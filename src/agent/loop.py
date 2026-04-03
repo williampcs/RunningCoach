@@ -98,6 +98,43 @@ _TOOLS: list[dict] = [
             "required": ["week_label", "content"],
         },
     },
+    {
+        "name": "update_race",
+        "description": (
+            "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備注）。"
+            "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。"
+            "需先用 get_upcoming_races 確認 race_id。只需傳入要更新的欄位。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "race_id":     {"type": "integer", "description": "races table 的 id"},
+                "name":        {"type": "string",  "description": "賽事名稱"},
+                "date":        {"type": "string",  "description": "比賽日期 YYYY-MM-DD"},
+                "distance_km": {"type": "number",  "description": "距離（公里）"},
+                "target_time": {"type": "string",  "description": "目標完賽時間，例：1:55:00"},
+                "confirmed":   {"type": "integer", "description": "1=已確認報名，0=考慮中"},
+                "notes":       {"type": "string",  "description": "備注"},
+            },
+            "required": ["race_id"],
+        },
+    },
+    {
+        "name": "cancel_race",
+        "description": (
+            "將賽事標記為已取消（設定 cancelled=1，保留歷史紀錄，不刪除）。"
+            "使用者說「我退出 OOO」或「取消報名 OOO」時呼叫。"
+            "需先用 get_upcoming_races 確認 race_id。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "race_id": {"type": "integer", "description": "races table 的 id"},
+                "notes":   {"type": "string",  "description": "取消原因（選填），例：傷病、時間衝突"},
+            },
+            "required": ["race_id"],
+        },
+    },
 ]
 
 
@@ -148,6 +185,20 @@ def _execute_tool(name: str, inputs: dict) -> str:
         elif name == "save_training_plan":
             db.save_training_plan(inputs["week_label"], inputs["content"])
             return f"訓練計畫已儲存（{inputs['week_label']}）"
+
+        elif name == "update_race":
+            race_id = int(inputs["race_id"])
+            fields = {k: inputs[k] for k in
+                      ("name", "date", "distance_km", "target_time", "confirmed", "notes")
+                      if k in inputs}
+            db.update_race(race_id, **fields)
+            changed = "、".join(f"{k}={v}" for k, v in fields.items())
+            return f"賽事 id={race_id} 已更新：{changed}"
+
+        elif name == "cancel_race":
+            race_id = int(inputs["race_id"])
+            db.cancel_race(race_id, notes=inputs.get("notes", ""))
+            return f"賽事 id={race_id} 已標記為取消，紀錄保留於 DB。"
 
         else:
             return f"未知的 tool：{name}"

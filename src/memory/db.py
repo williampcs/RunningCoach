@@ -22,7 +22,7 @@ def get_conn():
 
 
 def init_db() -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, and run incremental migrations."""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS athlete_profile (
@@ -109,6 +109,15 @@ def init_db() -> None:
             );
         """)
 
+        # --- Migration: races.cancelled (added after initial schema) ---
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(races)").fetchall()
+        }
+        if "cancelled" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE races ADD COLUMN cancelled INTEGER DEFAULT 0"
+            )
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -143,7 +152,7 @@ def get_upcoming_races(days: int) -> list[dict]:
     cutoff = (date.today() + timedelta(days=days)).isoformat()
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM races WHERE date >= ? AND date <= ? ORDER BY date",
+            "SELECT * FROM races WHERE date >= ? AND date <= ? AND cancelled=0 ORDER BY date",
             (today, cutoff),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -160,10 +169,31 @@ def add_race(name: str, date: str, distance_km: float,
         return cur.lastrowid
 
 
+def update_race(race_id: int, **kwargs) -> None:
+    """更新賽事欄位，只更新有傳入的欄位（name/date/distance_km/target_time/confirmed/notes）."""
+    allowed = {"name", "date", "distance_km", "target_time", "confirmed", "notes"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [race_id]
+    with get_conn() as conn:
+        conn.execute(f"UPDATE races SET {set_clause} WHERE id=?", values)
+
+
+def cancel_race(race_id: int, notes: str = "") -> None:
+    """將賽事標記為已取消（不刪除，保留歷史紀錄）."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE races SET cancelled=1, notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?",
+            (notes or None, race_id),
+        )
+
+
 def update_race_result(race_id: int, result_time: str, notes: str = "") -> None:
     with get_conn() as conn:
         conn.execute(
-            "UPDATE races SET result_time=?, notes=COALESCE(?, notes) WHERE id=?",
+            "UPDATE races SET result_time=?, notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?",
             (result_time, notes or None, race_id),
         )
 
