@@ -415,7 +415,7 @@ def _call_claude_with_tools(context: dict) -> str:
     for round_num in range(config.TOOL_CALL_MAX_ROUNDS):
         response = _client.messages.create(
             model=config.CLAUDE_MODEL,
-            max_tokens=1024,
+            max_tokens=config.MAX_RESPONSE_TOKENS,
             system=context["system"],
             messages=messages,
             tools=_TOOLS,
@@ -445,7 +445,7 @@ def _call_claude_with_tools(context: dict) -> str:
     logger.warning("Max tool call rounds (%d) reached", config.TOOL_CALL_MAX_ROUNDS)
     final = _client.messages.create(
         model=config.CLAUDE_MODEL,
-        max_tokens=1024,
+        max_tokens=config.MAX_RESPONSE_TOKENS,
         system=context["system"],
         messages=messages,
     )

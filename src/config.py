@@ -23,3 +23,4 @@ RACE_LOOKAHEAD_DAYS: int = int(os.getenv("RACE_LOOKAHEAD_DAYS", "90"))
 
 # Agent
 TOOL_CALL_MAX_ROUNDS: int = int(os.getenv("TOOL_CALL_MAX_ROUNDS", "5"))
+MAX_RESPONSE_TOKENS: int = int(os.getenv("MAX_RESPONSE_TOKENS", "4096"))
