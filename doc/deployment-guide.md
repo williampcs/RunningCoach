@@ -1,7 +1,7 @@
 # Running Coach — 部署與測試指南
 
 **最後更新**：2026-04-03
-**適用版本**：Phase 1（spec v1.3）
+**適用版本**：Phase 2（spec v1.3）
 
 ---
 
@@ -216,8 +216,39 @@ docker compose logs | grep "Bot online"
 |------|---------|---------|
 | `/profile` | `/profile goal_long_term 2026年底半馬破二` | 回應「已更新 goal_long_term」 |
 | `/plan` | `/plan 週一輕鬆跑8km，週三間歇6x400m` | 回應「訓練計畫已更新（XXXX-WXX）」 |
-| `/status` | `/status` | 顯示選手資料筆數、對話筆數、近期賽事數、訓練計畫狀態 |
+| `/status` | `/status` | 顯示五層記憶完整狀態（含 emoji 指示器） |
 | `/sync` | `/sync` | 回應「Strava 同步功能將於 Phase 3 開放」 |
+
+### T4（Phase 2）：賽事管理 — 自然語言新增
+
+在 Discord 傳送：
+> 「我報名了五月十號萬金石半馬，目標 1:58」
+
+✅ Claude 呼叫 `add_race` tool
+✅ 回應確認賽事已新增
+✅ 此後對話的 system prompt 自動出現該賽事（層1 注入）
+
+### T5（Phase 2）：賽事管理 — 更新成績
+
+傳送：
+> 「剛跑完萬金石，成績 1:55:30，後半段發揮不錯」
+
+✅ Claude 先呼叫 `get_upcoming_races` 確認 race_id
+✅ 再呼叫 `update_race_result` 更新成績
+✅ 回應包含分析與鼓勵
+
+### T6（Phase 2）：對話壓縮
+
+製造超過 20 輪對話後，確認：
+
+```bash
+sqlite3 ~/projs/RunningCoach/data/coach.db \
+  "SELECT id, substr(content,1,50) FROM summaries ORDER BY id DESC LIMIT 1;"
+```
+
+✅ summaries table 有一筆壓縮摘要
+✅ conversations table 筆數回到 10 筆以下
+✅ 後續對話品質不下降（層4 有注入摘要）
 
 ### T4：非指定 channel 隔離
 

@@ -8,6 +8,7 @@ from discord import app_commands
 import config
 import agent.loop as agent_loop
 import memory.db as db
+import memory.context_manager as ctx
 
 logger = logging.getLogger(__name__)
 
@@ -95,21 +96,31 @@ def create_bot() -> CoachBot:
         await interaction.response.send_message(f"已更新 `{key}` = `{value}`。")
 
     # --------------------------------------------------------------- /status
-    @bot.tree.command(name="status", description="顯示目前記憶狀態（debug）")
+    @bot.tree.command(name="status", description="顯示目前五層記憶狀態（debug）")
     async def cmd_status(interaction: discord.Interaction):
         if interaction.channel_id != config.DISCORD_ALLOWED_CHANNEL_ID:
             return
-        profile = db.get_profile()
-        conv_count = db.count_conversations()
-        races = db.get_upcoming_races(config.RACE_LOOKAHEAD_DAYS)
-        plan = db.get_active_training_plan()
+        s = ctx.get_status_summary()
+        conv_bar = "🟡" if s["conversation_count"] >= s["conversation_max"] * 0.8 else "🟢"
 
-        lines = ["**記憶狀態**", ""]
-        lines.append(f"選手資料：{len(profile)} 筆")
-        lines.append(f"對話紀錄：{conv_count} 筆（閾值 {config.CONVERSATION_MAX}）")
-        lines.append(f"近期賽事（{config.RACE_LOOKAHEAD_DAYS} 天內）：{len(races)} 筆")
-        lines.append(f"訓練計畫：{'有' if plan else '無'}")
-
+        lines = [
+            "**📊 記憶層狀態**", "",
+            f"**層1 — System Prompt**",
+            f"　選手資料：{s['profile_keys']} 筆",
+            f"　近期賽事（{config.RACE_LOOKAHEAD_DAYS}天內）：{s['upcoming_races']} 筆",
+            "",
+            f"**層2 — 訓練歷史摘要**",
+            f"　最近 {s['workout_summaries']} 筆（上限 {config.WORKOUT_SUMMARY_COUNT}）",
+            "",
+            f"**層3 — 訓練計畫**",
+            f"　{'有（' + s['training_plan_label'] + '）' if s['has_training_plan'] else '尚未設定'}",
+            "",
+            f"**層4 — 對話摘要**",
+            f"　{'有' if s['has_conv_summary'] else '無（尚未觸發壓縮）'}",
+            "",
+            f"**層5 — Rolling Window**",
+            f"　{conv_bar} 對話 {s['conversation_count']} 筆（閾值 {s['conversation_max']}）",
+        ]
         await interaction.response.send_message("\n".join(lines))
 
     return bot
