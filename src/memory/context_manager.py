@@ -9,16 +9,25 @@ Phase 2 補完：
   層3 — training_plan
   層4 — 對話摘要
 """
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 
 import config
 import memory.db as db
 
+_TZ = ZoneInfo("Asia/Taipei")
+_WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
 
 def _build_system_prompt() -> str:
+    # 注入當前日期與時區（讓 LLM 知道「今天」是哪天）
+    now = datetime.now(_TZ)
+    weekday_str = _WEEKDAYS[now.weekday()]  # Monday=0 … Sunday=6
+    date_line = f"今天日期：{now.strftime('%Y-%m-%d')}（{weekday_str}）｜時區：Asia/Taipei（UTC+8）｜以星期日為一週的第一天"
+
     profile = db.get_profile()
 
-    lines = ["你是一位專業跑步教練，以下是選手資料：", ""]
+    lines = [date_line, "", "你是一位專業跑步教練，以下是選手資料：", ""]
 
     goal = profile.get("goal_long_term", "")
     if goal:

@@ -307,3 +307,29 @@ docker compose restart
 sudo apt install -y sqlite3
 sqlite3 ~/projs/RunningCoach/data/coach.db "SELECT ..."
 ```
+
+---
+
+### 問題 5：LLM 認為現在是 2024 年（時間感知錯誤）
+
+**原因**：Claude 本身不知道當前日期，會以 training cutoff 的時間印象作答，導致訓練計畫建議、距比賽天數等資訊錯誤。
+
+**解法**：在 `context_manager.py` 的 `_build_system_prompt()` 最頂部動態注入當前日期與時區：
+
+```
+今天日期：2026-04-03（星期五）｜時區：Asia/Taipei（UTC+8）｜以星期日為一週的第一天
+```
+
+每次呼叫 API 前即時生成，不需要 rebuild，`docker compose restart` 即可生效。
+
+---
+
+### 設計補充：長期目標支援多個目標
+
+`athlete_profile.goal_long_term` 為自由格式字串，可直接寫入多個目標：
+
+```bash
+/profile goal_long_term 半馬：2026年底破二；全馬：2027年底破430
+```
+
+不需要改 schema 或 code，LLM 能直接理解多目標格式。具體有日期的賽事目標應進 `races` table（透過自然語言告知 Claude 即可，Phase 2 實作 tool call 後生效）。
