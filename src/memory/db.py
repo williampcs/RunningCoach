@@ -298,3 +298,152 @@ def save_training_plan(week_label: str, content: str) -> None:
             "INSERT INTO training_plans (week_label, content, created_at, is_active) VALUES (?, ?, ?, 1)",
             (week_label, content, now_iso()),
         )
+
+
+# ---------------------------------------------------------------------------
+# strava_tokens helpers
+# ---------------------------------------------------------------------------
+
+def get_strava_token() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM strava_tokens WHERE id=1").fetchone()
+    return dict(row) if row else None
+
+
+def save_strava_token(access_token: str, refresh_token: str, expires_at: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO strava_tokens (id, access_token, refresh_token, expires_at)"
+            " VALUES (1, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET"
+            "   access_token=excluded.access_token,"
+            "   refresh_token=excluded.refresh_token,"
+            "   expires_at=excluded.expires_at",
+            (access_token, refresh_token, expires_at),
+        )
+
+
+# ---------------------------------------------------------------------------
+# workouts helpers
+# ---------------------------------------------------------------------------
+
+def get_workout_by_strava_id(strava_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM workouts WHERE strava_id=?", (strava_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_workout(strava_data: dict,
+                 perceived_effort: int | None = None,
+                 subjective_notes: str | None = None) -> int:
+    """將客觀 Strava 資料與主觀感受合併存入 workouts table."""
+    import json as _json
+    raw = strava_data.get("raw_json")
+    raw_str = _json.dumps(raw, ensure_ascii=False) if isinstance(raw, dict) else raw
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO workouts
+               (strava_id, date, type, distance_km, duration_min,
+                avg_hr, max_hr, avg_pace, elevation_m, calories,
+                perceived_effort, subjective_notes, raw_json, source, synced_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'strava',?)
+               ON CONFLICT(strava_id) DO UPDATE SET
+                 perceived_effort = COALESCE(excluded.perceived_effort, perceived_effort),
+                 subjective_notes = COALESCE(excluded.subjective_notes, subjective_notes),
+                 synced_at        = excluded.synced_at""",
+            (
+                strava_data.get("strava_id"),
+                strava_data["date"],
+                strava_data.get("type", "run"),
+                strava_data.get("distance_km"),
+                strava_data.get("duration_min"),
+                strava_data.get("avg_hr"),
+                strava_data.get("max_hr"),
+                strava_data.get("avg_pace"),
+                strava_data.get("elevation_m"),
+                strava_data.get("calories"),
+                perceived_effort,
+                subjective_notes,
+                raw_str,
+                now_iso(),
+            ),
+        )
+        # UPSERT 不回傳 lastrowid，需另查
+        row = conn.execute(
+            "SELECT id FROM workouts WHERE strava_id=?", (strava_data.get("strava_id"),)
+        ).fetchone()
+        return row["id"] if row else cur.lastrowid
+
+
+def save_workout_summary(workout_id: int, summary: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO workout_summaries (workout_id, summary, created_at) VALUES (?, ?, ?)",
+            (workout_id, summary, now_iso()),
+        )
+
+
+def get_recent_workouts_raw(days: int) -> list[dict]:
+    """回傳最近 N 天的跑步紀錄（含 workout_summaries）."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT w.*, ws.summary
+               FROM workouts w
+               LEFT JOIN workout_summaries ws ON ws.workout_id = w.id
+               WHERE w.date >= ?
+               ORDER BY w.date DESC""",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_workouts_for_pace_trend(weeks: int) -> list[dict]:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date, avg_pace, distance_km FROM workouts"
+            " WHERE date >= ? AND avg_pace IS NOT NULL ORDER BY date",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# pending_subjective helpers
+# ---------------------------------------------------------------------------
+
+def save_pending_subjective(date: str, perceived_effort: int,
+                            subjective_notes: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO pending_subjective (date, perceived_effort, subjective_notes, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (date, perceived_effort, subjective_notes, now_iso()),
+        )
+
+
+def get_pending_subjective_by_date(date: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM pending_subjective WHERE date=? ORDER BY id DESC LIMIT 1",
+            (date,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_pending_subjective(record_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM pending_subjective WHERE id=?", (record_id,))
+
+
+def cleanup_old_pending_subjective() -> None:
+    """刪除超過 7 天未配對的主觀暫存資料."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=7)).isoformat()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM pending_subjective WHERE date < ?", (cutoff,))

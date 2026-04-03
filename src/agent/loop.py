@@ -1,6 +1,7 @@
 """Agent Loop — 組合 context、呼叫 Claude API、執行 tool call 迴圈、回傳回應."""
 import asyncio
 import logging
+from datetime import date
 
 import anthropic
 
@@ -8,10 +9,14 @@ import config
 import memory.db as db
 import memory.context_manager as ctx
 import memory.summarizer as summarizer
+from tools.strava_tool import strava
 
 logger = logging.getLogger(__name__)
 
 _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+
+# 跑後回報流程中，暫存最近一次從 Strava 取回的活動（per-process singleton）
+_strava_activity_cache: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +103,85 @@ _TOOLS: list[dict] = [
             "required": ["week_label", "content"],
         },
     },
+    # ── Phase 3 tools ──────────────────────────────────────────────────────────
+    {
+        "name": "fetch_latest_strava_activity",
+        "description": (
+            "從 Strava 拉取最新一筆跑步活動（基本資料，不含 laps/streams）。"
+            "偵測到跑後回報意圖時呼叫，用於驗證日期是否為今天。"
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "save_workout",
+        "description": (
+            "合併客觀 Strava 資料（來自 fetch_latest_strava_activity 的快取）"
+            "與使用者輸入的主觀感受，存入 workouts table 並生成 AI 分析摘要。"
+            "須在 fetch_latest_strava_activity 確認日期為今天後才呼叫。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "perceived_effort": {
+                    "type": "integer",
+                    "description": "體感強度 1-10",
+                },
+                "subjective_notes": {
+                    "type": "string",
+                    "description": "主觀感受，例：腿有點重，呼吸順，右膝無異狀",
+                },
+            },
+            "required": ["perceived_effort"],
+        },
+    },
+    {
+        "name": "save_pending_subjective",
+        "description": (
+            "將主觀感受暫存至 pending_subjective table。"
+            "當 Strava 尚未同步今天的活動時呼叫，使用者之後執行 /sync 時自動合併。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "跑步日期 YYYY-MM-DD，通常是今天",
+                },
+                "perceived_effort": {"type": "integer", "description": "體感強度 1-10"},
+                "subjective_notes": {"type": "string", "description": "主觀感受"},
+            },
+            "required": ["date", "perceived_effort"],
+        },
+    },
+    {
+        "name": "get_recent_workouts",
+        "description": (
+            "從 DB 取最近 N 天的跑步資料（含主觀感受與 AI 摘要）。"
+            "使用者詢問具體訓練細節時呼叫。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {"type": "integer", "description": "查詢天數，預設 14"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_pace_trend",
+        "description": (
+            "計算過去 N 週的週平均配速，用於趨勢分析。"
+            "使用者詢問「配速有沒有進步」時呼叫。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weeks": {"type": "integer", "description": "查詢週數，預設 4"},
+            },
+            "required": [],
+        },
+    },
+    # ── Phase 2 tools (races & profile) ────────────────────────────────────────
     {
         "name": "update_race",
         "description": (
@@ -142,9 +226,122 @@ _TOOLS: list[dict] = [
 # Tool 執行器
 # ---------------------------------------------------------------------------
 
+def generate_workout_summary(workout_data: dict) -> str:
+    """生成 AI 跑步分析摘要（可供 /sync 流程呼叫）."""
+    has_subjective = workout_data.get("perceived_effort") is not None
+    effort_line = (
+        f"體感強度：{workout_data['perceived_effort']}/10\n"
+        f"主觀感受：{workout_data.get('subjective_notes') or '未記錄'}"
+        if has_subjective else "體感資料：未記錄"
+    )
+    prompt = (
+        f"請為以下跑步訓練生成一段簡潔分析摘要（150字以內，繁體中文）：\n\n"
+        f"日期：{workout_data['date']}\n"
+        f"距離：{workout_data.get('distance_km')}km\n"
+        f"時長：{workout_data.get('duration_min')}分鐘\n"
+        f"配速：{workout_data.get('avg_pace') or '未知'}\n"
+        f"平均心率：{workout_data.get('avg_hr') or '未記錄'}bpm\n"
+        f"最高心率：{workout_data.get('max_hr') or '未記錄'}bpm\n"
+        f"爬升：{workout_data.get('elevation_m') or 0}m\n"
+        f"{effort_line}\n\n"
+        f"格式：一行數據摘要 ＋ AI評估。"
+        f"{'客觀數據與體感對比分析。' if has_subjective else '僅客觀數據，給出客觀評估。'}"
+    )
+    response = _client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
+
+
 def _execute_tool(name: str, inputs: dict) -> str:
+    global _strava_activity_cache
     try:
-        if name == "add_race":
+        # ── Phase 3 tools ────────────────────────────────────────────────────
+        if name == "fetch_latest_strava_activity":
+            activity = strava.fetch_latest_activity()
+            if activity is None:
+                return "Strava 上找不到跑步活動，請確認 Strava token 已設定且有同步資料。"
+            _strava_activity_cache = activity
+            today = date.today().isoformat()
+            is_today = activity["date"] == today
+            date_note = "✅ 是今天的活動" if is_today else f"⚠️ 活動日期為 {activity['date']}，非今天，Strava 可能尚未同步"
+            return (
+                f"最新跑步活動：\n"
+                f"日期：{activity['date']}　{date_note}\n"
+                f"距離：{activity['distance_km']}km｜時長：{activity['duration_min']}分鐘\n"
+                f"配速：{activity.get('avg_pace') or '未知'}｜"
+                f"心率：{activity.get('avg_hr') or '未記錄'}/{activity.get('max_hr') or '未記錄'}bpm\n"
+                f"爬升：{activity.get('elevation_m') or 0}m｜卡路里：{activity.get('calories') or '未記錄'}"
+            )
+
+        elif name == "save_workout":
+            if not _strava_activity_cache:
+                return "錯誤：請先呼叫 fetch_latest_strava_activity 取得活動資料。"
+            perceived_effort = inputs.get("perceived_effort")
+            subjective_notes = inputs.get("subjective_notes", "")
+            workout_data = {**_strava_activity_cache,
+                            "perceived_effort": perceived_effort,
+                            "subjective_notes": subjective_notes}
+            workout_id = db.save_workout(
+                strava_data=_strava_activity_cache,
+                perceived_effort=perceived_effort,
+                subjective_notes=subjective_notes or None,
+            )
+            summary = generate_workout_summary(workout_data)
+            db.save_workout_summary(workout_id, summary)
+            _strava_activity_cache = None  # 清除快取
+            return f"訓練紀錄已儲存（id={workout_id}）。\n\n{summary}"
+
+        elif name == "save_pending_subjective":
+            db.save_pending_subjective(
+                date=inputs["date"],
+                perceived_effort=int(inputs["perceived_effort"]),
+                subjective_notes=inputs.get("subjective_notes", ""),
+            )
+            return f"主觀感受已暫存（{inputs['date']}）。Strava 同步後請執行 /sync 完成合併。"
+
+        elif name == "get_recent_workouts":
+            days = int(inputs.get("days", 14))
+            workouts = db.get_recent_workouts_raw(days)
+            if not workouts:
+                return f"最近 {days} 天無訓練紀錄。"
+            lines = [f"最近 {days} 天的訓練紀錄（共 {len(workouts)} 筆）："]
+            for w in workouts:
+                subj = f"｜體感 {w['perceived_effort']}/10" if w.get("perceived_effort") else ""
+                lines.append(
+                    f"- {w['date']} {w['distance_km']}km {w.get('avg_pace','?')} "
+                    f"心率:{w.get('avg_hr','?')}bpm{subj}"
+                )
+            return "\n".join(lines)
+
+        elif name == "get_pace_trend":
+            weeks = int(inputs.get("weeks", 4))
+            records = db.get_workouts_for_pace_trend(weeks)
+            if not records:
+                return f"最近 {weeks} 週無配速資料。"
+            # 依 ISO week 分組計算平均配速
+            from datetime import datetime
+            weekly: dict[str, list[int]] = {}
+            for r in records:
+                try:
+                    dt = datetime.strptime(r["date"], "%Y-%m-%d")
+                    week_key = dt.strftime("%G-W%V")
+                    pace_str = r["avg_pace"].split("/")[0]
+                    mins, secs = pace_str.split(":")
+                    secs_total = int(mins) * 60 + int(secs)
+                    weekly.setdefault(week_key, []).append(secs_total)
+                except Exception:
+                    continue
+            lines = [f"過去 {weeks} 週週平均配速："]
+            for week in sorted(weekly):
+                avg = sum(weekly[week]) // len(weekly[week])
+                lines.append(f"  {week}：{avg // 60}:{avg % 60:02d}/km（{len(weekly[week])} 筆）")
+            return "\n".join(lines)
+
+        # ── Phase 2 tools ────────────────────────────────────────────────────
+        elif name == "add_race":
             race_id = db.add_race(
                 name=inputs["name"],
                 date=inputs["date"],

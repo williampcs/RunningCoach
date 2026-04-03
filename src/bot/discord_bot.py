@@ -1,4 +1,5 @@
 """Discord Bot — 接收訊息、轉發 Agent、回傳結果."""
+import asyncio
 import logging
 
 import discord
@@ -7,6 +8,7 @@ from discord import app_commands
 
 import config
 import agent.loop as agent_loop
+import agent.sync as agent_sync
 import memory.db as db
 import memory.context_manager as ctx
 
@@ -67,13 +69,18 @@ def create_bot() -> CoachBot:
     bot = CoachBot()
 
     # ------------------------------------------------------------------ /sync
-    @bot.tree.command(name="sync", description="手動觸發 Strava 資料同步")
+    @bot.tree.command(name="sync", description="手動觸發 Strava 資料同步（含合併主觀暫存）")
     async def cmd_sync(interaction: discord.Interaction):
         if interaction.channel_id != config.DISCORD_ALLOWED_CHANNEL_ID:
             return
         await interaction.response.defer()
-        # Phase 3 實作 Strava 同步，目前回傳提示
-        await interaction.followup.send("Strava 同步功能將於 Phase 3 開放。")
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, agent_sync.run_sync)
+        except Exception as e:
+            logger.error("Sync error: %s", e)
+            result = "❌ 同步失敗，請稍後再試。"
+        await interaction.followup.send(result)
 
     # ------------------------------------------------------------------ /plan
     @bot.tree.command(name="plan", description="更新本週訓練計畫")
