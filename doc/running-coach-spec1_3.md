@@ -484,7 +484,7 @@ running-coach/
 
 **行為規格**：
 - 每次收到訊息，從 Context Manager 取得完整 context
-- 呼叫 Claude API（模型：`claude-sonnet-4-5-20251001`）
+- 呼叫 Claude API（模型：`claude-sonnet-4-5`）
 - 若回應包含 tool call，執行對應工具後繼續迴圈
 - 最多執行 5 輪 tool call，避免無限迴圈
 - 最終文字回應存入 conversations，回傳給 Bot
@@ -720,7 +720,7 @@ STRAVA_CLIENT_SECRET=abc123...
 # 注意：access_token 與 refresh_token 存在 DB，不放這裡
 
 # Agent 參數（可選，有預設值）
-CLAUDE_MODEL=claude-sonnet-4-5-20251001
+CLAUDE_MODEL=claude-sonnet-4-5
 CONVERSATION_MAX=20
 CONVERSATION_KEEP=10
 WORKOUT_SUMMARY_COUNT=7
