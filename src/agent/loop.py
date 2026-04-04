@@ -88,13 +88,23 @@ _TOOLS: list[dict] = [
     {
         "name": "update_athlete_profile",
         "description": (
-            "更新選手固定資料（長期目標、PB、傷病等）。"
-            "使用者明確說要更新個人資料，或 PB 有新紀錄時呼叫。"
+            "更新選手固定資料（目標、PB、傷病、生理數據、訓練偏好等）。"
+            "使用者提供或更新個人資料、PB 有新紀錄、或提到生理數據與訓練偏好時呼叫。"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "key":   {"type": "string", "description": "資料欄位，例：goal_long_term、pb_half、injuries、weekly_km_target"},
+                "key": {
+                    "type": "string",
+                    "description": (
+                        "資料欄位名稱，可用值：\n"
+                        "・核心：goal_long_term、weekly_km_target、injuries\n"
+                        "・PB：pb_5k、pb_10k、pb_half、pb_full\n"
+                        "・生理：gender、birth_year、height_cm、weight_kg、"
+                        "body_fat_pct、max_hr、resting_hr\n"
+                        "・訓練偏好：pref_long_run_day、pref_rest_days、pref_train_time"
+                    ),
+                },
                 "value": {"type": "string", "description": "欄位值"},
             },
             "required": ["key", "value"],

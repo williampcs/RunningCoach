@@ -30,6 +30,7 @@ def _build_system_prompt() -> str:
     )
 
     profile = db.get_profile()
+    now_year = datetime.now(_TZ).year
     lines = [date_line, "", "你是一位專業跑步教練，以下是選手資料：", ""]
 
     if goal := profile.get("goal_long_term"):
@@ -47,6 +48,61 @@ def _build_system_prompt() -> str:
 
     if weekly_km := profile.get("weekly_km_target"):
         lines.append(f"每週目標里程：{weekly_km}km")
+
+    # 生理資料
+    phys = []
+    if gender := profile.get("gender"):
+        phys.append(f"性別：{gender}")
+    try:
+        if birth_year := profile.get("birth_year"):
+            age = now_year - int(birth_year)
+            phys.append(f"年齡：{age}歲")
+    except ValueError:
+        pass
+    if height := profile.get("height_cm"):
+        phys.append(f"身高：{height}cm")
+    if weight := profile.get("weight_kg"):
+        phys.append(f"體重：{weight}kg")
+    if body_fat := profile.get("body_fat_pct"):
+        phys.append(f"體脂：{body_fat}%")
+    if phys:
+        lines.append("生理資料：" + "｜".join(phys))
+
+    # 心率資料與區間
+    try:
+        max_hr_val: int | None = None
+        if mhr := profile.get("max_hr"):
+            max_hr_val = int(mhr)
+            lines.append(f"最大心率：{max_hr_val}bpm（實測）")
+        elif profile.get("birth_year"):
+            age = now_year - int(profile["birth_year"])
+            max_hr_val = 220 - age
+            lines.append(f"最大心率：{max_hr_val}bpm（推算，220－年齡）")
+
+        if rhr := profile.get("resting_hr"):
+            lines.append(f"靜息心率：{int(rhr)}bpm")
+
+        if max_hr_val:
+            z1 = int(max_hr_val * 0.60)
+            z2 = int(max_hr_val * 0.70)
+            z3 = int(max_hr_val * 0.80)
+            z4 = int(max_hr_val * 0.90)
+            lines.append(
+                f"心率區間：Z1 <{z1}  Z2 {z1}–{z2}  Z3 {z2}–{z3}  Z4 {z3}–{z4}  Z5 >{z4}"
+            )
+    except (ValueError, TypeError):
+        pass
+
+    # 訓練偏好
+    prefs = []
+    if long_run_day := profile.get("pref_long_run_day"):
+        prefs.append(f"長跑日：{long_run_day}")
+    if rest_days := profile.get("pref_rest_days"):
+        prefs.append(f"休息日：{rest_days}")
+    if train_time := profile.get("pref_train_time"):
+        prefs.append(f"偏好時段：{train_time}")
+    if prefs:
+        lines.append("訓練偏好：" + "｜".join(prefs))
 
     # 動態注入近期賽事（距今 N 天內）
     races = db.get_upcoming_races(config.RACE_LOOKAHEAD_DAYS)

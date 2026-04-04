@@ -49,32 +49,34 @@
 
 ---
 
-## [KI-003] 選手資料欄位不足，影響個人化訓練建議
+## [KI-003] 選手資料欄位不足，影響個人化訓練建議 ✅ 已解決
 
 **發現時機**：Phase 3 驗收後檢視
-**狀態**：待實作
-**優先度**：高
+**解決時機**：Phase 3 修補
+**狀態**：已實作
 
-**問題描述**：
-`athlete_profile` 目前只記錄以下欄位：
-`goal_long_term`, `pb_5k`, `pb_10k`, `pb_half`, `pb_full`, `injuries`, `weekly_km_target`
+**實作內容**：
+沿用 key-value 結構，不需改 DB schema，新增以下欄位：
 
-缺少許多影響訓練負荷、心率區間計算與補給建議的生理資料：
+| key | 說明 |
+|-----|------|
+| `gender` | 性別 |
+| `birth_year` | 出生年份（用於自動推算年齡） |
+| `height_cm` | 身高（cm） |
+| `weight_kg` | 體重（kg） |
+| `body_fat_pct` | 體脂率（%） |
+| `max_hr` | 最大心率實測值（bpm） |
+| `resting_hr` | 靜息心率（bpm） |
 
-| 缺少欄位 | 用途 |
-|---------|------|
-| 性別 | 補給、生理週期考量 |
-| 生日（年月） | 年齡、最大心率推算 |
-| 身高 / 體重 | BMI、補給熱量估算 |
-| 體脂率 | 更精確的功率體重比 |
-| 最大心率（實測） | 心率區間 Zone 1–5 計算 |
-| 靜息心率 | 心率儲備（HRR）計算 |
+`_build_system_prompt()` 新增渲染邏輯：
+- 年齡由 `birth_year` 自動推算（Python 計算，非 LLM）
+- 最大心率：有實測值用實測；否則用 `220 - 年齡` 推算並標注
+- 心率區間 Zone 1–5 由 Python 直接計算注入（% of MaxHR），Claude 無需自行運算
+- 格式範例：`Z1 <109  Z2 109–127  Z3 127–145  Z4 145–163  Z5 >163`
 
-**可能解法**：
-- `athlete_profile` 是 key-value 結構，技術上可直接新增欄位
-- 需更新 `init_profile.py` 加入互動式輸入
-- 需更新 `context_manager.py` 的 system prompt 注入邏輯，讓 Claude 能取得並運用這些資料
-- 或提供 `update_athlete_profile` tool 讓 Claude 在對話中引導選手填寫
+**填寫方式**：
+- `/profile key value` 指令
+- 直接告知 Claude（如「我的體重是 68kg」），Claude 會呼叫 `update_athlete_profile` tool 自動儲存
 
 ---
 
@@ -170,23 +172,24 @@ Claude 進行日期算術（計算距離比賽剩餘天數、判斷某日是星�
 
 ---
 
-## [KI-008] 無訓練偏好欄位，模型無法據此規劃
+## [KI-008] 無訓練偏好欄位，模型無法據此規劃 ✅ 已解決
 
 **發現時機**：Phase 3 驗收後檢視
-**狀態**：待實作
-**優先度**：中
+**解決時機**：Phase 3 修補
+**狀態**：已實作
 
-**問題描述**：
-目前 `athlete_profile` 沒有結構化的訓練偏好欄位，Claude 無法得知：
-- 習慣哪天進行長跑（如週日）
-- 固定哪幾天無法訓練（工作/家庭因素）
-- 偏好的訓練時段（早晨/傍晚）
-- 對跑步路線的偏好（操場/路跑/越野）
+**實作內容**：
+沿用 key-value 結構，以 `pref_` 前綴區分偏好欄位與核心資料：
 
-**可能解法**：
-- 在 `athlete_profile` key-value 中新增 `training_preferences` key（JSON 格式）
-- 或新增獨立的 `training_preferences` table
-- 更新 system prompt 注入邏輯，讓 Claude 在規劃訓練時自動參考
+| key | 說明 | 範例值 |
+|-----|------|--------|
+| `pref_long_run_day` | 長跑日 | 週日 |
+| `pref_rest_days` | 固定休息日（逗號分隔） | 週二,週五 |
+| `pref_train_time` | 偏好訓練時段 | 早晨 / 傍晚 / 彈性 |
+
+`_build_system_prompt()` 注入「訓練偏好」區塊，讓 Claude 在制定週計畫時自動考量。
+
+**填寫方式**：同 KI-003，透過 `/profile` 指令或直接告知 Claude。
 
 ---
 
