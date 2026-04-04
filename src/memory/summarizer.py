@@ -14,18 +14,52 @@ import memory.context_manager as ctx
 
 logger = logging.getLogger(__name__)
 
-_COMPRESS_PROMPT_TEMPLATE = (
-    "以下是一段跑步教練與選手的對話紀錄，請壓縮成重點摘要，保留：\n"
-    "1. 訓練決策（調整了什麼、為什麼）\n"
-    "2. 重要發現（狀態異常、突破、傷病跡象）\n"
-    "3. 選手當時的狀態描述\n\n"
-    "請用繁體中文，條列式輸出，精簡為 200 字以內。\n\n"
-    "對話紀錄：\n{conversation_text}"
-)
+# 第一次壓縮（無前次摘要）
+_INITIAL_PROMPT = """\
+你是跑步教練的助手，負責維護選手的訓練記錄。
+請將以下對話整理成結構化的選手狀態摘要，用自己的話重新表達，不要保留對話原文。
+
+輸出格式（每區塊 1-3 點，總計 300 字以內，繁體中文）：
+【訓練狀態】近期訓練概況、體能水平
+【重要決策】調整了什麼、原因為何
+【待追蹤】傷病、目標、未完成事項
+
+對話紀錄：
+{conversation_text}\
+"""
+
+# 後續壓縮（有前次摘要，融入更新）
+_UPDATE_PROMPT = """\
+你是跑步教練的助手，負責維護選手的訓練記錄。
+請將【新增對話】的重要資訊融入【現有摘要】，輸出更新後的完整摘要。
+若新舊資訊有衝突，以新資訊為準；已過時或不再相關的舊資訊可刪除。
+
+【現有摘要】
+{previous_summary}
+
+【新增對話】
+{conversation_text}
+
+輸出格式（每區塊 1-3 點，總計 300 字以內，繁體中文）：
+【訓練狀態】近期訓練概況、體能水平
+【重要決策】調整了什麼、原因為何
+【待追蹤】傷病、目標、未完成事項\
+"""
 
 
-def _do_summarize(client: anthropic.Anthropic, conversation_text: str) -> str:
-    prompt = _COMPRESS_PROMPT_TEMPLATE.format(conversation_text=conversation_text)
+def _do_summarize(
+    client: anthropic.Anthropic,
+    conversation_text: str,
+    previous_summary: str | None,
+) -> str:
+    if previous_summary:
+        prompt = _UPDATE_PROMPT.format(
+            previous_summary=previous_summary,
+            conversation_text=conversation_text,
+        )
+    else:
+        prompt = _INITIAL_PROMPT.format(conversation_text=conversation_text)
+
     response = client.messages.create(
         model=config.CLAUDE_MODEL,
         max_tokens=512,
@@ -49,9 +83,12 @@ async def compress_async(client: anthropic.Anthropic) -> None:
             f"{r['role'].upper()}: {r['content']}" for r in to_compress
         )
 
-        loop = asyncio.get_event_loop()
-        summary_text = await loop.run_in_executor(
-            None, _do_summarize, client, conversation_text
+        prev = db.get_latest_summary()
+        previous_summary = prev["content"] if prev else None
+
+        event_loop = asyncio.get_event_loop()
+        summary_text = await event_loop.run_in_executor(
+            None, _do_summarize, client, conversation_text, previous_summary
         )
 
         max_id = to_compress[-1]["id"]
