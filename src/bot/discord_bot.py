@@ -8,6 +8,7 @@ from discord import app_commands
 
 import config
 import agent.loop as agent_loop
+from agent.loop import UsageStats
 import agent.sync as agent_sync
 import memory.db as db
 import memory.context_manager as ctx
@@ -29,6 +30,42 @@ def _split_message(text: str) -> list[str]:
     if text:
         parts.append(text)
     return parts
+
+
+def _format_token_footer(stats: UsageStats) -> str:
+    """將 UsageStats 格式化為 Discord 用的 token 用量頁尾."""
+    total_chars = sum(stats.layer_chars.values()) + stats.user_msg_chars
+    if total_chars == 0 or stats.initial_input_tokens == 0:
+        return ""
+
+    def est(chars: int) -> str:
+        tokens = round(stats.initial_input_tokens * chars / total_chars)
+        return f"{tokens:,}"
+
+    layer_labels = [
+        ("layer1", "層1系統"),
+        ("layer2", "層2訓練"),
+        ("layer3", "層3計畫"),
+        ("layer4", "層4摘要"),
+        ("layer5", "層5對話"),
+    ]
+
+    detail_parts = []
+    for key, label in layer_labels:
+        chars = stats.layer_chars.get(key, 0)
+        if chars > 0:
+            detail_parts.append(f"{label}~{est(chars)}")
+    detail_parts.append(f"訊息~{est(stats.user_msg_chars)}")
+
+    overhead = ""
+    if stats.tool_rounds > 0:
+        overhead = f" | 工具 {stats.tool_rounds} 輪 +{stats.tool_input_overhead:,}"
+
+    return (
+        f"\n-# 📊 輸入 {stats.initial_input_tokens:,}"
+        f"（{'  '.join(detail_parts)}）"
+        f" | 輸出 {stats.total_output_tokens:,}{overhead}"
+    )
 
 
 class CoachBot(commands.Bot):
@@ -56,13 +93,17 @@ class CoachBot(commands.Bot):
 
         async with message.channel.typing():
             try:
-                reply = await agent_loop.run(message.content)
+                reply, stats = await agent_loop.run(message.content)
             except Exception as e:
                 logger.error("Agent error: %s", e)
-                reply = "目前無法回應，請稍後再試。"
+                reply, stats = "目前無法回應，請稍後再試。", None
 
-        for part in _split_message(reply):
-            await message.channel.send(part)
+        parts = _split_message(reply)
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1 and stats is not None:
+                await message.channel.send(part + _format_token_footer(stats))
+            else:
+                await message.channel.send(part)
 
 
 def create_bot() -> CoachBot:

@@ -305,41 +305,27 @@ if prev_summary:
 
 ---
 
-## [KI-013] 無 Token 用量監控，難以掌握 API 費用
+## [KI-013] 無 Token 用量監控，難以掌握 API 費用 ✅ 已解決
 
 **發現時機**：Phase 3 驗收後
-**狀態**：待實作
-**優先度**：高
+**解決時機**：Phase 3 修補
+**狀態**：已實作
 
-**問題描述**：
-目前 `agent/loop.py` 未記錄任何 token 用量資訊。每次呼叫 Claude API 實際消耗多少 input/output tokens 完全不可見，無法：
-- 得知單次對話的 token 用量
-- 追蹤累積費用趨勢
-- 發現異常的高用量請求（例如 context 過大）
+**實作內容**：
 
-**現況**：
-Anthropic API 的每個 response 物件已內含用量資訊，只是沒有被記錄：
-```python
-response.usage.input_tokens   # 本次送入的 token 數（含 system prompt、歷史對話）
-response.usage.output_tokens  # 本次 Claude 回應的 token 數
+| 來源 | 做法 | 可見位置 |
+|------|------|---------|
+| 主對話（含 tool calls） | Discord 每則回覆附加 token footer | Discord 頻道 |
+| 對話壓縮（非同步） | `logger.info` 記錄 input/output | `docker compose logs` |
+| workout_summary 生成 | `logger.info` 記錄 input/output | `docker compose logs` |
+
+**Discord footer 格式**（顯示於每則回覆末端）：
+```
+📊 輸入 1,847（層1系統~312  層2訓練~578  層3計畫~218  層4摘要~91  層5對話~415  訊息~233） | 輸出 412 | 工具 2 輪 +553
 ```
 
-**可能解法（由簡到完整）**：
-
-**方案 A — 僅加 log（最簡單，5 分鐘）**：
-在 `_call_claude_with_tools()` 每次 API 呼叫後加一行：
-```python
-logger.info("Tokens — input: %d, output: %d", response.usage.input_tokens, response.usage.output_tokens)
-```
-透過 `docker compose logs` 即可查看。
-
-**方案 B — 累積計數 + /status 顯示（中等）**：
-- 在 loop.py 維護 per-conversation token 累計
-- `/status` 指令顯示本次對話用量與歷史總計
-
-**方案 C — 寫入 DB 長期追蹤（完整）**：
-- 新增 `token_usage` table，記錄每次 API call 的時間、input/output tokens、呼叫來源（主對話 / 壓縮 / workout summary）
-- 可計算每日/每週費用估算（claude-sonnet-4-5 約 $3/MTok input, $15/MTok output）
-- `/status` 顯示近 7 天用量摘要
-
-**建議先實作方案 A**，確認用量規模後再決定是否需要方案 C。
+**設計說明**：
+- 輸入各層 token 數為**比例估算**（依字元數佔比換算），非 API 精確值
+- `initial_input_tokens`（第一輪）代表 context 大小；後續 tool call 輪次的額外 input 顯示為 overhead
+- 非同步壓縮不顯示在 footer（timing 對不上），改以 log 記錄
+- 若需長期追蹤費用趨勢，可未來新增 `token_usage` DB table（方案 C，目前未實作）

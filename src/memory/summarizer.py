@@ -31,6 +31,10 @@ def _do_summarize(client: anthropic.Anthropic, conversation_text: str) -> str:
         max_tokens=512,
         messages=[{"role": "user", "content": prompt}],
     )
+    logger.info(
+        "compression tokens — input: %d, output: %d",
+        response.usage.input_tokens, response.usage.output_tokens,
+    )
     return response.content[0].text
 
 

@@ -86,9 +86,16 @@ def _build_system_prompt() -> str:
 # ---------------------------------------------------------------------------
 
 def get_context_for_api() -> dict:
-    """回傳可直接傳入 Claude API 的 context dict."""
+    """回傳可直接傳入 Claude API 的 context dict，附帶各層字元數供 token 用量估算。"""
     system = _build_system_prompt()
     messages = []
+    layer_chars: dict[str, int] = {
+        "layer1": len(system),
+        "layer2": 0,
+        "layer3": 0,
+        "layer4": 0,
+        "layer5": 0,
+    }
 
     # 層2 — 訓練歷史摘要
     workout_summaries = db.get_recent_workout_summaries(config.WORKOUT_SUMMARY_COUNT)
@@ -96,6 +103,7 @@ def get_context_for_api() -> dict:
         content = "以下是最近的訓練記錄摘要（由舊至新）：\n\n" + "\n\n".join(
             f"【{s['date']}】\n{s['summary']}" for s in workout_summaries
         )
+        layer_chars["layer2"] = len(content)
         messages.append({"role": "user", "content": content})
         messages.append({"role": "assistant", "content": "已閱讀訓練記錄，我會參考這些資料提供建議。"})
 
@@ -103,20 +111,24 @@ def get_context_for_api() -> dict:
     plan = db.get_active_training_plan()
     if plan:
         content = f"當前訓練計畫（{plan['week_label']}）：\n\n{plan['content']}"
+        layer_chars["layer3"] = len(content)
         messages.append({"role": "user", "content": content})
         messages.append({"role": "assistant", "content": "已閱讀當前訓練計畫，我會依此規劃建議。"})
 
     # 層4 — 對話摘要（壓縮後的歷史重點）
     summary = db.get_latest_summary()
     if summary:
-        messages.append({"role": "user", "content": f"以下是之前對話的重點摘要：\n\n{summary['content']}"})
+        content = f"以下是之前對話的重點摘要：\n\n{summary['content']}"
+        layer_chars["layer4"] = len(content)
+        messages.append({"role": "user", "content": content})
         messages.append({"role": "assistant", "content": "已閱讀對話摘要，我會記住這些重要資訊。"})
 
     # 層5 — Rolling Window（最近 N 輪原始對話）
     recent = db.get_recent_conversations(config.CONVERSATION_KEEP)
+    layer_chars["layer5"] = sum(len(r["content"]) for r in recent)
     messages += [{"role": r["role"], "content": r["content"]} for r in recent]
 
-    return {"system": system, "messages": messages}
+    return {"system": system, "messages": messages, "layer_chars": layer_chars}
 
 
 # ---------------------------------------------------------------------------
