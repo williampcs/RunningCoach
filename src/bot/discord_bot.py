@@ -44,7 +44,6 @@ def _format_token_footer(stats: UsageStats) -> str:
 
     layer_labels = [
         ("layer1", "層1系統"),
-        ("layer3", "層3計畫"),
         ("layer4", "層4摘要"),
         ("layer5", "層5對話"),
     ]

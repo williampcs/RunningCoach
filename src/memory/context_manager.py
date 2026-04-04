@@ -72,9 +72,12 @@ def _build_system_prompt() -> str:
         "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
         "・進行跑後回饋分析（save_workout 後）",
         "・討論訓練狀態、疲勞程度、體能趨勢",
-        "・制定或調整訓練計畫",
         "・使用者詢問過去訓練內容或表現",
-        "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫。",
+        "get_training_plan — 以下情況請主動呼叫：",
+        "・制定、調整或審視訓練計畫",
+        "・需要確認本週計畫安排或訓練目標時",
+        "・與當前計畫進行對比分析時",
+        "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上兩個 tool。",
         "",
         "【跑後回報偵測】",
         "當使用者訊息符合以下任一條件，視為跑後回報，應主動呼叫 fetch_latest_strava_activity：",
@@ -105,23 +108,15 @@ def get_context_for_api() -> dict:
     """回傳可直接傳入 Claude API 的 context dict，附帶各層字元數供 token 用量估算。
 
     層2（訓練摘要）已移除，改由 get_recent_workouts tool 按需載入。
+    層3（訓練計畫）已移除，改由 get_training_plan tool 按需載入。
     """
     system = _build_system_prompt()
     messages = []
     layer_chars: dict[str, int] = {
         "layer1": len(system),
-        "layer3": 0,
         "layer4": 0,
         "layer5": 0,
     }
-
-    # 層3 — 當前訓練計畫
-    plan = db.get_active_training_plan()
-    if plan:
-        content = f"當前訓練計畫（{plan['week_label']}）：\n\n{plan['content']}"
-        layer_chars["layer3"] = len(content)
-        messages.append({"role": "user", "content": content})
-        messages.append({"role": "assistant", "content": "已閱讀當前訓練計畫，我會依此規劃建議。"})
 
     # 層4 — 對話摘要（壓縮後的歷史重點）
     summary = db.get_latest_summary()

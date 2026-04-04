@@ -195,6 +195,19 @@ _TOOLS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "get_training_plan",
+        "description": (
+            "取得目前啟用中的訓練計畫內容。"
+            "以下情況應主動呼叫：制定、調整或審視訓練計畫；確認本週訓練安排；"
+            "將跑後表現與計畫目標對比時。賽事管理、閒聊等不需要呼叫。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
     # ── Phase 2 tools (races & profile) ────────────────────────────────────────
     {
         "name": "update_race",
@@ -361,6 +374,12 @@ def _execute_tool(name: str, inputs: dict) -> str:
                 avg = sum(weekly[week]) // len(weekly[week])
                 lines.append(f"  {week}：{avg // 60}:{avg % 60:02d}/km（{len(weekly[week])} 筆）")
             return "\n".join(lines)
+
+        elif name == "get_training_plan":
+            plan = db.get_active_training_plan()
+            if not plan:
+                return "目前沒有啟用中的訓練計畫。"
+            return f"當前訓練計畫（{plan['week_label']}）：\n\n{plan['content']}"
 
         # ── Phase 2 tools ────────────────────────────────────────────────────
         elif name == "add_race":
