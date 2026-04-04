@@ -68,6 +68,14 @@ def _build_system_prompt() -> str:
         "",
         "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
         "",
+        "【訓練歷史載入時機】",
+        "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
+        "・進行跑後回饋分析（save_workout 後）",
+        "・討論訓練狀態、疲勞程度、體能趨勢",
+        "・制定或調整訓練計畫",
+        "・使用者詢問過去訓練內容或表現",
+        "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫。",
+        "",
         "【跑後回報偵測】",
         "當使用者訊息符合以下任一條件，視為跑後回報，應主動呼叫 fetch_latest_strava_activity：",
         "・出現「跑完」「剛跑」「今天跑」「跑步完」等關鍵詞",
@@ -85,27 +93,27 @@ def _build_system_prompt() -> str:
 # 組合五層 Context
 # ---------------------------------------------------------------------------
 
+def _truncate_msg(content: str) -> str:
+    """若訊息超過單則字元上限，截斷並附上標記。"""
+    limit = config.CONVERSATION_MSG_MAX_CHARS
+    if len(content) <= limit:
+        return content
+    return content[:limit] + f"…（訊息過長，已截短至 {limit} 字）"
+
+
 def get_context_for_api() -> dict:
-    """回傳可直接傳入 Claude API 的 context dict，附帶各層字元數供 token 用量估算。"""
+    """回傳可直接傳入 Claude API 的 context dict，附帶各層字元數供 token 用量估算。
+
+    層2（訓練摘要）已移除，改由 get_recent_workouts tool 按需載入。
+    """
     system = _build_system_prompt()
     messages = []
     layer_chars: dict[str, int] = {
         "layer1": len(system),
-        "layer2": 0,
         "layer3": 0,
         "layer4": 0,
         "layer5": 0,
     }
-
-    # 層2 — 訓練歷史摘要
-    workout_summaries = db.get_recent_workout_summaries(config.WORKOUT_SUMMARY_COUNT)
-    if workout_summaries:
-        content = "以下是最近的訓練記錄摘要（由舊至新）：\n\n" + "\n\n".join(
-            f"【{s['date']}】\n{s['summary']}" for s in workout_summaries
-        )
-        layer_chars["layer2"] = len(content)
-        messages.append({"role": "user", "content": content})
-        messages.append({"role": "assistant", "content": "已閱讀訓練記錄，我會參考這些資料提供建議。"})
 
     # 層3 — 當前訓練計畫
     plan = db.get_active_training_plan()
@@ -123,10 +131,14 @@ def get_context_for_api() -> dict:
         messages.append({"role": "user", "content": content})
         messages.append({"role": "assistant", "content": "已閱讀對話摘要，我會記住這些重要資訊。"})
 
-    # 層5 — Rolling Window（最近 N 輪原始對話）
+    # 層5 — Rolling Window（最近 N 輪原始對話，單則超長訊息截斷）
     recent = db.get_recent_conversations(config.CONVERSATION_KEEP)
-    layer_chars["layer5"] = sum(len(r["content"]) for r in recent)
-    messages += [{"role": r["role"], "content": r["content"]} for r in recent]
+    truncated = [
+        {"role": r["role"], "content": _truncate_msg(r["content"])}
+        for r in recent
+    ]
+    layer_chars["layer5"] = sum(len(r["content"]) for r in truncated)
+    messages += truncated
 
     return {"system": system, "messages": messages, "layer_chars": layer_chars}
 

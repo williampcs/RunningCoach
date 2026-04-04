@@ -18,6 +18,7 @@ DB_PATH: str = os.getenv("DB_PATH", "/app/data/coach.db")
 # Context / memory tuning
 CONVERSATION_MAX: int = int(os.getenv("CONVERSATION_MAX", "20"))
 CONVERSATION_KEEP: int = int(os.getenv("CONVERSATION_KEEP", "10"))
+CONVERSATION_MSG_MAX_CHARS: int = int(os.getenv("CONVERSATION_MSG_MAX_CHARS", "600"))
 WORKOUT_SUMMARY_COUNT: int = int(os.getenv("WORKOUT_SUMMARY_COUNT", "7"))
 RACE_LOOKAHEAD_DAYS: int = int(os.getenv("RACE_LOOKAHEAD_DAYS", "90"))
 

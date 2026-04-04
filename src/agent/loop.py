@@ -168,8 +168,10 @@ _TOOLS: list[dict] = [
     {
         "name": "get_recent_workouts",
         "description": (
-            "從 DB 取最近 N 天的跑步資料（含主觀感受與 AI 摘要）。"
-            "使用者詢問具體訓練細節時呼叫。"
+            "取得最近 N 天的訓練紀錄，包含客觀數據、主觀感受與 AI 分析摘要。"
+            "以下情況應主動呼叫：進行跑後分析（save_workout 後）、討論訓練狀態或疲勞、"
+            "制定或調整訓練計畫、使用者詢問過去訓練表現。"
+            "賽事管理、個人資料更新、一般閒聊等不需要呼叫。"
         ),
         "input_schema": {
             "type": "object",
@@ -323,13 +325,17 @@ def _execute_tool(name: str, inputs: dict) -> str:
             workouts = db.get_recent_workouts_raw(days)
             if not workouts:
                 return f"最近 {days} 天無訓練紀錄。"
+            summaries = db.get_recent_workout_summaries(len(workouts) + 2)
+            summary_by_date = {s["date"]: s["summary"] for s in summaries}
             lines = [f"最近 {days} 天的訓練紀錄（共 {len(workouts)} 筆）："]
             for w in workouts:
                 subj = f"｜體感 {w['perceived_effort']}/10" if w.get("perceived_effort") else ""
                 lines.append(
-                    f"- {w['date']} {w['distance_km']}km {w.get('avg_pace','?')} "
-                    f"心率:{w.get('avg_hr','?')}bpm{subj}"
+                    f"\n【{w['date']}】{w['distance_km']}km｜{w.get('avg_pace','?')}｜"
+                    f"心率 {w.get('avg_hr','?')}/{w.get('max_hr','?')}bpm{subj}"
                 )
+                if ai_summary := summary_by_date.get(w["date"]):
+                    lines.append(f"  AI摘要：{ai_summary}")
             return "\n".join(lines)
 
         elif name == "get_pace_trend":
