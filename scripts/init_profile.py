@@ -19,13 +19,13 @@ import memory.db as db  # noqa: E402
 
 # 若不想互動輸入，可直接在這裡填入預設值（留空字串代表跳過）
 DEFAULTS: dict[str, str] = {
-    "goal_long_term": "2026年底前半馬破二",   # e.g. "2026年底前半馬破二"
-    "pb_5k": "30:00",            # e.g. "30:00"
-    "pb_10k": "70:00",           # e.g. "70:00"
-    "pb_half": "",          # e.g. ""
-    "pb_full": "",          # e.g. ""
-    "injuries": "",         # e.g. ""
-    "weekly_km_target": "30", # e.g. "30"
+    "goal_long_term": "",   # e.g. "2026年底前半馬破二"
+    "pb_5k": "",            # e.g. "30:00"
+    "pb_10k": "",           # e.g. "70:00"
+    "pb_half": "",          # e.g. "2:08:00"
+    "pb_full": "",          # e.g. "4:00:00"
+    "injuries": "",         # e.g. "右膝髕骨外側輕微不適"
+    "weekly_km_target": "", # e.g. "50"
 }
 
 PROMPTS: dict[str, str] = {
