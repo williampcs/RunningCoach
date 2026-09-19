@@ -1,7 +1,7 @@
 # Running Coach — 部署與測試指南
 
-**最後更新**：2026-04-03
-**適用版本**：Phase 2（spec v1.3）
+**最後更新**：2026-09-19  
+**適用版本**：Intervals.icu 整合版（支援 GitHub Actions CI/CD）
 
 ---
 
@@ -9,21 +9,25 @@
 
 ```
 本機（開發）
-  │  git push
+  │  git push origin main
   ▼
-GCP VM（~/projs/RunningCoach/）
-  │  docker compose up --build -d
+GitHub Repo
+  │  Webhook / Event Trigger
   ▼
-Docker Container: running-coach
+GCP VM (GitHub Actions Self-hosted Runner)
+  │  git pull & docker compose up --build -d
+  ▼
+Docker Container: coach-bot
   │  volume mount
   ▼
 VM 本地 ./data/coach.db  ←→  容器內 /app/data/coach.db
 ```
 
 **重要原則**：
-- Code 與 image 在 VM 上 build
-- DB 永遠存在 VM 的 `./data/` 目錄，透過 volume mount 讓容器存取
-- `.env` 只放在 VM，不進 git
+- Code 透過 GitHub Actions 觸發 VM 本地的 Self-hosted Runner 自動部署
+- Image 在 VM 上 build，享受快取且速度快
+- DB 永遠存在 VM 的 `./data/` 目錄，透過 volume mount 讓容器存取，不進 git
+- `.env` 只放在 VM 本地，不進 git
 - `scripts/init_profile.py` 必須透過容器執行（`docker compose run`），不能直接在 VM 上跑 python
 
 ---
@@ -51,9 +55,9 @@ ANTHROPIC_API_KEY=sk-ant-...
 DISCORD_BOT_TOKEN=...
 DISCORD_ALLOWED_CHANNEL_ID=你的頻道ID
 CLAUDE_MODEL=claude-sonnet-4-5
+INTERVALS_API_KEY=你的IntervalsAPIKey
+INTERVALS_ATHLETE_ID=你的AthleteID（或填 0）
 ```
-
-Strava 相關欄位 Phase 3 再填，目前留空即可。
 
 ### Step 3：建立 data 目錄
 
@@ -191,7 +195,75 @@ for r in rows: print(r)
 
 ---
 
-## 六、驗收測試項目（Phase 1）
+## 六、GitHub Actions CI/CD 自動化部署設定（Self-hosted Runner）
+
+本專案支援 **100% 免費、零網路曝險** 的自動化部署機制。透過在 GCP VM 上常駐 GitHub Self-hosted Runner，只要本機執行 `git push origin main`，VM 便會自動拉取最新程式碼並重啟 Docker 容器。
+
+### 1. 運作原理與優勢
+- **免對外開放 Port 22**：Runner 主動透過 HTTPS 與 GitHub 長連線傾聽事件，GCP 防火牆無需對外開放 SSH 通訊埠。
+- **免存主機 SSH 私鑰**：不需在 GitHub Secrets 存放任何主機登入金鑰，安全性更高。
+- **不計額度限制**：Self-hosted Runner 不消耗 GitHub Actions 每月 2,000 分鐘的免費額度，完全免費且次數無上限。
+
+### 2. 首次在 VM 上安裝 Runner（一次性設定）
+1. 前往 GitHub Repo 網頁 → **Settings** → 左側 **Actions** → **Runners**。
+2. 點擊右上角綠色按鈕 **New self-hosted runner**。
+3. 選擇 **Linux**、**x64**，複製頁面上的指令並在 VM 上執行：
+   ```bash
+   # 建立目錄並下載 runner（使用 GitHub 頁面給你的專屬指令）
+   mkdir actions-runner && cd actions-runner
+   curl -o actions-runner-linux-x64-....tar.gz -L https://...
+   tar xzf ./actions-runner-linux-x64-....tar.gz
+
+   # 依照 GitHub 頁面執行配置（一路按 Enter 採用預設值即可）
+   ./config.sh --url https://github.com/williampcs/RunningCoach --token <TOKEN>
+   ```
+
+### 3. 將 Runner 註冊為背景系統服務（開機自啟）
+**重要**：請勿只在前台執行 `./run.sh`（終端機關閉後會中斷）。請執行內建的服務管理腳本，註冊為 Linux systemd 服務：
+```bash
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+確認運行狀態：
+```bash
+sudo ./svc.sh status
+```
+看到 `Active: active (running)` 即代表 Runner 已常駐在背景，可以安全關閉 SSH 視窗。
+
+### 4. Docker 執行權限確認
+因為 GitHub Actions 部署時會執行 `docker compose`，確保執行 Runner 的使用者帳號具有 Docker 操作權限：
+```bash
+sudo usermod -aG docker $USER
+# 重啟 Runner 服務以套用權限變更
+sudo systemctl restart actions.runner.*
+```
+
+### 5. 自動部署工作流程檔說明
+工作流程定義檔位於 `.github/workflows/deploy.yml`：
+```yaml
+name: Auto Deploy to GCP VM
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    name: Deploy on GCP VM
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest changes and restart container
+        run: |
+          cd ~/projs/RunningCoach 2>/dev/null || cd ~/projs/running_coach
+          git pull origin main
+          docker compose up --build -d
+          docker compose ps
+```
+當任何提交 push 到 GitHub 的 `main` 分支時，GitHub Actions 會自動調度 VM 上的 Runner 自動拉取最新程式碼並重啟容器。可至 GitHub 的 **Actions** 頁籤即時查看部署日誌與歷程。
+
+---
+
+## 七、驗收測試項目
 
 ### T1：Bot 上線確認
 
@@ -217,7 +289,7 @@ docker compose logs | grep "Bot online"
 | `/profile` | `/profile goal_long_term 2026年底半馬破二` | 回應「已更新 goal_long_term」 |
 | `/plan` | `/plan 週一輕鬆跑8km，週三間歇6x400m` | 回應「訓練計畫已更新（XXXX-WXX）」 |
 | `/status` | `/status` | 顯示五層記憶完整狀態（含 emoji 指示器） |
-| `/sync` | `/sync` | 回應「Strava 同步功能將於 Phase 3 開放」 |
+| `/sync` | `/sync` | 回應 Intervals.icu 同步結果（新增筆數、合併體感） |
 
 ### T4（Phase 2）：賽事管理 — 自然語言新增
 
@@ -280,7 +352,7 @@ docker compose restart
 
 ---
 
-## 七、已遇問題與解法
+## 八、已遇問題與解法
 
 ### 問題 1：`init_profile.py` 直接在 VM 跑出現 `KeyError: ANTHROPIC_API_KEY`
 
