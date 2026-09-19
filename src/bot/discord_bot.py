@@ -108,7 +108,7 @@ def create_bot() -> CoachBot:
     bot = CoachBot()
 
     # ------------------------------------------------------------------ /sync
-    @bot.tree.command(name="sync", description="手動觸發 Strava 資料同步（含合併主觀暫存）")
+    @bot.tree.command(name="sync", description="手動觸發 Intervals.icu 資料同步（含合併主觀暫存）")
     async def cmd_sync(interaction: discord.Interaction):
         if interaction.channel_id != config.DISCORD_ALLOWED_CHANNEL_ID:
             return

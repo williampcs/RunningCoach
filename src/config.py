@@ -8,9 +8,9 @@ CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
 DISCORD_BOT_TOKEN: str = os.environ["DISCORD_BOT_TOKEN"]
 DISCORD_ALLOWED_CHANNEL_ID: int = int(os.environ["DISCORD_ALLOWED_CHANNEL_ID"])
 
-# Strava
-STRAVA_CLIENT_ID: str = os.getenv("STRAVA_CLIENT_ID", "")
-STRAVA_CLIENT_SECRET: str = os.getenv("STRAVA_CLIENT_SECRET", "")
+# Intervals.icu
+INTERVALS_API_KEY: str = os.getenv("INTERVALS_API_KEY", "")
+INTERVALS_ATHLETE_ID: str = os.getenv("INTERVALS_ATHLETE_ID", "0")
 
 # DB
 DB_PATH: str = os.getenv("DB_PATH", "/app/data/coach.db")

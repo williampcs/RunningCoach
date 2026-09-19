@@ -136,14 +136,14 @@ def _build_system_prompt() -> str:
         "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上兩個 tool。",
         "",
         "【跑後回報偵測】",
-        "當使用者訊息符合以下任一條件，視為跑後回報，應主動呼叫 fetch_latest_strava_activity：",
+        "當使用者訊息符合以下任一條件，視為跑後回報，應主動呼叫 fetch_latest_activity：",
         "・出現「跑完」「剛跑」「今天跑」「跑步完」等關鍵詞",
         "・出現體感數字，例如「7/10」「體感7」「RPE 8」",
         "・出現身體感受描述，例如「腿重」「呼吸」「心率」「膝蓋」「腳踝」等部位",
-        "取得 Strava 資料後：",
+        "取得 Intervals.icu 資料後：",
         "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
-        "・若活動日期 ≠ 今天（Strava 尚未同步）→ 呼叫 save_pending_subjective 暫存主觀感受，"
-        "並告知使用者 Strava 同步後輸入 /sync 完成合併",
+        "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，"
+        "並告知使用者手錶同步後輸入 /sync 完成合併",
     ]
     return "\n".join(lines)
 

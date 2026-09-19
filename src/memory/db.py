@@ -110,12 +110,24 @@ def init_db() -> None:
         """)
 
         # --- Migration: races.cancelled (added after initial schema) ---
-        existing_cols = {
+        existing_race_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(races)").fetchall()
         }
-        if "cancelled" not in existing_cols:
+        if "cancelled" not in existing_race_cols:
             conn.execute(
                 "ALTER TABLE races ADD COLUMN cancelled INTEGER DEFAULT 0"
+            )
+
+        # --- Migration: workouts.intervals_id (for Intervals.icu integration) ---
+        existing_workout_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(workouts)").fetchall()
+        }
+        if "intervals_id" not in existing_workout_cols:
+            conn.execute(
+                "ALTER TABLE workouts ADD COLUMN intervals_id TEXT"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_intervals_id ON workouts(intervals_id)"
             )
 
 
@@ -327,6 +339,14 @@ def save_strava_token(access_token: str, refresh_token: str, expires_at: int) ->
 # workouts helpers
 # ---------------------------------------------------------------------------
 
+def get_workout_by_intervals_id(intervals_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM workouts WHERE intervals_id=?", (intervals_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_workout_by_strava_id(strava_id: str) -> dict | None:
     with get_conn() as conn:
         row = conn.execute(
@@ -335,46 +355,68 @@ def get_workout_by_strava_id(strava_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def save_workout(strava_data: dict,
+def save_workout(activity_data: dict,
                  perceived_effort: int | None = None,
                  subjective_notes: str | None = None) -> int:
-    """將客觀 Strava 資料與主觀感受合併存入 workouts table."""
+    """將客觀活動資料（Intervals.icu 或 Strava）與主觀感受合併存入 workouts table."""
     import json as _json
-    raw = strava_data.get("raw_json")
+    raw = activity_data.get("raw_json")
     raw_str = _json.dumps(raw, ensure_ascii=False) if isinstance(raw, dict) else raw
+
+    intervals_id = activity_data.get("intervals_id")
+    strava_id = activity_data.get("strava_id")
+    source = "intervals" if intervals_id else activity_data.get("source", "strava")
+
     with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO workouts
-               (strava_id, date, type, distance_km, duration_min,
-                avg_hr, max_hr, avg_pace, elevation_m, calories,
-                perceived_effort, subjective_notes, raw_json, source, synced_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'strava',?)
-               ON CONFLICT(strava_id) DO UPDATE SET
-                 perceived_effort = COALESCE(excluded.perceived_effort, perceived_effort),
-                 subjective_notes = COALESCE(excluded.subjective_notes, subjective_notes),
-                 synced_at        = excluded.synced_at""",
-            (
-                strava_data.get("strava_id"),
-                strava_data["date"],
-                strava_data.get("type", "run"),
-                strava_data.get("distance_km"),
-                strava_data.get("duration_min"),
-                strava_data.get("avg_hr"),
-                strava_data.get("max_hr"),
-                strava_data.get("avg_pace"),
-                strava_data.get("elevation_m"),
-                strava_data.get("calories"),
-                perceived_effort,
-                subjective_notes,
-                raw_str,
-                now_iso(),
-            ),
-        )
-        # UPSERT 不回傳 lastrowid，需另查
-        row = conn.execute(
-            "SELECT id FROM workouts WHERE strava_id=?", (strava_data.get("strava_id"),)
-        ).fetchone()
-        return row["id"] if row else cur.lastrowid
+        # 檢查是否已存在紀錄
+        existing = None
+        if intervals_id:
+            existing = conn.execute(
+                "SELECT id FROM workouts WHERE intervals_id=?", (intervals_id,)
+            ).fetchone()
+        elif strava_id:
+            existing = conn.execute(
+                "SELECT id FROM workouts WHERE strava_id=?", (strava_id,)
+            ).fetchone()
+
+        if existing:
+            workout_id = existing["id"]
+            conn.execute(
+                """UPDATE workouts SET
+                     perceived_effort = COALESCE(?, perceived_effort),
+                     subjective_notes = COALESCE(?, subjective_notes),
+                     synced_at        = ?
+                   WHERE id = ?""",
+                (perceived_effort, subjective_notes, now_iso(), workout_id),
+            )
+            return workout_id
+        else:
+            cur = conn.execute(
+                """INSERT INTO workouts
+                   (intervals_id, strava_id, date, type, distance_km, duration_min,
+                    avg_hr, max_hr, avg_pace, elevation_m, calories,
+                    perceived_effort, subjective_notes, raw_json, source, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    intervals_id,
+                    strava_id,
+                    activity_data["date"],
+                    activity_data.get("type", "run"),
+                    activity_data.get("distance_km"),
+                    activity_data.get("duration_min"),
+                    activity_data.get("avg_hr"),
+                    activity_data.get("max_hr"),
+                    activity_data.get("avg_pace"),
+                    activity_data.get("elevation_m"),
+                    activity_data.get("calories"),
+                    perceived_effort,
+                    subjective_notes,
+                    raw_str,
+                    source,
+                    now_iso(),
+                ),
+            )
+            return cur.lastrowid
 
 
 def save_workout_summary(workout_id: int, summary: str) -> None:

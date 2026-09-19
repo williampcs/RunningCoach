@@ -1,8 +1,8 @@
 """/sync 指令的完整同步流程.
 
 流程：
-1. 從 Strava 拉取最近 14 天的跑步活動
-2. 以 strava_id 去重，只處理新資料
+1. 從 Intervals.icu 拉取最近 14 天的跑步活動
+2. 以 intervals_id 去重，只處理新資料
 3. 檢查 pending_subjective 是否有符合日期的主觀暫存
 4. 合併主客觀資料（或僅存客觀資料）後存入 workouts
 5. 生成 AI 摘要存入 workout_summaries
@@ -11,36 +11,36 @@
 import logging
 
 import memory.db as db
-from tools.strava_tool import strava
+from tools.intervals_tool import intervals
 from agent.loop import generate_workout_summary
 
 logger = logging.getLogger(__name__)
 
 
 def run_sync() -> str:
-    """執行完整 Strava 同步，回傳結果摘要字串."""
+    """執行完整 Intervals.icu 同步，回傳結果摘要字串."""
     # 拉取最近 14 天活動
     try:
-        activities = strava.fetch_activities(days=14)
+        activities = intervals.fetch_activities(days=14)
     except RuntimeError as e:
-        return f"❌ Strava 連線失敗：{e}"
+        return f"❌ Intervals.icu 連線失敗：{e}"
     except Exception as e:
-        logger.error("Strava fetch error: %s", e)
-        return f"❌ 拉取 Strava 資料時發生錯誤：{e}"
+        logger.error("Intervals.icu fetch error: %s", e)
+        return f"❌ 拉取 Intervals.icu 資料時發生錯誤：{e}"
 
     if not activities:
-        return "Strava 最近 14 天無跑步活動。"
+        return "Intervals.icu 最近 14 天無跑步活動。"
 
     new_count = 0
     merged_count = 0
     skipped_count = 0
 
     for activity in activities:
-        strava_id = activity["strava_id"]
-        act_date  = activity["date"]
+        intervals_id = activity.get("intervals_id")
+        act_date     = activity["date"]
 
         # 去重：已存在則跳過
-        if db.get_workout_by_strava_id(strava_id):
+        if intervals_id and db.get_workout_by_intervals_id(intervals_id):
             skipped_count += 1
             continue
 
@@ -52,12 +52,12 @@ def run_sync() -> str:
         # 儲存 workout
         try:
             workout_id = db.save_workout(
-                strava_data=activity,
+                activity_data=activity,
                 perceived_effort=perceived_effort,
                 subjective_notes=subjective_notes,
             )
         except Exception as e:
-            logger.error("save_workout failed for strava_id=%s: %s", strava_id, e)
+            logger.error("save_workout failed for intervals_id=%s: %s", intervals_id, e)
             continue
 
         # 生成 AI 摘要
@@ -81,7 +81,7 @@ def run_sync() -> str:
     db.cleanup_old_pending_subjective()
 
     # 組合回傳訊息
-    parts = [f"✅ Strava 同步完成"]
+    parts = [f"✅ Intervals.icu 同步完成"]
     if new_count:
         parts.append(f"新增 {new_count} 筆訓練紀錄")
     if merged_count:

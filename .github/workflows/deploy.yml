@@ -1,0 +1,24 @@
+name: Auto Deploy to GCP VM
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    name: Deploy on GCP VM
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest changes and restart container
+        run: |
+          # 切換到專案目錄（相容 RunningCoach 或 running_coach 資料夾名稱）
+          cd ~/projs/RunningCoach 2>/dev/null || cd ~/projs/running_coach
+
+          # 拉取最新程式碼
+          git pull origin main
+
+          # 重新建置並在背景啟動 Docker 容器
+          docker compose up --build -d
+
+          # 確認容器狀態
+          docker compose ps

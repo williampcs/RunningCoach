@@ -10,14 +10,14 @@ import config
 import memory.db as db
 import memory.context_manager as ctx
 import memory.summarizer as summarizer
-from tools.strava_tool import strava
+from tools.intervals_tool import intervals
 
 logger = logging.getLogger(__name__)
 
 _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
-# 跑後回報流程中，暫存最近一次從 Strava 取回的活動（per-process singleton）
-_strava_activity_cache: dict | None = None
+# 跑後回報流程中，暫存最近一次取回的跑步活動（per-process singleton）
+_activity_cache: dict | None = None
 
 
 @dataclass
@@ -127,9 +127,9 @@ _TOOLS: list[dict] = [
     },
     # ── Phase 3 tools ──────────────────────────────────────────────────────────
     {
-        "name": "fetch_latest_strava_activity",
+        "name": "fetch_latest_activity",
         "description": (
-            "從 Strava 拉取最新一筆跑步活動（基本資料，不含 laps/streams）。"
+            "從 Intervals.icu 拉取最新一筆跑步活動（基本資料，不含 laps/streams）。"
             "偵測到跑後回報意圖時呼叫，用於驗證日期是否為今天。"
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -137,9 +137,9 @@ _TOOLS: list[dict] = [
     {
         "name": "save_workout",
         "description": (
-            "合併客觀 Strava 資料（來自 fetch_latest_strava_activity 的快取）"
+            "合併客觀活動資料（來自 fetch_latest_activity 的快取）"
             "與使用者輸入的主觀感受，存入 workouts table 並生成 AI 分析摘要。"
-            "須在 fetch_latest_strava_activity 確認日期為今天後才呼叫。"
+            "須在 fetch_latest_activity 確認日期為今天後才呼叫。"
         ),
         "input_schema": {
             "type": "object",
@@ -160,7 +160,7 @@ _TOOLS: list[dict] = [
         "name": "save_pending_subjective",
         "description": (
             "將主觀感受暫存至 pending_subjective table。"
-            "當 Strava 尚未同步今天的活動時呼叫，使用者之後執行 /sync 時自動合併。"
+            "當手錶活動尚未同步至 Intervals.icu 時呼叫，使用者之後執行 /sync 時自動合併。"
         ),
         "input_schema": {
             "type": "object",
@@ -297,42 +297,43 @@ def generate_workout_summary(workout_data: dict) -> str:
 
 
 def _execute_tool(name: str, inputs: dict) -> str:
-    global _strava_activity_cache
+    global _activity_cache
     try:
         # ── Phase 3 tools ────────────────────────────────────────────────────
-        if name == "fetch_latest_strava_activity":
-            activity = strava.fetch_latest_activity()
+        if name in ("fetch_latest_activity", "fetch_latest_strava_activity"):
+            activity = intervals.fetch_latest_activity()
             if activity is None:
-                return "Strava 上找不到跑步活動，請確認 Strava token 已設定且有同步資料。"
-            _strava_activity_cache = activity
+                return "Intervals.icu 上找不到跑步活動，請確認手錶已同步且 API Key 設定正確。"
+            _activity_cache = activity
             today = date.today().isoformat()
             is_today = activity["date"] == today
-            date_note = "✅ 是今天的活動" if is_today else f"⚠️ 活動日期為 {activity['date']}，非今天，Strava 可能尚未同步"
+            date_note = "✅ 是今天的活動" if is_today else f"⚠️ 活動日期為 {activity['date']}，非今天，手錶資料可能尚未同步至 Intervals.icu"
+            load_note = f"｜負荷(Load)：{activity['training_load']}" if activity.get("training_load") is not None else ""
             return (
                 f"最新跑步活動：\n"
                 f"日期：{activity['date']}　{date_note}\n"
                 f"距離：{activity['distance_km']}km｜時長：{activity['duration_min']}分鐘\n"
                 f"配速：{activity.get('avg_pace') or '未知'}｜"
                 f"心率：{activity.get('avg_hr') or '未記錄'}/{activity.get('max_hr') or '未記錄'}bpm\n"
-                f"爬升：{activity.get('elevation_m') or 0}m｜卡路里：{activity.get('calories') or '未記錄'}"
+                f"爬升：{activity.get('elevation_m') or 0}m｜卡路里：{activity.get('calories') or '未記錄'}{load_note}"
             )
 
         elif name == "save_workout":
-            if not _strava_activity_cache:
-                return "錯誤：請先呼叫 fetch_latest_strava_activity 取得活動資料。"
+            if not _activity_cache:
+                return "錯誤：請先呼叫 fetch_latest_activity 取得活動資料。"
             perceived_effort = inputs.get("perceived_effort")
             subjective_notes = inputs.get("subjective_notes", "")
-            workout_data = {**_strava_activity_cache,
+            workout_data = {**_activity_cache,
                             "perceived_effort": perceived_effort,
                             "subjective_notes": subjective_notes}
             workout_id = db.save_workout(
-                strava_data=_strava_activity_cache,
+                activity_data=_activity_cache,
                 perceived_effort=perceived_effort,
                 subjective_notes=subjective_notes or None,
             )
             summary = generate_workout_summary(workout_data)
             db.save_workout_summary(workout_id, summary)
-            _strava_activity_cache = None  # 清除快取
+            _activity_cache = None  # 清除快取
             return f"訓練紀錄已儲存（id={workout_id}）。\n\n{summary}"
 
         elif name == "save_pending_subjective":
@@ -341,7 +342,7 @@ def _execute_tool(name: str, inputs: dict) -> str:
                 perceived_effort=int(inputs["perceived_effort"]),
                 subjective_notes=inputs.get("subjective_notes", ""),
             )
-            return f"主觀感受已暫存（{inputs['date']}）。Strava 同步後請執行 /sync 完成合併。"
+            return f"主觀感受已暫存（{inputs['date']}）。手錶同步至 Intervals.icu 後請執行 /sync 完成合併。"
 
         elif name == "get_recent_workouts":
             days = int(inputs.get("days", 14))
