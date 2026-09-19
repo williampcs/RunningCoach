@@ -9,5 +9,5 @@
 #   Discord 斜線指令：
 #     bot/discord_bot.py → /plan 指令（直接呼叫 db.save_training_plan）
 #
-# 與 strava_tool.py 不同，訓練計畫無外部 API 呼叫，
+# 與 intervals_tool.py 不同，訓練計畫無外部 API 呼叫，
 # 邏輯簡單，集中在上述位置維護即可。

@@ -93,13 +93,6 @@ def init_db() -> None:
                 created_at      TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS strava_tokens (
-                id            INTEGER PRIMARY KEY CHECK (id = 1),
-                access_token  TEXT NOT NULL,
-                refresh_token TEXT NOT NULL,
-                expires_at    INTEGER NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS pending_subjective (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 date             TEXT NOT NULL,
@@ -311,28 +304,6 @@ def save_training_plan(week_label: str, content: str) -> None:
             (week_label, content, now_iso()),
         )
 
-
-# ---------------------------------------------------------------------------
-# strava_tokens helpers
-# ---------------------------------------------------------------------------
-
-def get_strava_token() -> dict | None:
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM strava_tokens WHERE id=1").fetchone()
-    return dict(row) if row else None
-
-
-def save_strava_token(access_token: str, refresh_token: str, expires_at: int) -> None:
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO strava_tokens (id, access_token, refresh_token, expires_at)"
-            " VALUES (1, ?, ?, ?)"
-            " ON CONFLICT(id) DO UPDATE SET"
-            "   access_token=excluded.access_token,"
-            "   refresh_token=excluded.refresh_token,"
-            "   expires_at=excluded.expires_at",
-            (access_token, refresh_token, expires_at),
-        )
 
 
 # ---------------------------------------------------------------------------

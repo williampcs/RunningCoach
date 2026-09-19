@@ -375,3 +375,26 @@ CONVERSATION_KEEP: int = int(os.getenv("CONVERSATION_KEEP", "20")) # 10 → 20
 - `initial_input_tokens`（第一輪）代表 context 大小；後續 tool call 輪次的額外 input 顯示為 overhead
 - 非同步壓縮不顯示在 footer（timing 對不上），改以 log 記錄
 - 若需長期追蹤費用趨勢，可未來新增 `token_usage` DB table（方案 C，目前未實作）
+
+---
+
+## [KI-016] 數據來源由 Strava 全面遷移至 Intervals.icu ✅ 已解決
+
+**發現時機**：2026 年 Strava 開發者政策收緊（個人開發者轉付費、禁止 AI 讀取）
+**解決時機**：2026-09-19
+**狀態**：已實作完成
+
+**問題描述**：
+Strava 於 2026 年起限制個人開發者 API，要求綁定付費會員資格，並嚴格禁止將活動數據導入第三方 AI/LLM 模型處理，導致原有的 Strava 串接斷供、資料鏈斷裂。
+
+**架構決策與處理方式**：
+1. **清理廢棄檔案**：
+   - 刪除 `src/tools/strava_tool.py` 與 `scripts/strava_auth.py`。
+2. **切換至 Intervals.icu**：
+   - 新增 `src/tools/intervals_tool.py`，改採 HTTP Basic Auth（靜態 API Key），免除繁瑣的 OAuth2 Redirect 與 Token Refresh 背景作業。
+3. **資料庫平滑遷移（向後相容）**：
+   - `workouts` 資料表加入 `intervals_id TEXT` 欄位與唯一索引。
+   - 保留既有 `strava_id` 欄位以確保歷史跑步紀錄不遺失。
+   - 移除無用的 `strava_tokens` 資料表與讀寫函式。
+4. **Agent 與提示詞更新**：
+   - 跑後即時回報與 `/sync` 指令改由 Intervals.icu 取得數據，並額外支援 `icu_training_load` 訓練負荷指標。

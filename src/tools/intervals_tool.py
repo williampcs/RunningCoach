@@ -1,6 +1,6 @@
 """Intervals.icu Tool — API 連線、活動拉取、資料正規化.
 
-取代原 Strava 串接，提供：
+提供：
 - fetch_latest_activity: 取得最新一筆跑步活動
 - fetch_activities: 批次取得指定天數內的跑步活動
 - fetch_activity_intervals: 取得間歇分段資料 (Phase 4 預留)
