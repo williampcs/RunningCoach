@@ -395,6 +395,7 @@ Strava 於 2026 年起限制個人開發者 API，要求綁定付費會員資格
 3. **資料庫平滑遷移（向後相容）**：
    - `workouts` 資料表加入 `intervals_id TEXT` 欄位與唯一索引。
    - 保留既有 `strava_id` 欄位以確保歷史跑步紀錄不遺失。
+   - `workouts` 資料表加入 `training_load INTEGER` 欄位儲存 `icu_training_load`；migration 時從既有紀錄的 `raw_json` 回填（2026-10-02 補上，原本只在跑後回報時顯示、未入庫）。
    - 移除無用的 `strava_tokens` 資料表與讀寫函式。
 4. **Agent 與提示詞更新**：
    - 跑後即時回報與 `/sync` 指令改由 Intervals.icu 取得數據，並額外支援 `icu_training_load` 訓練負荷指標。

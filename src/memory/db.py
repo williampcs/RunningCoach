@@ -123,6 +123,17 @@ def init_db() -> None:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_intervals_id ON workouts(intervals_id)"
             )
 
+        # --- Migration: workouts.training_load (Intervals.icu icu_training_load) ---
+        if "training_load" not in existing_workout_cols:
+            conn.execute(
+                "ALTER TABLE workouts ADD COLUMN training_load INTEGER"
+            )
+            # 既有紀錄從 raw_json 回填
+            conn.execute(
+                "UPDATE workouts SET training_load = json_extract(raw_json, '$.icu_training_load')"
+                " WHERE json_valid(raw_json)"
+            )
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -356,18 +367,20 @@ def save_workout(activity_data: dict,
                 """UPDATE workouts SET
                      perceived_effort = COALESCE(?, perceived_effort),
                      subjective_notes = COALESCE(?, subjective_notes),
+                     training_load    = COALESCE(?, training_load),
                      synced_at        = ?
                    WHERE id = ?""",
-                (perceived_effort, subjective_notes, now_iso(), workout_id),
+                (perceived_effort, subjective_notes,
+                 activity_data.get("training_load"), now_iso(), workout_id),
             )
             return workout_id
         else:
             cur = conn.execute(
                 """INSERT INTO workouts
                    (intervals_id, strava_id, date, type, distance_km, duration_min,
-                    avg_hr, max_hr, avg_pace, elevation_m, calories,
+                    avg_hr, max_hr, avg_pace, elevation_m, calories, training_load,
                     perceived_effort, subjective_notes, raw_json, source, synced_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     intervals_id,
                     strava_id,
@@ -380,6 +393,7 @@ def save_workout(activity_data: dict,
                     activity_data.get("avg_pace"),
                     activity_data.get("elevation_m"),
                     activity_data.get("calories"),
+                    activity_data.get("training_load"),
                     perceived_effort,
                     subjective_notes,
                     raw_str,
