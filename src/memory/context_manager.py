@@ -4,7 +4,7 @@
 層2 — 訓練歷史摘要（最近 N 筆 workout_summaries）
 層3 — 當前訓練計畫（training_plans 最新一筆）
 層4 — 對話摘要（summaries 最新一筆，對話壓縮後產生）
-層5 — Rolling Window（conversations 最近 N 輪）
+層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
 """
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -182,8 +182,11 @@ def get_context_for_api() -> dict:
         messages.append({"role": "user", "content": content})
         messages.append({"role": "assistant", "content": "已閱讀對話摘要，我會記住這些重要資訊。"})
 
-    # 層5 — Rolling Window（最近 N 輪原始對話，單則超長訊息截斷）
-    recent = db.get_recent_conversations(config.CONVERSATION_KEEP)
+    # 層5 — Rolling Window（所有尚未壓縮的原始對話，單則超長訊息截斷）
+    # 已壓縮的對話會從 DB 刪除，因此帶入全部剩餘對話即可與層4摘要無縫銜接；
+    # 若只取最近 KEEP 筆，KEEP~MAX 之間的訊息會既不在視窗也不在摘要中。
+    # 上限 MAX*2 為保險：壓縮持續失敗時避免 context 無限增長。
+    recent = db.get_recent_conversations(config.CONVERSATION_MAX * 2)
     truncated = [
         {"role": r["role"], "content": _truncate_msg(r["content"])}
         for r in recent
