@@ -7,7 +7,8 @@
 
 呼叫端只提供 system 字串、純文字對話歷史（role/content）、JSON Schema 格式的工具定義
 （name / description / input_schema），以及執行工具的 callback。
-快取、思考等 Claude 特有設定屬於本模組的實作細節。
+快取、思考強度（effort）、拒絕回答等 Claude 特有行為由本模組處理，
+呼叫端只會看到 Result.finish（ok / refused / truncated）或 LLMError。
 """
 import logging
 from dataclasses import dataclass
@@ -27,6 +28,16 @@ _MODELS: dict[str, str] = {
     "summary":  config.CLAUDE_MODEL_SUMMARY,
     "compress": config.CLAUDE_MODEL_COMPRESS,
 }
+
+# 不支援 output_config.effort 的模型（送出會回 400）
+_NO_EFFORT_PREFIXES = ("claude-sonnet-4-5", "claude-haiku-4-5")
+
+# 單次生成（摘要、壓縮）屬於簡單的內容生成，固定用最低強度
+_COMPLETE_EFFORT = "low"
+
+
+class LLMError(RuntimeError):
+    """模型未產生可用內容（拒絕回答，或輸出在產生文字前就被截斷）."""
 
 
 @dataclass
@@ -62,11 +73,35 @@ class Usage:
 class Result:
     text: str
     usage: Usage
+    finish: str = "ok"   # ok / refused（模型拒絕回答）/ truncated（達輸出上限被截斷）
+
+
+def _model_options(model: str, effort: str) -> dict:
+    """依模型組出額外的 request 參數.
+
+    Sonnet 5.5 等新模型預設開啟思考，思考深度以 effort 控制；
+    Sonnet 4.5 / Haiku 4.5 沒有 effort 參數，送出會被拒絕，因此略過。
+    """
+    if model.startswith(_NO_EFFORT_PREFIXES):
+        return {}
+    return {"output_config": {"effort": effort}}
 
 
 def _extract_text(response) -> str:
+    # 回應可能以 thinking 區塊開頭，依 type 取文字而非依位置
     parts = [block.text for block in response.content if block.type == "text"]
     return "\n".join(parts)
+
+
+def _finish(response, purpose: str) -> str:
+    if response.stop_reason == "refusal":
+        details = getattr(response, "stop_details", None)
+        logger.warning("%s refused — category: %s", purpose, getattr(details, "category", None))
+        return "refused"
+    if response.stop_reason == "max_tokens":
+        logger.warning("%s hit max_tokens — output truncated", purpose)
+        return "truncated"
+    return "ok"
 
 
 def _log_usage(purpose: str, usage: Usage) -> None:
@@ -82,16 +117,27 @@ def _log_usage(purpose: str, usage: Usage) -> None:
 # ---------------------------------------------------------------------------
 
 def complete(purpose: str, prompt: str, max_tokens: int) -> Result:
-    """單次生成（無工具、無 system prompt）."""
+    """單次生成（無工具、無 system prompt）.
+
+    max_tokens 是含思考的總輸出上限，內容長度應由 prompt 控制。
+    模型拒絕回答或沒有產生任何文字時 raise LLMError，避免呼叫端把空字串當成結果存檔。
+    """
+    model = _MODELS[purpose]
     usage = Usage()
     response = _client.messages.create(
-        model=_MODELS[purpose],
+        model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
+        **_model_options(model, _COMPLETE_EFFORT),
     )
     usage.add(response.usage)
     _log_usage(purpose, usage)
-    return Result(_extract_text(response), usage)
+
+    finish = _finish(response, purpose)
+    text = _extract_text(response)
+    if finish == "refused" or not text.strip():
+        raise LLMError(f"{purpose}: 模型未產生內容（stop_reason={response.stop_reason}）")
+    return Result(text, usage, finish)
 
 
 def run_with_tools(
@@ -106,6 +152,7 @@ def run_with_tools(
     取得最終回應。保留 tools 是因為對話中已有工具呼叫紀錄，且移除 tools 會讓快取失效。
     """
     model = _MODELS["chat"]
+    options = _model_options(model, config.CLAUDE_CHAT_EFFORT)
     messages = list(messages)
     usage = Usage()
 
@@ -116,12 +163,13 @@ def run_with_tools(
             system=system,
             messages=messages,
             tools=tools,
+            **options,
         )
         usage.add(response.usage)
 
         if response.stop_reason != "tool_use":
             _log_usage("chat", usage)
-            return Result(_extract_text(response), usage)
+            return Result(_extract_text(response), usage, _finish(response, "chat"))
 
         # 執行所有 tool call
         usage.tool_rounds += 1
@@ -136,7 +184,7 @@ def run_with_tools(
                     "content": result,
                 })
 
-        # 本輪 assistant 訊息原封不動加回（含 tool_use 區塊），接著附上 tool results
+        # 本輪 assistant 訊息原封不動加回（含 thinking、tool_use 區塊），接著附上 tool results
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
@@ -148,7 +196,8 @@ def run_with_tools(
         messages=messages,
         tools=tools,
         tool_choice={"type": "none"},
+        **options,
     )
     usage.add(final.usage)
     _log_usage("chat", usage)
-    return Result(_extract_text(final), usage)
+    return Result(_extract_text(final), usage, _finish(final, "chat"))

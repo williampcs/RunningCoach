@@ -13,6 +13,10 @@ from tools.intervals_tool import intervals
 
 logger = logging.getLogger(__name__)
 
+# 模型沒有給出可用回覆時顯示給使用者的訊息
+_REFUSED_REPLY = "這個問題我沒辦法回覆，換個方式問問看？"
+_EMPTY_REPLY = "這次沒有產生回覆（可能是內容太長被截斷），請再問一次，或把問題拆小一點。"
+
 # 跑後回報流程中，暫存最近一次取回的跑步活動（per-process singleton）
 _activity_cache: dict | None = None
 
@@ -67,7 +71,7 @@ _TOOLS: list[dict] = [
         "name": "update_race_result",
         "description": (
             "更新賽事實際完賽時間與備注。"
-            "賽後使用者回報成績時呼叫，需先用 get_upcoming_races 確認 race_id。"
+            "賽後使用者回報成績時呼叫。race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
         ),
         "input_schema": {
             "type": "object",
@@ -218,7 +222,7 @@ _TOOLS: list[dict] = [
         "description": (
             "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備注）。"
             "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。"
-            "需先用 get_upcoming_races 確認 race_id。只需傳入要更新的欄位。"
+            "race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。只需傳入要更新的欄位。"
         ),
         "input_schema": {
             "type": "object",
@@ -239,7 +243,7 @@ _TOOLS: list[dict] = [
         "description": (
             "將賽事標記為已取消（設定 cancelled=1，保留歷史紀錄，不刪除）。"
             "使用者說「我退出 OOO」或「取消報名 OOO」時呼叫。"
-            "需先用 get_upcoming_races 確認 race_id。"
+            "race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
         ),
         "input_schema": {
             "type": "object",
@@ -278,7 +282,7 @@ def generate_workout_summary(workout_data: dict) -> str:
         f"格式：一行數據摘要 ＋ AI評估。"
         f"{'客觀數據與體感對比分析。' if has_subjective else '僅客觀數據，給出客觀評估。'}"
     )
-    return llm.complete("summary", prompt, max_tokens=300).text
+    return llm.complete("summary", prompt, max_tokens=2000).text
 
 
 def _execute_tool(name: str, inputs: dict) -> str:
@@ -466,10 +470,17 @@ async def run(user_message: str) -> tuple[str, UsageStats]:
         logger.error("LLM API error: %s", e)
         raise
 
-    db.append_conversation("assistant", result.text)
+    if result.finish == "refused":
+        reply = _REFUSED_REPLY
+    elif not result.text.strip():
+        reply = _EMPTY_REPLY
+    else:
+        reply = result.text
+
+    db.append_conversation("assistant", reply)
     stats = UsageStats(
         layer_chars=context["layer_chars"],
         user_msg_chars=len(user_message),
         usage=result.usage,
     )
-    return result.text, stats
+    return reply, stats

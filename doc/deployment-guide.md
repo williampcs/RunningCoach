@@ -54,7 +54,7 @@ nano .env
 ANTHROPIC_API_KEY=sk-ant-...
 DISCORD_BOT_TOKEN=...
 DISCORD_ALLOWED_CHANNEL_ID=你的頻道ID
-CLAUDE_MODEL=claude-sonnet-4-5
+CLAUDE_MODEL=claude-sonnet-5-5
 INTERVALS_API_KEY=你的IntervalsAPIKey
 INTERVALS_ATHLETE_ID=你的AthleteID（或填 0）
 ```

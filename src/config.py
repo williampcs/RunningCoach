@@ -2,10 +2,12 @@ import os
 
 # Anthropic
 ANTHROPIC_API_KEY: str = os.environ["ANTHROPIC_API_KEY"]
-CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5")
 # 分用途模型（未設定則沿用 CLAUDE_MODEL）
 CLAUDE_MODEL_SUMMARY: str = os.getenv("CLAUDE_MODEL_SUMMARY") or CLAUDE_MODEL    # 跑後分析摘要
 CLAUDE_MODEL_COMPRESS: str = os.getenv("CLAUDE_MODEL_COMPRESS") or CLAUDE_MODEL  # 對話壓縮
+# 主對話的思考強度（low / medium / high / xhigh / max）；不支援 effort 的模型會自動略過
+CLAUDE_CHAT_EFFORT: str = os.getenv("CLAUDE_CHAT_EFFORT") or "low"
 
 # Discord
 DISCORD_BOT_TOKEN: str = os.environ["DISCORD_BOT_TOKEN"]
@@ -27,4 +29,5 @@ RACE_LOOKAHEAD_DAYS: int = int(os.getenv("RACE_LOOKAHEAD_DAYS", "90"))
 
 # Agent
 TOOL_CALL_MAX_ROUNDS: int = int(os.getenv("TOOL_CALL_MAX_ROUNDS", "5"))
-MAX_RESPONSE_TOKENS: int = int(os.getenv("MAX_RESPONSE_TOKENS", "4096"))
+# 輸出上限含思考 token；只有實際輸出才計費，設寬一點避免回覆被截斷
+MAX_RESPONSE_TOKENS: int = int(os.getenv("MAX_RESPONSE_TOKENS", "16000"))

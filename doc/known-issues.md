@@ -104,6 +104,9 @@ max_tokens=1024  # ← 太低
 
 **注意**：換模型（如 claude-sonnet-4-6）不會解決此問題，根本原因是 max_tokens 設定值。
 
+> ⚠️ [KI-019] 遷移到 Sonnet 5.5 後，思考 token 也計入 max_tokens：預設值改為 `16000`，
+> 摘要與壓縮的上限由 300 / 512 改為 2000（內容長度由 prompt 的字數要求控制）。
+
 ---
 
 ## [KI-005] DB 時間戳記為 UTC，顯示差 8 小時
@@ -457,3 +460,41 @@ Strava 於 2026 年起限制個人開發者 API，要求綁定付費會員資格
 
 **驗證**：以模擬 HTTP 層跑五種路徑（無工具、兩輪工具、達最大輪數、跑後摘要、對話壓縮），
 重構前後共 12 個 request body 除最大輪數的最終呼叫（刻意變更）外完全一致。
+
+---
+
+## [KI-019] 主模型由 Sonnet 4.5 遷移至 Sonnet 5.5 ✅ 已解決
+
+**發現時機**：2026-10-04（`claude-sonnet-4-5` 於 2026-09-30 被標為 Deprecated，**2026-11-30 退役**）
+**解決時機**：2026-10-04
+**狀態**：已實作，待正式環境切換驗證
+**優先度**：高（有期限）
+
+**為什麼不能只改模型名稱**：
+
+| Sonnet 5.5 的行為 | 對本專案的影響 | 處理方式 |
+|------|------|------|
+| 預設開啟思考，強度 `high`；思考 token 計入 `max_tokens` | 摘要（300）、壓縮（512）可能還沒輸出文字就用完額度；成本偏高 | 以 `output_config.effort` 控制：主對話讀 `CLAUDE_CHAT_EFFORT`（預設 `low`），摘要與壓縮固定 `low`；上限放寬為 16000 / 2000 |
+| `effort` 參數在 Sonnet 4.5、Haiku 4.5 會回 400 | 分用途模型混用時會壞 | `llm._model_options()` 依模型決定是否送出 |
+| 新增 `stop_reason: "refusal"`（安全分類器拒絕，內容可能為空） | 主對話會送出空訊息；摘要／壓縮會把空字串存檔 | 主對話回友善提示；`llm.complete()` 改為 raise `LLMError`，壓縮失敗時保留原對話下輪重試 |
+| 回應可能以 `thinking` 區塊開頭 | 依位置取 `content[0].text` 會出錯 | 已於 [KI-018] 改為依區塊 type 取文字，thinking 區塊在 tool 迴圈中原封不動傳回 |
+| 新 tokenizer，同樣文字約多 30% token | 用量數字與成本基準需重抓 | 單價較低（$2 / $10，4.5 為 $3 / $15）；切換後以頁尾的累計輸入重新觀察 |
+
+**設定**：
+- `CLAUDE_MODEL` 預設改為 `claude-sonnet-5-5`
+- 新增 `CLAUDE_CHAT_EFFORT`（不命名為 `CLAUDE_EFFORT`：該名稱與 Claude Code 自身的環境變數衝突，本機從其終端機執行時會被覆寫）
+- `MAX_RESPONSE_TOKENS` 預設 4096 → 16000
+
+**提示詞調整**（Sonnet 5.5 比 4.5 更照字面執行指示）：
+- 跑後回報的觸發條件由「出現關鍵字（跑完、心率、膝蓋…）任一即視為回報」改為描述意圖：
+  使用者在回報一次剛完成的跑步時才呼叫 `fetch_latest_activity`；只是詢問訓練、心率或傷痛問題時不呼叫
+- `update_race` / `cancel_race` / `update_race_result` 的說明由「需先用 `get_upcoming_races` 確認 race_id」
+  改為「race_id 取自 system prompt 的近期賽事清單，清單中沒有時再查詢」，省去一輪多餘的 tool call
+
+**刻意不做**：伺服器端 refusal fallback（只重試 `cyber` 與 `frontier_llm` 兩類拒絕，與跑步教練情境無關）。
+
+**驗證**：以模擬 HTTP 層在 anthropic SDK 1.11 與 0.88（VM 映像檔 4 月建置時的版本）各跑一輪，
+涵蓋三種設定（全 5.5、回退 4.5、5.5 搭配 Haiku 摘要）的 request 形狀，以及 thinking 區塊回傳、拒絕回答、輸出截斷共 10 項行為。
+
+**回退**：2026-11-30 前可將 `.env` 的 `CLAUDE_MODEL` 改回 `claude-sonnet-4-5` 並 `docker compose restart`。
+

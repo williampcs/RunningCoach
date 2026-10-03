@@ -54,7 +54,7 @@ def _do_summarize(conversation_text: str, previous_summary: str | None) -> str:
     else:
         prompt = _INITIAL_PROMPT.format(conversation_text=conversation_text)
 
-    return llm.complete("compress", prompt, max_tokens=512).text
+    return llm.complete("compress", prompt, max_tokens=2000).text
 
 
 async def compress_async() -> None:
