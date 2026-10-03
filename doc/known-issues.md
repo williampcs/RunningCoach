@@ -370,12 +370,13 @@ CONVERSATION_KEEP: int = int(os.getenv("CONVERSATION_KEEP", "20")) # 10 → 20
 
 **Discord footer 格式**（顯示於每則回覆末端）：
 ```
-📊 輸入 1,847（層1系統~312  層2訓練~578  層3計畫~218  層4摘要~91  層5對話~415  訊息~233） | 輸出 412 | 工具 2 輪 +553
+📊 輸入 1,847（層1系統~312  層4摘要~91  層5對話~415  訊息~233） | 輸出 412 | 工具 2 輪，累計輸入 5,940 | 快取 讀 3,200 寫 410
 ```
 
 **設計說明**：
 - 輸入各層 token 數為**比例估算**（依字元數佔比換算），非 API 精確值
-- `initial_input_tokens`（第一輪）代表 context 大小；後續 tool call 輪次的額外 input 顯示為 overhead
+- 「輸入」為第一輪完整輸入，代表 context 大小；有 tool call 時另顯示「累計輸入」（所有輪次加總，才是實際計費量，見 [KI-018]）
+- 「快取」欄位僅在有快取讀寫時顯示
 - 非同步壓縮不顯示在 footer（timing 對不上），改以 log 記錄
 - 若需長期追蹤費用趨勢，可未來新增 `token_usage` DB table（方案 C，目前未實作）
 
@@ -426,3 +427,33 @@ Strava 於 2026 年起限制個人開發者 API，要求綁定付費會員資格
 - 視窗筆數由固定 ≤10 筆，變為穩定狀態下 KEEP+2～MAX+2 筆（預設 12～22 筆）
 - 模擬 40 輪平均視窗由 9.4 筆增至 15.2 筆；每則仍受 600 字截斷限制
 - 若需壓回原本成本，可調低 `CONVERSATION_MAX` / `CONVERSATION_KEEP`（代價是壓縮更頻繁）
+
+---
+
+## [KI-018] Token 統計只計第一輪，且 LLM 呼叫散落各模組 ✅ 已解決
+
+**發現時機**：2026-10-02 成本優化討論
+**解決時機**：2026-10-02
+**狀態**：已實作
+**優先度**：中
+
+**問題描述**：
+1. 每輪 tool call 都會重送整段 context，但 Discord 頁尾與 log 只記第一輪 input，其餘只顯示差額。
+   例：三輪呼叫（1,000 / 1,100 / 1,200）實際計費 3,300，頁尾卻顯示「1,000 +200」，成本被低估。
+2. `anthropic` SDK 散落於 `loop.py` 與 `summarizer.py`，換模型、加快取、分用途選模型都要改多處。
+3. 超過最大輪數時的最終呼叫移除了 tools；對話中已有 tool_use 紀錄時 API 可能拒絕，且會讓快取失效。
+
+**實作內容**：
+- 新增 `src/llm.py` 作為唯一使用 `anthropic` SDK 的模組，對外介面與供應商無關：
+  - `complete(purpose, prompt, max_tokens)`：單次生成（跑後摘要、對話壓縮）
+  - `run_with_tools(system, messages, tools, execute_tool)`：tool call 迴圈整段移入
+  - `Usage`：逐輪累加未快取輸入、快取讀寫、輸出、呼叫次數
+- 分用途模型：`CLAUDE_MODEL`（主對話）、`CLAUDE_MODEL_SUMMARY`、`CLAUDE_MODEL_COMPRESS`，後兩者未設定則沿用 `CLAUDE_MODEL`
+- 最大輪數後的最終呼叫改為保留 tools 並設 `tool_choice: none`
+- 頁尾與 log 顯示累計輸入與快取讀寫
+
+**刻意不做**：多供應商抽象（基底類別、registry）、把快取／思考等 Claude 特有功能抽象化。
+換供應商時只需改寫 `llm.py`；工具定義為 JSON Schema，屆時於 `llm.py` 內轉換欄位名即可。
+
+**驗證**：以模擬 HTTP 層跑五種路徑（無工具、兩輪工具、達最大輪數、跑後摘要、對話壓縮），
+重構前後共 12 個 request body 除最大輪數的最終呼叫（刻意變更）外完全一致。

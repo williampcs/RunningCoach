@@ -46,10 +46,11 @@
 src/
 ├── main.py                    # 進入點：初始化 DB、啟動 Bot
 ├── config.py                  # 環境變數集中管理
+├── llm.py                     # LLM 呼叫層：唯一使用 anthropic SDK 的模組、tool call 迴圈、用量統計
 ├── bot/
 │   └── discord_bot.py         # Discord 事件處理、slash 指令、訊息分段
 ├── agent/
-│   ├── loop.py                # Agent 主迴圈：組 context、tool call 迴圈、token 統計
+│   ├── loop.py                # Agent 主流程：組 context、tool 定義與執行
 │   └── sync.py                # /sync：批次拉取 Intervals.icu 並合併主觀暫存
 ├── memory/
 │   ├── db.py                  # SQLite 存取層（所有 table 與查詢）

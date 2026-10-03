@@ -1,12 +1,11 @@
-"""Agent Loop — 組合 context、呼叫 Claude API、執行 tool call 迴圈、回傳回應."""
+"""Agent Loop — 組合 context、定義與執行 tools、交由 llm 模組呼叫模型、回傳回應."""
 import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date
 
-import anthropic
-
 import config
+import llm
 import memory.db as db
 import memory.context_manager as ctx
 import memory.summarizer as summarizer
@@ -14,21 +13,16 @@ from tools.intervals_tool import intervals
 
 logger = logging.getLogger(__name__)
 
-_client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
 # 跑後回報流程中，暫存最近一次取回的跑步活動（per-process singleton）
 _activity_cache: dict | None = None
 
 
 @dataclass
 class UsageStats:
-    """單次對話的 Token 用量統計（主對話 loop，不含非同步壓縮）."""
+    """單次對話的用量統計（主對話，不含非同步壓縮），供 Discord 頁尾顯示."""
     layer_chars: dict        # 各層字元數，用於比例估算
     user_msg_chars: int      # 使用者訊息字元數
-    initial_input_tokens: int   # 第一輪 API call 的 input tokens（代表 context 大小）
-    total_output_tokens: int    # 所有輪次 output tokens 加總
-    tool_rounds: int            # 觸發 tool call 的輪次數
-    tool_input_overhead: int    # tool call 累積增加的額外 input tokens
+    usage: llm.Usage         # 實際 API 用量（含所有 tool call 輪次）
 
 
 # ---------------------------------------------------------------------------
@@ -284,16 +278,7 @@ def generate_workout_summary(workout_data: dict) -> str:
         f"格式：一行數據摘要 ＋ AI評估。"
         f"{'客觀數據與體感對比分析。' if has_subjective else '僅客觀數據，給出客觀評估。'}"
     )
-    response = _client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    logger.info(
-        "workout_summary tokens — input: %d, output: %d",
-        response.usage.input_tokens, response.usage.output_tokens,
-    )
-    return response.content[0].text
+    return llm.complete("summary", prompt, max_tokens=300).text
 
 
 def _execute_tool(name: str, inputs: dict) -> str:
@@ -458,118 +443,33 @@ def _execute_tool(name: str, inputs: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Claude API 呼叫（含 tool call 迴圈）
-# ---------------------------------------------------------------------------
-
-def _call_claude_with_tools(context: dict) -> tuple[str, UsageStats]:
-    messages = list(context["messages"])
-    layer_chars = context.get("layer_chars", {})
-    user_msg_chars = context.get("user_msg_chars", 0)
-
-    initial_input_tokens = 0
-    total_output_tokens = 0
-    last_input_tokens = 0
-    tool_rounds = 0
-
-    for round_num in range(config.TOOL_CALL_MAX_ROUNDS):
-        response = _client.messages.create(
-            model=config.CLAUDE_MODEL,
-            max_tokens=config.MAX_RESPONSE_TOKENS,
-            system=context["system"],
-            messages=messages,
-            tools=_TOOLS,
-        )
-
-        if round_num == 0:
-            initial_input_tokens = response.usage.input_tokens
-        last_input_tokens = response.usage.input_tokens
-        total_output_tokens += response.usage.output_tokens
-
-        # 沒有 tool call，直接回傳文字
-        if response.stop_reason != "tool_use":
-            stats = UsageStats(
-                layer_chars=layer_chars,
-                user_msg_chars=user_msg_chars,
-                initial_input_tokens=initial_input_tokens,
-                total_output_tokens=total_output_tokens,
-                tool_rounds=tool_rounds,
-                tool_input_overhead=last_input_tokens - initial_input_tokens,
-            )
-            logger.info(
-                "chat tokens — input: %d, output: %d, tool_rounds: %d",
-                initial_input_tokens, total_output_tokens, tool_rounds,
-            )
-            return _extract_text(response), stats
-
-        # 執行所有 tool call
-        tool_rounds += 1
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                result = _execute_tool(block.name, block.input)
-                logger.info("Tool [%s] input=%s → %s", block.name, block.input, result[:120])
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
-
-        # 把本輪 assistant 訊息與 tool results 加入 messages，繼續迴圈
-        messages.append({"role": "assistant", "content": response.content})
-        messages.append({"role": "user", "content": tool_results})
-
-    # 超過最大輪數，不帶 tools 再問一次取最終回應
-    logger.warning("Max tool call rounds (%d) reached", config.TOOL_CALL_MAX_ROUNDS)
-    final = _client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=config.MAX_RESPONSE_TOKENS,
-        system=context["system"],
-        messages=messages,
-    )
-    total_output_tokens += final.usage.output_tokens
-    stats = UsageStats(
-        layer_chars=layer_chars,
-        user_msg_chars=user_msg_chars,
-        initial_input_tokens=initial_input_tokens,
-        total_output_tokens=total_output_tokens,
-        tool_rounds=tool_rounds,
-        tool_input_overhead=final.usage.input_tokens - initial_input_tokens,
-    )
-    logger.info(
-        "chat tokens — input: %d, output: %d, tool_rounds: %d (max reached)",
-        initial_input_tokens, total_output_tokens, tool_rounds,
-    )
-    return _extract_text(final), stats
-
-
-def _extract_text(response) -> str:
-    parts = [block.text for block in response.content if hasattr(block, "text")]
-    return "\n".join(parts) if parts else ""
-
-
-# ---------------------------------------------------------------------------
 # 公開介面
 # ---------------------------------------------------------------------------
 
 async def run(user_message: str) -> tuple[str, UsageStats]:
-    """接收使用者訊息，回傳 Claude 的文字回應與 token 用量統計。"""
+    """接收使用者訊息，回傳模型的文字回應與 token 用量統計。"""
     db.append_conversation("user", user_message)
 
     # 非同步觸發壓縮（不阻塞主流程）
     if ctx.should_compress():
-        asyncio.create_task(summarizer.compress_async(_client))
+        asyncio.create_task(summarizer.compress_async())
 
     context = ctx.get_context_for_api()
-    context["user_msg_chars"] = len(user_message)
 
     event_loop = asyncio.get_event_loop()
     try:
-        response_text, stats = await event_loop.run_in_executor(
-            None, _call_claude_with_tools, context
+        result = await event_loop.run_in_executor(
+            None, llm.run_with_tools,
+            context["system"], context["messages"], _TOOLS, _execute_tool,
         )
     except Exception as e:
-        logger.error("Claude API error: %s", e)
+        logger.error("LLM API error: %s", e)
         raise
 
-    db.append_conversation("assistant", response_text)
-    return response_text, stats
+    db.append_conversation("assistant", result.text)
+    stats = UsageStats(
+        layer_chars=context["layer_chars"],
+        user_msg_chars=len(user_message),
+        usage=result.usage,
+    )
+    return result.text, stats

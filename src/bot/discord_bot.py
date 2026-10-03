@@ -34,12 +34,13 @@ def _split_message(text: str) -> list[str]:
 
 def _format_token_footer(stats: UsageStats) -> str:
     """將 UsageStats 格式化為 Discord 用的 token 用量頁尾."""
+    u = stats.usage
     total_chars = sum(stats.layer_chars.values()) + stats.user_msg_chars
-    if total_chars == 0 or stats.initial_input_tokens == 0:
+    if total_chars == 0 or u.first_input_tokens == 0:
         return ""
 
     def est(chars: int) -> str:
-        tokens = round(stats.initial_input_tokens * chars / total_chars)
+        tokens = round(u.first_input_tokens * chars / total_chars)
         return f"{tokens:,}"
 
     layer_labels = [
@@ -55,14 +56,17 @@ def _format_token_footer(stats: UsageStats) -> str:
             detail_parts.append(f"{label}~{est(chars)}")
     detail_parts.append(f"訊息~{est(stats.user_msg_chars)}")
 
-    overhead = ""
-    if stats.tool_rounds > 0:
-        overhead = f" | 工具 {stats.tool_rounds} 輪 +{stats.tool_input_overhead:,}"
+    # 有 tool call 時每輪都會重送整段 context，累計輸入才是實際計費量
+    extra = ""
+    if u.tool_rounds > 0:
+        extra += f" | 工具 {u.tool_rounds} 輪，累計輸入 {u.total_input_tokens:,}"
+    if u.cache_read_tokens or u.cache_write_tokens:
+        extra += f" | 快取 讀 {u.cache_read_tokens:,} 寫 {u.cache_write_tokens:,}"
 
     return (
-        f"\n-# 📊 輸入 {stats.initial_input_tokens:,}"
+        f"\n-# 📊 輸入 {u.first_input_tokens:,}"
         f"（{'  '.join(detail_parts)}）"
-        f" | 輸出 {stats.total_output_tokens:,}{overhead}"
+        f" | 輸出 {u.output_tokens:,}{extra}"
     )
 
 

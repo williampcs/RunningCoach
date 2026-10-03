@@ -3,6 +3,9 @@ import os
 # Anthropic
 ANTHROPIC_API_KEY: str = os.environ["ANTHROPIC_API_KEY"]
 CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5")
+# 分用途模型（未設定則沿用 CLAUDE_MODEL）
+CLAUDE_MODEL_SUMMARY: str = os.getenv("CLAUDE_MODEL_SUMMARY") or CLAUDE_MODEL    # 跑後分析摘要
+CLAUDE_MODEL_COMPRESS: str = os.getenv("CLAUDE_MODEL_COMPRESS") or CLAUDE_MODEL  # 對話壓縮
 
 # Discord
 DISCORD_BOT_TOKEN: str = os.environ["DISCORD_BOT_TOKEN"]

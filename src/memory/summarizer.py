@@ -6,9 +6,7 @@
 import asyncio
 import logging
 
-import anthropic
-
-import config
+import llm
 import memory.db as db
 import memory.context_manager as ctx
 
@@ -47,11 +45,7 @@ _UPDATE_PROMPT = """\
 """
 
 
-def _do_summarize(
-    client: anthropic.Anthropic,
-    conversation_text: str,
-    previous_summary: str | None,
-) -> str:
+def _do_summarize(conversation_text: str, previous_summary: str | None) -> str:
     if previous_summary:
         prompt = _UPDATE_PROMPT.format(
             previous_summary=previous_summary,
@@ -60,19 +54,10 @@ def _do_summarize(
     else:
         prompt = _INITIAL_PROMPT.format(conversation_text=conversation_text)
 
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    logger.info(
-        "compression tokens — input: %d, output: %d",
-        response.usage.input_tokens, response.usage.output_tokens,
-    )
-    return response.content[0].text
+    return llm.complete("compress", prompt, max_tokens=512).text
 
 
-async def compress_async(client: anthropic.Anthropic) -> None:
+async def compress_async() -> None:
     """非同步壓縮舊對話，失敗時僅記錄 warning，不中斷主流程."""
     try:
         to_compress = ctx.get_conversations_to_compress()
@@ -88,7 +73,7 @@ async def compress_async(client: anthropic.Anthropic) -> None:
 
         event_loop = asyncio.get_event_loop()
         summary_text = await event_loop.run_in_executor(
-            None, _do_summarize, client, conversation_text, previous_summary
+            None, _do_summarize, conversation_text, previous_summary
         )
 
         max_id = to_compress[-1]["id"]
