@@ -13,6 +13,7 @@ import config
 import memory.db as db
 
 _TZ = ZoneInfo("Asia/Taipei")
+RECENT_WORKOUT_DAYS = 14   # get_recent_workouts tool 的預設查詢天數
 _WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
 
 
@@ -26,7 +27,7 @@ def _build_system_prompt() -> str:
     weekday_str = _WEEKDAYS[now.weekday()]  # Monday=0 … Sunday=6
     date_line = (
         f"今天日期：{now.strftime('%Y-%m-%d')}（{weekday_str}）"
-        f"｜時區：Asia/Taipei（UTC+8）｜以星期日為一週的第一天"
+        f"｜時區：Asia/Taipei（UTC+8）｜以星期一為一週的第一天"
     )
 
     profile = db.get_profile()
@@ -118,6 +119,20 @@ def _build_system_prompt() -> str:
             lines.append(
                 f"- [{r['id']}] {r['date']} {r['name']} {r['distance_km']}km"
                 f"{target}｜距今 {days_away} 天（{status}）"
+            )
+
+    # 已結束、尚未記錄成績的賽事（保留 N 天，讓賽後隔幾天回報成績時仍取得到 id）
+    past_races = db.get_past_races_without_result(config.RACE_LOOKBACK_DAYS)
+    if past_races:
+        lines.append("")
+        lines.append("待記錄成績的賽事（已結束、尚未回報成績）：")
+        today = date.today()
+        for r in past_races:
+            days_ago = (today - date.fromisoformat(r["date"])).days
+            target = f"｜目標 {r['target_time']}" if r.get("target_time") else "｜目標完賽"
+            lines.append(
+                f"- [{r['id']}] {r['date']} {r['name']} {r['distance_km']}km"
+                f"{target}｜{days_ago} 天前"
             )
 
     lines += [
@@ -223,21 +238,22 @@ def apply_compression(summary_text: str, covers_up_to_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 def get_status_summary() -> dict:
-    """回傳各記憶層的狀態摘要."""
-    workout_summaries = db.get_recent_workout_summaries(config.WORKOUT_SUMMARY_COUNT)
+    """回傳各記憶層的狀態摘要.
+
+    層1、層4、層5 每次都帶入 context；層2、層3 由 tool 按需載入，這裡只回報 DB 中的資料量。
+    """
     plan = db.get_active_training_plan()
     summary = db.get_latest_summary()
-    conv_count = db.count_conversations()
-    races = db.get_upcoming_races(config.RACE_LOOKAHEAD_DAYS)
-    profile = db.get_profile()
 
     return {
-        "profile_keys": len(profile),
-        "upcoming_races": len(races),
-        "workout_summaries": len(workout_summaries),
-        "has_training_plan": plan is not None,
+        "profile_keys": len(db.get_profile()),
+        "upcoming_races": len(db.get_upcoming_races(config.RACE_LOOKAHEAD_DAYS)),
+        "unrecorded_races": len(db.get_past_races_without_result(config.RACE_LOOKBACK_DAYS)),
+        "recent_workouts": db.count_workouts(days=RECENT_WORKOUT_DAYS),
+        "total_workouts": db.count_workouts(),
+        "pending_subjective": db.count_pending_subjective(),
         "training_plan_label": plan["week_label"] if plan else None,
-        "has_conv_summary": summary is not None,
-        "conversation_count": conv_count,
+        "conv_summary_chars": len(summary["content"]) if summary else 0,
+        "conversation_count": db.count_conversations(),
         "conversation_max": config.CONVERSATION_MAX,
     }

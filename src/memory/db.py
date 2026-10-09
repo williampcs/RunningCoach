@@ -174,6 +174,20 @@ def get_upcoming_races(days: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_past_races_without_result(days: int) -> list[dict]:
+    """回傳過去 N 天內已結束、尚未記錄成績且未取消的賽事（供賽後補登成績）."""
+    from datetime import date, timedelta
+    today = date.today().isoformat()
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM races WHERE date < ? AND date >= ? AND cancelled=0"
+            " AND (result_time IS NULL OR result_time = '') ORDER BY date DESC",
+            (today, cutoff),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def add_race(name: str, date: str, distance_km: float,
              target_time: str = "", confirmed: int = 1, notes: str = "") -> int:
     with get_conn() as conn:
@@ -428,6 +442,18 @@ def get_recent_workouts_raw(days: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def count_workouts(days: int | None = None) -> int:
+    """訓練紀錄筆數；指定 days 時只計最近 N 天."""
+    from datetime import date, timedelta
+    with get_conn() as conn:
+        if days is None:
+            return conn.execute("SELECT COUNT(*) FROM workouts").fetchone()[0]
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        return conn.execute(
+            "SELECT COUNT(*) FROM workouts WHERE date >= ?", (cutoff,)
+        ).fetchone()[0]
+
+
 def get_workouts_for_pace_trend(weeks: int) -> list[dict]:
     from datetime import date, timedelta
     cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
@@ -461,6 +487,11 @@ def get_pending_subjective_by_date(date: str) -> dict | None:
             (date,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def count_pending_subjective() -> int:
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM pending_subjective").fetchone()[0]
 
 
 def delete_pending_subjective(record_id: int) -> None:

@@ -116,6 +116,19 @@ def _log_usage(purpose: str, usage: Usage) -> None:
 # 公開介面
 # ---------------------------------------------------------------------------
 
+def describe_models() -> dict[str, str]:
+    """各用途實際使用的模型與思考強度（供 /status 顯示）."""
+    def fmt(purpose: str, effort: str) -> str:
+        model = _MODELS[purpose]
+        return f"{model}（思考強度 {effort}）" if _model_options(model, effort) else model
+
+    return {
+        "chat":     fmt("chat", config.CLAUDE_CHAT_EFFORT),
+        "summary":  fmt("summary", _COMPLETE_EFFORT),
+        "compress": fmt("compress", _COMPLETE_EFFORT),
+    }
+
+
 def complete(purpose: str, prompt: str, max_tokens: int) -> Result:
     """單次生成（無工具、無 system prompt）.
 

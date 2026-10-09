@@ -7,6 +7,7 @@ from discord.ext import commands
 from discord import app_commands
 
 import config
+import llm
 import agent.loop as agent_loop
 from agent.loop import UsageStats
 import agent.sync as agent_sync
@@ -146,30 +147,40 @@ def create_bot() -> CoachBot:
         await interaction.response.send_message(f"已更新 `{key}` = `{value}`。")
 
     # --------------------------------------------------------------- /status
-    @bot.tree.command(name="status", description="顯示目前五層記憶狀態（debug）")
+    @bot.tree.command(name="status", description="顯示模型設定與五層記憶狀態")
     async def cmd_status(interaction: discord.Interaction):
         if interaction.channel_id != config.DISCORD_ALLOWED_CHANNEL_ID:
             return
         s = ctx.get_status_summary()
+        models = llm.describe_models()
         conv_bar = "🟡" if s["conversation_count"] >= s["conversation_max"] * 0.8 else "🟢"
+        plan = f"有（{s['training_plan_label']}）" if s["training_plan_label"] else "尚未設定"
+        summary = f"有（{s['conv_summary_chars']} 字）" if s["conv_summary_chars"] else "無（尚未觸發壓縮）"
 
         lines = [
-            "**📊 記憶層狀態**", "",
-            f"**層1 — System Prompt**",
+            "**📊 系統狀態**", "",
+            "**模型**",
+            f"　主對話：{models['chat']}",
+            f"　跑後摘要：{models['summary']}",
+            f"　對話壓縮：{models['compress']}",
+            "",
+            "**層1 — System Prompt（每次帶入）**",
             f"　選手資料：{s['profile_keys']} 筆",
-            f"　近期賽事（{config.RACE_LOOKAHEAD_DAYS}天內）：{s['upcoming_races']} 筆",
+            f"　近期賽事（{config.RACE_LOOKAHEAD_DAYS} 天內）：{s['upcoming_races']} 筆",
+            f"　待記錄成績的賽事（{config.RACE_LOOKBACK_DAYS} 天內）：{s['unrecorded_races']} 筆",
             "",
-            f"**層2 — 訓練歷史摘要**",
-            f"　最近 {s['workout_summaries']} 筆（上限 {config.WORKOUT_SUMMARY_COUNT}）",
+            "**層2 — 訓練歷史（需要時由 tool 載入）**",
+            f"　最近 {ctx.RECENT_WORKOUT_DAYS} 天：{s['recent_workouts']} 筆｜累計：{s['total_workouts']} 筆",
+            f"　待合併的主觀感受：{s['pending_subjective']} 筆",
             "",
-            f"**層3 — 訓練計畫**",
-            f"　{'有（' + s['training_plan_label'] + '）' if s['has_training_plan'] else '尚未設定'}",
+            "**層3 — 訓練計畫（需要時由 tool 載入）**",
+            f"　{plan}",
             "",
-            f"**層4 — 對話摘要**",
-            f"　{'有' if s['has_conv_summary'] else '無（尚未觸發壓縮）'}",
+            "**層4 — 對話摘要（每次帶入）**",
+            f"　{summary}",
             "",
-            f"**層5 — Rolling Window**",
-            f"　{conv_bar} 對話 {s['conversation_count']} 筆（閾值 {s['conversation_max']}）",
+            "**層5 — 對話視窗（每次帶入）**",
+            f"　{conv_bar} {s['conversation_count']} 筆（超過 {s['conversation_max']} 筆時壓縮）",
         ]
         await interaction.response.send_message("\n".join(lines))
 

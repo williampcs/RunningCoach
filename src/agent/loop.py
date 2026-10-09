@@ -56,7 +56,7 @@ _TOOLS: list[dict] = [
     {
         "name": "get_upcoming_races",
         "description": (
-            "查詢距今 N 天內的賽事清單。"
+            "查詢距今 N 天內的賽事清單，並附上最近已結束、尚未記錄成績的賽事。"
             "使用者詢問「我最近有什麼比賽」或需要列出賽事時呼叫。"
         ),
         "input_schema": {
@@ -71,7 +71,7 @@ _TOOLS: list[dict] = [
         "name": "update_race_result",
         "description": (
             "更新賽事實際完賽時間與備注。"
-            "賽後使用者回報成績時呼叫。race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
+            "賽後使用者回報成績時呼叫。race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
         ),
         "input_schema": {
             "type": "object",
@@ -117,7 +117,7 @@ _TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "week_label": {"type": "string", "description": "週標籤，例：2026-W14"},
+                "week_label": {"type": "string", "description": "週標籤，ISO 週（週一起算），例：2026-W14"},
                 "content":    {"type": "string", "description": "訓練計畫完整內容"},
             },
             "required": ["week_label", "content"],
@@ -184,7 +184,7 @@ _TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "description": "查詢天數，預設 14"},
+                "days": {"type": "integer", "description": f"查詢天數，預設 {ctx.RECENT_WORKOUT_DAYS}"},
             },
             "required": [],
         },
@@ -222,7 +222,7 @@ _TOOLS: list[dict] = [
         "description": (
             "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備注）。"
             "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。"
-            "race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。只需傳入要更新的欄位。"
+            "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。只需傳入要更新的欄位。"
         ),
         "input_schema": {
             "type": "object",
@@ -243,7 +243,7 @@ _TOOLS: list[dict] = [
         "description": (
             "將賽事標記為已取消（設定 cancelled=1，保留歷史紀錄，不刪除）。"
             "使用者說「我退出 OOO」或「取消報名 OOO」時呼叫。"
-            "race_id 為 system prompt「近期目標賽事」清單中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
+            "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。"
         ),
         "input_schema": {
             "type": "object",
@@ -334,7 +334,7 @@ def _execute_tool(name: str, inputs: dict) -> str:
             return f"主觀感受已暫存（{inputs['date']}）。手錶同步至 Intervals.icu 後請執行 /sync 完成合併。"
 
         elif name == "get_recent_workouts":
-            days = int(inputs.get("days", 14))
+            days = int(inputs.get("days", ctx.RECENT_WORKOUT_DAYS))
             workouts = db.get_recent_workouts_raw(days)
             if not workouts:
                 return f"最近 {days} 天無訓練紀錄。"
@@ -396,16 +396,23 @@ def _execute_tool(name: str, inputs: dict) -> str:
         elif name == "get_upcoming_races":
             days = int(inputs.get("days", config.RACE_LOOKAHEAD_DAYS))
             races = db.get_upcoming_races(days)
-            if not races:
-                return f"未來 {days} 天內無已記錄賽事。"
-            lines = [f"未來 {days} 天內的賽事（共 {len(races)} 筆）："]
-            for r in races:
+            past_races = db.get_past_races_without_result(config.RACE_LOOKBACK_DAYS)
+
+            def race_line(r: dict) -> str:
                 target = r.get("target_time") or "完賽即可"
                 result = f"｜實際成績：{r['result_time']}" if r.get("result_time") else ""
-                lines.append(
-                    f"- [id={r['id']}] {r['date']} {r['name']} "
-                    f"{r['distance_km']}km 目標：{target}{result}"
-                )
+                return (f"- [id={r['id']}] {r['date']} {r['name']} "
+                        f"{r['distance_km']}km 目標：{target}{result}")
+
+            lines = []
+            if races:
+                lines.append(f"未來 {days} 天內的賽事（共 {len(races)} 筆）：")
+                lines += [race_line(r) for r in races]
+            else:
+                lines.append(f"未來 {days} 天內無已記錄賽事。")
+            if past_races:
+                lines.append(f"\n最近 {config.RACE_LOOKBACK_DAYS} 天已結束、尚未記錄成績的賽事（共 {len(past_races)} 筆）：")
+                lines += [race_line(r) for r in past_races]
             return "\n".join(lines)
 
         elif name == "update_race_result":

@@ -134,7 +134,7 @@ python src/main.py
 | `/sync` | 手動觸發 Intervals.icu 同步，合併主觀暫存資料 |
 | `/plan <content>` | 更新本週訓練計畫 |
 | `/profile <key> <value>` | 更新選手資料欄位 |
-| `/status` | 顯示目前五層記憶狀態（debug 用） |
+| `/status` | 顯示模型設定與各記憶層狀態（debug 用） |
 
 一般訊息範例：
 
@@ -147,11 +147,11 @@ python src/main.py
 
 ## 📐 設計文件
 
-- [running-coach-spec1_3.md](doc/running-coach-spec1_3.md) — 最新版規格書（v1.3）
+- [running-coach-spec1_4.md](doc/running-coach-spec1_4.md) — 最新版規格書（v1.4，描述目前實作）
 - [known-issues.md](doc/known-issues.md) — 已知問題與設計取捨
 - [deployment-guide.md](doc/deployment-guide.md) — 部署指南
 
-`doc/` 保留了 spec v1.0 → v1.3 的多版本迭代，記錄設計思路的演進過程。
+`doc/` 保留了 spec v1.0 → v1.4 的多版本迭代，記錄設計思路的演進過程。
 
 ---
 

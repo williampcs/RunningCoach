@@ -288,7 +288,7 @@ docker compose logs | grep "Bot online"
 |------|---------|---------|
 | `/profile` | `/profile goal_long_term 2026年底半馬破二` | 回應「已更新 goal_long_term」 |
 | `/plan` | `/plan 週一輕鬆跑8km，週三間歇6x400m` | 回應「訓練計畫已更新（XXXX-WXX）」 |
-| `/status` | `/status` | 顯示五層記憶完整狀態（含 emoji 指示器） |
+| `/status` | `/status` | 顯示各用途的模型設定與五層記憶狀態（含 emoji 指示器） |
 | `/sync` | `/sync` | 回應 Intervals.icu 同步結果（新增筆數、合併體感） |
 
 ### T4（Phase 2）：賽事管理 — 自然語言新增
@@ -305,7 +305,7 @@ docker compose logs | grep "Bot online"
 傳送：
 > 「剛跑完萬金石，成績 1:55:30，後半段發揮不錯」
 
-✅ Claude 先呼叫 `get_upcoming_races` 確認 race_id
+✅ Claude 使用賽事清單中的 id（清單中沒有該賽事時才呼叫 `get_upcoming_races`）；比賽後 14 天內回報都找得到
 ✅ 再呼叫 `update_race_result` 更新成績
 ✅ 回應包含分析與鼓勵
 
@@ -420,7 +420,7 @@ sqlite3 ~/projs/RunningCoach/data/coach.db "SELECT ..."
 **解法**：在 `context_manager.py` 的 `_build_system_prompt()` 最頂部動態注入當前日期與時區：
 
 ```
-今天日期：2026-04-03（星期五）｜時區：Asia/Taipei（UTC+8）｜以星期日為一週的第一天
+今天日期：2026-04-03（星期五）｜時區：Asia/Taipei（UTC+8）｜以星期一為一週的第一天
 ```
 
 每次呼叫 API 前即時生成，不需要 rebuild，`docker compose restart` 即可生效。
