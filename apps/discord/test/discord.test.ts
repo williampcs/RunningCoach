@@ -43,6 +43,18 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, LLM_PROVIDER: "openai", LLM_API_KEY: "o" })).toThrow("缺少環境變數 LLM_MODEL");
   });
 
+  it("分用途模型只讀該供應商的變數：換供應商時留著的 CLAUDE_MODEL_* 不會被誤用", () => {
+    const config = loadConfig({
+      ...base,
+      LLM_PROVIDER: "openai",
+      LLM_API_KEY: "o",
+      LLM_MODEL: "main-model",
+      LLM_MODEL_COMPRESS: "small-model",
+      CLAUDE_MODEL_SUMMARY: "claude-haiku-5-5",
+    });
+    expect(config.llm.models).toEqual({ chat: "main-model", summary: "main-model", compress: "small-model" });
+  });
+
   it("設定錯誤時在啟動階段就報錯", () => {
     expect(() => loadConfig({ ...base, DISCORD_BOT_TOKEN: "" })).toThrow("缺少環境變數 DISCORD_BOT_TOKEN");
     expect(() => loadConfig({ ...base, CONVERSATION_MAX: "abc" })).toThrow("CONVERSATION_MAX 必須是整數");

@@ -66,16 +66,13 @@ function loadLlm(env: Env): BotConfig["llm"] {
     throw new Error(`LLM_PROVIDER 必須是 anthropic / openai / gemini / openai-compatible：${kind}`);
   }
 
-  // 分用途模型（未設定則沿用主對話模型）
-  const pick = (...names: string[]) => names.map((n) => env[n]?.trim()).find(Boolean) || chatModel;
+  // 分用途模型（未設定則沿用主對話模型）。名稱前綴跟著供應商，換供應商時留在 .env 裡的 Claude 模型不會被送給別家
+  const prefix = kind === "anthropic" ? "CLAUDE" : "LLM";
+  const pick = (purpose: "SUMMARY" | "COMPRESS") => env[`${prefix}_MODEL_${purpose}`]?.trim() || chatModel;
   return {
     provider,
     chatEffort: chatEffort as Effort,
-    models: {
-      chat: chatModel,
-      summary: pick("CLAUDE_MODEL_SUMMARY", "LLM_MODEL_SUMMARY"),
-      compress: pick("CLAUDE_MODEL_COMPRESS", "LLM_MODEL_COMPRESS"),
-    },
+    models: { chat: chatModel, summary: pick("SUMMARY"), compress: pick("COMPRESS") },
   };
 }
 
