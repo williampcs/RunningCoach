@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { formatTokenFooter } from "../src";
-import { activity, makeCoach, toolTurn, turn, type RecordedCall } from "./helpers";
+import { activity, makeCoach, ScriptedProvider, toolTurn, turn, type RecordedCall } from "./helpers";
 
 describe("Coach.chat", () => {
   it("跑後回報：拉取活動 → 合併主觀感受存檔並生成摘要 → 最終回覆", async () => {
@@ -204,6 +204,40 @@ describe("對話壓縮", () => {
       "a4",
       "u5",
     ]);
+  });
+
+  it("configure 更換設定時沿用同一個資料庫與壓縮狀態，進行中的壓縮不會重複觸發", async () => {
+    const { coach, provider, activities } = await makeCoach([], { settings });
+    for (let i = 0; i < 4; i++) await coach.db.appendConversation("user", `m${i}`);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const respond = async (call: RecordedCall) => {
+      if (call.request.model !== "compress-model") return turn({ text: "回覆" });
+      await gate;
+      return turn({ text: "【訓練狀態】摘要" });
+    };
+    provider.script.push(respond, respond);
+    await coach.chat("m4"); // 背景壓縮開始，停在 gate
+
+    const next = new ScriptedProvider([turn({ text: "新設定的回覆" })]);
+    coach.configure({
+      llm: { provider: next, models: { chat: "new-chat", summary: "new-summary", compress: "new-compress" }, chatEffort: "low" },
+      activities,
+      settings: { ...settings, timeZone: "Asia/Tokyo" },
+    });
+    expect(coach.settings.timeZone).toBe("Asia/Tokyo");
+    expect(coach.describeModels().chat).toBe("new-chat（思考強度 low）");
+
+    // 對話數仍超過上限，但上一次壓縮還沒結束，不再觸發
+    const { reply } = await coach.chat("m5");
+    expect(reply).toBe("新設定的回覆");
+    expect(next.calls.map((c) => c.request.model)).toEqual(["new-chat"]);
+
+    release();
+    await coach.idle();
+    expect(provider.calls.filter((c) => c.request.model === "compress-model")).toHaveLength(1);
+    expect((await coach.db.getLatestSummary())?.content).toBe("【訓練狀態】摘要");
   });
 
   it("壓縮失敗時保留原對話，下一輪再試", async () => {

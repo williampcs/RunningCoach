@@ -50,7 +50,7 @@ export function SettingsView() {
 
   useEffect(() => {
     void coach.status().then((s) => setStatus(formatStatus(s, coach.describeModels(), coach.settings)));
-  }, [coach, revision]);
+  }, [coach, settings, revision]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
   const consented = draft.consents.includes(consentKey(draft));

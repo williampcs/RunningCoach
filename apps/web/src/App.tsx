@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Coach, IntervalsClient, localDate, type LlmProvider } from "@running-coach/core";
+import { Coach, IntervalsClient, localDate, type CoachConfig, type LlmProvider, type Logger } from "@running-coach/core";
 
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
@@ -31,9 +31,11 @@ function unconfiguredProvider(problem: string): LlmProvider {
   };
 }
 
-function buildCoach(db: BrowserDb, settings: AppSettings, problem: string | null): Coach {
-  return new Coach({
-    driver: db,
+const logger: Logger = { info: () => undefined, warn: (m) => console.warn(m), error: (m) => console.error(m) };
+
+function coachConfig(settings: AppSettings): CoachConfig {
+  const problem = llmProblem(settings);
+  return {
     llm: {
       provider: problem ? unconfiguredProvider(problem) : buildProvider(settings),
       models: resolvedModels(settings),
@@ -46,12 +48,13 @@ function buildCoach(db: BrowserDb, settings: AppSettings, problem: string | null
       baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
     }),
     settings: { timeZone: settings.timeZone },
-    logger: { info: () => undefined, warn: (m) => console.warn(m), error: (m) => console.error(m) },
-  });
+  };
 }
 
 export function App() {
   const [db, setDb] = useState<BrowserDb | null>(null);
+  // 整個分頁只有一個 Coach，儲存設定時以 configure() 更新，不重建（理由見 Coach.configure）
+  const [coach, setCoach] = useState<Coach | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const [tab, setTab] = useState<Tab>("chat");
@@ -60,7 +63,6 @@ export function App() {
   const opening = useRef(false);
 
   const problem = llmProblem(settings);
-  const coach = useMemo(() => (db ? buildCoach(db, settings, problem) : null), [db, settings, problem]);
 
   useEffect(() => {
     // StrictMode 在開發時會執行兩次 effect；OPFS 的檔案一次只能由一條連線開啟
@@ -68,8 +70,10 @@ export function App() {
     opening.current = true;
     (async () => {
       const opened = await openBrowserDb();
-      await buildCoach(opened, loadSettings(), "初始化").init();
+      const created = new Coach({ driver: opened, ...coachConfig(loadSettings()), logger });
+      await created.init();
       setDb(opened);
+      setCoach(created);
     })().catch((e) => setFatal(errorText(e)));
   }, []);
 
@@ -86,6 +90,7 @@ export function App() {
       touch,
       updateSettings(next) {
         saveSettings(next);
+        coach.configure(coachConfig(next));
         setSettings(next);
       },
       async reload() {

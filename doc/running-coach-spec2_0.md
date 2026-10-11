@@ -362,7 +362,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 3. 補齊 v2 的使用說明：README 改寫為 v2 的內容；`.env.example` 補上 v2 新增的變數（Discord 外殼的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`TIMEZONE` 等，以及代理的 `ADMIN_TOKEN`、`ALLOWED_ORIGINS`、`PROXY_POLICY` 等，以 `apps/discord/src/config.ts` 與 `apps/proxy/src/node.ts` 為準）。
 4. ~~為 v2 加上 CI~~：已完成（9.1）。現有的部署 workflow 只處理 v1。
 5. ~~建置並驗證 Discord 外殼的 Dockerfile~~：已完成（9.1）。映像只在 CI 建置驗證，尚未推送到 registry；要不要推送、推到哪裡，跟部署方式一起決定（9.2）。
-6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。另外，每次儲存設定都會重建 `Coach`，新舊實例各有自己的 `Db` 佇列與「壓縮進行中」旗標；背景壓縮進行中儲存設定，可能讓兩邊的 SQL 交錯進同一個交易，或重複壓縮同一批對話。改為共用同一個 `Db` 與壓縮狀態。
+6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。另外，~~每次儲存設定都會重建 `Coach`~~：已修正，網頁版只建立一個 `Coach`，儲存設定時以 `Coach.configure()` 更換 LLM、活動來源與設定，資料庫佇列與背景壓縮狀態保留。
 7. 評估 Prompt Caching。v1 與 v2 都還沒啟用；單則訊息、間隔超過快取存活時間的對話會多付寫入費用，要先量測再決定。
 8. 階段 C 的其餘部分：帳號、金流、定價（第 5.4 節），以及部署代理。
 

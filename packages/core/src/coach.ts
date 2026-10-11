@@ -49,40 +49,70 @@ export interface CoachOptions {
   logger?: Logger;
 }
 
+/** 可以在執行中更換的部分（見 Coach.configure） */
+export type CoachConfig = Pick<CoachOptions, "llm" | "activities" | "settings">;
+
+/** 由 CoachConfig 建出的元件；一輪對話從頭到尾使用同一份 */
+interface Runtime {
+  settings: CoachSettings;
+  llm: Llm;
+  context: ContextManager;
+  activities: ActivitySource;
+  executeTool: ToolExecutor;
+}
+
 export class Coach {
   readonly db: Db;
-  readonly settings: CoachSettings;
-  private readonly llm: Llm;
-  private readonly context: ContextManager;
-  private readonly activities: ActivitySource;
   private readonly logger: Logger;
   private readonly now: () => Date;
-  private readonly executeTool: ToolExecutor;
+  private runtime: Runtime;
   private compressing: Promise<void> | null = null;
 
   constructor(options: CoachOptions) {
-    this.settings = { ...DEFAULT_SETTINGS, ...options.settings };
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? silentLogger;
-    this.activities = options.activities;
     this.db = new Db(options.driver, { now: this.now, today: () => this.today() });
-    this.llm = new Llm(
+    this.runtime = this.buildRuntime(options);
+  }
+
+  /**
+   * 更換 LLM、活動來源與設定（網頁版儲存設定時）。資料庫與背景壓縮的狀態保留：
+   * 若改為重建 Coach，新舊實例各有一個操作佇列與壓縮旗標，背景壓縮進行中時
+   * 兩邊的 SQL 可能交錯進同一個交易，或重複壓縮同一批對話。
+   * 進行中的對話與壓縮沿用開始時的設定。
+   */
+  configure(config: CoachConfig): void {
+    this.runtime = this.buildRuntime(config);
+  }
+
+  private buildRuntime(config: CoachConfig): Runtime {
+    const settings = { ...DEFAULT_SETTINGS, ...config.settings };
+    const llm = new Llm(
       {
-        ...options.llm,
-        maxResponseTokens: this.settings.maxResponseTokens,
-        toolCallMaxRounds: this.settings.toolCallMaxRounds,
+        ...config.llm,
+        maxResponseTokens: settings.maxResponseTokens,
+        toolCallMaxRounds: settings.toolCallMaxRounds,
       },
       this.logger,
     );
-    this.context = new ContextManager(this.db, this.settings, this.now);
-    this.executeTool = createToolExecutor({
-      db: this.db,
-      llm: this.llm,
-      activities: this.activities,
-      settings: this.settings,
-      today: () => this.today(),
-      logger: this.logger,
-    });
+    return {
+      settings,
+      llm,
+      context: new ContextManager(this.db, settings, this.now),
+      activities: config.activities,
+      executeTool: createToolExecutor({
+        db: this.db,
+        llm,
+        activities: config.activities,
+        settings,
+        today: () => localDate(this.now(), settings.timeZone),
+        logger: this.logger,
+      }),
+    };
+  }
+
+  get settings(): CoachSettings {
+    return this.runtime.settings;
   }
 
   /** 使用者時區的今天，YYYY-MM-DD */
@@ -97,20 +127,16 @@ export class Coach {
 
   /** 接收使用者訊息，回傳模型的文字回應與 token 用量統計 */
   async chat(userMessage: string): Promise<ChatReply> {
+    const rt = this.runtime;
     await this.db.appendConversation("user", userMessage);
 
     // 背景觸發壓縮（不阻塞主流程）
-    if (await this.context.shouldCompress()) this.compressInBackground();
+    if (await rt.context.shouldCompress()) this.compressInBackground(rt);
 
-    const context = await this.context.getContextForApi();
+    const context = await rt.context.getContextForApi();
     let result;
     try {
-      result = await this.llm.runWithTools(
-        context.system,
-        context.messages,
-        buildTools(this.settings),
-        this.executeTool,
-      );
+      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings), rt.executeTool);
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
@@ -127,13 +153,13 @@ export class Coach {
     };
   }
 
-  private compressInBackground(): void {
+  private compressInBackground(rt: Runtime): void {
     // 上一次壓縮還在進行時不重複觸發，避免同一批對話被摘要兩次
     if (this.compressing) return;
     this.compressing = compressConversations({
       db: this.db,
-      context: this.context,
-      llm: this.llm,
+      context: rt.context,
+      llm: rt.llm,
       logger: this.logger,
     }).finally(() => {
       this.compressing = null;
@@ -147,7 +173,8 @@ export class Coach {
 
   /** 從活動來源同步最近的跑步活動，並合併主觀暫存 */
   sync(): Promise<string> {
-    return runSync({ db: this.db, llm: this.llm, activities: this.activities, logger: this.logger });
+    const { llm, activities } = this.runtime;
+    return runSync({ db: this.db, llm, activities, logger: this.logger });
   }
 
   /**
@@ -155,8 +182,9 @@ export class Coach {
    * 找到今天的活動時合併主觀感受並生成摘要；否則暫存主觀感受，等同步時合併。
    */
   async reportRun(perceivedEffort: number, subjectiveNotes: string): Promise<RunReport> {
+    const { llm, activities } = this.runtime;
     const today = this.today();
-    const latest = await this.activities.fetchLatestActivity();
+    const latest = await activities.fetchLatestActivity();
     if (!latest || latest.date !== today) {
       await this.db.savePendingSubjective(today, perceivedEffort, subjectiveNotes);
       return { status: "pending", date: today, latest };
@@ -165,7 +193,7 @@ export class Coach {
     const workoutId = await this.db.saveWorkout(latest, perceivedEffort, subjectiveNotes || null);
     let summary: string | null = null;
     try {
-      summary = await generateWorkoutSummary(this.llm, {
+      summary = await generateWorkoutSummary(llm, {
         ...latest,
         perceived_effort: perceivedEffort,
         subjective_notes: subjectiveNotes,
@@ -185,11 +213,11 @@ export class Coach {
   }
 
   status(): Promise<StatusSummary> {
-    return this.context.getStatusSummary();
+    return this.runtime.context.getStatusSummary();
   }
 
   /** 各用途實際使用的模型與思考強度 */
   describeModels(): Record<Purpose, string> {
-    return this.llm.describeModels();
+    return this.runtime.llm.describeModels();
   }
 }
