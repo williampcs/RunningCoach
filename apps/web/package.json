@@ -1,0 +1,27 @@
+{
+  "name": "@running-coach/web",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json",
+    "dev:mock": "VITE_INTERVALS_BASE_URL=http://127.0.0.1:8788/intervals vite"
+  },
+  "dependencies": {
+    "@running-coach/core": "*",
+    "@sqlite.org/sqlite-wasm": "^3.53.4-build2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "*",
+    "remark-gfm": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.4"
+  }
+}
