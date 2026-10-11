@@ -7,3 +7,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# Node / TypeScript (v2)
+node_modules/
+dist/
+.wrangler/
+*.tsbuildinfo

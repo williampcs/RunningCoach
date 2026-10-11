@@ -1,0 +1,93 @@
+/**
+ * 完整同步流程（/sync）.
+ *
+ * 1. 從活動來源拉取最近 14 天的跑步活動
+ * 2. 以 intervals_id 去重，只處理新資料
+ * 3. 檢查 pending_subjective 是否有符合日期的主觀暫存
+ * 4. 合併主客觀資料（或僅存客觀資料）後存入 workouts
+ * 5. 生成 AI 摘要存入 workout_summaries
+ * 6. 清理超過 7 天的 pending_subjective
+ */
+import type { Db } from "./db";
+import { IntervalsError } from "./intervals";
+import type { Llm } from "./llm";
+import { generateWorkoutSummary } from "./tools";
+import type { ActivitySource, Activity, Logger } from "./types";
+
+const SYNC_DAYS = 14;
+
+function message(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** 執行同步，回傳結果摘要字串 */
+export async function runSync(deps: {
+  db: Db;
+  llm: Llm;
+  activities: ActivitySource;
+  logger: Logger;
+}): Promise<string> {
+  const { db, llm, activities, logger } = deps;
+
+  let fetched: Activity[];
+  try {
+    fetched = await activities.fetchActivities(SYNC_DAYS);
+  } catch (e) {
+    if (e instanceof IntervalsError) return `❌ Intervals.icu 連線失敗：${e.message}`;
+    logger.error(`Intervals.icu fetch error: ${message(e)}`);
+    return `❌ 拉取 Intervals.icu 資料時發生錯誤：${message(e)}`;
+  }
+  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。`;
+
+  let newCount = 0;
+  let mergedCount = 0;
+  let skippedCount = 0;
+
+  for (const activity of fetched) {
+    // 去重：已存在則跳過
+    if (activity.intervals_id && (await db.getWorkoutByIntervalsId(activity.intervals_id))) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const pending = await db.getPendingSubjectiveByDate(activity.date);
+    const perceivedEffort = pending?.perceived_effort ?? null;
+    const subjectiveNotes = pending?.subjective_notes ?? null;
+
+    let workoutId: number;
+    try {
+      workoutId = await db.saveWorkout(activity, perceivedEffort, subjectiveNotes);
+    } catch (e) {
+      logger.error(`save_workout failed for intervals_id=${activity.intervals_id}: ${message(e)}`);
+      continue;
+    }
+
+    try {
+      const summary = await generateWorkoutSummary(llm, {
+        ...activity,
+        perceived_effort: perceivedEffort,
+        subjective_notes: subjectiveNotes,
+      });
+      await db.saveWorkoutSummary(workoutId, summary);
+    } catch (e) {
+      logger.warn(`Summary generation failed for workout_id=${workoutId}: ${message(e)}`);
+    }
+
+    // 清除已配對的 pending 資料
+    if (pending) {
+      await db.deletePendingSubjective(pending.id);
+      mergedCount += 1;
+    }
+    newCount += 1;
+  }
+
+  await db.cleanupOldPendingSubjective();
+
+  if (newCount === 0) {
+    return skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : "✅ Intervals.icu 同步完成";
+  }
+  const details = [`新增 ${newCount} 筆訓練紀錄`];
+  if (mergedCount) details.push(`其中 ${mergedCount} 筆合併了主觀感受`);
+  if (skippedCount) details.push(`略過 ${skippedCount} 筆已存在資料`);
+  return `✅ Intervals.icu 同步完成：${details.join("，")}`;
+}
