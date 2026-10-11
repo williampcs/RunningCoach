@@ -620,8 +620,12 @@ SSH 無回應、runner 失聯，部署失敗，重設 VM 後才恢復。
 - **退役期限可以和部署分開處理。** 線上的 `7536f61` 程式預設已是 `claude-sonnet-5-5`，但在它之前的 `.env.example` 寫的是
   `CLAUDE_MODEL=claude-sonnet-4-5`。VM 的 `.env` 若是照舊範本建立、之後沒改，正式環境仍在用 4.5。
   要在 11/30 前到 VM 確認；是的話改 `.env` 後 `docker compose restart` 即可，不需要重建映像。
-- **v2 合併回 `main` 時會再發生一次。** `v2` 分支上的 `.github/workflows/deploy.yml` 仍是 v1 的版本（在 VM 上建置映像），
-  合併當下就會在 VM 上建置 Node 映像。合併前要先把部署方式換掉（GitHub 代管的 runner 建置、VM 只拉取）。
+- **v2 合併回 `main` 時會再發生一次。** `v2` 分支上的 `.github/workflows/deploy.yml` 仍是 v1 的版本，合併就會觸發它。
+  VM 上的 `docker compose` 建置的是根目錄的 Python Dockerfile（`v2` 沒有改 `src/`、`Dockerfile`、`docker-compose.yml`、
+  `requirements.txt`），所以合併等於用同樣的方式重做一次 `62ae45f` 的部署，風險相同；v2 的 TypeScript 程式不會被部署。
+  合併前要先決定部署方式並換掉這個 workflow（GitHub 代管的 runner 建置、VM 只拉取）。
+- 待確認：`7536f61`（線上）到 `62ae45f` 之間 `requirements.txt` 與 `Dockerfile` 都沒有變，照理 `pip install` 那層可以沿用快取、
+  建置很輕。10/9 那次仍讓 VM 無回應，可能是 VM 上沒有建置快取，或原因不在建置本身，要到 VM 上看 Docker 的狀態才知道。
 - 提案（待決定）：不另外部署 `62ae45f`。它的內容（[KI-020] 到 [KI-022]）v2 都已移植，v1 停在 `7536f61`
   （確認上面的 `.env` 即可），部署問題直接在 v2 的切換中解決。
 
