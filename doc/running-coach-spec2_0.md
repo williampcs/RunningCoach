@@ -14,6 +14,7 @@
 | 2.0-draft | 2026-10-09 | 初稿：由「單人 Discord bot」改為「本地優先的網頁／App + 薄代理 server」，Discord 改為自建外殼 |
 | 2.0-draft | 2026-10-10 | 定案：TypeScript 為唯一語言、支援多家 LLM 供應商；4.3 四項查證完成；補上實作現況、repo 結構與本機開發方式 |
 | 2.0-draft | 2026-10-11 | 授權改為 AGPL-3.0（第 8 節）；補上下一步與交接事項（9.4、9.5） |
+| 2.0-draft | 2026-10-11 | 雲端 session 與本機 session 的分工（9.5）；v2 合併前要先換掉部署 workflow（9.2）；網頁版重建 `Coach` 的問題（9.4） |
 
 ---
 
@@ -330,7 +331,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 ### 9.2 階段 A 還差什麼
 
 1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
-2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。
+2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。`v2` 分支上的 `deploy.yml` 仍是 v1 的版本，v2 合併回 `main` 之前一定要先換掉（KI-023 的補充）。
 3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。
 4. 觀察一段時間後移除 Python 程式碼。
 
@@ -355,12 +356,12 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 依建議順序。第 1、2 項需要金鑰或正式環境，沒有的話從第 3 項開始。
 
-1. 處理 v1 的部署問題，讓 `62ae45f` 上線並在正式環境驗證（[KI-023](known-issues.md)）。這件事有期限：Sonnet 4.5 於 2026-11-30 退役。
+1. 處理 v1 的部署問題，讓 `62ae45f` 上線並在正式環境驗證（[KI-023](known-issues.md)）。這件事有期限：Sonnet 4.5 於 2026-11-30 退役。期限的部分只需確認 VM 的 `.env`，可以先單獨處理；是否乾脆跳過 `62ae45f`、直接切換到 v2，見 KI-023 的補充。
 2. 用真實的 API key 跑一次 v2：Claude 轉接層、Discord 外殼、網頁版各一次真實對話與跑後回報。
 3. 補齊 v2 的使用說明：README 改寫為 v2 的內容；`.env.example` 補上 v2 新增的變數（Discord 外殼的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`TIMEZONE` 等，以及代理的 `ADMIN_TOKEN`、`ALLOWED_ORIGINS`、`PROXY_POLICY` 等，以 `apps/discord/src/config.ts` 與 `apps/proxy/src/node.ts` 為準）。
 4. 為 v2 加上 CI：在 GitHub 代管的 runner 上執行 `npm test` 與 `npm run typecheck`；現有的部署 workflow 只處理 v1。
 5. 建置並驗證 Discord 外殼的 Dockerfile。
-6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。
+6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。另外，每次儲存設定都會重建 `Coach`，新舊實例各有自己的 `Db` 佇列與「壓縮進行中」旗標；背景壓縮進行中儲存設定，可能讓兩邊的 SQL 交錯進同一個交易，或重複壓縮同一批對話。改為共用同一個 `Db` 與壓縮狀態。
 7. 評估 Prompt Caching。v1 與 v2 都還沒啟用；單則訊息、間隔超過快取存活時間的對話會多付寫入費用，要先量測再決定。
 8. 階段 C 的其餘部分：帳號、金流、定價（第 5.4 節），以及部署代理。
 
@@ -371,6 +372,12 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - 任何金鑰：`.env` 沒有進版控。沒有金鑰時，以 9.3 的模擬服務開發與測試。
 - 正式環境的資料庫（`data/coach.db`）與 VM 的登入方式。
 - 先前在本機累積的對話紀錄與助理的記憶檔。這些內容中與專案有關的部分已整理進本文與 [known-issues.md](known-issues.md)。
+
+分工（2026-10-11 起）：
+
+- 雲端 session 只做開發：沒有金鑰；環境的網路政策擋下 `intervals.icu` 與 `discord.com`（`api.anthropic.com` 可連）；有 Docker 指令但 daemon 沒有啟動；有 Chromium 與 Playwright，可以搭配模擬服務在瀏覽器實測網頁版。
+- 需要真實金鑰或正式環境的驗證（9.4 的第 1、2 項）在本機的 session 做。
+- 雲端的容器用完就會被回收，要保留的改動與討論結論都要 commit 並 push 到 `v2`。
 
 另外：
 
