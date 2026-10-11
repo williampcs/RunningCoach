@@ -1,0 +1,21 @@
+{
+  "name": "@running-coach/discord",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --env-file=../../.env src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/main.js --external:better-sqlite3 --external:discord.js",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@running-coach/core": "*",
+    "@running-coach/sqlite-node": "*",
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22"
+  }
+}
