@@ -3,7 +3,9 @@
 #   docker build -f apps/discord/Dockerfile -t running-coach-bot .
 #   docker run -d --env-file .env -v "$PWD/data:/app/data" running-coach-bot
 
-# 所有 workspace 的 package.json 都要在場，npm ci 才認得 lockfile
+# 所有 workspace 的 package.json 都要在場，npm ci 才認得 lockfile。
+# npm ci 一律加 --ignore-scripts：better-sqlite3 的安裝步驟是 node-gyp rebuild，有內附的預編譯檔時
+# 不會建置任何東西，但 node-gyp 仍需要 Python 與 make，slim 映像沒有。esbuild 跳過安裝腳本也能執行。
 FROM node:22-slim AS manifests
 WORKDIR /repo
 COPY package.json package-lock.json ./
@@ -14,7 +16,7 @@ COPY apps/proxy/package.json apps/proxy/
 COPY apps/web/package.json apps/web/
 
 FROM manifests AS build
-RUN npm ci --workspace @running-coach/discord --include-workspace-root
+RUN npm ci --ignore-scripts --workspace @running-coach/discord --include-workspace-root
 COPY tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/discord ./apps/discord
@@ -22,7 +24,7 @@ RUN npm run build --workspace @running-coach/discord
 
 # 執行階段只需要沒被打包進去的兩個套件（better-sqlite3、discord.js）
 FROM manifests AS deps
-RUN npm ci --omit=dev --workspace @running-coach/discord
+RUN npm ci --ignore-scripts --omit=dev --workspace @running-coach/discord
 
 FROM node:22-slim
 ENV NODE_ENV=production

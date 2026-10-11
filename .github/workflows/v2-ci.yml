@@ -1,0 +1,38 @@
+# v2 的 CI：在 GitHub 代管的 runner 上執行，不碰 VM。
+# deploy.yml 只在 push 到 main 時於 VM 的 self-hosted runner 上執行，與這裡無關。
+name: v2 CI
+
+on:
+  push:
+    branches: [v2]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build --workspaces --if-present
+
+  discord-image:
+    name: Build Discord image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 只驗證能建置，不推送到 registry（部署方式見 KI-023）
+      - run: docker build -f apps/discord/Dockerfile -t running-coach-bot .
