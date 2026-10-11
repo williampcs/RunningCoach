@@ -6,6 +6,9 @@
 
 > 個人 side project，用來實驗「LLM Agent 的記憶管理與 context 工程」在真實、持續使用的場景下該如何設計。
 
+> **v2 開發中（`v2` 分支）**：正在改寫為 TypeScript，加入資料留在使用者裝置的網頁版與訂閱用的薄代理，Discord 改為自建外殼。
+> 規格、進度與本機開發方式見 [doc/running-coach-spec2_0.md](doc/running-coach-spec2_0.md)。本頁以下的內容描述的仍是 v1（Python 版）。
+
 ---
 
 ## ✨ 特色

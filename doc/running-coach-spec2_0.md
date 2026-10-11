@@ -13,7 +13,7 @@
 |------|------|----------|
 | 2.0-draft | 2026-10-09 | 初稿：由「單人 Discord bot」改為「本地優先的網頁／App + 薄代理 server」，Discord 改為自建外殼 |
 | 2.0-draft | 2026-10-10 | 定案：TypeScript 為唯一語言、支援多家 LLM 供應商；4.3 四項查證完成；補上實作現況、repo 結構與本機開發方式 |
-| 2.0-draft | 2026-10-11 | 授權改為 AGPL-3.0（第 8 節） |
+| 2.0-draft | 2026-10-11 | 授權改為 AGPL-3.0（第 8 節）；補上下一步與交接事項（9.4、9.5） |
 
 ---
 
@@ -330,7 +330,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 ### 9.2 階段 A 還差什麼
 
 1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
-2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。
+2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。
 3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。
 4. 觀察一段時間後移除 Python 程式碼。
 
@@ -351,12 +351,39 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 以模擬服務測試訂閱模式時，先向代理的 `POST /admin/accounts` 建立帳號取得憑證，再到網頁版的設定頁選「訂閱（經代理）」，填入 `http://localhost:8787` 與憑證。
 
+### 9.4 下一步
+
+依建議順序。第 1、2 項需要金鑰或正式環境，沒有的話從第 3 項開始。
+
+1. 處理 v1 的部署問題，讓 `62ae45f` 上線並在正式環境驗證（[KI-023](known-issues.md)）。這件事有期限：Sonnet 4.5 於 2026-11-30 退役。
+2. 用真實的 API key 跑一次 v2：Claude 轉接層、Discord 外殼、網頁版各一次真實對話與跑後回報。
+3. 補齊 v2 的使用說明：README 改寫為 v2 的內容；`.env.example` 補上 v2 新增的變數（Discord 外殼的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`TIMEZONE` 等，以及代理的 `ADMIN_TOKEN`、`ALLOWED_ORIGINS`、`PROXY_POLICY` 等，以 `apps/discord/src/config.ts` 與 `apps/proxy/src/node.ts` 為準）。
+4. 為 v2 加上 CI：在 GitHub 代管的 runner 上執行 `npm test` 與 `npm run typecheck`；現有的部署 workflow 只處理 v1。
+5. 建置並驗證 Discord 外殼的 Dockerfile。
+6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。
+7. 評估 Prompt Caching。v1 與 v2 都還沒啟用；單則訊息、間隔超過快取存活時間的對話會多付寫入費用，要先量測再決定。
+8. 階段 C 的其餘部分：帳號、金流、定價（第 5.4 節），以及部署代理。
+
+### 9.5 換一個環境接手時要知道的事
+
+以下這些不在 repo 裡，新的開發環境（例如雲端 session）拿不到：
+
+- 任何金鑰：`.env` 沒有進版控。沒有金鑰時，以 9.3 的模擬服務開發與測試。
+- 正式環境的資料庫（`data/coach.db`）與 VM 的登入方式。
+- 先前在本機累積的對話紀錄與助理的記憶檔。這些內容中與專案有關的部分已整理進本文與 [known-issues.md](known-issues.md)。
+
+另外：
+
+- 不要 push 或合併到 `main`（[KI-023](known-issues.md)）。v2 的工作都在 `v2` 分支。
+- 這個 repo 是公開的。金鑰、個人的訓練與生理資料、主機名稱與登入資訊都不要寫進任何會進版控的檔案。
+
 ---
 
-## 10. 版本與 repo 安排 [提案]
+## 10. 版本與 repo 安排
 
-- 規格：本文為 v2.0，v1.4 凍結為 Python 版的最終規格。決策紀錄繼續寫在 [known-issues.md](known-issues.md)，KI 編號延續。
-- 程式：開工前在目前的提交打上 `v1.4` 標籤；v2 在同一個 repo 開發，Python 版在階段 A 完成前保留並持續部署。
+- 規格：本文為 v2.0，v1.4 凍結為 Python 版的最終規格。決策紀錄繼續寫在 [known-issues.md](known-issues.md)，KI 編號延續（v2 的決策是 KI-024）。
+- 程式：v2 在同一個 repo 的 `v2` 分支開發，已 push 到 GitHub，尚未開 PR。`main` 仍是 v1，Python 版在階段 A 完成前保留並持續部署。
+- 尚未做：在 `main` 目前的提交（`62ae45f`）打上 `v1.4` 標籤。
 - 軟體版號：階段 A 完成為 2.0，之後 B、C、D 依序為 2.1、2.2、2.3。
 
 ---
