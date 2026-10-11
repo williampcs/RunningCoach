@@ -13,6 +13,9 @@ import {
   type ProviderKind,
 } from "../settings";
 
+// AGPL 第 13 條：對外提供服務時，使用者要能取得對應的原始碼。部署修改過的版本時，請把連結改成你的版本
+const SOURCE_URL = "https://github.com/williampcs/RunningCoach";
+
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const MODEL_LABELS: Record<Purpose, string> = { chat: "主對話", summary: "跑後摘要", compress: "對話壓縮" };
 
@@ -271,6 +274,13 @@ export function SettingsView() {
       <section className="card">
         <Markdown>{status}</Markdown>
       </section>
+
+      <p className="muted small center">
+        Running Coach 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
+        <a href={SOURCE_URL} target="_blank" rel="noreferrer">
+          原始碼
+        </a>
+      </p>
     </>
   );
 }
