@@ -1,0 +1,21 @@
+{
+  "name": "@running-coach/proxy",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --env-file-if-exists=.env src/node.ts",
+    "build": "esbuild src/node.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/node.js --external:better-sqlite3",
+    "start": "node dist/node.js",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "dev:mock": "ADMIN_TOKEN=dev-admin ANTHROPIC_API_KEY=mock-upstream UPSTREAM_BASE_URL=http://127.0.0.1:8788 ALLOWED_ORIGINS=http://localhost:5173 PROXY_DB_PATH=./data/dev-proxy.db tsx src/node.ts"
+  },
+  "dependencies": {
+    "@running-coach/core": "*",
+    "@running-coach/sqlite-node": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261010.1",
+    "@types/node": "^22"
+  }
+}
