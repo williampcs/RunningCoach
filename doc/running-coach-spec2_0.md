@@ -250,7 +250,9 @@ v1.4 的邏輯除了 Discord 介面、進入點與設定之外，全部進了共
 - 活動來源：僅 Intervals.icu（自填 API key）。
 - 功能：對話、選手資料、賽事管理、訓練計畫檢視與手動編輯、跑後回報、手動同步、用量與記憶狀態檢視、資料匯出／匯入（可匯入 v1 的 `coach.db`）。
 - 儲存：資料庫在瀏覽器的 OPFS；金鑰與設定在 localStorage（明文，設定頁有說明）。同一個網站同時只能開一個分頁，第二個分頁會退回暫時性的記憶體資料庫並顯示警告。
-- 回覆目前是等整段完成後一次顯示，尚未做逐字串流。
+- 對話回覆逐字串流：模型思考時顯示「教練思考中…」，執行工具時顯示正在做的事（例如「讀取最新的跑步活動…」），文字一產生就逐段顯示。完成後才寫入對話紀錄，中途失敗不保留半段回覆。
+- 思考階段只顯示「思考中」，不顯示思考摘要（2026-10-11 決定）。新模型預設不回傳思考內容，要顯示摘要得另外在請求中要求。
+- Discord 外殼不串流：Discord 只能反覆編輯同一則訊息，還有頻率限制，維持完成後一次送出。
 
 ### 6.2 與 Discord 版的行為差異 [提案]
 
@@ -320,12 +322,12 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 項目 | 狀態 | 驗證方式 |
 |------|------|----------|
 | 共用核心 | 完成 | 單元測試；與 Python 版以同一份資料庫逐項比對輸出（差異見 3.5） |
-| Claude 轉接層 | 完成 | 對模擬伺服器驗證 request 形狀與工具往返；**尚未打真實 API** |
-| OpenAI 相容轉接層 | 完成 | 同上；**尚未對真實的 OpenAI／Gemini 驗證** |
+| Claude 轉接層 | 完成 | 對模擬伺服器驗證 request 形狀與工具往返，含串流；**尚未打真實 API** |
+| OpenAI 相容轉接層 | 完成 | 同上；**尚未對真實的 OpenAI／Gemini 驗證**，串流格式的細節（例如工具呼叫的分段方式）各家可能不同 |
 | Discord 外殼 | 完成 | 設定載入與訊息分段有測試；打包後可啟動到登入 Discord 為止。**訊息與斜線指令的處理尚未以真實 bot token 驗證** |
 | Discord 的 Dockerfile | 可建置 | CI 每次建置；本地建置後以假設定啟動，資料庫初始化成功、停在連線 Discord。原本建置會失敗：better-sqlite3 13 的安裝步驟需要 Python，已改為 `npm ci --ignore-scripts` |
 | CI | 完成 | `.github/workflows/v2-ci.yml`：GitHub 代管的 runner 執行型別檢查、測試、各 workspace 建置與 Discord 映像建置 |
-| 網頁版 | 第一版完成 | 在瀏覽器中以模擬上游實際操作：設定、對話（含工具迴圈）、跑後回報、同步、賽事、匯入 v1 資料庫、重新整理後資料仍在、手機版面 |
+| 網頁版 | 第一版完成 | 在瀏覽器中以模擬上游實際操作：設定、對話（含工具迴圈）、跑後回報、同步、賽事、匯入 v1 資料庫、重新整理後資料仍在、手機版面。串流回覆以兩條路徑實測：訂閱（經代理，Claude 轉接層）與 OpenAI 相容服務直連 |
 | 薄代理（Node） | 完成 | 單元測試；以真實 SDK 走「核心 → 代理 → 模擬上游」；瀏覽器經代理對話 |
 | 薄代理（Workers） | 已寫 | 只通過型別檢查 |
 
@@ -345,13 +347,15 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | `npm install` | 安裝所有 workspace 的相依套件 |
 | `npm test` | 執行全部測試 |
 | `npm run typecheck` | 型別檢查 |
-| `npm run dev:mock` | 模擬上游（LLM 與 Intervals.icu），埠 8788 |
+| `npm run dev:mock` | 模擬上游（Anthropic 與 OpenAI 相容的 LLM API、Intervals.icu），埠 8788。回覆前停頓模擬思考，可用 `MOCK_THINK_MS`、`MOCK_CHUNK_MS` 調整 |
 | `npm run dev:mock -w @running-coach/proxy` | 薄代理，上游指向模擬服務，埠 8787，管理憑證為 `dev-admin` |
 | `npm run dev:mock -w @running-coach/web` | 網頁版，Intervals.icu 指向模擬服務，埠 5173 |
 | `npm run dev -w @running-coach/web` | 網頁版，連真實服務 |
 | `npm run dev -w @running-coach/discord` | Discord bot，讀取 repo 根目錄的 `.env` |
 
 以模擬服務測試訂閱模式時，先向代理的 `POST /admin/accounts` 建立帳號取得憑證，再到網頁版的設定頁選「訂閱（經代理）」，填入 `http://localhost:8787` 與憑證。
+
+不經代理測試 OpenAI 相容轉接層時，設定頁選「使用自己的 API key」→「其他 OpenAI 相容服務」，服務網址填 `http://127.0.0.1:8788/v1`，API key 與模型隨意填。
 
 ### 9.4 下一步
 
@@ -362,7 +366,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 3. 補齊 v2 的使用說明：README 改寫為 v2 的內容；`.env.example` 補上 v2 新增的變數（Discord 外殼的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`TIMEZONE` 等，以及代理的 `ADMIN_TOKEN`、`ALLOWED_ORIGINS`、`PROXY_POLICY` 等，以 `apps/discord/src/config.ts` 與 `apps/proxy/src/node.ts` 為準）。
 4. ~~為 v2 加上 CI~~：已完成（9.1）。現有的部署 workflow 只處理 v1。
 5. ~~建置並驗證 Discord 外殼的 Dockerfile~~：已完成（9.1）。映像只在 CI 建置驗證，尚未推送到 registry；要不要推送、推到哪裡，跟部署方式一起決定（9.2）。
-6. 網頁版：回覆逐字串流、service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。另外，~~每次儲存設定都會重建 `Coach`~~：已修正，網頁版只建立一個 `Coach`，儲存設定時以 `Coach.configure()` 更換 LLM、活動來源與設定，資料庫佇列與背景壓縮狀態保留。
+6. 網頁版：service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。~~回覆逐字串流~~：已完成（6.1）。另外，~~每次儲存設定都會重建 `Coach`~~：已修正，網頁版只建立一個 `Coach`，儲存設定時以 `Coach.configure()` 更換 LLM、活動來源與設定，資料庫佇列與背景壓縮狀態保留。
 7. 評估 Prompt Caching。v1 與 v2 都還沒啟用；單則訊息、間隔超過快取存活時間的對話會多付寫入費用，要先量測再決定。
 8. 階段 C 的其餘部分：帳號、金流、定價（第 5.4 節），以及部署代理。
 

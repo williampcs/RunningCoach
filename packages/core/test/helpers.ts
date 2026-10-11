@@ -7,6 +7,7 @@ import {
   type ChatRequest,
   type CoachSettings,
   type LlmProvider,
+  type NextOptions,
   type ToolResult,
   type Turn,
 } from "../src";
@@ -31,6 +32,8 @@ export interface RecordedCall {
   request: ChatRequest;
   toolResults?: ToolResult[];
   disableTools?: boolean;
+  /** 串流呼叫時才有；腳本中的函式可以用它模擬逐段產生的文字 */
+  onText?: (text: string) => void;
 }
 
 /** 依序回放預先寫好的回應，並記錄每次呼叫 */
@@ -45,7 +48,7 @@ export class ScriptedProvider implements LlmProvider {
 
   startChat(request: ChatRequest) {
     return {
-      next: async (opts: { toolResults?: ToolResult[]; disableTools?: boolean } = {}) => {
+      next: async (opts: NextOptions = {}) => {
         const call = { request, ...opts };
         this.calls.push(call);
         const step = this.script.shift();

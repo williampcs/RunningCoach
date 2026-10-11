@@ -57,13 +57,28 @@ export interface ChatRequest {
   effort: Effort;
 }
 
+export interface NextOptions {
+  toolResults?: ToolResult[];
+  disableTools?: boolean;
+  /** 提供時以串流方式呼叫，回覆文字一產生就交給它；回傳的 Turn 與非串流時相同 */
+  onText?: (text: string) => void;
+}
+
 /**
  * 一段進行中的對話。供應商原生格式的訊息（含思考區塊、工具呼叫紀錄）由 session 自行保存，
  * 核心只需要交回工具結果。
  */
 export interface ChatSession {
-  next(opts?: { toolResults?: ToolResult[]; disableTools?: boolean }): Promise<Turn>;
+  next(opts?: NextOptions): Promise<Turn>;
 }
+
+/**
+ * 主對話的進度，供介面即時顯示；不影響結果。
+ * - thinking：開始一次模型呼叫，在第一段文字出現前模型在思考
+ * - text：這次模型呼叫產生的文字片段
+ * - tool：開始執行工具；這次模型呼叫先前產生的文字不是最終回覆
+ */
+export type ChatEvent = { type: "thinking" } | { type: "text"; text: string } | { type: "tool"; name: string };
 
 export interface LlmProvider {
   /** 供 /status 顯示：該模型實際會套用的思考強度；不支援時回傳 null */

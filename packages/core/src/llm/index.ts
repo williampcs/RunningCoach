@@ -9,6 +9,7 @@ import type { Logger } from "../types";
 import {
   LlmError,
   Usage,
+  type ChatEvent,
   type ChatMessage,
   type Effort,
   type LlmProvider,
@@ -87,12 +88,14 @@ export class Llm {
   /**
    * 帶工具的多輪對話：模型要求呼叫工具時以 executeTool 執行，直到產生最終文字回應。
    * 最多 toolCallMaxRounds 輪；超過時禁止再呼叫工具，取得最終回應。
+   * 提供 onEvent 時以串流方式呼叫模型，並回報進度（見 ChatEvent）。
    */
   async runWithTools(
     system: string,
     messages: ChatMessage[],
     tools: ToolDef[],
     executeTool: (name: string, input: Record<string, unknown>) => Promise<string>,
+    onEvent?: (event: ChatEvent) => void,
   ): Promise<LlmResult> {
     const usage = new Usage();
     const session = this.config.provider.startChat({
@@ -104,13 +107,17 @@ export class Llm {
       effort: this.config.chatEffort,
     });
 
-    let turn = await session.next();
+    const stream = onEvent ? { onText: (text: string) => onEvent({ type: "text", text }) } : {};
+
+    onEvent?.({ type: "thinking" });
+    let turn = await session.next(stream);
     usage.add(turn.usage);
 
     for (let round = 1; turn.finish === "tool_use"; round++) {
       usage.toolRounds += 1;
       const toolResults: ToolResult[] = [];
       for (const call of turn.toolCalls) {
+        onEvent?.({ type: "tool", name: call.name });
         const content = await executeTool(call.name, call.input);
         this.logger.info(`Tool [${call.name}] input=${JSON.stringify(call.input)} → ${content.slice(0, 120)}`);
         toolResults.push({ id: call.id, content });
@@ -118,7 +125,8 @@ export class Llm {
 
       const lastRound = round >= this.config.toolCallMaxRounds;
       if (lastRound) this.logger.warn(`Max tool call rounds (${this.config.toolCallMaxRounds}) reached`);
-      turn = await session.next({ toolResults, disableTools: lastRound });
+      onEvent?.({ type: "thinking" });
+      turn = await session.next({ toolResults, disableTools: lastRound, ...stream });
       usage.add(turn.usage);
       if (lastRound) break;
     }

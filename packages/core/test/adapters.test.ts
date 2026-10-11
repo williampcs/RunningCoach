@@ -24,7 +24,20 @@ afterEach(() => {
   server = undefined;
 });
 
-/** 依序回覆預先寫好的 JSON，並記錄收到的 request */
+/** 串流回應的原文（SSE） */
+class Sse {
+  constructor(readonly body: string) {}
+}
+
+/** Anthropic 格式的 SSE：每個事件帶 event 名稱 */
+const anthropicSse = (events: Record<string, unknown>[]) =>
+  new Sse(events.map((e) => `event: ${String(e.type)}\ndata: ${JSON.stringify(e)}\n\n`).join(""));
+
+/** OpenAI 格式的 SSE：只有 data，以 [DONE] 結尾 */
+const openaiSse = (chunks: unknown[], eol = "\n") =>
+  new Sse([...chunks.map((c) => JSON.stringify(c)), "[DONE]"].map((d) => `data: ${d}${eol}${eol}`).join(""));
+
+/** 依序回覆預先寫好的 JSON 或 SSE，並記錄收到的 request */
 async function mockApi(responses: unknown[]) {
   const captured: Captured[] = [];
   server = createServer((req, res) => {
@@ -32,8 +45,14 @@ async function mockApi(responses: unknown[]) {
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       captured.push({ headers: req.headers, body: JSON.parse(raw) });
+      const response = responses.shift();
+      if (response instanceof Sse) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(response.body);
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(responses.shift()));
+      res.end(JSON.stringify(response));
     });
   });
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -116,6 +135,88 @@ describe("AnthropicProvider", () => {
     expect(captured[1]!.body.output_config).toEqual({ effort: "low" });
     expect(provider.effortFor("claude-haiku-4-5", "low")).toBeNull();
     expect(provider.effortFor("claude-haiku-5-5", "low")).toBe("low");
+  });
+  it("串流：文字片段即時交出，結束後的結果與工具往返和非串流相同", async () => {
+    const start = (usage: Record<string, number>) => ({
+      type: "message_start",
+      message: {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-5-5",
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 900, output_tokens: 1, ...usage },
+      },
+    });
+    const block = (index: number, content_block: Record<string, unknown>) => ({ type: "content_block_start", index, content_block });
+    const delta = (index: number, d: Record<string, unknown>) => ({ type: "content_block_delta", index, delta: d });
+    const stop = (index: number) => ({ type: "content_block_stop", index });
+    const end = (stopReason: string, outputTokens: number) => [
+      { type: "message_delta", delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: outputTokens } },
+      { type: "message_stop" },
+    ];
+    const { baseURL, captured } = await mockApi([
+      anthropicSse([
+        start({ cache_read_input_tokens: 300, cache_creation_input_tokens: 20 }),
+        // 思考內容不回傳，只有簽章
+        block(0, { type: "thinking", thinking: "", signature: "" }),
+        delta(0, { type: "signature_delta", signature: "sig-abc" }),
+        stop(0),
+        block(1, { type: "text", text: "" }),
+        delta(1, { type: "text_delta", text: "讓我" }),
+        delta(1, { type: "text_delta", text: "看看" }),
+        stop(1),
+        block(2, { type: "tool_use", id: "toolu_1", name: "get_training_plan", input: {} }),
+        delta(2, { type: "input_json_delta", partial_json: '{"week' }),
+        delta(2, { type: "input_json_delta", partial_json: '":"2026-W41"}' }),
+        stop(2),
+        ...end("tool_use", 40),
+      ]),
+      anthropicSse([
+        start({}),
+        block(0, { type: "text", text: "" }),
+        delta(0, { type: "text_delta", text: "本週" }),
+        delta(0, { type: "text_delta", text: "輕鬆跑" }),
+        stop(0),
+        block(1, { type: "text", text: "" }),
+        delta(1, { type: "text_delta", text: "週末長跑" }),
+        stop(1),
+        ...end("end_turn", 60),
+      ]),
+    ]);
+    const session = new AnthropicProvider({ apiKey: "test-key", baseURL }).startChat({
+      model: "claude-opus-5-5",
+      messages: [{ role: "user", content: "這週怎麼練？" }],
+      tools,
+      maxTokens: 16000,
+      effort: "medium",
+    });
+    const texts: string[] = [];
+    const onText = (text: string) => texts.push(text);
+
+    const first = await session.next({ onText });
+    expect(first).toEqual({
+      text: "讓我看看",
+      toolCalls: [{ id: "toolu_1", name: "get_training_plan", input: { week: "2026-W41" } }],
+      finish: "tool_use",
+      usage: { input: 900, cacheRead: 300, cacheWrite: 20, output: 40 },
+    });
+    const second = await session.next({ toolResults: [{ id: "toolu_1", content: "計畫內容" }], onText });
+    // 多個文字區塊與非串流一樣以換行串接
+    expect(second).toMatchObject({ text: "本週輕鬆跑\n週末長跑", finish: "ok", usage: { output: 60 } });
+    expect(texts).toEqual(["讓我", "看看", "本週", "輕鬆跑", "\n", "週末長跑"]);
+
+    expect(captured[0]!.body).toMatchObject({ stream: true, output_config: { effort: "medium" } });
+    expect(captured[1]!.body.messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig-abc" },
+        { type: "text", text: "讓我看看" },
+        { type: "tool_use", id: "toolu_1", name: "get_training_plan", input: { week: "2026-W41" } },
+      ],
+    });
   });
 });
 
@@ -203,6 +304,96 @@ describe("OpenAICompatibleProvider", () => {
     expect((await provider.startChat(request).next()).finish).toBe("truncated");
     expect(captured[0]!.body).toEqual({ model: "m", messages: [{ role: "user", content: "hi" }], max_tokens: 500 });
     expect(provider.effortFor("m", "low")).toBeNull();
+  });
+
+  it("串流：合併逐段送達的文字與工具呼叫，組回與非串流相同的 assistant 訊息", async () => {
+    const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) => ({
+      choices: [{ index: 0, delta, finish_reason }],
+    });
+    const { baseURL, captured } = await mockApi([
+      openaiSse([
+        chunk({
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              index: 0,
+              id: "call_1",
+              type: "function",
+              function: { name: "get_training_plan", arguments: "" },
+              extra_content: { google: { thought_signature: "sig-xyz" } },
+            },
+          ],
+        }),
+        chunk({ tool_calls: [{ index: 0, function: { arguments: '{"week":' } }] }),
+        chunk({ tool_calls: [{ index: 0, function: { arguments: '"2026-W41"}' } }] }),
+        chunk({}, "tool_calls"),
+        { choices: [], usage: { prompt_tokens: 1000, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 400 } } },
+      ]),
+      // 以 CRLF 換行的伺服器
+      openaiSse(
+        [
+          chunk({ role: "assistant", content: "" }),
+          chunk({ content: "本週" }),
+          chunk({ content: "輕鬆跑" }, "stop"),
+          { choices: [], usage: { prompt_tokens: 1100, completion_tokens: 50 } },
+        ],
+        "\r\n",
+      ),
+    ]);
+    const session = new OpenAICompatibleProvider({ apiKey: "k", baseURL }).startChat({
+      model: "m",
+      messages: [{ role: "user", content: "這週怎麼練？" }],
+      tools,
+      maxTokens: 16000,
+      effort: "low",
+    });
+    const texts: string[] = [];
+    const onText = (text: string) => texts.push(text);
+
+    const first = await session.next({ onText });
+    expect(first).toEqual({
+      text: "",
+      toolCalls: [{ id: "call_1", name: "get_training_plan", input: { week: "2026-W41" } }],
+      finish: "tool_use",
+      usage: { input: 600, cacheRead: 400, cacheWrite: 0, output: 30 },
+    });
+    const second = await session.next({ toolResults: [{ id: "call_1", content: "計畫內容" }], onText });
+    expect(second).toEqual({
+      text: "本週輕鬆跑",
+      toolCalls: [],
+      finish: "ok",
+      usage: { input: 1100, cacheRead: 0, cacheWrite: 0, output: 50 },
+    });
+    expect(texts).toEqual(["本週", "輕鬆跑"]);
+
+    expect(captured[0]!.body).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+    expect(captured[1]!.body.messages[1]).toEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "get_training_plan", arguments: '{"week":"2026-W41"}' },
+          extra_content: { google: { thought_signature: "sig-xyz" } },
+        },
+      ],
+    });
+  });
+
+  it("串流中途收到錯誤事件時丟出錯誤", async () => {
+    const { baseURL } = await mockApi([
+      openaiSse([{ choices: [{ index: 0, delta: { content: "講到" } }] }, { error: { message: "overloaded" } }]),
+    ]);
+    const texts: string[] = [];
+    const error = await new OpenAICompatibleProvider({ apiKey: "k", baseURL })
+      .startChat({ model: "m", messages: [{ role: "user", content: "hi" }], maxTokens: 10, effort: "low" })
+      .next({ onText: (t) => texts.push(t) })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OpenAICompatibleError);
+    expect(error).toMatchObject({ message: "overloaded" });
+    expect(texts).toEqual(["講到"]);
   });
 
   it("HTTP 錯誤時丟出帶狀態碼的錯誤", async () => {

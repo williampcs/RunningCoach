@@ -2,7 +2,7 @@
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
-import { Llm, type LlmConfig, type Purpose, type Usage } from "./llm";
+import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
 import { runSync } from "./sync";
 import { buildTools, createToolExecutor, generateWorkoutSummary, type ToolExecutor } from "./tools";
@@ -125,8 +125,11 @@ export class Coach {
     return this.db.init();
   }
 
-  /** 接收使用者訊息，回傳模型的文字回應與 token 用量統計 */
-  async chat(userMessage: string): Promise<ChatReply> {
+  /**
+   * 接收使用者訊息，回傳模型的文字回應與 token 用量統計。
+   * 提供 onEvent 時以串流方式呼叫模型並回報進度；回覆仍在完成後才寫入對話紀錄。
+   */
+  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void): Promise<ChatReply> {
     const rt = this.runtime;
     await this.db.appendConversation("user", userMessage);
 
@@ -136,7 +139,13 @@ export class Coach {
     const context = await rt.context.getContextForApi();
     let result;
     try {
-      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings), rt.executeTool);
+      result = await rt.llm.runWithTools(
+        context.system,
+        context.messages,
+        buildTools(rt.settings),
+        rt.executeTool,
+        onEvent,
+      );
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;

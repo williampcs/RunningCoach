@@ -1,14 +1,20 @@
 /**
  * 本機開發用的模擬上游 — 不需要任何金鑰、不花 token 就能把整條流程跑起來.
  *
- *   POST /v1/messages                         模擬 Anthropic Messages API（依規則回覆，會呼叫工具）
+ *   POST /v1/messages                         模擬 Anthropic Messages API（依規則回覆，會呼叫工具；支援串流）
+ *   POST /v1/chat/completions                 模擬 OpenAI 相容的 Chat Completions（同一套規則；支援串流）
  *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步）
+ *
+ * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
  * 搭配方式見 README 的「本機開發」。
  */
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8788);
+// 模擬思考的停頓與串流時每段文字的間隔（毫秒）
+const THINK_MS = Number(process.env.MOCK_THINK_MS ?? 800);
+const CHUNK_MS = Number(process.env.MOCK_CHUNK_MS ?? 25);
 
 type Block = { type: string; [key: string]: unknown };
 type Message = { role: string; content: string | Block[] };
@@ -90,9 +96,130 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-headers": "*",
+  // 萬用字元不涵蓋 authorization，要另外列出
+  "access-control-allow-headers": "*, authorization",
   "access-control-allow-methods": "GET, POST, OPTIONS",
 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 把文字切成幾個字一段 */
+function pieces(text: string, size = 3): string[] {
+  const chars = Array.from(text);
+  const out: string[] = [];
+  for (let i = 0; i < chars.length; i += size) out.push(chars.slice(i, i + size).join(""));
+  return out;
+}
+
+const estimateUsage = (body: { messages: unknown; system?: unknown }, content: Block[]) => ({
+  input: Math.round((JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length) / 2),
+  output: Math.round(JSON.stringify(content).length / 2),
+});
+
+function readJson(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(raw));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
+/** Anthropic 格式的串流：一段不回傳內容的思考，接著逐段送出文字與工具呼叫 */
+async function streamAnthropic(res: ServerResponse, model: string, content: Block[], usage: { input: number; output: number }) {
+  res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
+  const send = (type: string, data: Record<string, unknown> = {}) =>
+    res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+
+  send("message_start", {
+    message: {
+      id: `msg_${Date.now()}`,
+      type: "message",
+      role: "assistant",
+      model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: usage.input, output_tokens: 1 },
+    },
+  });
+  send("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
+  await sleep(THINK_MS);
+  send("content_block_delta", { index: 0, delta: { type: "signature_delta", signature: "mock-signature" } });
+  send("content_block_stop", { index: 0 });
+
+  for (const [i, block] of content.entries()) {
+    const index = i + 1;
+    if (block.type === "text") {
+      send("content_block_start", { index, content_block: { type: "text", text: "" } });
+      for (const text of pieces(String(block.text))) {
+        send("content_block_delta", { index, delta: { type: "text_delta", text } });
+        await sleep(CHUNK_MS);
+      }
+    } else {
+      send("content_block_start", { index, content_block: { ...block, input: {} } });
+      send("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
+    }
+    send("content_block_stop", { index });
+  }
+  const stopReason = content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn";
+  send("message_delta", { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: usage.output } });
+  send("message_stop");
+  res.end();
+}
+
+type OpenAIMessage = { role: string; content: string | null; tool_calls?: unknown[] };
+
+/** OpenAI 格式的請求轉成 reply() 使用的格式（只用得到最後一則與是否有工具） */
+function fromOpenAI(body: { messages: OpenAIMessage[]; tools?: unknown[]; tool_choice?: unknown }) {
+  return {
+    messages: body.messages
+      .filter((m) => m.role !== "system")
+      .map((m): Message =>
+        m.role === "tool"
+          ? { role: "user", content: [{ type: "tool_result", content: m.content ?? "" }] }
+          : { role: m.role, content: m.content ?? "" },
+      ),
+    tools: body.tools,
+    tool_choice: body.tool_choice === "none" ? { type: "none" } : undefined,
+  };
+}
+
+function toOpenAI(content: Block[]) {
+  const text = content.filter((b) => b.type === "text").map((b) => String(b.text)).join("\n");
+  const toolCalls = content
+    .filter((b) => b.type === "tool_use")
+    .map((b) => ({ id: String(b.id), type: "function", function: { name: String(b.name), arguments: JSON.stringify(b.input) } }));
+  return { text, toolCalls, finishReason: toolCalls.length ? "tool_calls" : "stop" };
+}
+
+async function streamOpenAI(res: ServerResponse, content: Block[], usage: { input: number; output: number }, includeUsage: boolean) {
+  res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
+  const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
+    send({ id: "chatcmpl-mock", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] });
+  const { text, toolCalls, finishReason } = toOpenAI(content);
+
+  chunk({ role: "assistant", content: "" });
+  await sleep(THINK_MS);
+  for (const piece of pieces(text)) {
+    chunk({ content: piece });
+    await sleep(CHUNK_MS);
+  }
+  for (const [index, call] of toolCalls.entries()) {
+    chunk({ tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: "" } }] });
+    chunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
+  }
+  chunk({}, finishReason);
+  if (includeUsage) send({ id: "chatcmpl-mock", choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output } });
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
 
 createServer((req, res) => {
   const send = (status: number, payload: unknown) => {
@@ -107,13 +234,12 @@ createServer((req, res) => {
     return send(200, activities());
   }
   if (req.method === "POST" && path === "/v1/messages") {
-    let raw = "";
-    req.on("data", (chunk) => (raw += chunk));
-    req.on("end", () => {
-      const body = JSON.parse(raw);
+    void readJson(req).then(async (body) => {
       const content = reply(body);
-      const inputChars = JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length;
-      console.log(`${new Date().toISOString()} /v1/messages model=${body.model} → ${content[0]?.type}`);
+      const usage = estimateUsage(body, content);
+      console.log(`${new Date().toISOString()} /v1/messages model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
+      if (body.stream) return streamAnthropic(res, body.model, content, usage);
+      await sleep(THINK_MS);
       send(200, {
         id: `msg_${Date.now()}`,
         type: "message",
@@ -122,9 +248,33 @@ createServer((req, res) => {
         content,
         stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: Math.round(inputChars / 2), output_tokens: Math.round(JSON.stringify(content).length / 2) },
+        usage: { input_tokens: usage.input, output_tokens: usage.output },
       });
-    });
+    }, () => send(400, { type: "error", error: { type: "invalid_request_error", message: "invalid JSON" } }));
+    return;
+  }
+  if (req.method === "POST" && path === "/v1/chat/completions") {
+    void readJson(req).then(async (body) => {
+      const content = reply(fromOpenAI(body));
+      const usage = estimateUsage(body, content);
+      console.log(`${new Date().toISOString()} /v1/chat/completions model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
+      if (body.stream) return streamOpenAI(res, content, usage, Boolean(body.stream_options?.include_usage));
+      await sleep(THINK_MS);
+      const { text, toolCalls, finishReason } = toOpenAI(content);
+      send(200, {
+        id: "chatcmpl-mock",
+        object: "chat.completion",
+        model: body.model,
+        choices: [
+          {
+            index: 0,
+            finish_reason: finishReason,
+            message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+          },
+        ],
+        usage: { prompt_tokens: usage.input, completion_tokens: usage.output },
+      });
+    }, () => send(400, { error: { message: "invalid JSON" } }));
     return;
   }
   send(404, { type: "error", error: { type: "not_found_error", message: path } });

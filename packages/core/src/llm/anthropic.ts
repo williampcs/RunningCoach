@@ -43,7 +43,7 @@ export class AnthropicProvider implements LlmProvider {
       async next(opts = {}): Promise<Turn> {
         if (opts.toolResults) messages.push({ role: "user", content: toToolResultBlocks(opts.toolResults) });
 
-        const response = await client.messages.create({
+        const params: Anthropic.MessageCreateParamsNonStreaming = {
           model: request.model,
           max_tokens: request.maxTokens,
           ...(request.system ? { system: request.system } : {}),
@@ -53,7 +53,10 @@ export class AnthropicProvider implements LlmProvider {
           ...(tools?.length && opts.disableTools ? { tool_choice: { type: "none" as const } } : {}),
           // 新模型預設開啟思考，思考深度以 effort 控制
           ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
-        });
+        };
+        const response = opts.onText
+          ? await streamMessage(client, params, opts.onText)
+          : await client.messages.create(params);
 
         // 本輪 assistant 訊息原封不動加回（含 thinking、tool_use 區塊）
         messages.push({ role: "assistant", content: response.content });
@@ -81,6 +84,28 @@ export class AnthropicProvider implements LlmProvider {
       },
     };
   }
+}
+
+/**
+ * 以串流方式送出：文字片段一產生就交給 onText，結束後取得與非串流相同的完整訊息。
+ * 思考內容不會回傳（新模型預設如此），思考期間沒有文字片段。
+ */
+async function streamMessage(
+  client: Anthropic,
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  onText: (text: string) => void,
+): Promise<Anthropic.Message> {
+  const stream = client.messages.stream(params);
+  let textBlocks = 0;
+  for await (const event of stream) {
+    if (event.type === "content_block_start" && event.content_block.type === "text") {
+      // 非串流時多個文字區塊以換行串接，這裡保持一致
+      if (textBlocks++ > 0) onText("\n");
+    } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      onText(event.delta.text);
+    }
+  }
+  return stream.finalMessage();
 }
 
 function toToolResultBlocks(results: ToolResult[]): Anthropic.ToolResultBlockParam[] {

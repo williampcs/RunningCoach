@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LlmError, type ToolDef } from "../src";
+import { LlmError, type ChatEvent, type ToolDef } from "../src";
 import { Llm } from "../src/llm";
 import { silentLogger } from "../src/types";
 import { ScriptedProvider, toolTurn, turn } from "./helpers";
@@ -25,6 +25,38 @@ function makeLlm(script: ConstructorParameters<typeof ScriptedProvider>[0], tool
 }
 
 describe("Llm.runWithTools", () => {
+  it("提供 onEvent 時以串流方式呼叫，依序回報思考、文字與工具；沒有時不串流", async () => {
+    const { llm, provider } = makeLlm([
+      (call) => {
+        call.onText?.("讓我查一下");
+        return turn({ text: "讓我查一下", finish: "tool_use", toolCalls: [{ id: "a", name: "echo", input: {} }] });
+      },
+      (call) => {
+        call.onText?.("完");
+        call.onText?.("成");
+        return turn({ text: "完成" });
+      },
+      turn({ text: "不串流" }),
+    ]);
+    const events: ChatEvent[] = [];
+    const result = await llm.runWithTools("sys", [{ role: "user", content: "hi" }], tools, async () => "ok", (e) => {
+      events.push(e);
+    });
+
+    expect(result.text).toBe("完成");
+    expect(events).toEqual([
+      { type: "thinking" },
+      { type: "text", text: "讓我查一下" },
+      { type: "tool", name: "echo" },
+      { type: "thinking" },
+      { type: "text", text: "完" },
+      { type: "text", text: "成" },
+    ]);
+
+    await llm.runWithTools("sys", [{ role: "user", content: "hi" }], tools, async () => "ok");
+    expect(provider.calls.map((c) => typeof c.onText)).toEqual(["function", "function", "undefined"]);
+  });
+
   it("執行工具並把結果交回，直到模型產生最終回應；用量逐輪累加", async () => {
     const { llm, provider } = makeLlm([
       turn({
