@@ -15,6 +15,7 @@
 | 2.0-draft | 2026-10-10 | 定案：TypeScript 為唯一語言、支援多家 LLM 供應商；4.3 四項查證完成；補上實作現況、repo 結構與本機開發方式 |
 | 2.0-draft | 2026-10-11 | 授權改為 AGPL-3.0（第 8 節）；補上下一步與交接事項（9.4、9.5） |
 | 2.0-draft | 2026-10-11 | 雲端 session 與本機 session 的分工（9.5）；v2 合併前要先換掉部署 workflow（9.2）；網頁版重建 `Coach` 的問題（9.4） |
+| 2.0-draft | 2026-10-11 | 加上 CI 並修正 Discord 映像的建置（9.1）；網頁版改為只有一個 `Coach`；對話回覆逐字串流，思考階段只顯示「思考中」（6.1）；README 與 `.env.example` 改寫為 v2（9.4） |
 
 ---
 
@@ -335,7 +336,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
 2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。`v2` 分支上的 `deploy.yml` 仍是 v1 的版本，v2 合併回 `main` 之前一定要先換掉（KI-023 的補充）。
-3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。
+3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。若以 `docker run --env-file` 啟動，先把 `.env` 裡的行尾註解移到獨立一行：v1 的範例檔有 `CLAUDE_MODEL_SUMMARY=claude-haiku-5-5     # 跑後分析摘要` 這種寫法，docker compose 會去掉行尾註解，`docker run --env-file` 不會，模型名稱會連同註解一起被讀進去。
 4. 觀察一段時間後移除 Python 程式碼。
 
 ### 9.3 本機開發
@@ -363,7 +364,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 1. 處理 v1 的部署問題，讓 `62ae45f` 上線並在正式環境驗證（[KI-023](known-issues.md)）。這件事有期限：Sonnet 4.5 於 2026-11-30 退役。期限的部分只需確認 VM 的 `.env`，可以先單獨處理；是否乾脆跳過 `62ae45f`、直接切換到 v2，見 KI-023 的補充。
 2. 用真實的 API key 跑一次 v2：Claude 轉接層、Discord 外殼、網頁版各一次真實對話與跑後回報。
-3. 補齊 v2 的使用說明：README 改寫為 v2 的內容；`.env.example` 補上 v2 新增的變數（Discord 外殼的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`、`TIMEZONE` 等，以及代理的 `ADMIN_TOKEN`、`ALLOWED_ORIGINS`、`PROXY_POLICY` 等，以 `apps/discord/src/config.ts` 與 `apps/proxy/src/node.ts` 為準）。
+3. ~~補齊 v2 的使用說明~~：已完成。README 改寫為 v2 的內容；根目錄的 `.env.example` 是 Discord 外殼的設定（變數名稱沿用 v1），代理的設定在 `apps/proxy/.env.example`。
 4. ~~為 v2 加上 CI~~：已完成（9.1）。現有的部署 workflow 只處理 v1。
 5. ~~建置並驗證 Discord 外殼的 Dockerfile~~：已完成（9.1）。映像只在 CI 建置驗證，尚未推送到 registry；要不要推送、推到哪裡，跟部署方式一起決定（9.2）。
 6. 網頁版：service worker（離線開啟）、在瀏覽器確認設定頁底部的原始碼連結。~~回覆逐字串流~~：已完成（6.1）。另外，~~每次儲存設定都會重建 `Coach`~~：已修正，網頁版只建立一個 `Coach`，儲存設定時以 `Coach.configure()` 更換 LLM、活動來源與設定，資料庫佇列與背景壓縮狀態保留。

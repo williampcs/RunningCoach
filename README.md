@@ -1,143 +1,138 @@
 # Running Coach 🏃
 
-一個運行在 Discord 上的 AI 跑步教練。使用者以自然語言對話，Agent 會結合 **Intervals.icu 客觀數據**與**個人主觀感受**，提供個人化的訓練建議、賽事規劃與跑後分析。
+AI 跑步教練。用自然語言對話，教練會結合 **Intervals.icu 的客觀數據**與**你自己的主觀感受**，給出個人化的訓練建議、賽事規劃與跑後分析。
 
-核心設計是一套 **五層記憶架構**，讓 Claude 在有限的 context window 內維持長期記憶（選手資料、訓練歷史、賽事目標、對話重點），並透過 **Tool Use（function calling）** 按需載入資料，把每次 API 呼叫的 token 用量壓到最低。
+核心是一套 **五層記憶架構**：在有限的 context window 內維持長期記憶（選手資料、訓練歷史、賽事目標、對話重點），並透過 **Tool Use** 按需載入資料，把每次呼叫的 token 用量壓到最低。
 
-> 個人 side project，用來實驗「LLM Agent 的記憶管理與 context 工程」在真實、持續使用的場景下該如何設計。
-
-> **v2 開發中（`v2` 分支）**：正在改寫為 TypeScript，加入資料留在使用者裝置的網頁版與訂閱用的薄代理，Discord 改為自建外殼。
-> 規格、進度與本機開發方式見 [doc/running-coach-spec2_0.md](doc/running-coach-spec2_0.md)。本頁以下的內容描述的仍是 v1（Python 版）。
+> 這個分支（`v2`）是改寫中的 TypeScript 版：資料留在使用者裝置的網頁版、可選的訂閱代理，以及自建的 Discord bot。
+> 目前線上運作的是 v1（Python 的 Discord bot），在 `main` 分支，規格見 [running-coach-spec1_4.md](doc/running-coach-spec1_4.md)。
+> v2 還沒有部署，也還沒以真實的 API key 驗證；進度與尚未驗證的部分見 [v2 規格第 9 節](doc/running-coach-spec2_0.md)。
 
 ---
 
 ## ✨ 特色
 
-- **對話式教練** — 直接用中文聊天，例如「今天跑完 10K，體感 7/10，右膝有點緊」，Agent 會自動抓取跑步活動、合併主觀感受、生成分析摘要並存檔。
-- **五層記憶架構** — 系統提示、訓練歷史、訓練計畫、對話摘要、rolling window 分層管理，兼顧「記得住」與「不爆 token」。
-- **Tool Use 按需載入** — 訓練歷史、訓練計畫等大型資料不常駐 context，由 Claude 依對話意圖自行決定何時呼叫工具讀取。
-- **自動對話壓縮** — 對話超過閾值時，非同步將舊訊息壓縮成結構化摘要，不阻塞主回應。
-- **Intervals.icu 整合** — 透過個人 API Key 直接串接，支援 Garmin / Coros / Wahoo 等手錶數據即時回報與 `/sync` 批次補齊。
-- **GitHub Actions 自動部署 (CI/CD)** — 透過 Self-hosted Runner 實現 `git push` 後由 GCP VM 自動拉取程式碼並重啟 Docker 容器。
-- **Token 用量透明化** — 每則回應附上各記憶層的 input/output token 估算，方便觀察 context 成本。
+- **對話式教練**：例如「今天跑完 10K，體感 7/10，右膝有點緊」，教練會抓取跑步活動、合併主觀感受、產生分析並存檔。
+- **資料留在你的裝置**：網頁版的資料庫存在瀏覽器裡（SQLite／OPFS），金鑰也只存在瀏覽器。作者的伺服器不保存對話與訓練資料。
+- **兩種使用 AI 的方式**：
+  - **自備 key**：Claude、OpenAI、Gemini 或其他 OpenAI 相容服務，由瀏覽器直接連線。
+  - **訂閱**：經作者的薄代理轉發，只提供 Claude；代理只記帳號與用量，不留內容。
+- **五層記憶 + 按需載入**：訓練歷史與計畫不常駐 context，由模型視對話需要呼叫工具讀取。
+- **逐字串流**：思考時顯示「思考中」，執行工具時顯示正在做的事，文字一產生就顯示。
+- **透明**：設定頁依模式與供應商列出資料會送到哪裡，確認後才能開始對話。
+- **可以自建 Discord bot**：同一份核心，跑在你自己的機器上。
 
 ---
 
 ## 🧠 五層記憶架構
 
-每次呼叫 Claude API 時，`context_manager` 動態組合以下五層：
+每次呼叫模型時，`packages/core/src/context.ts` 組合以下五層：
 
 | 層 | 內容 | 載入方式 |
 |----|------|----------|
 | **層 1** — System Prompt | 當前日期/時區、選手資料、心率區間、近期賽事 | 常駐（動態組合） |
-| **層 2** — 訓練歷史摘要 | 最近數筆訓練的 AI 分析摘要 | 按需（`get_recent_workouts` tool） |
-| **層 3** — 訓練計畫 | 當前啟用中的週訓練計畫 | 按需（`get_training_plan` tool） |
+| **層 2** — 訓練歷史摘要 | 最近數筆訓練的 AI 分析摘要 | 按需（`get_recent_workouts` 工具） |
+| **層 3** — 訓練計畫 | 當前啟用中的週訓練計畫 | 按需（`get_training_plan` 工具） |
 | **層 4** — 對話摘要 | 壓縮後的歷史對話重點 | 常駐（壓縮後產生） |
-| **層 5** — Rolling Window | 最近 N 輪原始對話 | 常駐 |
+| **層 5** — Rolling Window | 尚未壓縮的原始對話 | 常駐 |
 
-層 2、層 3 刻意改為 tool 按需載入，只有在討論訓練狀態或計畫時才進入 context，避免每則閒聊都付出完整歷史的 token 成本。
-
----
-
-## 🏗️ 專案結構
-
-```
-.github/
-└── workflows/
-    └── deploy.yml             # GitHub Actions CI/CD 自動部署工作流程
-
-src/
-├── main.py                    # 進入點：初始化 DB、啟動 Bot
-├── config.py                  # 環境變數集中管理
-├── llm.py                     # LLM 呼叫層：唯一使用 anthropic SDK 的模組、tool call 迴圈、用量統計
-├── bot/
-│   └── discord_bot.py         # Discord 事件處理、slash 指令、訊息分段
-├── agent/
-│   ├── loop.py                # Agent 主流程：組 context、tool 定義與執行
-│   └── sync.py                # /sync：批次拉取 Intervals.icu 並合併主觀暫存
-├── memory/
-│   ├── db.py                  # SQLite 存取層（所有 table 與查詢）
-│   ├── context_manager.py     # 五層 context 組合
-│   └── summarizer.py          # 非同步對話壓縮
-└── tools/
-    ├── intervals_tool.py      # Intervals.icu API 連線 / 活動拉取 / 正規化
-    └── training_plan_tool.py  # 訓練計畫工具
-
-scripts/
-├── test_intervals.py          # 測試 Intervals.icu API 連線與活動抓取
-└── init_profile.py            # 互動式初始化選手資料
-
-doc/                           # 開發規格書（多版本迭代）與已知問題
-```
+對話超過上限時，背景把較舊的對話壓縮成結構化摘要，不阻塞主回應。
 
 ---
 
-## 🛠️ 技術棧
+## 🏗️ 架構
 
-- **Python 3.12**
-- **[Anthropic Claude](https://www.anthropic.com/)** — Agent 推理與 Tool Use
-- **[discord.py](https://discordpy.readthedocs.io/)** — Discord Bot 介面
-- **[Intervals.icu API](https://intervals.icu/)** — 跑步活動資料來源（支援手錶自動同步）
-- **SQLite** — 本地持久化（選手資料、訓練、對話、token）
-- **Docker / docker-compose** — 容器化部署
-- **GitHub Actions (Self-hosted Runner)** — 自動化 CI/CD 部署
+```
+                    packages/core（共用核心，Coach 類別）
+                 不碰任何平台 API，只用 fetch 和 Anthropic SDK
+          ┌───────────────────┼───────────────────┐
+     apps/discord          apps/web            apps/proxy
+     Node，自建用           瀏覽器              Node／Cloudflare Workers
+     discord.js            React + Vite        只轉發 LLM 請求、記用量
+     better-sqlite3        sqlite-wasm（OPFS）
+```
+
+| 路徑 | 內容 |
+|------|------|
+| `packages/core` | 共用核心：agent 迴圈、五層記憶、對話壓縮、13 個工具、Intervals.icu 串接、LLM 轉接層（Claude／OpenAI 相容）、SQL schema |
+| `packages/sqlite-node` | Node 的 SQLite 儲存驅動 |
+| `apps/web` | 網頁版 |
+| `apps/discord` | 自建用的 Discord bot |
+| `apps/proxy` | 訂閱用的薄代理 |
+| `tools/mock-upstream.ts` | 本機開發用的模擬 LLM 與 Intervals.icu |
+
+核心只透過幾個介面接觸外界（儲存驅動、LLM 供應商、活動來源、時鐘與時區），各外殼各自實作。資料庫 schema 與 v1 相容，v1 的 `coach.db` 可以直接使用。
 
 ---
 
-## 🚀 快速開始
+## 🚀 本機開發
 
-### 1. 前置需求
-
-- 一個 [Discord Bot](https://discord.com/developers/applications)（需開啟 Message Content Intent）
-- 一組 [Anthropic API Key](https://console.anthropic.com/)
-- 一組 [Intervals.icu API Key 與 Athlete ID](https://intervals.icu/settings)（免費取得）
-
-### 2. 設定環境變數
+需要 Node.js 22 以上。
 
 ```bash
-cp .env.example .env
-# 編輯 .env，填入你的 API key 與 token
+npm install
+npm test
+npm run typecheck
 ```
 
-`.env` 已列入 `.gitignore`，不會被 git 追蹤。
-
-### 3. 使用 Docker 執行（建議）
+**不需要任何金鑰**就能把整條流程跑起來。開三個終端機：
 
 ```bash
-docker compose up -d --build
+npm run dev:mock                                # 模擬上游（LLM 與 Intervals.icu），埠 8788
+npm run dev:mock -w @running-coach/proxy        # 薄代理，上游指向模擬服務，埠 8787，管理憑證 dev-admin
+npm run dev:mock -w @running-coach/web          # 網頁版，Intervals.icu 指向模擬服務，埠 5173
 ```
 
-### 4. 首次設定
+在代理上建立一個測試帳號，取得訂閱憑證：
 
 ```bash
-# 初始化選手資料（互動式）
-docker compose run --rm coach-bot python scripts/init_profile.py
-
-# 測試 Intervals.icu 連線
-python scripts/test_intervals.py
+curl -X POST -H 'authorization: Bearer dev-admin' http://127.0.0.1:8787/admin/accounts
 ```
 
-> 完整部署步驟（含 GCP VM / GitHub Actions CI/CD 設定）請參考 [doc/deployment-guide.md](doc/deployment-guide.md)。
+打開 http://localhost:5173 ，到「設定」選「訂閱（經代理）」，代理網址填 `http://localhost:8787`，貼上憑證，勾選資料流向後儲存。Intervals.icu 的 API key 隨意填即可。
 
-### 本機開發（不使用 Docker）
-
-```bash
-pip install -r requirements.txt
-python src/main.py
-```
+想不經代理、測試 OpenAI 相容的路徑：設定頁選「使用自己的 API key」→「其他 OpenAI 相容服務」，服務網址填 `http://127.0.0.1:8788/v1`，API key 與模型隨意填。
 
 ---
 
-## 💬 使用方式
+## 🌐 網頁版
 
-在指定的 Discord 頻道（`DISCORD_ALLOWED_CHANNEL_ID`）直接對話即可。Slash 指令：
+```bash
+npm run dev -w @running-coach/web      # 連真實服務
+npm run build -w @running-coach/web    # 建置到 apps/web/dist
+```
+
+- 建置結果是靜態檔案，不需要後端。瀏覽器的 OPFS 只在 HTTPS（或 localhost）下可用。還沒有實際部署過。
+- 可選的建置變數：`VITE_PROXY_URL`（設定頁預填的代理網址）、`VITE_INTERVALS_BASE_URL`（改連其他 Intervals.icu 端點，開發用）。
+- 資料只存在這個瀏覽器。同時開第二個分頁時，第二個分頁只能用暫時性的記憶體資料庫（畫面上會有警告）。換裝置或清除網站資料前，請在設定頁匯出資料庫；匯入也接受 v1 的 `coach.db`。
+- 設定頁底部有原始碼連結（AGPL-3.0 第 13 條）。部署修改過的版本時，請把 `apps/web/src/views/Settings.tsx` 的 `SOURCE_URL` 改成你的版本。
+
+---
+
+## 🤖 自建 Discord bot
+
+功能與 v1 相同：在指定頻道直接對話，加上幾個 slash 指令。只支援自備 key。
+
+```bash
+cp .env.example .env    # 填入 Discord、Intervals.icu、LLM 的設定
+npm run dev -w @running-coach/discord
+```
+
+用 Docker（以 repo 根目錄為 context）：
+
+```bash
+docker build -f apps/discord/Dockerfile -t running-coach-bot .
+docker run -d --env-file .env -v "$PWD/data:/app/data" running-coach-bot
+```
+
+環境變數名稱沿用 v1，v1 的 `.env` 與 `data/coach.db` 可以直接用；但 `docker run --env-file` 不會去掉行尾的「# …」註解，要先把註解移到獨立一行。各變數的說明見 [.env.example](.env.example)。
 
 | 指令 | 說明 |
 |------|------|
-| `/sync` | 手動觸發 Intervals.icu 同步，合併主觀暫存資料 |
+| `/sync` | 從 Intervals.icu 同步最近的活動，合併暫存的主觀感受 |
 | `/plan <content>` | 更新本週訓練計畫 |
 | `/profile <key> <value>` | 更新選手資料欄位 |
-| `/status` | 顯示模型設定與各記憶層狀態（debug 用） |
+| `/status` | 顯示模型設定與各記憶層狀態 |
 
 一般訊息範例：
 
@@ -148,13 +143,48 @@ python src/main.py
 
 ---
 
-## 📐 設計文件
+## 🔁 薄代理（訂閱）
 
-- [running-coach-spec1_4.md](doc/running-coach-spec1_4.md) — 最新版規格書（v1.4，描述目前實作）
-- [known-issues.md](doc/known-issues.md) — 已知問題與設計取捨
-- [deployment-guide.md](doc/deployment-guide.md) — 部署指南
+訂閱者以代理發的憑證取代 API key，其餘與直連 Anthropic 相同。每次請求依序驗證憑證、檢查頻率與額度、只轉發白名單內的欄位、累計用量；請求與回應內容只在記憶體中經過。
 
-`doc/` 保留了 spec v1.0 → v1.4 的多版本迭代，記錄設計思路的演進過程。
+| 端點 | 用途 |
+|------|------|
+| `POST /v1/messages` | 轉發（含串流） |
+| `GET /v1/usage` | 訂閱者查詢本月用量與額度 |
+| `POST /admin/accounts` | 建立帳號，回傳憑證（只出現這一次） |
+| `GET` / `PATCH /admin/accounts/:id` | 查詢帳號；停用（`status`）或調整每月預算（`monthly_budget_usd`） |
+| `POST /admin/accounts/:id/rotate-token` | 重發憑證 |
+
+管理端點以 `ADMIN_TOKEN` 驗證，供帳號與金流服務（不在本 repo）呼叫。
+
+```bash
+cp apps/proxy/.env.example apps/proxy/.env
+npm run dev -w @running-coach/proxy
+```
+
+設定說明見 [apps/proxy/.env.example](apps/proxy/.env.example)。**預設的模型價格與每月 3 美元預算只是佔位**，上線前要依現行價目與定價調整。Cloudflare Workers 進入點（用量存在 D1）只通過型別檢查，還沒有實際部署，見 `apps/proxy/wrangler.toml`。
+
+---
+
+## 🛠️ 技術棧
+
+- **TypeScript**（npm workspaces）
+- **[Anthropic Claude](https://www.anthropic.com/)**（官方 SDK）與 OpenAI 相容的 Chat Completions
+- **React + Vite**，**[SQLite WASM](https://sqlite.org/wasm)**（OPFS）
+- **[discord.js](https://discord.js.org/)**，**better-sqlite3**
+- **[Intervals.icu API](https://intervals.icu/)**：跑步活動資料來源（支援 Garmin／Coros／Wahoo 等手錶）
+- **Vitest**、**esbuild**、**GitHub Actions**（CI：型別檢查、測試、建置、Discord 映像）
+
+---
+
+## 📐 文件
+
+- [running-coach-spec2_0.md](doc/running-coach-spec2_0.md)：v2 規格。第 9 節是進度、尚未驗證的部分與下一步，第 11 節是待決定事項
+- [known-issues.md](doc/known-issues.md)：決策與問題紀錄（KI 編號）
+- [running-coach-spec1_4.md](doc/running-coach-spec1_4.md)：v1 規格；`doc/` 也保留了 v1.0 到 v1.4 的演進
+- [deployment-guide.md](doc/deployment-guide.md)：v1 的部署指南（GCP VM）
+
+`src/`、`scripts/`、根目錄的 `Dockerfile`、`docker-compose.yml`、`requirements.txt` 是 v1 的 Python 版，等自己的 bot 切換到 v2 之後移除。
 
 ---
 
