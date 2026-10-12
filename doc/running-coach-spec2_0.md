@@ -16,6 +16,7 @@
 | 2.0-draft | 2026-10-11 | 授權改為 AGPL-3.0（第 8 節）；補上下一步與交接事項（9.4、9.5） |
 | 2.0-draft | 2026-10-11 | 雲端 session 與本機 session 的分工（9.5）；v2 合併前要先換掉部署 workflow（9.2）；網頁版重建 `Coach` 的問題（9.4） |
 | 2.0-draft | 2026-10-11 | 加上 CI 並修正 Discord 映像的建置（9.1）；網頁版改為只有一個 `Coach`；對話回覆逐字串流，思考階段只顯示「思考中」（6.1）；README 與 `.env.example` 改寫為 v2（9.4） |
+| 2.0-draft | 2026-10-12 | 部署改為 GitHub 建置公開映像、VM 只拉取（9.2、KI-025）；合併 `v2` 即切換到 v2 |
 
 ---
 
@@ -335,8 +336,8 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 ### 9.2 階段 A 還差什麼
 
 1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
-2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。`v2` 分支上的 `deploy.yml` 仍是 v1 的版本，v2 合併回 `main` 之前一定要先換掉（KI-023 的補充）。
-3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。若以 `docker run --env-file` 啟動，先把 `.env` 裡的行尾註解移到獨立一行：v1 的範例檔有 `CLAUDE_MODEL_SUMMARY=claude-haiku-5-5     # 跑後分析摘要` 這種寫法，docker compose 會去掉行尾註解，`docker run --env-file` 不會，模型名稱會連同註解一起被讀進去。
+2. ~~決定部署方式~~：已決定並實作（[KI-025](known-issues.md)）：GitHub 代管的 runner 建置公開映像並推到 GHCR，VM 只拉取與重啟。合併 `v2` 到 `main` 就是切換，合併前的檢查清單見 KI-025。
+3. 切換：合併 `v2` 到 `main`，部署流程會把 Python 容器換成 v2，沿用同一個 `data/coach.db` 與 `.env`（環境變數名稱相同）。`.env` 的行尾註解不影響：部署用 docker compose，會去掉行尾註解（以 Compose v5.6 實測）；只有改用 `docker run --env-file` 時才要先把註解移到獨立一行。
    - 預設值與線上的 v1 不同：線上 `7536f61` 預設主對話 Sonnet 5.5、思考強度 low；v2（與未上線的 `62ae45f`）預設 Opus 5.5、medium。`.env` 沒有設定 `CLAUDE_MODEL`、`CLAUDE_MODEL_SUMMARY`、`CLAUDE_MODEL_COMPRESS`、`CLAUDE_CHAT_EFFORT` 的話，切換後三種用途都會用 Opus 5.5，費用明顯增加。切換前先在 `.env` 寫明這四項。
    - 回退：v2 對資料庫做的 migration 與 v1 相同，只多寫 `PRAGMA user_version`，v1 不會讀它，所以停掉 v2、改回 Python 容器就能用同一個 `coach.db`。切換前仍先備份 `coach.db`。
    - Node 與 discord.js 在這台 VM 上的記憶體用量還沒量過，切換後以 `docker stats` 觀察。
@@ -416,6 +417,6 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 6 | 帳號、金流、定價、額度 | 階段 C |
 | 7 | ~~4.3 的四項查證~~ | 已完成（見 4.3） |
 | 8 | 資料備份：只做匯出／匯入，或之後加上加密雲端備份 | 換機體驗 |
-| 9 | 階段 A 的部署方式（見 9.2） | 何時能把自己的 bot 切到 v2 |
+| 9 | ~~階段 A 的部署方式~~ | 已決定：GitHub 建置、GHCR 公開映像、VM 只拉取（KI-025） |
 | 10 | 是否向 Intervals.icu 申請 OAuth 應用 | 「授權 App」這條路要不要做；做的話代理要多一個換 token 的端點 |
 | 11 | 是否服務歐盟使用者 | 同意流程與隱私政策的嚴格程度（見 4.3） |

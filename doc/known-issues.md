@@ -590,7 +590,7 @@ Claude Haiku 5.5 於 2026-10-07 發布，單價約為 Haiku 4.5 的十分之一�
 ## [KI-023] 自動部署讓 VM 無回應，最新版尚未上線
 
 **發現時機**：2026-10-09 部署 `62ae45f`
-**狀態**：待處理
+**狀態**：以 [KI-025] 處理（部署流程已改在 `v2` 分支，合併到 `main` 後生效）
 
 **問題描述**：
 push 到 `main` 會觸發 GitHub Actions 的 self-hosted runner 在 VM 上執行 `docker compose up --build`。
@@ -623,7 +623,7 @@ SSH 無回應、runner 失聯，部署失敗，重設 VM 後才恢復。
 - **v2 合併回 `main` 時會再發生一次。** `v2` 分支上的 `.github/workflows/deploy.yml` 仍是 v1 的版本，合併就會觸發它。
   VM 上的 `docker compose` 建置的是根目錄的 Python Dockerfile（`v2` 沒有改 `src/`、`Dockerfile`、`docker-compose.yml`、
   `requirements.txt`），所以合併等於用同樣的方式重做一次 `62ae45f` 的部署，風險相同；v2 的 TypeScript 程式不會被部署。
-  合併前要先決定部署方式並換掉這個 workflow（GitHub 代管的 runner 建置、VM 只拉取）。
+  合併前要先決定部署方式並換掉這個 workflow（GitHub 代管的 runner 建置、VM 只拉取）。已由 [KI-025] 處理。
 - 待確認：`7536f61`（線上）到 `62ae45f` 之間 `requirements.txt` 與 `Dockerfile` 都沒有變，照理 `pip install` 那層可以沿用快取、
   建置很輕。10/9 那次仍讓 VM 無回應，可能是 VM 上沒有建置快取，或原因不在建置本身，要到 VM 上看 Docker 的狀態才知道。
 - 提案（待決定）：不另外部署 `62ae45f`。它的內容（[KI-020] 到 [KI-022]）v2 都已移植，v1 停在 `7536f61`
@@ -651,3 +651,40 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 
 **現況與待辦**：
 見規格第 9 節（進度、未驗證的部分、下一步）與第 11 節（待決定事項）。
+
+---
+
+## [KI-025] 部署改為 GitHub 建置映像、VM 只拉取
+
+**決定時機**：2026-10-12
+**狀態**：已實作於 `v2` 分支，合併到 `main` 後生效
+
+**決策**：
+- push 到 `main` 時，`.github/workflows/deploy.yml` 先在 GitHub 代管的 runner 上執行型別檢查與測試，
+  再建置 `apps/discord/Dockerfile`，推到 GHCR 的公開映像 `ghcr.io/williampcs/running-coach-bot`（標籤為 commit sha 與 `latest`）。
+- VM 上的 self-hosted runner 只做 `git pull`（取得 `docker-compose.yml`）、`docker compose pull`、`docker compose up -d`，
+  再確認容器 20 秒後仍在執行且沒有重啟過。VM 上不再建置映像（[KI-023]）。
+- 映像公開：repo 本身是公開的，映像只含程式與相依套件；金鑰與資料都在 VM 的 `.env` 與 `data/`，不進映像。
+  VM 拉取時不需要登入 registry。映像帶有原始碼位置與 commit 的標籤（AGPL 要求能取得對應的原始碼）。
+
+**合併 `v2` 就是切換**：`docker-compose.yml` 已改為執行 v2 的映像，合併後的第一次部署就會把 Python 版換成 v2。合併前要完成：
+1. 以真實的 token 與 key 跑過 v2 bot（規格 9.2）
+2. VM 的 `.env` 寫明四項模型設定（規格 9.2）
+3. 備份 `data/coach.db`
+4. 第一次部署後，到 GitHub 的 Packages 確認 `running-coach-bot` 是公開的。若是私有，VM 拉取會失敗，原本的容器繼續運作；
+   改為公開後重新執行失敗的 job 即可。GHCR 新建映像的預設可見性沒有查到一致的說法，以實際為準；
+   另有說法指出改為公開後無法改回私有。
+
+**回退**（在 VM 的專案目錄執行，兩者都沿用同一個 `coach.db`，見規格 9.2）：
+- 回到之前的 v2 版本：`BOT_IMAGE=ghcr.io/williampcs/running-coach-bot:<commit sha> docker compose up -d`
+- 回到 v1 的 Python 版：`BOT_IMAGE=runningcoach-coach-bot docker compose up -d`。這是 VM 上原本建置的映像；
+  部署流程只清除沒有標籤的映像，會保留它。
+
+**驗證**：actionlint 檢查通過；以本地的 docker compose 模擬 VM 上的步驟：從舊的 compose（本機建置）切換到新的 compose、
+容器起不來時檢查步驟會失敗、正常時通過、回退到舊映像。實際推送到 GHCR 與 VM 上的部署要等合併後才會執行。
+
+**注意**：
+- Actions 的紀錄是公開的。部署流程不輸出容器的 log（含對話內容）、`.env` 或 `docker compose config` 的結果，之後修改也要維持。
+- self-hosted runner 的名稱與機器名稱會出現在公開的 Actions 紀錄中（v1 時就是如此）。介意的話，重新註冊 runner 時改用中性的名稱。
+- 公開 repo 搭配 self-hosted runner：外部的人可以發 PR，在 PR 裡加入指定在 self-hosted runner 上執行的 workflow，
+  在 VM 上執行任意程式（`.env` 就在 VM 上）。建議在 repo 的 Settings → Actions 把外部貢獻者 PR 的 workflow 設為一律需要核准。

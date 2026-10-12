@@ -4,7 +4,7 @@ AI 跑步教練。`main` 是線上運作的 v1（Python 的 Discord bot，程式
 
 ## 必須遵守
 
-- **不要 push 或合併到 `main`。** 每次 push 都會觸發 VM 上的自動部署，上一次因此讓 VM 無回應（`doc/known-issues.md` 的 KI-023）。v2 的工作都在 `v2` 分支；其他分支的 push 不會觸發部署。
+- **不要 push 或合併到 `main`。** 每次 push 都會觸發 VM 上的自動部署，上一次因此讓 VM 無回應（`doc/known-issues.md` 的 KI-023）。v2 的工作都在 `v2` 分支；其他分支的 push 不會觸發部署。合併 `v2` 到 `main` 就會把線上的 bot 切換成 v2，合併前的檢查見 KI-025。
 - **這個 repo 是公開的。** 金鑰、個人的訓練與生理資料、主機名稱與登入資訊都不要寫進會進版控的檔案。
 
 ## 文件入口

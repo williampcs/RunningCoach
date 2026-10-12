@@ -125,6 +125,12 @@ docker build -f apps/discord/Dockerfile -t running-coach-bot .
 docker run -d --env-file .env -v "$PWD/data:/app/data" running-coach-bot
 ```
 
+或用 docker compose 拉取 GHCR 上預先建好的公開映像（作者的 VM 就是這樣部署，見 [KI-025](doc/known-issues.md)）：
+
+```bash
+docker compose pull && docker compose up -d
+```
+
 環境變數名稱沿用 v1，v1 的 `.env` 與 `data/coach.db` 可以直接用；但 `docker run --env-file` 不會去掉行尾的「# …」註解，要先把註解移到獨立一行。各變數的說明見 [.env.example](.env.example)。
 
 | 指令 | 說明 |
@@ -184,7 +190,7 @@ npm run dev -w @running-coach/proxy
 - [running-coach-spec1_4.md](doc/running-coach-spec1_4.md)：v1 規格；`doc/` 也保留了 v1.0 到 v1.4 的演進
 - [deployment-guide.md](doc/deployment-guide.md)：v1 的部署指南（GCP VM）
 
-`src/`、`scripts/`、根目錄的 `Dockerfile`、`docker-compose.yml`、`requirements.txt` 是 v1 的 Python 版，等自己的 bot 切換到 v2 之後移除。
+`src/`、`scripts/`、根目錄的 `Dockerfile` 與 `requirements.txt` 是 v1 的 Python 版，等自己的 bot 切換到 v2、觀察一段時間後移除。
 
 ---
 

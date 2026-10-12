@@ -1,6 +1,14 @@
+# 自建的 Discord bot（v2）。映像由 GitHub Actions 建置並推到 GHCR（見 .github/workflows/deploy.yml），
+# 這台機器只負責拉取與重啟，不在本機建置。
+#
+#   docker compose pull && docker compose up -d
+#
+# 指定版本（例如回退到之前的某次部署）：
+#   BOT_IMAGE=ghcr.io/williampcs/running-coach-bot:<commit sha> docker compose up -d
+# 要用自己建置的映像時，同樣以 BOT_IMAGE 指定。
 services:
   coach-bot:
-    build: .
+    image: ${BOT_IMAGE:-ghcr.io/williampcs/running-coach-bot:latest}
     container_name: running-coach
     restart: unless-stopped
     env_file: .env
