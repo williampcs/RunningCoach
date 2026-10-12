@@ -337,6 +337,9 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
 2. 決定部署方式：目前的 VM（1GB RAM，與其他服務共用）在機器上建置映像的風險高，v1 最近一次部署就是因此失敗（[KI-023](known-issues.md)）。建議改由 GitHub Actions 建好映像再拉取，或搬到家用伺服器。`v2` 分支上的 `deploy.yml` 仍是 v1 的版本，v2 合併回 `main` 之前一定要先換掉（KI-023 的補充）。
 3. 切換：停掉 Python 容器，以同一個 `data/coach.db` 與 `.env` 啟動新容器（環境變數名稱相同）。若以 `docker run --env-file` 啟動，先把 `.env` 裡的行尾註解移到獨立一行：v1 的範例檔有 `CLAUDE_MODEL_SUMMARY=claude-haiku-5-5     # 跑後分析摘要` 這種寫法，docker compose 會去掉行尾註解，`docker run --env-file` 不會，模型名稱會連同註解一起被讀進去。
+   - 預設值與線上的 v1 不同：線上 `7536f61` 預設主對話 Sonnet 5.5、思考強度 low；v2（與未上線的 `62ae45f`）預設 Opus 5.5、medium。`.env` 沒有設定 `CLAUDE_MODEL`、`CLAUDE_MODEL_SUMMARY`、`CLAUDE_MODEL_COMPRESS`、`CLAUDE_CHAT_EFFORT` 的話，切換後三種用途都會用 Opus 5.5，費用明顯增加。切換前先在 `.env` 寫明這四項。
+   - 回退：v2 對資料庫做的 migration 與 v1 相同，只多寫 `PRAGMA user_version`，v1 不會讀它，所以停掉 v2、改回 Python 容器就能用同一個 `coach.db`。切換前仍先備份 `coach.db`。
+   - Node 與 discord.js 在這台 VM 上的記憶體用量還沒量過，切換後以 `docker stats` 觀察。
 4. 觀察一段時間後移除 Python 程式碼。
 
 ### 9.3 本機開發
