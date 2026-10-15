@@ -158,9 +158,15 @@ export class Coach {
     else if (!result.text.trim()) reply = EMPTY_REPLY;
 
     await this.db.appendConversation("assistant", reply);
+    // 剛送出的訊息先存進資料庫才組合 context，所以也算在層5；頁尾另列為「訊息」，層5扣掉以免重複計算
+    const sentChars = context.messages.at(-1)?.content.length ?? 0;
     return {
       reply,
-      stats: { layerChars: context.layerChars, userMsgChars: userMessage.length, usage: result.usage },
+      stats: {
+        layerChars: { ...context.layerChars, layer5: context.layerChars.layer5 - sentChars },
+        userMsgChars: sentChars,
+        usage: result.usage,
+      },
     };
   }
 

@@ -4,6 +4,14 @@ import { formatTokenFooter } from "../src";
 import { activity, makeCoach, ScriptedProvider, toolTurn, turn, type RecordedCall } from "./helpers";
 
 describe("Coach.chat", () => {
+  it("用量統計：層5不含剛送出的訊息，訊息另計", async () => {
+    const { coach } = await makeCoach([turn({ text: "好的" }), turn({ text: "收到" })]);
+    await coach.chat("第一則");
+    const { stats } = await coach.chat("第二則訊息");
+    expect(stats.userMsgChars).toBe("第二則訊息".length);
+    expect(stats.layerChars.layer5).toBe("第一則".length + "好的".length);
+  });
+
   it("剛送出的長訊息與最近一來一回完整帶入", async () => {
     const { coach, provider } = await makeCoach([turn({ text: "A".repeat(900) }), turn({ text: "好" })]);
     await coach.chat("我".repeat(1000));
@@ -69,7 +77,8 @@ describe("Coach.chat", () => {
     ]);
     // 主對話用量不含摘要模型的呼叫
     expect(stats.usage).toMatchObject({ apiCalls: 3, toolRounds: 2 });
-    expect(formatTokenFooter(stats)).toMatch(/^📊 輸入 100（層1系統~\d+  層5對話~\d+  訊息~\d+） \| 輸出 60 \| 工具 2 輪，累計輸入 300$/);
+    // 第一則對話：層5只有剛送出的訊息，已另列為「訊息」，不再重複出現在層5
+    expect(formatTokenFooter(stats)).toMatch(/^📊 輸入 100（層1系統~\d+  訊息~\d+） \| 輸出 60 \| 工具 2 輪，累計輸入 300$/);
   });
 
   it("手錶尚未同步：活動不是今天時提示模型，並可暫存主觀感受", async () => {
