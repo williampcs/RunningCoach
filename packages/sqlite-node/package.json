@@ -1,0 +1,21 @@
+{
+  "name": "@running-coach/sqlite-node",
+  "version": "2.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@running-coach/core": "*",
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "*",
+    "@types/node": "^22"
+  }
+}

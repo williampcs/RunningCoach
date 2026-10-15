@@ -1,0 +1,17 @@
+# Cloudflare Workers 部署設定（尚未實際部署驗證）
+#
+#   npx wrangler d1 create running-coach-proxy      # 取得 database_id 填入下方
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put ADMIN_TOKEN
+#   npx wrangler deploy
+name = "running-coach-proxy"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGINS = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "running-coach-proxy"
+database_id = ""

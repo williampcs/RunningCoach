@@ -1,24 +1,100 @@
-name: Auto Deploy to GCP VM
+# 部署自建的 Discord bot（v2）：push 到 main 時執行。
+#
+# 映像在 GitHub 代管的 runner 上建置並推到 GHCR（公開），VM 上的 self-hosted runner 只拉取與重啟，
+# 不在 VM 上建置（KI-023、KI-025）。
+#
+# 這是公開 repo，Actions 的紀錄任何人都看得到：不要在這裡輸出容器的 log（含對話內容）、
+# .env 或 docker compose config 的結果。
+name: Deploy Discord bot
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 部署依序執行，不互相取消
+concurrency:
+  group: deploy
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy on GCP VM
-    runs-on: self-hosted
+  check:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
     steps:
-      - name: Pull latest changes and restart container
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  image:
+    name: Build and push image
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: name
+        # GHCR 的名稱必須是小寫
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/running-coach-bot" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Build
+        run: >-
+          docker build -f apps/discord/Dockerfile
+          --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          --label org.opencontainers.image.revision=${{ github.sha }}
+          --label org.opencontainers.image.licenses=AGPL-3.0-only
+          -t ${{ steps.name.outputs.image }}:${{ github.sha }}
+          -t ${{ steps.name.outputs.image }}:latest
+          .
+      - name: Push
+        run: |
+          docker push ${{ steps.name.outputs.image }}:${{ github.sha }}
+          docker push ${{ steps.name.outputs.image }}:latest
+
+  deploy:
+    name: Deploy on VM
+    needs: image
+    runs-on: self-hosted
+    env:
+      # 以這次建置的版本啟動，不依賴 latest
+      BOT_IMAGE: ${{ needs.image.outputs.image }}:${{ github.sha }}
+    steps:
+      - name: Pull and restart
         run: |
           # 切換到專案目錄（相容 RunningCoach 或 running_coach 資料夾名稱）
           cd ~/projs/RunningCoach 2>/dev/null || cd ~/projs/running_coach
 
-          # 拉取最新程式碼
+          # 只為了取得最新的 docker-compose.yml；.env 與 data/ 不在版控中，不受影響
           git pull origin main
 
-          # 重新建置並在背景啟動 Docker 容器
-          docker compose up --build -d
+          # 映像是公開的，不需要登入。拉取失敗時到這裡就停止，原本的容器繼續運作
+          docker compose pull
+          docker compose up -d
 
-          # 確認容器狀態
-          docker compose ps
+          # 只清掉沒有標籤的舊映像；有標籤的（例如 v1 的 Python 映像）保留，供回退使用
+          docker image prune -f
+
+      - name: Check the container is running
+        run: |
+          sleep 20
+          state=$(docker inspect --format '{{.State.Status}} {{.RestartCount}}' running-coach)
+          echo "running-coach: $state"
+          if [ "$state" != "running 0" ]; then
+            echo "容器沒有正常執行。請到 VM 上以 docker logs running-coach 查看原因（log 含對話內容，不要貼到公開的地方）。"
+            exit 1
+          fi

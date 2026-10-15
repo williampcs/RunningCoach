@@ -1,0 +1,20 @@
+{
+  "name": "@running-coach/core",
+  "version": "2.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0"
+  },
+  "devDependencies": {
+    "@running-coach/sqlite-node": "*",
+    "@types/node": "^22"
+  }
+}
