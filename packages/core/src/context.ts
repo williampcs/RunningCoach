@@ -183,11 +183,14 @@ export class ContextManager {
   // 組合 Context
   // ---------------------------------------------------------------------------
 
-  /** 訊息超過單則字元上限時截斷並附上標記 */
-  private truncate(content: string): string {
+  /** 較早的訊息超過單則字元上限時截斷，標記附上 id，模型需要時以 get_full_message 讀取全文 */
+  private truncate(row: ConversationRow): string {
     const limit = this.settings.conversationMsgMaxChars;
-    if (content.length <= limit) return content;
-    return content.slice(0, limit) + `…（訊息過長，已截短至 ${limit} 字）`;
+    if (row.content.length <= limit) return row.content;
+    return (
+      row.content.slice(0, limit) +
+      `…（訊息過長，只帶入前 ${limit} 字；需要完整內容時以 get_full_message 讀取，message_id=${row.id}）`
+    );
   }
 
   async getContextForApi(): Promise<ApiContext> {
@@ -208,9 +211,11 @@ export class ContextManager {
       messages.push({ role: "assistant", content: "已閱讀對話摘要，我會記住這些重要資訊。" });
     }
 
-    // 層5 — Rolling Window（所有尚未壓縮的原始對話，單則超長訊息截斷）
-    for (const row of conversations) {
-      const content = this.truncate(row.content);
+    // 層5 — Rolling Window（所有尚未壓縮的原始對話）。
+    // 最新的幾則完整帶入：剛送出的訊息已先存進資料庫，也在其中；較早的超長訊息才截斷
+    const fullFrom = conversations.length - this.settings.conversationFullRecent;
+    for (const [i, row] of conversations.entries()) {
+      const content = i >= fullFrom ? row.content : this.truncate(row);
       layerChars.layer5 += content.length;
       messages.push({ role: row.role, content });
     }

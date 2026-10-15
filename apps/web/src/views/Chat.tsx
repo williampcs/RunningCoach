@@ -14,6 +14,7 @@ const TOOL_STATUS: Record<string, string> = {
   get_recent_workouts: "查看最近的訓練",
   get_pace_trend: "計算配速趨勢",
   get_training_plan: "查看訓練計畫",
+  get_full_message: "讀取較早的完整訊息",
   save_training_plan: "儲存訓練計畫",
   add_race: "新增賽事",
   get_upcoming_races: "查看近期賽事",

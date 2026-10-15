@@ -72,21 +72,27 @@ describe("ContextManager", () => {
     expect(invalid).not.toContain("心率區間");
   });
 
-  it("層4、層5：摘要在前，未壓縮對話全部帶入，超長訊息截斷", async () => {
+  it("層4、層5：摘要在前，未壓縮對話全部帶入；較早的超長訊息截斷並標示 id，最新 3 則完整", async () => {
     const { coach, context } = await setup();
     const first = await coach.db.appendConversation("user", "舊訊息");
     await coach.db.applyCompression("【訓練狀態】穩定", first);
-    await coach.db.appendConversation("user", "x".repeat(700));
+    const oldId = await coach.db.appendConversation("user", "x".repeat(700));
     await coach.db.appendConversation("assistant", "好的");
+    await coach.db.appendConversation("user", "y".repeat(700));
+    await coach.db.appendConversation("assistant", "z".repeat(700));
+    await coach.db.appendConversation("user", "w".repeat(700));
 
     const ctx = await context.getContextForApi();
-    expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "user", "assistant", "user"]);
     expect(ctx.messages[0]!.content).toBe("以下是之前對話的重點摘要：\n\n【訓練狀態】穩定");
-    expect(ctx.messages[2]!.content).toBe("x".repeat(600) + "…（訊息過長，已截短至 600 字）");
+    expect(ctx.messages[2]!.content).toBe(
+      "x".repeat(600) + `…（訊息過長，只帶入前 600 字；需要完整內容時以 get_full_message 讀取，message_id=${oldId}）`,
+    );
+    expect(ctx.messages.slice(4).map((m) => m.content)).toEqual(["y".repeat(700), "z".repeat(700), "w".repeat(700)]);
     expect(ctx.layerChars).toEqual({
       layer1: ctx.system.length,
       layer4: ctx.messages[0]!.content.length,
-      layer5: ctx.messages[2]!.content.length + 2,
+      layer5: ctx.messages[2]!.content.length + 2 + 700 * 3,
     });
   });
 });

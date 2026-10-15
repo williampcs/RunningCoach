@@ -4,6 +4,32 @@ import { formatTokenFooter } from "../src";
 import { activity, makeCoach, ScriptedProvider, toolTurn, turn, type RecordedCall } from "./helpers";
 
 describe("Coach.chat", () => {
+  it("剛送出的長訊息與最近一來一回完整帶入", async () => {
+    const { coach, provider } = await makeCoach([turn({ text: "A".repeat(900) }), turn({ text: "好" })]);
+    await coach.chat("我".repeat(1000));
+    expect(provider.calls[0]!.request.messages.at(-1)!.content).toBe("我".repeat(1000));
+
+    await coach.chat("下一則");
+    expect(provider.calls[1]!.request.messages.map((m) => m.content)).toEqual(["我".repeat(1000), "A".repeat(900), "下一則"]);
+  });
+
+  it("get_full_message：讀回被截斷的較早訊息；找不到時說明可能已壓縮", async () => {
+    const { coach, provider } = await makeCoach([
+      toolTurn("get_full_message", { message_id: 1 }),
+      toolTurn("get_full_message", { message_id: 999 }),
+      turn({ text: "後半段是週末長跑。" }),
+    ]);
+    await coach.db.appendConversation("user", "長".repeat(800));
+    await coach.db.appendConversation("assistant", "收到");
+    await coach.db.appendConversation("user", "再說");
+    await coach.db.appendConversation("assistant", "好");
+
+    await coach.chat("我第一則訊息的後半段是什麼？");
+    expect(provider.calls[0]!.request.messages[0]!.content).toContain("以 get_full_message 讀取，message_id=1）");
+    expect(provider.calls[1]!.toolResults![0]!.content).toBe(`訊息 1（使用者）的完整內容：\n\n${"長".repeat(800)}`);
+    expect(provider.calls[2]!.toolResults![0]!.content).toBe("找不到 message_id=999 的訊息，可能已整理成對話摘要。");
+  });
+
   it("跑後回報：拉取活動 → 合併主觀感受存檔並生成摘要 → 最終回覆", async () => {
     const { coach, provider, driver } = await makeCoach(
       [

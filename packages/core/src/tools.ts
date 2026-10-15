@@ -9,6 +9,9 @@ const RACE_ID_HINT =
   "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
   "清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。";
 
+/** get_full_message 一次最多回傳的字數，避免貼上的超長內容撐爆單次請求 */
+const FULL_MESSAGE_MAX_CHARS = 20_000;
+
 export function buildTools(settings: CoachSettings): ToolDef[] {
   return [
     {
@@ -159,6 +162,18 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
         "以下情況應主動呼叫：制定、調整或審視訓練計畫；確認本週訓練安排；" +
         "將跑後表現與計畫目標對比時。賽事管理、閒聊等不需要呼叫。",
       input_schema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "get_full_message",
+      description:
+        "讀取對話紀錄中一則訊息的完整內容。較早的長訊息在對話中只帶入前段，並標示 message_id；" +
+        "需要後面的內容時才呼叫，例如使用者先前貼上的長文、你先前較長回覆中的某一點。" +
+        "已整理成對話摘要的訊息無法讀取。",
+      input_schema: {
+        type: "object",
+        properties: { message_id: { type: "integer", description: "截斷標記中的 message_id" } },
+        required: ["message_id"],
+      },
     },
     {
       name: "update_race",
@@ -364,6 +379,18 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const plan = await db.getActiveTrainingPlan();
         if (!plan) return "目前沒有啟用中的訓練計畫。";
         return `當前訓練計畫（${plan.week_label}）：\n\n${plan.content}`;
+      }
+
+      case "get_full_message": {
+        const id = toInt(input.message_id, "message_id");
+        const row = await db.getConversation(id);
+        if (!row) return `找不到 message_id=${id} 的訊息，可能已整理成對話摘要。`;
+        const who = row.role === "user" ? "使用者" : "教練";
+        const content =
+          row.content.length > FULL_MESSAGE_MAX_CHARS
+            ? row.content.slice(0, FULL_MESSAGE_MAX_CHARS) + `…（超過 ${FULL_MESSAGE_MAX_CHARS} 字，以下省略）`
+            : row.content;
+        return `訊息 ${id}（${who}）的完整內容：\n\n${content}`;
       }
 
       case "add_race": {
