@@ -4,7 +4,10 @@ import { formatStatus, type Effort, type Purpose } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
+import { useSync } from "../use-sync";
+import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import {
+  clearSettings,
   consentKey,
   PROVIDER_LABELS,
   PROVIDER_RECIPIENT,
@@ -43,16 +46,21 @@ function DataFlow({ draft }: { draft: AppSettings }) {
 }
 
 export function SettingsView() {
-  const { coach, db, settings, updateSettings, revision, reload } = useApp();
+  const { coach, db, settings, llmProblem, updateSettings, revision, reload } = useApp();
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [workouts, setWorkouts] = useState<number | null>(null);
+  const sync = useSync();
 
   useEffect(() => {
     void coach.status().then((s) => setStatus(formatStatus(s, coach.describeModels(), coach.settings)));
+    void coach.db.countWorkouts().then(setWorkouts);
   }, [coach, settings, revision]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
+  // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
+  const syncNext = !dirty && llmProblem === null && settings.intervals.apiKey.trim() !== "" && workouts === 0;
   const consented = draft.consents.includes(consentKey(draft));
   const claudeOnly = draft.llmMode === "proxy" || draft.provider === "anthropic";
 
@@ -78,6 +86,23 @@ export function SettingsView() {
       URL.revokeObjectURL(url);
     } catch (e) {
       setMessage({ kind: "error", text: `匯出失敗：${errorText(e)}` });
+    }
+  }
+
+  async function reset(keepSettings: boolean) {
+    const what = keepSettings
+      ? "這會刪除這台裝置上的對話、訓練紀錄、賽事、計畫與選手資料；設定與 API key 會保留。"
+      : "這會刪除這台裝置上的所有資料與設定（包括 API key），回到第一次使用的狀態。";
+    if (!confirm(`${what}\n無法復原，確定要繼續嗎？`)) return;
+    setMessage(null);
+    try {
+      await db.reset();
+      resetGettingStarted();
+      if (!keepSettings) clearSettings();
+      // 重新載入，讓 Coach 與各頁的狀態（進行中的對話壓縮、未送出的內容）一併回到初始
+      location.reload();
+    } catch (e) {
+      setMessage({ kind: "error", text: `重置失敗：${errorText(e)}` });
     }
   }
 
@@ -196,9 +221,9 @@ export function SettingsView() {
 
       <section className="card">
         <h2>Intervals.icu</h2>
-        <p className="muted small">
-          在 intervals.icu 的 Settings → Developer Settings 取得 API key。key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得。
-        </p>
+        <p className="small">教練透過 Intervals.icu 讀取你的跑步紀錄：</p>
+        <IntervalsGuide where="下方的「API key」欄位" />
+        <p className="muted small">key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得。</p>
         <div className="grid">
           <label>
             API key
@@ -245,6 +270,18 @@ export function SettingsView() {
         {dirty && <button onClick={() => setDraft(settings)}>放棄變更</button>}
       </div>
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
+      {(syncNext || sync.message) && (
+        <div className="notice info">
+          <strong>下一步：同步最近 14 天的訓練</strong>
+          <span>把最近兩週的跑步紀錄抓進來，教練才知道你的近況。每筆會產生一段 AI 分析。</span>
+          {syncNext && (
+            <button className="primary" disabled={sync.busy} onClick={() => void sync.run()}>
+              {sync.busy ? "同步中…" : "立即同步"}
+            </button>
+          )}
+          {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+        </div>
+      )}
 
       <section className="card">
         <h2>資料</h2>
@@ -268,6 +305,17 @@ export function SettingsView() {
               }}
             />
           </label>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>重置</h2>
+        <p className="muted small">方便測試或重新開始。重置會讓新手引導重新出現，而且無法復原；需要的話先匯出資料庫。</p>
+        <div className="row">
+          <button onClick={() => void reset(true)}>清除資料，保留設定與 API key</button>
+          <button className="danger" onClick={() => void reset(false)}>
+            全部重置
+          </button>
         </div>
       </section>
 

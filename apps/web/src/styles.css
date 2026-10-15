@@ -12,6 +12,7 @@
   --warn: #fef3c7;
   --error: #fee2e2;
   --info: #e0f2fe;
+  --danger-text: #b91c1c;
   font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
   line-height: 1.6;
 }
@@ -30,6 +31,7 @@
     --warn: #57400a;
     --error: #5b1d1d;
     --info: #0c3a55;
+    --danger-text: #fca5a5;
   }
 }
 
@@ -206,6 +208,11 @@ button.primary {
   font-weight: 600;
 }
 
+button.danger {
+  color: var(--danger-text);
+  border-color: var(--danger-text);
+}
+
 button.link {
   border: 0;
   background: none;
@@ -256,7 +263,7 @@ a {
   flex-direction: column;
 }
 
-.list li {
+.list > li {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -264,7 +271,7 @@ a {
   border-top: 1px solid var(--border);
 }
 
-.list li:first-child {
+.list > li:first-child {
   border-top: 0;
 }
 
@@ -423,4 +430,62 @@ pre {
   background: var(--bg);
   border-radius: 4px;
   padding: 0 4px;
+}
+
+/* 新手引導 */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-mark {
+  flex: none;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.step.done .step-mark {
+  background: var(--ok);
+  color: var(--text);
+}
+
+.step.done strong {
+  color: var(--muted);
+}
+
+.step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-left: calc(1.6em + 8px);
+}
+
+.guide {
+  margin: 0;
+  padding-left: 1.3em;
 }

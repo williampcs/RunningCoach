@@ -9,7 +9,8 @@ export type DbRequest =
   | { id: number; method: "exec"; sql: string }
   | { id: number; method: "run" | "all"; sql: string; params: (string | number | null)[] }
   | { id: number; method: "export" }
-  | { id: number; method: "import"; bytes: Uint8Array };
+  | { id: number; method: "import"; bytes: Uint8Array }
+  | { id: number; method: "reset" };
 
 let sqlite3: Sqlite3Static;
 let pool: SAHPoolUtil | null = null;
@@ -52,6 +53,17 @@ async function handle(request: DbRequest): Promise<unknown> {
         await pool.importDb(DB_FILE, request.bytes);
       } finally {
         db = new pool.OpfsSAHPoolDb(DB_FILE);
+      }
+      return null;
+    }
+    case "reset": {
+      // 刪掉資料庫檔案，換一個空的；資料表由核心的 init() 重建
+      db.close();
+      if (pool) {
+        pool.unlink(DB_FILE);
+        db = new pool.OpfsSAHPoolDb(DB_FILE);
+      } else {
+        db = new sqlite3.oo1.DB(":memory:");
       }
       return null;
     }

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type { Activity, RunReport, Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { Markdown } from "../Markdown";
+import { useSync } from "../use-sync";
 
 function activityLines(a: Activity): string {
   return [
@@ -30,7 +32,8 @@ export function ReportView() {
   const { coach, settings, revision, touch, goTo } = useApp();
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState<"report" | "sync" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const sync = useSync();
   const [report, setReport] = useState<RunReport | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
@@ -42,7 +45,7 @@ export function ReportView() {
   const hasIntervals = settings.intervals.apiKey.trim() !== "";
 
   async function submit() {
-    setBusy("report");
+    setBusy(true);
     setMessage(null);
     setReport(null);
     try {
@@ -51,21 +54,7 @@ export function ReportView() {
     } catch (e) {
       setMessage({ kind: "error", text: errorText(e) });
     } finally {
-      setBusy(null);
-    }
-  }
-
-  async function sync() {
-    setBusy("sync");
-    setMessage(null);
-    try {
-      const text = await coach.sync();
-      setMessage({ kind: text.startsWith("❌") ? "error" : "ok", text });
-      touch();
-    } catch (e) {
-      setMessage({ kind: "error", text: errorText(e) });
-    } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
 
@@ -98,19 +87,20 @@ export function ReportView() {
           />
         </label>
         <div className="row">
-          <button className="primary" disabled={busy !== null || !hasIntervals} onClick={() => void submit()}>
-            {busy === "report" ? "處理中…" : "儲存跑後回報"}
+          <button className="primary" disabled={busy || sync.busy || !hasIntervals} onClick={() => void submit()}>
+            {busy ? "處理中…" : "儲存跑後回報"}
           </button>
-          <button disabled={busy !== null || !hasIntervals} onClick={() => void sync()}>
-            {busy === "sync" ? "同步中…" : "同步最近 14 天"}
+          <button disabled={busy || sync.busy || !hasIntervals} onClick={() => void sync.run()}>
+            {sync.busy ? "同步中…" : "同步最近 14 天"}
           </button>
         </div>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
+        {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
         {report?.status === "saved" && (
           <div className="notice ok">
             <strong>已存檔</strong>
             <pre>{activityLines(report.activity)}</pre>
-            {report.summary ? <p>{report.summary}</p> : <p className="muted">這次沒有產生分析摘要。</p>}
+            {report.summary ? <Markdown>{report.summary}</Markdown> : <p className="muted">這次沒有產生分析摘要。</p>}
             <button className="primary" onClick={() => goTo("chat", analysisRequest(report.activity, effort, notes.trim()))}>
               請教練分析
             </button>
@@ -143,7 +133,11 @@ export function ReportView() {
                 {w.perceived_effort != null && `｜體感 ${w.perceived_effort}/10`}
                 {w.subjective_notes && `｜${w.subjective_notes}`}
               </div>
-              {w.summary && <p className="small">{w.summary}</p>}
+              {w.summary && (
+                <div className="small">
+                  <Markdown>{w.summary}</Markdown>
+                </div>
+              )}
             </li>
           ))}
         </ul>
