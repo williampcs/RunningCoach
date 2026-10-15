@@ -590,7 +590,7 @@ Claude Haiku 5.5 於 2026-10-07 發布，單價約為 Haiku 4.5 的十分之一�
 ## [KI-023] 自動部署讓 VM 無回應，最新版尚未上線
 
 **發現時機**：2026-10-09 部署 `62ae45f`
-**狀態**：以 [KI-025] 處理（部署流程已改在 `v2` 分支，合併到 `main` 後生效）
+**狀態**：以 [KI-025] 處理（2026-10-15 合併到 `main`）
 
 **問題描述**：
 push 到 `main` 會觸發 GitHub Actions 的 self-hosted runner 在 VM 上執行 `docker compose up --build`。
@@ -657,7 +657,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-025] 部署改為 GitHub 建置映像、VM 只拉取
 
 **決定時機**：2026-10-12
-**狀態**：已實作於 `v2` 分支，合併到 `main` 後生效
+**狀態**：2026-10-15 合併到 `main`，第一次以這個流程部署
 
 **決策**：
 - push 到 `main` 時，`.github/workflows/deploy.yml` 先在 GitHub 代管的 runner 上執行型別檢查與測試，
@@ -674,6 +674,13 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 4. 第一次部署後，到 GitHub 的 Packages 確認 `running-coach-bot` 是公開的。若是私有，VM 拉取會失敗，原本的容器繼續運作；
    改為公開後重新執行失敗的 job 即可。GHCR 新建映像的預設可見性沒有查到一致的說法，以實際為準；
    另有說法指出改為公開後無法改回私有。
+
+**2026-10-15 合併時的決定**（使用者）：
+- 不先以真實的 token 與 key 測試，合併後直接在 Discord 上確認；有問題再修。
+- 不備份 `coach.db`：目前的資料是測試資料。
+- `.env` 的模型設定沒有在合併前調整；沒有寫明分用途模型時，三種用途都會用 Opus 5.5（規格 9.2）。
+- repo 維持公開，不轉私有。
+- 沒有加上「部署檢查失敗時自動回退」與容器的記憶體上限；目前檢查失敗時新容器已取代舊容器，要手動回退。
 
 **回退**（在 VM 的專案目錄執行，兩者都沿用同一個 `coach.db`，見規格 9.2）：
 - 回到之前的 v2 版本：`BOT_IMAGE=ghcr.io/williampcs/running-coach-bot:<commit sha> docker compose up -d`

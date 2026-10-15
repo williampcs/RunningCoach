@@ -2,7 +2,7 @@
 
 **版本**：2.0-draft  
 **最後更新**：2026-10-11  
-**狀態**：架構已定，階段 A、B 與薄代理的第一版已實作（尚未部署、尚未以真實 API 金鑰驗證，見第 9 節）。v1.x 的 Python Discord bot 仍是目前運作中的系統，規格見 [running-coach-spec1_4.md](running-coach-spec1_4.md)。
+**狀態**：架構已定，階段 A、B 與薄代理的第一版已實作。2026-10-15 `v2` 合併到 `main`，作者的 Discord bot 改由 v2 部署（[KI-025](known-issues.md)）；合併前沒有以真實 API 金鑰驗證（見第 9 節）。網頁版與薄代理尚未部署。v1 的規格見 [running-coach-spec1_4.md](running-coach-spec1_4.md)。
 
 > 本文目的是對齊理解。每一節標示 **[已對齊]**（討論中雙方已同意）、**[提案]**（Claude 的建議，待確認）或 **[待決定]**。
 > 定案後移除標示並把版本改為 2.0。
@@ -17,6 +17,7 @@
 | 2.0-draft | 2026-10-11 | 雲端 session 與本機 session 的分工（9.5）；v2 合併前要先換掉部署 workflow（9.2）；網頁版重建 `Coach` 的問題（9.4） |
 | 2.0-draft | 2026-10-11 | 加上 CI 並修正 Discord 映像的建置（9.1）；網頁版改為只有一個 `Coach`；對話回覆逐字串流，思考階段只顯示「思考中」（6.1）；README 與 `.env.example` 改寫為 v2（9.4） |
 | 2.0-draft | 2026-10-12 | 部署改為 GitHub 建置公開映像、VM 只拉取（9.2、KI-025）；合併 `v2` 即切換到 v2 |
+| 2.0-draft | 2026-10-15 | `v2` 合併到 `main`，作者的 Discord bot 切換到 v2；合併前未以真實金鑰測試、未備份資料庫（使用者決定，資料為測試資料）；repo 維持公開 |
 
 ---
 
@@ -335,7 +336,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 ### 9.2 階段 A 還差什麼
 
-1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。
+1. 用真實的 API key 與 bot token 跑一次 Discord 外殼，確認與 Python 版行為一致。2026-10-15 使用者決定不先測試，合併後直接在 Discord 上確認（KI-025）。
 2. ~~決定部署方式~~：已決定並實作（[KI-025](known-issues.md)）：GitHub 代管的 runner 建置公開映像並推到 GHCR，VM 只拉取與重啟。合併 `v2` 到 `main` 就是切換，合併前的檢查清單見 KI-025。
 3. 切換：合併 `v2` 到 `main`，部署流程會把 Python 容器換成 v2，沿用同一個 `data/coach.db` 與 `.env`（環境變數名稱相同）。`.env` 的行尾註解不影響：部署用 docker compose，會去掉行尾註解（以 Compose v5.6 實測）；只有改用 `docker run --env-file` 時才要先把註解移到獨立一行。
    - 預設值與線上的 v1 不同：線上 `7536f61` 預設主對話 Sonnet 5.5、思考強度 low；v2（與未上線的 `62ae45f`）預設 Opus 5.5、medium。`.env` 沒有設定 `CLAUDE_MODEL`、`CLAUDE_MODEL_SUMMARY`、`CLAUDE_MODEL_COMPRESS`、`CLAUDE_CHAT_EFFORT` 的話，切換後三種用途都會用 Opus 5.5，費用明顯增加。切換前先在 `.env` 寫明這四項。
@@ -399,7 +400,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 ## 10. 版本與 repo 安排
 
 - 規格：本文為 v2.0，v1.4 凍結為 Python 版的最終規格。決策紀錄繼續寫在 [known-issues.md](known-issues.md)，KI 編號延續（v2 的決策是 KI-024）。
-- 程式：v2 在同一個 repo 的 `v2` 分支開發，已 push 到 GitHub，尚未開 PR。`main` 仍是 v1，Python 版在階段 A 完成前保留並持續部署。
+- 程式：v2 在同一個 repo 的 `v2` 分支開發，2026-10-15 經 PR 合併到 `main`。v1 的 Python 程式（`src/` 等）保留到觀察期結束後移除。
 - 尚未做：在 `main` 目前的提交（`62ae45f`）打上 `v1.4` 標籤。
 - 軟體版號：階段 A 完成為 2.0，之後 B、C、D 依序為 2.1、2.2、2.3。
 

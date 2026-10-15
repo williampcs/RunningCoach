@@ -4,9 +4,9 @@ AI 跑步教練。用自然語言對話，教練會結合 **Intervals.icu 的客
 
 核心是一套 **五層記憶架構**：在有限的 context window 內維持長期記憶（選手資料、訓練歷史、賽事目標、對話重點），並透過 **Tool Use** 按需載入資料，把每次呼叫的 token 用量壓到最低。
 
-> 這個分支（`v2`）是改寫中的 TypeScript 版：資料留在使用者裝置的網頁版、可選的訂閱代理，以及自建的 Discord bot。
-> 目前線上運作的是 v1（Python 的 Discord bot），在 `main` 分支，規格見 [running-coach-spec1_4.md](doc/running-coach-spec1_4.md)。
-> v2 還沒有部署，也還沒以真實的 API key 驗證；進度與尚未驗證的部分見 [v2 規格第 9 節](doc/running-coach-spec2_0.md)。
+> 這是 v2（TypeScript）：資料留在使用者裝置的網頁版、可選的訂閱代理，以及自建的 Discord bot。
+> 作者自己的 Discord bot 自 2026-10-15 起改由 v2 部署；上線前沒有先以真實的 API key 測試，進度與尚未驗證的部分見 [v2 規格第 9 節](doc/running-coach-spec2_0.md)。網頁版與代理還沒有部署。
+> v1 是 Python 的 Discord bot，規格見 [running-coach-spec1_4.md](doc/running-coach-spec1_4.md)，最後一版是 commit `62ae45f`。
 
 ---
 
