@@ -12,7 +12,7 @@ export interface BrowserDb extends SqlDriver {
   reason?: string;
   exportFile(): Promise<Uint8Array>;
   importFile(bytes: Uint8Array): Promise<void>;
-  /** 刪除所有資料，換成空的資料庫 */
+  /** 刪除所有資料，保留資料表結構 */
   reset(): Promise<void>;
 }
 

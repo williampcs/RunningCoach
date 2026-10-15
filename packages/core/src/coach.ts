@@ -14,6 +14,7 @@ import {
   type CoachSettings,
   type Logger,
   type SqlDriver,
+  type Workout,
 } from "./types";
 
 // 模型沒有給出可用回覆時顯示給使用者的訊息
@@ -212,6 +213,34 @@ export class Coach {
       this.logger.warn(`Summary generation failed for workout_id=${workoutId}: ${String(e)}`);
     }
     return { status: "saved", activity: latest, workoutId, summary };
+  }
+
+  /**
+   * 補填或修改已存檔訓練的主觀感受（例如同步進來、當時沒有回報的紀錄），
+   * 並帶著體感重新產生分析摘要。摘要失敗時保留原本的摘要，summary 為 null。
+   */
+  async addSubjective(
+    workoutId: number,
+    perceivedEffort: number,
+    subjectiveNotes: string,
+  ): Promise<{ workout: Workout; summary: string | null }> {
+    const existing = await this.db.getWorkout(workoutId);
+    if (!existing) throw new Error(`找不到這筆訓練紀錄（id=${workoutId}）`);
+
+    const notes = subjectiveNotes.trim() || null;
+    await this.db.updateWorkoutSubjective(workoutId, perceivedEffort, notes);
+    let summary: string | null = null;
+    try {
+      summary = await generateWorkoutSummary(this.runtime.llm, {
+        ...existing,
+        perceived_effort: perceivedEffort,
+        subjective_notes: notes,
+      });
+      await this.db.saveWorkoutSummary(workoutId, summary);
+    } catch (e) {
+      this.logger.warn(`Summary generation failed for workout_id=${workoutId}: ${String(e)}`);
+    }
+    return { workout: (await this.db.getWorkout(workoutId))!, summary };
   }
 
   /** 以本週的 ISO 週標籤儲存訓練計畫（/plan） */

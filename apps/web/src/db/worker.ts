@@ -57,14 +57,15 @@ async function handle(request: DbRequest): Promise<unknown> {
       return null;
     }
     case "reset": {
-      // 刪掉資料庫檔案，換一個空的；資料表由核心的 init() 重建
-      db.close();
-      if (pool) {
-        pool.unlink(DB_FILE);
-        db = new pool.OpfsSAHPoolDb(DB_FILE);
-      } else {
-        db = new sqlite3.oo1.DB(":memory:");
-      }
+      // 清空每個資料表但保留結構，全在這一則訊息內完成：
+      // 若刪檔重開，進行中的查詢（例如設定頁的狀態統計）會在資料表重建前撞上「資料表不存在」
+      const tables = db.selectValues("SELECT name FROM sqlite_master WHERE type = 'table'") as string[];
+      db.transaction(() => {
+        db.exec("PRAGMA defer_foreign_keys = ON");
+        for (const table of tables) db.exec(`DELETE FROM "${table.replaceAll('"', '""')}"`);
+      });
+      // 釋放空間，也不在檔案裡留下已刪資料的殘頁
+      db.exec("VACUUM");
       return null;
     }
   }
