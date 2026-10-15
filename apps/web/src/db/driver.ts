@@ -12,6 +12,8 @@ export interface BrowserDb extends SqlDriver {
   reason?: string;
   exportFile(): Promise<Uint8Array>;
   importFile(bytes: Uint8Array): Promise<void>;
+  /** 刪除所有資料，換成空的資料庫 */
+  reset(): Promise<void>;
 }
 
 export async function openBrowserDb(): Promise<BrowserDb> {
@@ -45,5 +47,6 @@ export async function openBrowserDb(): Promise<BrowserDb> {
     all: (sql, params: SqlValue[] = []) => call<Row[]>({ method: "all", sql, params }),
     exportFile: () => call<Uint8Array>({ method: "export" }),
     importFile: (bytes) => call<void>({ method: "import", bytes }),
+    reset: () => call<void>({ method: "reset" }),
   };
 }

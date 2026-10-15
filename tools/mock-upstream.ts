@@ -68,7 +68,15 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   const lastText = textOf(last);
   const isToolResult = Array.isArray(last?.content) && last.content.some((b) => b.type === "tool_result");
 
-  if (!body.tools?.length) return [{ type: "text", text: "（模擬摘要）10 公里有氧跑，配速穩定，心率落在 Z3，體感與數據相符。" }];
+  // 沒有工具的單次生成（跑後摘要、對話壓縮）；真實模型常回 Markdown
+  if (!body.tools?.length) {
+    return [
+      {
+        type: "text",
+        text: "**（模擬摘要）10 公里有氧跑**｜配速 5:30/km｜心率 152\n\n- 配速穩定，心率落在 Z3\n- 體感與數據相符",
+      },
+    ];
+  }
   if (body.tool_choice?.type === "none") return [{ type: "text", text: "（模擬回覆）已達工具呼叫上限，先回覆到這裡。" }];
 
   if (isToolResult) {

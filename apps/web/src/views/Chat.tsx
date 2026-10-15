@@ -4,6 +4,7 @@ import { formatTokenFooter, type ChatEvent, type ConversationRow } from "@runnin
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
+import { GettingStarted } from "./GettingStarted";
 
 // 執行工具時顯示的狀態
 const TOOL_STATUS: Record<string, string> = {
@@ -81,8 +82,9 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     void load();
   }, [load, revision]);
 
+  // 有對話時捲到最新一則；還沒有對話時停在頂端，新手引導才看得到
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
+    if (messages.length > 0 || sending !== null) bottom.current?.scrollIntoView({ block: "end" });
   }, [messages, sending, error, draft, tool]);
 
   const send = useCallback(
@@ -126,6 +128,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   return (
     <>
       <div className="messages">
+        <GettingStarted />
         {hasSummary && <div className="muted small center">較早的對話已整理成摘要，教練仍記得重點。</div>}
         {messages.length === 0 && sending === null && (
           <div className="empty">

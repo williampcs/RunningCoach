@@ -85,6 +85,11 @@ export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
+/** 刪除儲存的設定（含 API key），下次載入時回到預設值 */
+export function clearSettings(): void {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
 /** 切換供應商時的建議模型；Claude 以外的模型名稱由使用者填寫 */
 export function suggestedModels(mode: AppSettings["llmMode"], provider: ProviderKind): Record<Purpose, string> {
   return mode === "proxy" || provider === "anthropic" ? { ...CLAUDE_MODELS } : { chat: "", summary: "", compress: "" };
