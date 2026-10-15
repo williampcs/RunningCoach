@@ -499,3 +499,80 @@ pre {
   border: 1px solid var(--border);
   border-radius: 10px;
 }
+
+/* 桌面版：分頁改成左側欄，內容放寬；手機與平板直向維持原本的底部分頁列 */
+@media (min-width: 900px) {
+  .shell {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    column-gap: 28px;
+    max-width: 1120px;
+    padding: 0 32px;
+  }
+
+  .topbar {
+    grid-column: 1 / -1;
+    padding: 20px 0 16px;
+  }
+
+  .topbar h1 {
+    font-size: 1.3rem;
+  }
+
+  /* 側欄已標示目前分頁 */
+  .topbar span {
+    display: none;
+  }
+
+  .shell > .notice {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0 0 12px;
+  }
+
+  /* 留 4px 給對話頁輸入框的聚焦外框，避免被 overflow: hidden 裁掉 */
+  .page {
+    grid-column: 2;
+    grid-row: 3;
+    padding: 4px 4px 24px;
+  }
+
+  .tabbar {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    align-self: start;
+    flex-direction: column;
+    gap: 4px;
+    border: 0;
+    background: none;
+    padding: 0;
+  }
+
+  .tabbar button {
+    flex: none;
+    flex-direction: row;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+
+  .tabbar button span {
+    font-size: 1.05rem;
+  }
+
+  .tabbar button:hover {
+    background: var(--surface);
+  }
+
+  .tabbar button.active {
+    background: var(--surface);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .bubble {
+    max-width: 75%;
+  }
+}
