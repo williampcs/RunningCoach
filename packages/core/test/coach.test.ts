@@ -302,6 +302,37 @@ describe("Coach.reportRun（表單式跑後回報）", () => {
     expect((await coach.db.getRecentWorkouts(1))[0]).toMatchObject({ perceived_effort: 6, summary: "穩定的有氧跑" });
   });
 
+  it("補填已同步紀錄的體感：更新欄位並帶著體感重新產生摘要", async () => {
+    const { coach, provider } = await makeCoach(
+      [turn({ text: "同步時的摘要" }), turn({ text: "加上體感後的摘要" })],
+      { activities: [activity({ date: "2026-10-08" })] },
+    );
+    await coach.sync();
+    const [synced] = await coach.db.getRecentWorkouts(7);
+    expect(synced).toMatchObject({ perceived_effort: null, summary: "同步時的摘要" });
+
+    const result = await coach.addSubjective(synced!.id, 8, "  最後兩公里很喘 ");
+    expect(result).toMatchObject({
+      summary: "加上體感後的摘要",
+      workout: { perceived_effort: 8, subjective_notes: "最後兩公里很喘", summary: "加上體感後的摘要" },
+    });
+    expect(provider.calls[1]!.request.messages[0]!.content).toContain("體感強度：8/10\n主觀感受：最後兩公里很喘");
+    // 列表只顯示一次，附最新的摘要
+    expect(await coach.db.getRecentWorkouts(7)).toMatchObject([{ id: synced!.id, summary: "加上體感後的摘要" }]);
+
+    await expect(coach.addSubjective(999, 5, "")).rejects.toThrow("找不到這筆訓練紀錄");
+  });
+
+  it("補填時摘要失敗：體感照樣存檔，保留原本的摘要", async () => {
+    const { coach } = await makeCoach([turn({ text: "同步時的摘要" }), turn({ finish: "refused" })], {
+      activities: [activity({ date: "2026-10-08" })],
+    });
+    await coach.sync();
+    const [synced] = await coach.db.getRecentWorkouts(7);
+    const result = await coach.addSubjective(synced!.id, 4, "");
+    expect(result).toMatchObject({ summary: null, workout: { perceived_effort: 4, subjective_notes: null, summary: "同步時的摘要" } });
+  });
+
   it("手錶尚未同步：暫存主觀感受", async () => {
     const { coach, provider } = await makeCoach([], { activities: [activity({ date: "2026-10-09" })] });
     const report = await coach.reportRun(6, "輕鬆");

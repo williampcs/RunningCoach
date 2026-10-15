@@ -393,6 +393,27 @@ export class Db {
   // workouts
   // ---------------------------------------------------------------------------
 
+  /** 單筆訓練，附最新的摘要 */
+  getWorkout(id: number): Promise<Workout | null> {
+    return this.get<Workout>(
+      `SELECT w.*, ws.summary
+         FROM workouts w
+         LEFT JOIN workout_summaries ws
+           ON ws.id = (SELECT MAX(id) FROM workout_summaries WHERE workout_id = w.id)
+        WHERE w.id = ?`,
+      [id],
+    );
+  }
+
+  /** 補填或修改已存檔訓練的主觀感受 */
+  async updateWorkoutSubjective(id: number, perceivedEffort: number, subjectiveNotes: string | null): Promise<void> {
+    await this.run("UPDATE workouts SET perceived_effort=?, subjective_notes=? WHERE id=?", [
+      perceivedEffort,
+      subjectiveNotes,
+      id,
+    ]);
+  }
+
   getWorkoutByIntervalsId(intervalsId: string): Promise<Workout | null> {
     return this.get<Workout>("SELECT * FROM workouts WHERE intervals_id=?", [intervalsId]);
   }

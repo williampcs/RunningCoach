@@ -6,7 +6,13 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 
-function activityLines(a: Activity): string {
+/** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
+type RunData = Pick<
+  Activity,
+  "date" | "distance_km" | "duration_min" | "avg_pace" | "avg_hr" | "max_hr" | "elevation_m" | "training_load"
+>;
+
+function activityLines(a: RunData): string {
   return [
     `日期：${a.date}`,
     `距離：${a.distance_km ?? "?"}km｜時長：${a.duration_min ?? "?"}分鐘`,
@@ -16,9 +22,9 @@ function activityLines(a: Activity): string {
 }
 
 /** 交給教練分析的訊息：資料已由表單存檔，一次呼叫就能完成，不必再走工具迴圈 */
-function analysisRequest(a: Activity, effort: number, notes: string): string {
+function analysisRequest(a: RunData, effort: number, notes: string, backfilled = false): string {
   return [
-    "我剛完成今天的跑步，請以教練角度給我回饋。",
+    backfilled ? `我補記了 ${a.date} 那次跑步的感受，請以教練角度給我回饋。` : "我剛完成今天的跑步，請以教練角度給我回饋。",
     "",
     activityLines(a),
     `體感強度：${effort}/10`,
@@ -37,6 +43,10 @@ export function ReportView() {
   const [report, setReport] = useState<RunReport | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
+  // 補填已存檔紀錄的體感：一次只開一筆的表單
+  const [editing, setEditing] = useState<{ id: number; effort: number; notes: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [backfilled, setBackfilled] = useState<{ workout: Workout; summary: string | null } | null>(null);
 
   useEffect(() => {
     void coach.db.getRecentWorkouts(30).then(setWorkouts);
@@ -58,6 +68,26 @@ export function ReportView() {
     }
   }
 
+  function startEdit(w: Workout) {
+    setEditing({ id: w.id, effort: w.perceived_effort ?? 5, notes: w.subjective_notes ?? "" });
+    setBackfilled(null);
+  }
+
+  async function saveBackfill() {
+    if (!editing) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      setBackfilled(await coach.addSubjective(editing.id, editing.effort, editing.notes));
+      setEditing(null);
+      touch();
+    } catch (e) {
+      setMessage({ kind: "error", text: errorText(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       {!hasIntervals && (
@@ -71,6 +101,7 @@ export function ReportView() {
 
       <section className="card">
         <h2>今天跑完了？</h2>
+        <p className="muted small">回報今天這一趟。之前的跑步可以在下方的訓練紀錄裡補填體感。</p>
         <label>
           <span>
             體感強度：<strong>{effort}</strong> / 10
@@ -137,6 +168,66 @@ export function ReportView() {
                 <div className="small">
                   <Markdown>{w.summary}</Markdown>
                 </div>
+              )}
+              {editing?.id === w.id ? (
+                <div className="backfill">
+                  <label>
+                    <span>
+                      體感強度：<strong>{editing.effort}</strong> / 10
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={10}
+                      value={editing.effort}
+                      onChange={(e) => setEditing({ ...editing, effort: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label>
+                    主觀感受
+                    <textarea
+                      rows={2}
+                      value={editing.notes}
+                      placeholder="例如：最後兩公里很喘，腿還好"
+                      onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                    />
+                  </label>
+                  <div className="row">
+                    <button className="primary" disabled={saving} onClick={() => void saveBackfill()}>
+                      {saving ? "儲存並分析中…" : "儲存並重新分析"}
+                    </button>
+                    <button disabled={saving} onClick={() => setEditing(null)}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="row">
+                  <button className="small" disabled={editing !== null} onClick={() => startEdit(w)}>
+                    {w.perceived_effort != null ? "修改體感" : "補填體感"}
+                  </button>
+                  {backfilled?.workout.id === w.id && (
+                    <button
+                      className="small primary"
+                      onClick={() =>
+                        goTo(
+                          "chat",
+                          analysisRequest(
+                            backfilled.workout,
+                            backfilled.workout.perceived_effort ?? 5,
+                            backfilled.workout.subjective_notes ?? "",
+                            true,
+                          ),
+                        )
+                      }
+                    >
+                      請教練分析
+                    </button>
+                  )}
+                </div>
+              )}
+              {backfilled?.workout.id === w.id && !backfilled.summary && (
+                <p className="muted small">體感已存檔；這次沒有重新產生分析。</p>
               )}
             </li>
           ))}

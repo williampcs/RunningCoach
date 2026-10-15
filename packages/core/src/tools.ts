@@ -199,7 +199,11 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
   ];
 }
 
-export type WorkoutSummaryInput = Activity & {
+/** 產生摘要用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
+export type WorkoutSummaryInput = Pick<
+  Activity,
+  "date" | "distance_km" | "duration_min" | "avg_pace" | "avg_hr" | "max_hr" | "elevation_m"
+> & {
   perceived_effort: number | null;
   subjective_notes: string | null;
 };

@@ -489,3 +489,13 @@ pre {
   margin: 0;
   padding-left: 1.3em;
 }
+
+/* 補填體感的表單 */
+.backfill {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
