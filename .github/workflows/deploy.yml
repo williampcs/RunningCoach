@@ -1,4 +1,5 @@
-# 部署自建的 Discord bot（v2）：push 到 main 時執行。
+# 部署自建的 Discord bot（v2）：push 到 main 且 bot 用到的檔案有改動時執行。
+# 只改網頁版或文件時不會觸發，bot 不會因此重啟。
 #
 # 映像在 GitHub 代管的 runner 上建置並推到 GHCR（公開），VM 上的 self-hosted runner 只拉取與重啟，
 # 不在 VM 上建置（KI-023、KI-025）。
@@ -10,6 +11,14 @@ name: Deploy Discord bot
 on:
   push:
     branches: [main]
+    paths:
+      - apps/discord/**
+      - packages/**
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - docker-compose.yml
+      - .github/workflows/deploy.yml
 
 permissions:
   contents: read

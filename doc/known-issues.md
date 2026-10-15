@@ -695,3 +695,29 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - self-hosted runner 的名稱與機器名稱會出現在公開的 Actions 紀錄中（v1 時就是如此）。介意的話，重新註冊 runner 時改用中性的名稱。
 - 公開 repo 搭配 self-hosted runner：外部的人可以發 PR，在 PR 裡加入指定在 self-hosted runner 上執行的 workflow，
   在 VM 上執行任意程式（`.env` 就在 VM 上）。建議在 repo 的 Settings → Actions 把外部貢獻者 PR 的 workflow 設為一律需要核准。
+
+---
+
+## [KI-026] 網頁版部署到 GitHub Pages
+
+**決定時機**：2026-10-15
+**狀態**：workflow 已寫在 `v2`；在 repo 設定啟用 Pages、合併到 `main` 後上線
+
+**決策**：
+- `.github/workflows/web.yml`：push 到 `main` 且網頁版或核心（`apps/web`、`packages/core` 等）有改動時，或手動執行時，
+  在 GitHub 代管的 runner 上測試、建置，發布到 GitHub Pages，網址為 `https://williampcs.github.io/RunningCoach/`。
+- 不放在 VM：網頁版建置出來是靜態檔案，不需要伺服器；放在 VM 要另外架網頁伺服器、憑證與對外連入埠。
+- 發布的只有程式檔案；對話、訓練紀錄與金鑰都留在使用者的瀏覽器。代理還沒有部署，只能自備 key。
+- bot 的部署（`deploy.yml`）同時加上路徑條件：只改網頁版或文件時不會觸發，bot 不會因此重啟。
+
+**第一次**：在 repo 的 Settings → Pages 把 Source 設為「GitHub Actions」。沒有啟用時發布步驟會失敗，啟用後手動執行一次 workflow 即可。
+
+**注意**：
+- 同一個 GitHub 帳號底下的所有 Pages 網站共用 `williampcs.github.io` 這個來源（origin）。瀏覽器的 localStorage 與 OPFS 以來源區分，
+  所以同帳號其他 Pages 網站上的程式讀得到網頁版存的 API key 與資料。不要在同一個帳號架其他 Pages 網站；需要的話改用自訂網域。
+- 建置時以 `--base /RunningCoach/`（取自 repo 名稱）指定子路徑；改 repo 名稱或改用自訂網域時要跟著調整。
+- 還沒有獨立的隱私說明頁（規格 4.2、9.4）：給幾位跑友試用時先不做，公開推廣前要補。
+
+**驗證**：actionlint 通過；以 workflow 中相同的指令建置，在子路徑下以瀏覽器實測：持久儲存、串流對話、重新整理後資料仍在、
+原始碼連結、manifest 的起始頁與圖示。實際發布到 Pages 要等合併後。
+
