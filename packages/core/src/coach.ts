@@ -1,4 +1,5 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
+import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
@@ -248,6 +249,30 @@ export class Coach {
     const weekLabel = isoWeekLabel(this.today());
     await this.db.saveTrainingPlan(weekLabel, content);
     return weekLabel;
+  }
+
+  /** 從其他 AI 服務整理來的文字擷取選手資料、賽事與課表的建議值；不寫入任何東西 */
+  async extractImport(text: string): Promise<ImportSuggestion> {
+    const reply = await this.runtime.llm.complete("summary", buildExtractionPrompt(text.trim(), this.today()), 4000);
+    return parseExtraction(reply.text, this.today());
+  }
+
+  /** 寫入使用者確認過的項目；課表會成為本週的計畫 */
+  async applyImport(selected: ImportSuggestion): Promise<{ profile: number; races: number; plan: boolean }> {
+    const entries = Object.entries(selected.profile).filter(([, value]) => value.trim());
+    for (const [key, value] of entries) await this.db.setProfileKey(key, value.trim());
+    for (const race of selected.races) {
+      await this.db.addRace({
+        name: race.name,
+        date: race.date,
+        distance_km: race.distance_km,
+        target_time: race.target_time ?? undefined,
+        notes: race.notes ?? undefined,
+      });
+    }
+    const plan = selected.plan?.trim() ?? "";
+    if (plan) await this.savePlanForThisWeek(plan);
+    return { profile: entries.length, races: selected.races.length, plan: plan !== "" };
   }
 
   status(): Promise<StatusSummary> {

@@ -1,3 +1,11 @@
+export {
+  buildExtractionPrompt,
+  IMPORT_PROMPT,
+  parseExtraction,
+  PROFILE_FIELDS,
+  type ImportedRace,
+  type ImportSuggestion,
+} from "./athlete-import";
 export { Coach, type ChatReply, type CoachConfig, type CoachOptions, type RunReport, type UsageStats } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
