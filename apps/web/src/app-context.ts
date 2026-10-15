@@ -11,7 +11,8 @@ export interface AppState {
   settings: AppSettings;
   /** LLM 設定不完整時的說明；完整時為 null */
   llmProblem: string | null;
-  updateSettings(settings: AppSettings): void;
+  /** 啟用密碼鎖時要先加密，所以是非同步的 */
+  updateSettings(settings: AppSettings): Promise<void>;
   /** 資料有變動（對話、同步、匯入）時遞增，各頁據此重新讀取 */
   revision: number;
   touch(): void;

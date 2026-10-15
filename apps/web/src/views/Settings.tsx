@@ -9,6 +9,9 @@ import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import {
   clearSettings,
   consentKey,
+  disableLock,
+  enableLock,
+  lockEnabled,
   PROVIDER_LABELS,
   PROVIDER_RECIPIENT,
   suggestedModels,
@@ -23,7 +26,7 @@ const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const MODEL_LABELS: Record<Purpose, string> = { chat: "主對話", summary: "跑後摘要", compress: "對話壓縮" };
 
 /** 目前選擇下，資料會送到哪裡 */
-function DataFlow({ draft }: { draft: AppSettings }) {
+function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   if (draft.llmMode === "proxy") {
     return (
       <ul>
@@ -40,8 +43,115 @@ function DataFlow({ draft }: { draft: AppSettings }) {
         你的對話、選手資料與訓練紀錄會從這個瀏覽器直接送到 {recipient}，不經過 Running Coach 的任何伺服器。
       </li>
       <li>{recipient} 如何保存與使用這些資料，依它的 API 條款而定，Running Coach 無法替它保證。</li>
-      <li>API key 以明文存在這個瀏覽器；能操作這台裝置的人都讀得到，請勿在共用電腦上使用。</li>
+      <li>
+        {locked
+          ? "API key 以你的密碼加密後存在這個瀏覽器。"
+          : "API key 以明文存在這個瀏覽器；能操作這台裝置的人都讀得到。可以在下方的「保護 API key」啟用密碼鎖。"}
+      </li>
     </ul>
+  );
+}
+
+const MIN_PASSWORD = 8;
+
+/** 降低 API key 外洩風險的建議，以及選用的密碼鎖 */
+function KeyProtection({
+  settings,
+  locked,
+  onChange,
+}: {
+  settings: AppSettings;
+  locked: boolean;
+  onChange: (locked: boolean) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  async function enable() {
+    if (password.length < MIN_PASSWORD) {
+      setMessage({ kind: "error", text: `密碼至少要 ${MIN_PASSWORD} 個字元。` });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setMessage({ kind: "error", text: "兩次輸入的密碼不一樣。" });
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await enableLock(password, settings);
+      setPassword("");
+      setConfirmPassword("");
+      onChange(true);
+      setMessage({ kind: "ok", text: "已啟用密碼鎖。下次開啟網頁時要輸入密碼。" });
+    } catch (e) {
+      setMessage({ kind: "error", text: `啟用失敗：${errorText(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function disable() {
+    if (!confirm("停用後，API key 會改回以明文保存在這個瀏覽器。確定要停用密碼鎖嗎？")) return;
+    disableLock(settings);
+    onChange(false);
+    setMessage({ kind: "ok", text: "已停用密碼鎖。" });
+  }
+
+  return (
+    <section className="card">
+      <h2>保護 API key</h2>
+      <ul className="guide small">
+        <li>替 Running Coach 另外建立一把專用的 key，並在供應商的後台設定每月金額上限，外洩時損失有限。</li>
+        <li>懷疑外洩時，到供應商的後台撤銷這把 key 再產生新的；Intervals.icu 的 key 也可以在它的設定頁重新產生。</li>
+        <li>匯出的資料庫不含 API key。</li>
+      </ul>
+      <strong>密碼鎖（選用）</strong>
+      {locked ? (
+        <>
+          <p className="small">已啟用：API key 以你的密碼加密保存，每次開啟網頁都要輸入密碼。</p>
+          <div className="row">
+            <button onClick={() => location.reload()}>立即鎖定</button>
+            <button onClick={disable}>停用密碼鎖</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted small">
+            用你設定的密碼把 API key 加密後再保存，每次開啟網頁要輸入一次密碼。可以防止別人用這台裝置、或拷走瀏覽器資料時讀到
+            key；解鎖之後擋不住惡意的瀏覽器擴充功能。對話與訓練紀錄不會加密。忘記密碼就只能重新填寫 key。
+          </p>
+          <div className="grid">
+            <label>
+              密碼
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+            <label>
+              再輸入一次
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="row">
+            <button className="primary" disabled={busy || password === ""} onClick={() => void enable()}>
+              {busy ? "加密中…" : "啟用密碼鎖"}
+            </button>
+          </div>
+        </>
+      )}
+      {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
+    </section>
   );
 }
 
@@ -51,6 +161,7 @@ export function SettingsView() {
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [workouts, setWorkouts] = useState<number | null>(null);
+  const [locked, setLocked] = useState(lockEnabled);
   const sync = useSync();
 
   useEffect(() => {
@@ -211,7 +322,7 @@ export function SettingsView() {
 
         <div className="notice info">
           <strong>資料會送到哪裡</strong>
-          <DataFlow draft={draft} />
+          <DataFlow draft={draft} locked={locked} />
           <label className="check">
             <input type="checkbox" checked={consented} onChange={(e) => toggleConsent(e.target.checked)} />
             我了解並同意以上的資料流向
@@ -253,7 +364,7 @@ export function SettingsView() {
         <button
           className="primary"
           disabled={!dirty}
-          onClick={() => {
+          onClick={async () => {
             try {
               // 時區名稱無效時 Intl 會丟出錯誤，存檔前先擋下
               new Intl.DateTimeFormat("en-US", { timeZone: draft.timeZone });
@@ -261,8 +372,12 @@ export function SettingsView() {
               setMessage({ kind: "error", text: `時區名稱無效：${draft.timeZone}（例：Asia/Taipei）` });
               return;
             }
-            updateSettings(draft);
-            setMessage({ kind: "ok", text: "設定已儲存在這個瀏覽器。" });
+            try {
+              await updateSettings(draft);
+              setMessage({ kind: "ok", text: "設定已儲存在這個瀏覽器。" });
+            } catch (e) {
+              setMessage({ kind: "error", text: `儲存失敗：${errorText(e)}` });
+            }
           }}
         >
           儲存設定
@@ -282,6 +397,8 @@ export function SettingsView() {
           {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
         </div>
       )}
+
+      <KeyProtection settings={settings} locked={locked} onChange={setLocked} />
 
       <section className="card">
         <h2>資料</h2>

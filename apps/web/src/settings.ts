@@ -8,7 +8,15 @@ import {
   type Purpose,
 } from "@running-coach/core";
 
+import { createLock, openLock, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
+
 const STORAGE_KEY = "running-coach.settings.v1";
+/** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
+const LOCK_KEY = "running-coach.lock.v1";
+
+/** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
+let lockSession: LockSession | null = null;
+let unlockedSecrets: Secrets | null = null;
 
 export type ProviderKind = "anthropic" | "openai" | "gemini" | "openai-compatible";
 
@@ -64,7 +72,7 @@ export function defaultSettings(): AppSettings {
   };
 }
 
-export function loadSettings(): AppSettings {
+function loadPlainSettings(): AppSettings {
   const defaults = defaultSettings();
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<AppSettings> | null;
@@ -81,13 +89,93 @@ export function loadSettings(): AppSettings {
   }
 }
 
-export function saveSettings(settings: AppSettings): void {
+function secretsOf(s: AppSettings): Secrets {
+  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey };
+}
+
+function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
+  return {
+    ...s,
+    apiKey: secrets.apiKey,
+    proxy: { ...s.proxy, token: secrets.proxyToken },
+    intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey },
+  };
+}
+
+const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "" };
+
+/** 設定；啟用密碼鎖時，憑證只有在解鎖後才會出現 */
+export function loadSettings(): AppSettings {
+  const plain = loadPlainSettings();
+  return lockEnabled() ? withSecrets(plain, unlockedSecrets ?? NO_SECRETS) : plain;
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  if (lockEnabled()) {
+    if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
+    const sealed = await sealSecrets(lockSession, secretsOf(settings));
+    localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+    unlockedSecrets = secretsOf(settings);
+    return;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
-/** 刪除儲存的設定（含 API key），下次載入時回到預設值 */
+/** 刪除儲存的設定（含 API key 與密碼鎖），下次載入時回到預設值 */
 export function clearSettings(): void {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LOCK_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// 密碼鎖（選用）
+// ---------------------------------------------------------------------------
+
+export function lockEnabled(): boolean {
+  try {
+    return localStorage.getItem(LOCK_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** 已啟用密碼鎖、但這次開啟頁面後還沒輸入密碼 */
+export function needsUnlock(): boolean {
+  return lockEnabled() && lockSession === null;
+}
+
+/** 密碼錯誤時丟出 WrongPasswordError */
+export async function unlock(password: string): Promise<void> {
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  if (!sealed) throw new Error("沒有啟用密碼鎖");
+  const opened = await openLock(sealed, password);
+  lockSession = opened.session;
+  unlockedSecrets = opened.secrets;
+}
+
+/** 以密碼加密目前的憑證，明文設定裡的憑證改為空白 */
+export async function enableLock(password: string, settings: AppSettings): Promise<void> {
+  const { sealed, session } = await createLock(password, secretsOf(settings));
+  localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+  lockSession = session;
+  unlockedSecrets = secretsOf(settings);
+}
+
+/** 停用密碼鎖：憑證改回以明文保存 */
+export function disableLock(settings: AppSettings): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  localStorage.removeItem(LOCK_KEY);
+  lockSession = null;
+  unlockedSecrets = null;
+}
+
+/** 忘記密碼：刪除加密的憑證（其餘設定保留），之後要重新填寫 key */
+export function forgetLockedSecrets(): void {
+  localStorage.removeItem(LOCK_KEY);
+  lockSession = null;
+  unlockedSecrets = null;
 }
 
 /** 切換供應商時的建議模型；Claude 以外的模型名稱由使用者填寫 */
