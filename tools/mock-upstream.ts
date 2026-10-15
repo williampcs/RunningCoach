@@ -68,6 +68,19 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   const lastText = textOf(last);
   const isToolResult = Array.isArray(last?.content) && last.content.some((b) => b.type === "tool_result");
 
+  // 從其他 AI 帶入的擷取：回固定的 JSON，前後夾著說明文字與程式碼區塊（真實模型常這樣回）
+  if (!body.tools?.length && lastText.includes("只輸出一個 JSON 物件")) {
+    const extraction = {
+      profile: { goal_long_term: "全馬破四", pb_10k: "48:30", weight_kg: "62", injuries: "不明" },
+      races: [
+        { name: "模擬城市馬拉松", date: daysAgo(-60), distance_km: 42.195, target_time: "3:59:00", notes: null },
+        { name: "去年的半馬", date: daysAgo(200), distance_km: 21.0975, target_time: null, notes: null },
+      ],
+      plan: "- 週二：間歇 6×800m\n- 週四：節奏跑 8km\n- 週日：長跑 25km",
+    };
+    return [{ type: "text", text: `整理如下：\n\n\`\`\`json\n${JSON.stringify(extraction, null, 2)}\n\`\`\`` }];
+  }
+
   // 沒有工具的單次生成（跑後摘要、對話壓縮）；真實模型常回 Markdown
   if (!body.tools?.length) {
     return [
