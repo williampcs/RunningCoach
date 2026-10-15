@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
+import { ImportFromAi } from "./ImportFromAi";
 
 const GROUPS: { title: string; fields: { key: string; label: string; placeholder?: string; wide?: boolean }[] }[] = [
   {
@@ -74,34 +75,37 @@ export function ProfileView() {
   }
 
   return (
-    <form
-      className="stack"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-    >
-      {GROUPS.map((group) => (
-        <section className="card" key={group.title}>
-          <h2>{group.title}</h2>
-          <div className="grid">
-            {group.fields.map((field) => (
-              <label key={field.key} className={field.wide ? "wide" : ""}>
-                {field.label}
-                <input
-                  value={form[field.key] ?? ""}
-                  placeholder={field.placeholder}
-                  onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
-                />
-              </label>
-            ))}
-          </div>
-        </section>
-      ))}
-      {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
-      <button type="submit" className="primary" disabled={changed.length === 0}>
-        儲存選手資料
-      </button>
-    </form>
+    <>
+      <ImportFromAi />
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        {GROUPS.map((group) => (
+          <section className="card" key={group.title}>
+            <h2>{group.title}</h2>
+            <div className="grid">
+              {group.fields.map((field) => (
+                <label key={field.key} className={field.wide ? "wide" : ""}>
+                  {field.label}
+                  <input
+                    value={form[field.key] ?? ""}
+                    placeholder={field.placeholder}
+                    onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        ))}
+        {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
+        <button type="submit" className="primary" disabled={changed.length === 0}>
+          儲存選手資料
+        </button>
+      </form>
+    </>
   );
 }

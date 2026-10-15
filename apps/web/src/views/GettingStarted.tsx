@@ -133,7 +133,9 @@ export function GettingStarted() {
           {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
         </Step>
         <Step n={4} done={counts.profile > 0} title="填寫選手資料（建議）">
-          <p className="small muted">目標、個人最佳、最大心率等，教練的建議會更貼近你。</p>
+          <p className="small muted">
+            目標、個人最佳、最大心率等，教練的建議會更貼近你。已經跟其他 AI 聊過訓練的話，可以在選手資料頁「從其他 AI 帶入」。
+          </p>
           <button onClick={() => goTo("profile")}>前往選手資料</button>
         </Step>
       </ol>
