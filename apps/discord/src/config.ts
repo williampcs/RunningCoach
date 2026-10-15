@@ -91,6 +91,7 @@ export function loadConfig(env: Env): BotConfig {
       conversationMax: int(env, "CONVERSATION_MAX", DEFAULT_SETTINGS.conversationMax),
       conversationKeep: int(env, "CONVERSATION_KEEP", DEFAULT_SETTINGS.conversationKeep),
       conversationMsgMaxChars: int(env, "CONVERSATION_MSG_MAX_CHARS", DEFAULT_SETTINGS.conversationMsgMaxChars),
+      conversationFullRecent: int(env, "CONVERSATION_FULL_RECENT", DEFAULT_SETTINGS.conversationFullRecent),
       raceLookaheadDays: int(env, "RACE_LOOKAHEAD_DAYS", DEFAULT_SETTINGS.raceLookaheadDays),
       raceLookbackDays: int(env, "RACE_LOOKBACK_DAYS", DEFAULT_SETTINGS.raceLookbackDays),
       toolCallMaxRounds: int(env, "TOOL_CALL_MAX_ROUNDS", DEFAULT_SETTINGS.toolCallMaxRounds),

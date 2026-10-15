@@ -308,6 +308,10 @@ export class Db {
     return rows.reverse();
   }
 
+  getConversation(id: number): Promise<ConversationRow | null> {
+    return this.get<ConversationRow>("SELECT id, role, content FROM conversations WHERE id=?", [id]);
+  }
+
   countConversations(): Promise<number> {
     return this.count("SELECT COUNT(*) AS n FROM conversations");
   }

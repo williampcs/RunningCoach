@@ -113,6 +113,8 @@ export interface CoachSettings {
   conversationMax: number;
   conversationKeep: number;
   conversationMsgMaxChars: number;
+  /** 最新的幾則對話（含剛送出的訊息）完整帶入，不受 conversationMsgMaxChars 限制 */
+  conversationFullRecent: number;
   raceLookaheadDays: number;
   /** 已結束但尚未記錄成績的賽事，保留在賽事清單中的天數 */
   raceLookbackDays: number;
@@ -126,6 +128,7 @@ export const DEFAULT_SETTINGS: CoachSettings = {
   conversationMax: 20,
   conversationKeep: 10,
   conversationMsgMaxChars: 600,
+  conversationFullRecent: 3,
   raceLookaheadDays: 90,
   raceLookbackDays: 14,
   toolCallMaxRounds: 5,
