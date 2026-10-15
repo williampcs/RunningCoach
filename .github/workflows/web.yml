@@ -1,0 +1,57 @@
+# 部署網頁版到 GitHub Pages：push 到 main 且網頁版或核心有改動時執行，也可以手動執行。
+#
+# 網頁版建置出來是靜態檔案；對話、訓練紀錄與金鑰都留在使用者的瀏覽器，不經過這裡（KI-026）。
+# 第一次使用前，要在 repo 的 Settings → Pages 把 Source 設為「GitHub Actions」。
+name: Deploy web app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/web/**
+      - packages/core/**
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - .github/workflows/web.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # 網站在 https://<owner>.github.io/<repo>/ 底下
+      - run: npm run build -w @running-coach/web -- --base "/${GITHUB_REPOSITORY#*/}/"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/web/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

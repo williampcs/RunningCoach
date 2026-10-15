@@ -2,10 +2,10 @@
   "name": "Running Coach",
   "short_name": "Coach",
   "description": "資料留在你裝置上的 AI 跑步教練",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f8fafc",
   "theme_color": "#0f766e",
   "lang": "zh-Hant",
-  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
 }
