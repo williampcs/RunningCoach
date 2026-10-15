@@ -576,3 +576,21 @@ pre {
     max-width: 75%;
   }
 }
+
+/* 密碼鎖的解鎖畫面 */
+.unlock {
+  min-height: 100dvh;
+  justify-content: center;
+  align-items: center;
+}
+
+.unlock .card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.unlock h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--accent);
+}

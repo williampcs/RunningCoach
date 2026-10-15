@@ -88,8 +88,8 @@ export function App() {
       llmProblem: problem,
       revision,
       touch,
-      updateSettings(next) {
-        saveSettings(next);
+      async updateSettings(next) {
+        await saveSettings(next);
         coach.configure(coachConfig(next));
         setSettings(next);
       },
