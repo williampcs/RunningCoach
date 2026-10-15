@@ -701,7 +701,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-026] 網頁版部署到 GitHub Pages
 
 **決定時機**：2026-10-15
-**狀態**：workflow 已寫在 `v2`；在 repo 設定啟用 Pages、合併到 `main` 後上線
+**狀態**：2026-10-15 經 #2 合併到 `main` 並發布成功（GitHub 回報 Pages 部署成功，網址如下）。使用者已啟用 Pages，並確認帳號下沒有其他 Pages 網站。網站實際的使用情況待使用者以瀏覽器確認（雲端 session 的網路政策擋下 `github.io`）。
 
 **決策**：
 - `.github/workflows/web.yml`：push 到 `main` 且網頁版或核心（`apps/web`、`packages/core` 等）有改動時，或手動執行時，
