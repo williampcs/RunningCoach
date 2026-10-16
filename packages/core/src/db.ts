@@ -3,6 +3,7 @@ import { addDays, nowIso } from "./dates";
 import type {
   Activity,
   ConversationRow,
+  DailyCheckin,
   PendingSubjective,
   Race,
   Row,
@@ -10,10 +11,12 @@ import type {
   SqlValue,
   SummaryRow,
   TrainingPlan,
+  WellnessDay,
   Workout,
 } from "./types";
 
-export const SCHEMA_VERSION = 1;
+/** 2：新增 wellness 與 daily_checkins（v1 不讀這兩張表，仍可開啟同一個資料庫） */
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS athlete_profile (
@@ -82,6 +85,26 @@ const SCHEMA = `
     content         TEXT NOT NULL,
     covers_up_to_id INTEGER,
     created_at      TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS wellness (
+    date        TEXT PRIMARY KEY,
+    resting_hr  INTEGER,
+    hrv         REAL,
+    sleep_secs  INTEGER,
+    sleep_score INTEGER,
+    readiness   INTEGER,
+    raw_json    TEXT,
+    synced_at   TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS daily_checkins (
+    date       TEXT PRIMARY KEY,
+    energy     INTEGER NOT NULL,
+    soreness   INTEGER NOT NULL,
+    sleep      INTEGER NOT NULL,
+    notes      TEXT,
+    updated_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS pending_subjective (
@@ -512,6 +535,54 @@ export class Db {
     return this.all(
       "SELECT date, avg_pace, distance_km FROM workouts WHERE date >= ? AND avg_pace IS NOT NULL ORDER BY date",
       [addDays(this.clock.today(), -weeks * 7)],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // wellness（手錶的恢復資料）與 daily_checkins（選手自評）
+  // ---------------------------------------------------------------------------
+
+  /** 同一天以新資料覆蓋（手錶的睡眠、HRV 常在當天稍晚才補齊） */
+  async upsertWellness(days: WellnessDay[]): Promise<void> {
+    for (const w of days) {
+      await this.run(
+        `INSERT INTO wellness (date, resting_hr, hrv, sleep_secs, sleep_score, readiness, raw_json, synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(date) DO UPDATE SET
+           resting_hr=excluded.resting_hr, hrv=excluded.hrv, sleep_secs=excluded.sleep_secs,
+           sleep_score=excluded.sleep_score, readiness=excluded.readiness,
+           raw_json=excluded.raw_json, synced_at=excluded.synced_at`,
+        [w.date, w.resting_hr, w.hrv, w.sleep_secs, w.sleep_score, w.readiness, w.raw_json ?? null, this.stamp()],
+      );
+    }
+  }
+
+  /** 到 until（預設今天）為止 N 天的恢復資料（含 until 當天），舊的在前 */
+  getWellness(days: number, until = this.clock.today()): Promise<WellnessDay[]> {
+    return this.all<WellnessDay>(
+      "SELECT date, resting_hr, hrv, sleep_secs, sleep_score, readiness FROM wellness WHERE date >= ? AND date <= ? ORDER BY date",
+      [addDays(until, -days), until],
+    );
+  }
+
+  async saveCheckin(c: DailyCheckin): Promise<void> {
+    await this.run(
+      `INSERT INTO daily_checkins (date, energy, soreness, sleep, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(date) DO UPDATE SET energy=excluded.energy, soreness=excluded.soreness, sleep=excluded.sleep,
+         notes=excluded.notes, updated_at=excluded.updated_at`,
+      [c.date, c.energy, c.soreness, c.sleep, c.notes, this.stamp()],
+    );
+  }
+
+  getCheckin(date: string): Promise<DailyCheckin | null> {
+    return this.get<DailyCheckin>("SELECT date, energy, soreness, sleep, notes FROM daily_checkins WHERE date=?", [date]);
+  }
+
+  /** 最近 N 天（含今天）的自評，舊的在前 */
+  getCheckins(days: number): Promise<DailyCheckin[]> {
+    return this.all<DailyCheckin>(
+      "SELECT date, energy, soreness, sleep, notes FROM daily_checkins WHERE date >= ? AND date <= ? ORDER BY date",
+      [addDays(this.clock.today(), -days), this.clock.today()],
     );
   }
 

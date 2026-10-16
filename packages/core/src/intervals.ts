@@ -1,6 +1,6 @@
 /** Intervals.icu — API 連線、活動拉取、資料正規化. */
 import { addDays } from "./dates";
-import type { Activity, ActivitySource } from "./types";
+import type { Activity, ActivitySource, WellnessDay } from "./types";
 
 const BASE_URL = "https://intervals.icu/api/v1";
 
@@ -94,14 +94,33 @@ export class IntervalsClient implements ActivitySource {
     return (await this.queryRuns(days)).map((raw) => this.normalize(raw));
   }
 
-  private async queryRuns(days: number): Promise<RawActivity[]> {
+  /** 最近 N 天的恢復資料（靜息心率、HRV、睡眠等）；欄位視手錶與設定而定，沒有的就是 null */
+  async fetchWellness(days = 14): Promise<WellnessDay[]> {
     const newest = this.options.today();
     const oldest = addDays(newest, -days);
+    const data = await this.getJson(`/wellness?oldest=${oldest}&newest=${newest}`);
+    if (!Array.isArray(data)) return [];
+    return (data as Record<string, unknown>[]).flatMap((raw) => {
+      const date = typeof raw.id === "string" ? raw.id.slice(0, 10) : typeof raw.date === "string" ? raw.date.slice(0, 10) : "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+      const day: WellnessDay = {
+        date,
+        resting_hr: num(raw.restingHR),
+        hrv: num(raw.hrv),
+        sleep_secs: num(raw.sleepSecs),
+        sleep_score: num(raw.sleepScore),
+        readiness: num(raw.readiness),
+        raw_json: JSON.stringify(raw),
+      };
+      const empty = [day.resting_hr, day.hrv, day.sleep_secs, day.sleep_score, day.readiness].every((v) => v === null);
+      return empty ? [] : [day];
+    });
+  }
+
+  private async getJson(path: string): Promise<unknown> {
     const athleteId = this.options.athleteId || "0";
     const base = (this.options.baseUrl ?? BASE_URL).replace(/\/+$/, "");
-    const url = `${base}/athlete/${encodeURIComponent(athleteId)}/activities?oldest=${oldest}&newest=${newest}`;
-
-    const response = await this.fetchImpl(url, {
+    const response = await this.fetchImpl(`${base}/athlete/${encodeURIComponent(athleteId)}${path}`, {
       headers: { authorization: this.authHeader(), accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
@@ -109,7 +128,13 @@ export class IntervalsClient implements ActivitySource {
       const hint = response.status === 401 || response.status === 403 ? "（請確認 API Key 與 Athlete ID）" : "";
       throw new IntervalsError(`Intervals.icu 回應 ${response.status}${hint}`);
     }
-    const data: unknown = await response.json();
+    return response.json();
+  }
+
+  private async queryRuns(days: number): Promise<RawActivity[]> {
+    const newest = this.options.today();
+    const oldest = addDays(newest, -days);
+    const data = await this.getJson(`/activities?oldest=${oldest}&newest=${newest}`);
     if (!Array.isArray(data)) return [];
     return (data as RawActivity[]).filter(isRun).sort(byStartDesc);
   }

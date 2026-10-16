@@ -41,6 +41,32 @@ export interface Activity {
 export interface ActivitySource {
   fetchLatestActivity(): Promise<Activity | null>;
   fetchActivities(days: number): Promise<Activity[]>;
+  /** 最近 N 天的恢復資料（手錶經 Intervals.icu 提供）；不支援的來源不實作 */
+  fetchWellness?(days: number): Promise<WellnessDay[]>;
+}
+
+/** 一天的恢復資料；欄位視手錶與設定而定，可能缺 */
+export interface WellnessDay {
+  date: string;
+  resting_hr: number | null;
+  /** rMSSD，毫秒 */
+  hrv: number | null;
+  sleep_secs: number | null;
+  sleep_score: number | null;
+  readiness: number | null;
+  raw_json?: string | null;
+}
+
+/** 選手每天的身體狀況自評，1–5 分 */
+export interface DailyCheckin {
+  date: string;
+  /** 精神：1 很差 – 5 很好 */
+  energy: number;
+  /** 痠痛：1 沒有 – 5 很痠 */
+  soreness: number;
+  /** 睡眠：1 很差 – 5 很好 */
+  sleep: number;
+  notes: string | null;
 }
 
 export interface Race {

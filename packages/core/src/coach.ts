@@ -1,10 +1,12 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
+import { buildFeed, type FeedItem } from "./feed";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
+import { recoveryNoteFor } from "./recovery";
 import { runSync } from "./sync";
 import { buildTools, createToolExecutor, generateWorkoutSummary, type ToolExecutor } from "./tools";
 import {
@@ -13,6 +15,7 @@ import {
   type Activity,
   type ActivitySource,
   type CoachSettings,
+  type DailyCheckin,
   type Logger,
   type SqlDriver,
   type Workout,
@@ -214,6 +217,7 @@ export class Coach {
         ...latest,
         perceived_effort: perceivedEffort,
         subjective_notes: subjectiveNotes,
+        recovery: await recoveryNoteFor(this.db, latest.date),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -242,12 +246,28 @@ export class Coach {
         ...existing,
         perceived_effort: perceivedEffort,
         subjective_notes: notes,
+        recovery: await recoveryNoteFor(this.db, existing.date),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
       this.logger.warn(`Summary generation failed for workout_id=${workoutId}: ${String(e)}`);
     }
     return { workout: (await this.db.getWorkout(workoutId))!, summary };
+  }
+
+  /** 記錄今天的身體狀況自評（1–5 分），同一天再次記錄會覆蓋 */
+  async saveCheckin(checkin: Omit<DailyCheckin, "date">): Promise<DailyCheckin> {
+    const saved = { ...checkin, date: this.today(), notes: checkin.notes?.trim() || null };
+    for (const key of ["energy", "soreness", "sleep"] as const) {
+      if (!Number.isInteger(saved[key]) || saved[key] < 1 || saved[key] > 5) throw new Error(`${key} 必須是 1–5 的整數`);
+    }
+    await this.db.saveCheckin(saved);
+    return saved;
+  }
+
+  /** 教練動態：打開 App 時要提醒的事項 */
+  feed(): Promise<FeedItem[]> {
+    return buildFeed(this.db, this.today(), this.settings);
   }
 
   /** 以本週的 ISO 週標籤儲存訓練計畫（/plan） */

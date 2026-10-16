@@ -7,10 +7,12 @@
  * 4. 合併主客觀資料（或僅存客觀資料）後存入 workouts
  * 5. 生成 AI 摘要存入 workout_summaries
  * 6. 清理超過 7 天的 pending_subjective
+ * 另外更新恢復資料（靜息心率、HRV、睡眠）；沒有跑步時也更新，失敗不影響活動的同步
  */
 import type { Db } from "./db";
 import { IntervalsError } from "./intervals";
 import type { Llm } from "./llm";
+import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
 import type { ActivitySource, Activity, Logger } from "./types";
 
@@ -30,6 +32,21 @@ export async function runSync(deps: {
 }): Promise<string> {
   const { db, llm, activities, logger } = deps;
 
+  // 恢復資料先處理：受傷休息、沒有跑步紀錄時更需要它
+  let wellnessDays = 0;
+  let wellnessFailed = false;
+  if (activities.fetchWellness) {
+    try {
+      const days = await activities.fetchWellness(SYNC_DAYS);
+      await db.upsertWellness(days);
+      wellnessDays = days.length;
+    } catch (e) {
+      logger.warn(`Wellness fetch failed: ${message(e)}`);
+      wellnessFailed = true;
+    }
+  }
+  const wellnessNote = wellnessFailed ? "（恢復資料暫時無法取得）" : wellnessDays ? `已更新恢復資料 ${wellnessDays} 天。` : "";
+
   let fetched: Activity[];
   try {
     fetched = await activities.fetchActivities(SYNC_DAYS);
@@ -38,7 +55,7 @@ export async function runSync(deps: {
     logger.error(`Intervals.icu fetch error: ${message(e)}`);
     return `❌ 拉取 Intervals.icu 資料時發生錯誤：${message(e)}`;
   }
-  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。`;
+  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${wellnessNote}`;
 
   let newCount = 0;
   let mergedCount = 0;
@@ -68,6 +85,7 @@ export async function runSync(deps: {
         ...activity,
         perceived_effort: perceivedEffort,
         subjective_notes: subjectiveNotes,
+        recovery: await recoveryNoteFor(db, activity.date),
       });
       await db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -85,10 +103,11 @@ export async function runSync(deps: {
   await db.cleanupOldPendingSubjective();
 
   if (newCount === 0) {
-    return skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : "✅ Intervals.icu 同步完成";
+    return (skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : "✅ Intervals.icu 同步完成") + wellnessNote;
   }
   const details = [`新增 ${newCount} 筆訓練紀錄`];
   if (mergedCount) details.push(`其中 ${mergedCount} 筆合併了主觀感受`);
   if (skippedCount) details.push(`略過 ${skippedCount} 筆已存在資料`);
-  return `✅ Intervals.icu 同步完成：${details.join("，")}`;
+  if (wellnessDays) details.push(`更新恢復資料 ${wellnessDays} 天`);
+  return `✅ Intervals.icu 同步完成：${details.join("，")}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
 }
