@@ -431,7 +431,8 @@ export class Db {
     const d = this.driver;
     const intervalsId = activity.intervals_id ?? null;
     const stravaId = activity.strava_id ?? null;
-    const source = intervalsId ? "intervals" : (activity.source ?? "strava");
+    // 活動來源有標明時沿用（例如測試模式的 "fake"）；Intervals.icu 的資料不帶 source
+    const source = activity.source ?? (intervalsId ? "intervals" : "strava");
 
     return this.tx(async () => {
       let existing: Row | undefined;

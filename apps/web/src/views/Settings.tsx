@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { TestModeCard } from "./TestMode";
 import {
   clearSettings,
   consentKey,
@@ -156,7 +157,7 @@ function KeyProtection({
 }
 
 export function SettingsView() {
-  const { coach, db, settings, llmProblem, updateSettings, revision, reload } = useApp();
+  const { coach, db, settings, llmProblem, updateSettings, revision, reload, activitiesReady, testMode } = useApp();
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -171,7 +172,7 @@ export function SettingsView() {
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
   // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
-  const syncNext = !dirty && llmProblem === null && settings.intervals.apiKey.trim() !== "" && workouts === 0;
+  const syncNext = !dirty && llmProblem === null && activitiesReady && workouts === 0;
   const consented = draft.consents.includes(consentKey(draft));
   const claudeOnly = draft.llmMode === "proxy" || draft.provider === "anthropic";
 
@@ -201,9 +202,11 @@ export function SettingsView() {
   }
 
   async function reset(keepSettings: boolean) {
-    const what = keepSettings
-      ? "這會刪除這台裝置上的對話、訓練紀錄、賽事、計畫與選手資料；設定與 API key 會保留。"
-      : "這會刪除這台裝置上的所有資料與設定（包括 API key），回到第一次使用的狀態。";
+    const what = testMode.enabled
+      ? "這會刪除測試資料庫中的對話、訓練紀錄、賽事、計畫與選手資料；正式資料不受影響。"
+      : keepSettings
+        ? "這會刪除這台裝置上的對話、訓練紀錄、賽事、計畫與選手資料；設定與 API key 會保留。"
+        : "這會刪除這台裝置上的所有資料與設定（包括 API key），回到第一次使用的狀態。";
     if (!confirm(`${what}\n無法復原，確定要繼續嗎？`)) return;
     setMessage(null);
     try {
@@ -332,6 +335,7 @@ export function SettingsView() {
 
       <section className="card">
         <h2>Intervals.icu</h2>
+        {testMode.enabled && <div className="notice info">測試模式中使用假資料，不會連線 Intervals.icu。</div>}
         <p className="small">教練透過 Intervals.icu 讀取你的跑步紀錄：</p>
         <IntervalsGuide where="下方的「API key」欄位" />
         <p className="muted small">key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得。</p>
@@ -425,15 +429,28 @@ export function SettingsView() {
         </div>
       </section>
 
+      <TestModeCard />
+
       <section className="card">
         <h2>重置</h2>
-        <p className="muted small">方便測試或重新開始。重置會讓新手引導重新出現，而且無法復原；需要的話先匯出資料庫。</p>
-        <div className="row">
-          <button onClick={() => void reset(true)}>清除資料，保留設定與 API key</button>
-          <button className="danger" onClick={() => void reset(false)}>
-            全部重置
-          </button>
-        </div>
+        {testMode.enabled ? (
+          <>
+            <p className="muted small">測試模式中只會清除測試資料庫；正式資料與設定不受影響。</p>
+            <div className="row">
+              <button onClick={() => void reset(true)}>清除測試資料</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="muted small">方便測試或重新開始。重置會讓新手引導重新出現，而且無法復原；需要的話先匯出資料庫。</p>
+            <div className="row">
+              <button onClick={() => void reset(true)}>清除資料，保留設定與 API key</button>
+              <button className="danger" onClick={() => void reset(false)}>
+                全部重置
+              </button>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="card">

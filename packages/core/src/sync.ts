@@ -14,7 +14,8 @@ import type { Llm } from "./llm";
 import { generateWorkoutSummary } from "./tools";
 import type { ActivitySource, Activity, Logger } from "./types";
 
-const SYNC_DAYS = 14;
+/** 同步時拉取的天數 */
+export const SYNC_DAYS = 14;
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

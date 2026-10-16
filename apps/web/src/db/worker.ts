@@ -2,10 +2,11 @@
 /** SQLite（WASM）執行緒 — 資料庫存在瀏覽器的 OPFS，不離開使用者的裝置. */
 import sqlite3InitModule, { type Database, type SAHPoolUtil, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 
-const DB_FILE = "/coach.db";
+/** 正式資料是 /coach.db；測試模式用另一個檔案，兩者互不影響 */
+let dbFile = "/coach.db";
 
 export type DbRequest =
-  | { id: number; method: "open" }
+  | { id: number; method: "open"; file?: string }
   | { id: number; method: "exec"; sql: string }
   | { id: number; method: "run" | "all"; sql: string; params: (string | number | null)[] }
   | { id: number; method: "export" }
@@ -16,11 +17,12 @@ let sqlite3: Sqlite3Static;
 let pool: SAHPoolUtil | null = null;
 let db: Database;
 
-async function open(): Promise<{ persistent: boolean; reason?: string }> {
+async function open(file?: string): Promise<{ persistent: boolean; reason?: string }> {
+  if (file) dbFile = file;
   sqlite3 = await sqlite3InitModule();
   try {
     pool = await sqlite3.installOpfsSAHPoolVfs({ name: "running-coach" });
-    db = new pool.OpfsSAHPoolDb(DB_FILE);
+    db = new pool.OpfsSAHPoolDb(dbFile);
     return { persistent: true };
   } catch (e) {
     // OPFS 無法使用（例如無痕視窗，或同一個網站已在另一個分頁開啟）時退回記憶體資料庫
@@ -32,7 +34,7 @@ async function open(): Promise<{ persistent: boolean; reason?: string }> {
 async function handle(request: DbRequest): Promise<unknown> {
   switch (request.method) {
     case "open":
-      return open();
+      return open(request.file);
     case "exec":
       db.exec(request.sql);
       return null;
@@ -50,9 +52,9 @@ async function handle(request: DbRequest): Promise<unknown> {
       if (!pool) throw new Error("目前使用的是暫時性的記憶體資料庫，無法匯入");
       db.close();
       try {
-        await pool.importDb(DB_FILE, request.bytes);
+        await pool.importDb(dbFile, request.bytes);
       } finally {
-        db = new pool.OpfsSAHPoolDb(DB_FILE);
+        db = new pool.OpfsSAHPoolDb(dbFile);
       }
       return null;
     }
