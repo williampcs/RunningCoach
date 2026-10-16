@@ -340,7 +340,9 @@ export class Db {
   }
 
   getOldestConversations(n: number): Promise<ConversationRow[]> {
-    return this.all<ConversationRow>("SELECT id, role, content FROM conversations ORDER BY id ASC LIMIT ?", [n]);
+    return this.all<ConversationRow>("SELECT id, role, content, timestamp FROM conversations ORDER BY id ASC LIMIT ?", [
+      n,
+    ]);
   }
 
   // ---------------------------------------------------------------------------
@@ -359,9 +361,10 @@ export class Db {
   getMemorySnapshot(limit: number): Promise<{ summary: SummaryRow | null; conversations: ConversationRow[] }> {
     return this.serial(async () => {
       const summary = (await this.driver.all("SELECT * FROM summaries ORDER BY id DESC LIMIT 1"))[0];
-      const rows = await this.driver.all("SELECT id, role, content FROM conversations ORDER BY id DESC LIMIT ?", [
-        limit,
-      ]);
+      const rows = await this.driver.all(
+        "SELECT id, role, content, timestamp FROM conversations ORDER BY id DESC LIMIT ?",
+        [limit],
+      );
       return {
         summary: (summary as SummaryRow | undefined) ?? null,
         conversations: (rows as unknown as ConversationRow[]).reverse(),

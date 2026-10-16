@@ -14,6 +14,18 @@ export function localDate(now: Date, timeZone: string): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** 指定時區的當地時間（24 小時制），例：21:05 */
+export function localTime(now: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("hour")}:${get("minute")}`;
+}
+
 /** 時區的 UTC 偏移標示，例：UTC+8、UTC-3:30 */
 export function utcOffsetLabel(now: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(now);
