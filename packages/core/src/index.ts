@@ -10,6 +10,16 @@ export { Coach, type ChatReply, type CoachConfig, type CoachOptions, type RunRep
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
 export { addDays, daysBetween, isoWeekLabel, localDate, weekdayName } from "./dates";
+export {
+  FAKE_SCENARIOS,
+  FakeActivitySource,
+  fakeActivity,
+  formatPace,
+  generateActivities,
+  parsePace,
+  type FakeScenario,
+  type FakeSpec,
+} from "./fake-activities";
 export { formatStatus, formatTokenFooter, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
@@ -53,3 +63,4 @@ export {
   type TrainingPlan,
   type Workout,
 } from "./types";
+export { SYNC_DAYS } from "./sync";
