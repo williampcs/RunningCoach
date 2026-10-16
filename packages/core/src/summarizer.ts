@@ -10,7 +10,8 @@ import type { Logger } from "./types";
 const OUTPUT_FORMAT = `輸出格式（每區塊 1-3 點，總計 300 字以內，繁體中文）：
 【訓練狀態】近期訓練概況、體能水平
 【重要決策】調整了什麼、原因為何
-【待追蹤】傷病、目標、未完成事項`;
+【待追蹤】傷病、目標、未完成事項
+選手的訊息開頭標有傳送時間。提到時間時寫出實際日期（例如 10/18（星期六）），不要用「明天」「下週」這類相對說法：摘要會沿用很多天。`;
 
 // 第一次壓縮（無前次摘要）
 const initialPrompt = (conversationText: string) => `你是跑步教練的助手，負責維護選手的訓練記錄。
@@ -47,7 +48,12 @@ export async function compressConversations(deps: {
     const last = toCompress.at(-1);
     if (!last) return;
 
-    const conversationText = toCompress.map((r) => `${r.role.toUpperCase()}: ${r.content}`).join("\n");
+    const conversationText = toCompress
+      .map((r) => {
+        const sentAt = r.role === "user" ? context.messageTime(r, null) : null;
+        return `${r.role.toUpperCase()}${sentAt ? ` ${sentAt}` : ""}: ${r.content}`;
+      })
+      .join("\n");
     const previous = await db.getLatestSummary();
     const prompt = previous
       ? updatePrompt(previous.content, conversationText)

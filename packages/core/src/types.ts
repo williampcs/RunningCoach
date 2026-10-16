@@ -116,6 +116,8 @@ export interface ConversationRow {
   id: number;
   role: "user" | "assistant";
   content: string;
+  /** 傳送時間（UTC，例：2026-10-10T03:06:37Z） */
+  timestamp?: string;
 }
 
 export interface SummaryRow {

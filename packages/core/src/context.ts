@@ -7,7 +7,7 @@
  * 層4 — 對話摘要（summaries 最新一筆，對話壓縮後產生）
  * 層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
  */
-import { daysBetween, localDate, utcOffsetLabel, weekdayName } from "./dates";
+import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import type { Db } from "./db";
 import type { ChatMessage } from "./llm";
@@ -79,6 +79,9 @@ export class ContextManager {
     const lines = [
       `今天日期：${today}（${weekdayName(today)}）` +
         `｜時區：${timeZone}（${utcOffsetLabel(now, timeZone)}）｜以星期一為一週的第一天`,
+      // 沒有傳送時間時，模型會把前幾天訊息裡的「今天」「明天」當成今天說的
+      "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
+        "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
       "",
       "你是一位專業跑步教練，以下是選手資料：",
       "",
@@ -199,6 +202,20 @@ export class ContextManager {
   // 組合 Context
   // ---------------------------------------------------------------------------
 
+  /**
+   * 訊息的傳送時間，以選手的時區表示，例：[2026-10-09（星期五）21:30，昨天]。
+   * today 為 null 時不加「昨天」這類相對說法（對話摘要會保留很多天）。時間無法解析時為 null。
+   */
+  messageTime(row: ConversationRow, today: string | null): string | null {
+    const ms = row.timestamp ? Date.parse(row.timestamp) : NaN;
+    if (!Number.isFinite(ms)) return null;
+    const sent = new Date(ms);
+    const date = localDate(sent, this.settings.timeZone);
+    const ago = today === null ? -1 : daysBetween(date, today);
+    const relative = ago === 0 ? "今天" : ago === 1 ? "昨天" : ago > 1 ? `${ago} 天前` : null;
+    return `[${date}（${weekdayName(date)}）${localTime(sent, this.settings.timeZone)}${relative ? `，${relative}` : ""}]`;
+  }
+
   /** 較早的訊息超過單則字元上限時截斷，標記附上 id，模型需要時以 get_full_message 讀取全文 */
   private truncate(row: ConversationRow): string {
     const limit = this.settings.conversationMsgMaxChars;
@@ -228,10 +245,15 @@ export class ContextManager {
     }
 
     // 層5 — Rolling Window（所有尚未壓縮的原始對話）。
-    // 最新的幾則完整帶入：剛送出的訊息已先存進資料庫，也在其中；較早的超長訊息才截斷
+    // 最新的幾則完整帶入：剛送出的訊息已先存進資料庫，也在其中；較早的超長訊息才截斷。
+    // 選手的訊息開頭加上傳送時間。教練的回覆不加：回覆緊接在選手的訊息之後，
+    // 而且模型看到自己的回覆帶標記，會在新的回覆也加上
+    const today = localDate(this.now(), this.settings.timeZone);
     const fullFrom = conversations.length - this.settings.conversationFullRecent;
     for (const [i, row] of conversations.entries()) {
-      const content = i >= fullFrom ? row.content : this.truncate(row);
+      const body = i >= fullFrom ? row.content : this.truncate(row);
+      const sentAt = row.role === "user" ? this.messageTime(row, today) : null;
+      const content = sentAt ? `${sentAt}\n${body}` : body;
       layerChars.layer5 += content.length;
       messages.push({ role: row.role, content });
     }

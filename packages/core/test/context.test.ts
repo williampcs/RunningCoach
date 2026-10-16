@@ -36,6 +36,8 @@ describe("ContextManager", () => {
     expect(head).toBe(
       [
         "今天日期：2026-10-10（星期六）｜時區：Asia/Taipei（UTC+8）｜以星期一為一週的第一天",
+        "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
+          "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
         "",
         "你是一位專業跑步教練，以下是選手資料：",
         "",
@@ -83,16 +85,38 @@ describe("ContextManager", () => {
     await coach.db.appendConversation("user", "w".repeat(700));
 
     const ctx = await context.getContextForApi();
+    const sent = "[2026-10-10（星期六）12:00，今天]\n";
     expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "user", "assistant", "user"]);
     expect(ctx.messages[0]!.content).toBe("以下是之前對話的重點摘要：\n\n【訓練狀態】穩定");
     expect(ctx.messages[2]!.content).toBe(
-      "x".repeat(600) + `…（訊息過長，只帶入前 600 字；需要完整內容時以 get_full_message 讀取，message_id=${oldId}）`,
+      sent + "x".repeat(600) + `…（訊息過長，只帶入前 600 字；需要完整內容時以 get_full_message 讀取，message_id=${oldId}）`,
     );
-    expect(ctx.messages.slice(4).map((m) => m.content)).toEqual(["y".repeat(700), "z".repeat(700), "w".repeat(700)]);
+    expect(ctx.messages.slice(4).map((m) => m.content)).toEqual([sent + "y".repeat(700), "z".repeat(700), sent + "w".repeat(700)]);
     expect(ctx.layerChars).toEqual({
       layer1: ctx.system.length,
       layer4: ctx.messages[0]!.content.length,
-      layer5: ctx.messages[2]!.content.length + 2 + 700 * 3,
+      layer5: ctx.messages[2]!.content.length + 2 + 700 * 3 + sent.length * 2,
     });
+  });
+
+  it("層5：選手的訊息標上傳送時間與距今幾天，教練的回覆不標", async () => {
+    let now = new Date("2026-10-09T13:30:00Z"); // 台北 2026-10-09（星期五）21:30
+    const { coach, driver } = await makeCoach([], { now: () => now });
+    await coach.db.appendConversation("user", "明天要跑 20K");
+    await coach.db.appendConversation("assistant", "好，明天（10/10）長跑 20K");
+    now = new Date("2026-10-10T00:15:00Z"); // 跨日：台北 2026-10-10 08:15
+    await coach.db.appendConversation("user", "出門了");
+    await coach.db.appendConversation("user", "時間格式不明");
+    await driver.run("UPDATE conversations SET timestamp='?' WHERE content='時間格式不明'");
+
+    now = new Date("2026-10-12T04:00:00Z");
+    const context = new ContextManager(coach.db, { ...DEFAULT_SETTINGS }, () => now);
+    const ctx = await context.getContextForApi();
+    expect(ctx.messages.map((m) => m.content)).toEqual([
+      "[2026-10-09（星期五）21:30，3 天前]\n明天要跑 20K",
+      "好，明天（10/10）長跑 20K",
+      "[2026-10-10（星期六）08:15，2 天前]\n出門了",
+      "時間格式不明",
+    ]);
   });
 });

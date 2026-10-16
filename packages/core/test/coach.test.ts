@@ -3,22 +3,29 @@ import { describe, expect, it } from "vitest";
 import { formatTokenFooter } from "../src";
 import { activity, makeCoach, ScriptedProvider, toolTurn, turn, type RecordedCall } from "./helpers";
 
+/** 選手訊息開頭的傳送時間（測試時鐘：台北 2026-10-10 12:00） */
+const SENT = "[2026-10-10（星期六）12:00，今天]\n";
+
 describe("Coach.chat", () => {
   it("用量統計：層5不含剛送出的訊息，訊息另計", async () => {
     const { coach } = await makeCoach([turn({ text: "好的" }), turn({ text: "收到" })]);
     await coach.chat("第一則");
     const { stats } = await coach.chat("第二則訊息");
-    expect(stats.userMsgChars).toBe("第二則訊息".length);
-    expect(stats.layerChars.layer5).toBe("第一則".length + "好的".length);
+    expect(stats.userMsgChars).toBe((SENT + "第二則訊息").length);
+    expect(stats.layerChars.layer5).toBe((SENT + "第一則").length + "好的".length);
   });
 
   it("剛送出的長訊息與最近一來一回完整帶入", async () => {
     const { coach, provider } = await makeCoach([turn({ text: "A".repeat(900) }), turn({ text: "好" })]);
     await coach.chat("我".repeat(1000));
-    expect(provider.calls[0]!.request.messages.at(-1)!.content).toBe("我".repeat(1000));
+    expect(provider.calls[0]!.request.messages.at(-1)!.content).toBe(SENT + "我".repeat(1000));
 
     await coach.chat("下一則");
-    expect(provider.calls[1]!.request.messages.map((m) => m.content)).toEqual(["我".repeat(1000), "A".repeat(900), "下一則"]);
+    expect(provider.calls[1]!.request.messages.map((m) => m.content)).toEqual([
+      SENT + "我".repeat(1000),
+      "A".repeat(900),
+      SENT + "下一則",
+    ]);
   });
 
   it("get_full_message：讀回被截斷的較早訊息；找不到時說明可能已壓縮", async () => {
@@ -209,7 +216,10 @@ describe("對話壓縮", () => {
     await coach.idle();
 
     const compressCall = provider.calls.find((c) => c.request.model === "compress-model")!;
-    expect(compressCall.request.messages[0]!.content).toContain("對話紀錄：\nUSER: u1\nASSISTANT: a1\nUSER: u2");
+    // 壓縮的輸入也帶傳送時間，但不加「今天」：摘要會沿用很多天
+    const at = "[2026-10-10（星期六）12:00]";
+    expect(compressCall.request.messages[0]!.content).toContain(`對話紀錄：\nUSER ${at}: u1\nASSISTANT: a1\nUSER ${at}: u2`);
+    expect(compressCall.request.messages[0]!.content).toContain("不要用「明天」「下週」這類相對說法");
     expect((await coach.db.getLatestSummary())?.content).toBe("【訓練狀態】第一版");
     expect((await coach.db.getRecentConversations(10)).map((r) => r.content)).toEqual(["a2", "u3", "回覆"]);
 
@@ -223,7 +233,7 @@ describe("對話壓縮", () => {
 
     const second = provider.calls.filter((c) => c.request.model === "compress-model")[1]!;
     expect(second.request.messages[0]!.content).toContain(
-      "【現有摘要】\n【訓練狀態】第一版\n\n【新增對話】\nASSISTANT: a2\nUSER: u3\nASSISTANT: 回覆\nUSER: u4",
+      `【現有摘要】\n【訓練狀態】第一版\n\n【新增對話】\nASSISTANT: a2\nUSER ${at}: u3\nASSISTANT: 回覆\nUSER ${at}: u4`,
     );
     expect((await coach.db.getLatestSummary())?.content).toBe("【訓練狀態】第二版");
     expect((await coach.db.getRecentConversations(10)).map((r) => r.content)).toEqual(["a4", "u5", "回覆二"]);
@@ -233,11 +243,11 @@ describe("對話壓縮", () => {
       "以下是之前對話的重點摘要：\n\n【訓練狀態】第一版",
       "已閱讀對話摘要，我會記住這些重要資訊。",
       "a2",
-      "u3",
+      SENT + "u3",
       "回覆",
-      "u4",
+      SENT + "u4",
       "a4",
-      "u5",
+      SENT + "u5",
     ]);
   });
 
