@@ -8,7 +8,9 @@ import {
   FakeActivitySource,
   fakeActivity,
   formatPace,
+  analyzeRecovery,
   generateActivities,
+  generateWellness,
   parsePace,
   type Activity,
   type FakeSpec,
@@ -95,6 +97,21 @@ describe("generateActivities", () => {
     const irregular = generateActivities(spec({ scenario: "irregular", weeks: 8 }));
     expect(irregular.length).toBeLessThan(8 * 4);
     expect(irregular.some((r) => r.avg_hr === null && r.max_hr === null)).toBe(true);
+  });
+});
+
+describe("generateWellness", () => {
+  it("covers every day, stays reproducible and shows overreaching to the recovery check", () => {
+    const steady = generateWellness(spec());
+    expect(steady).toHaveLength(42);
+    expect(generateWellness(spec())).toEqual(steady);
+    // 另一組亂數：產生恢復資料不會改變跑步紀錄
+    expect(generateActivities(spec())).toEqual(generateActivities(spec()));
+    expect(analyzeRecovery(steady, [], END).watchFlags).toEqual([]);
+
+    const overreach = analyzeRecovery(generateWellness(spec({ scenario: "overreach" })), [], END);
+    expect(overreach.watchFlags.length).toBeGreaterThan(0);
+    expect(generateWellness(spec({ scenario: "irregular" })).length).toBeLessThan(42);
   });
 });
 

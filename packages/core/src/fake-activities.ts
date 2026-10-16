@@ -5,7 +5,7 @@
  * 活動以 `fake-` 開頭的 intervals_id 標示，source 為 "fake"。
  */
 import { addDays, daysBetween, weekdayIndex } from "./dates";
-import type { Activity, ActivitySource } from "./types";
+import type { Activity, ActivitySource, WellnessDay } from "./types";
 
 export const FAKE_SCENARIOS = {
   steady: { label: "穩定訓練", description: "每週固定的次數與距離，週日長跑" },
@@ -205,6 +205,66 @@ export function fakeActivity(input: {
 }
 
 /**
+ * 同一段期間的恢復資料（靜息心率、HRV、睡眠），隨情境變化：
+ * 過度訓練時最近 10 天靜息心率上升、HRV 下降、睡眠變少；賽前減量時恢復變好；資料缺漏時有些天沒有。
+ * 用另一組亂數，不影響 generateActivities 的結果。
+ */
+export function generateWellness(spec: FakeSpec): WellnessDay[] {
+  const rand = random(spec.seed + 1000);
+  const jitter = (range: number) => (rand() * 2 - 1) * range;
+  const days = spec.weeks * 7;
+  const start = addDays(spec.endDate, -(days - 1));
+  const out: WellnessDay[] = [];
+
+  for (let d = 0; d < days; d++) {
+    const date = addDays(start, d);
+    const daysLeft = days - 1 - d;
+    let restingHr = 52;
+    let hrv = 62;
+    let sleepHours = 7.2;
+
+    switch (spec.scenario) {
+      case "overreach":
+        if (daysLeft < 10) {
+          restingHr += 6;
+          hrv *= 0.78;
+          sleepHours -= 0.8;
+        }
+        break;
+      case "build":
+        if (daysLeft < 14) restingHr += 2;
+        break;
+      case "injury_break":
+        if (daysLeft >= 7 && daysLeft <= 16) sleepHours += 0.4;
+        break;
+      case "taper":
+        if (daysLeft < 7) {
+          restingHr -= 2;
+          hrv *= 1.08;
+        }
+        break;
+      case "irregular":
+        if (rand() < 0.3) continue;
+        break;
+      case "steady":
+        break;
+    }
+
+    const sleepSecs = Math.round((sleepHours + jitter(0.5)) * 3600);
+    out.push({
+      date,
+      resting_hr: Math.round(restingHr + jitter(1.5)),
+      hrv: Math.round(hrv + jitter(4)),
+      sleep_secs: sleepSecs,
+      sleep_score: Math.round(Math.min(100, Math.max(40, 55 + (sleepSecs / 3600 - 6) * 15 + jitter(5)))),
+      readiness: null,
+      raw_json: JSON.stringify({ fake: true }),
+    });
+  }
+  return out;
+}
+
+/**
  * 以假資料取代 Intervals.icu 的活動來源。
  * 日期範圍與 IntervalsClient 相同（今天往前 N 天，含當天）；日期在「今天」之後的活動看不到，
  * 所以把模擬日期往後移，就像時間過去、手錶陸續同步。
@@ -215,6 +275,7 @@ export class FakeActivitySource implements ActivitySource {
   constructor(
     activities: Activity[],
     private readonly today: () => string,
+    private readonly wellness: WellnessDay[] = [],
   ) {
     // 新的在前；同一天的，清單中較後面的（例如後來新增的自訂紀錄）視為較晚跑的
     this.activities = activities
@@ -237,5 +298,13 @@ export class FakeActivitySource implements ActivitySource {
 
   async fetchActivities(days = 14): Promise<Activity[]> {
     return this.within(days);
+  }
+
+  async fetchWellness(days = 14): Promise<WellnessDay[]> {
+    const today = this.today();
+    return this.wellness.filter((w) => {
+      const age = daysBetween(w.date, today);
+      return age >= 0 && age <= days;
+    });
   }
 }

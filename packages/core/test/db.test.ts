@@ -18,7 +18,7 @@ describe("Db", () => {
     const { db, driver } = await freshDb();
     await db.init();
     const [row] = await driver.all("PRAGMA user_version");
-    expect(row?.user_version).toBe(1);
+    expect(row?.user_version).toBe(2);
   });
 
   it("升級最早期的 v1 資料庫：補上欄位並從 raw_json 回填訓練負荷", async () => {

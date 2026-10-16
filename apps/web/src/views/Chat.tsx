@@ -4,6 +4,7 @@ import { formatTokenFooter, type ChatEvent, type ConversationRow } from "@runnin
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
+import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
 
 // 執行工具時顯示的狀態
@@ -15,6 +16,8 @@ const TOOL_STATUS: Record<string, string> = {
   get_pace_trend: "計算配速趨勢",
   get_training_plan: "查看訓練計畫",
   get_full_message: "讀取較早的完整訊息",
+  get_recovery_status: "查看恢復狀況",
+  save_daily_checkin: "記錄今天的身體狀況",
   save_training_plan: "儲存訓練計畫",
   add_race: "新增賽事",
   get_upcoming_races: "查看近期賽事",
@@ -128,6 +131,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
 
   return (
     <>
+      <CoachFeed />
       <div className="messages">
         <GettingStarted />
         {hasSummary && <div className="muted small center">較早的對話已整理成摘要，教練仍記得重點。</div>}

@@ -22,6 +22,20 @@ type Message = { role: string; content: string | Block[] };
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 const daysAgo = (n: number) => new Date(Date.parse(today()) - n * 86_400_000).toISOString().slice(0, 10);
 
+/** 最近 14 天的恢復資料；最近兩天靜息心率偏高、HRV 偏低，方便看到教練動態的提醒 */
+function wellness() {
+  return Array.from({ length: 14 }, (_, i) => {
+    const tired = i <= 1;
+    return {
+      id: daysAgo(i),
+      restingHR: tired ? 58 : 51 + (i % 3),
+      hrv: tired ? 46 : 60 + (i % 4),
+      sleepSecs: tired ? 21_600 : 26_000 + (i % 3) * 600,
+      sleepScore: tired ? 62 : 80,
+    };
+  });
+}
+
 function activities() {
   return [
     {
@@ -253,6 +267,10 @@ createServer((req, res) => {
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/activities$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
     return send(200, activities());
+  }
+  if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/wellness$/.test(path)) {
+    if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
+    return send(200, wellness());
   }
   if (req.method === "POST" && path === "/v1/messages") {
     void readJson(req).then(async (body) => {

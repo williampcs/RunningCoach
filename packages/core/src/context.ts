@@ -8,6 +8,7 @@
  * 層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
  */
 import { daysBetween, localDate, utcOffsetLabel, weekdayName } from "./dates";
+import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import type { Db } from "./db";
 import type { ChatMessage } from "./llm";
 import type { CoachSettings, ConversationRow, Race } from "./types";
@@ -150,6 +151,21 @@ export class ContextManager {
           `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${targetLabel(r)}｜${daysBetween(r.date, today)} 天前`,
         );
       }
+    }
+
+    // 今日身體狀況：選手自評與手錶的恢復資料；都沒有時不加，避免多餘的提示
+    const [wellness, checkins] = await Promise.all([this.db.getWellness(36), this.db.getCheckins(1)]);
+    const recovery = analyzeRecovery(wellness, checkins, today);
+    const watchLine = describeWatch(recovery);
+    if (recovery.checkin || watchLine) {
+      lines.push("", "今日身體狀況：");
+      lines.push(
+        recovery.checkin
+          ? `・選手自評：${describeCheckin(recovery.checkin)}`
+          : "・選手今天還沒自評；需要判斷能不能練時，先問今天的精神、痠痛與睡眠",
+      );
+      if (watchLine) lines.push(`・手錶（${recovery.latest!.date}）：${watchLine}`);
+      lines.push(`【身體狀況的判讀】${RECOVERY_RULES}需要更多天的資料時呼叫 get_recovery_status。`);
     }
 
     lines.push(

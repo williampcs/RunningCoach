@@ -16,10 +16,12 @@ export {
   fakeActivity,
   formatPace,
   generateActivities,
+  generateWellness,
   parsePace,
   type FakeScenario,
   type FakeSpec,
 } from "./fake-activities";
+export { buildFeed, type FeedAction, type FeedItem } from "./feed";
 export { formatStatus, formatTokenFooter, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
@@ -54,6 +56,7 @@ export {
   type ActivitySource,
   type CoachSettings,
   type ConversationRow,
+  type DailyCheckin,
   type Logger,
   type PendingSubjective,
   type Race,
@@ -61,6 +64,15 @@ export {
   type SqlDriver,
   type SqlValue,
   type TrainingPlan,
+  type WellnessDay,
   type Workout,
 } from "./types";
 export { SYNC_DAYS } from "./sync";
+export {
+  analyzeRecovery,
+  describeCheckin,
+  describeWatch,
+  formatRecoveryReport,
+  RECOVERY_RULES,
+  type RecoverySignals,
+} from "./recovery";

@@ -1,6 +1,7 @@
 /** 主對話可用的工具：定義（供模型呼叫）與執行器. */
 import { RECENT_WORKOUT_DAYS } from "./context";
 import { isoWeekLabel } from "./dates";
+import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
@@ -8,6 +9,9 @@ import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./ty
 const RACE_ID_HINT =
   "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
   "清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。";
+
+/** 恢復狀況的判讀要和前幾天比較，查詢時多取幾天的手錶資料 */
+const BASELINE_EXTRA_DAYS = 35;
 
 /** get_full_message 一次最多回傳的字數，避免貼上的超長內容撐爆單次請求 */
 const FULL_MESSAGE_MAX_CHARS = 20_000;
@@ -164,6 +168,33 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
       input_schema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "get_recovery_status",
+      description:
+        "取得最近幾天的恢復狀況：手錶的靜息心率、HRV、睡眠，以及選手每天的自評（精神、痠痛、睡眠）。" +
+        "討論疲勞、恢復、今天能不能練或要不要調整課表時呼叫。手錶數據只是參考，與選手的自評不一致時以選手的感受為主。",
+      input_schema: {
+        type: "object",
+        properties: { days: { type: "integer", description: "查詢天數，預設 7，最多 28" } },
+        required: [],
+      },
+    },
+    {
+      name: "save_daily_checkin",
+      description:
+        "記錄選手今天的身體狀況自評。選手在對話中描述今天的精神、疲勞、痠痛或睡眠時呼叫；" +
+        "依描述換算成 1–5 分，無法判斷的項目先詢問，不要猜。同一天再次記錄會覆蓋。",
+      input_schema: {
+        type: "object",
+        properties: {
+          energy: { type: "integer", description: "精神：1 很差 – 5 很好" },
+          soreness: { type: "integer", description: "痠痛：1 沒有 – 5 很痠" },
+          sleep: { type: "integer", description: "睡眠：1 很差 – 5 很好" },
+          notes: { type: "string", description: "選手的原話或補充，例：右小腿緊" },
+        },
+        required: ["energy", "soreness", "sleep"],
+      },
+    },
+    {
       name: "get_full_message",
       description:
         "讀取對話紀錄中一則訊息的完整內容。較早的長訊息在對話中只帶入前段，並標示 message_id；" +
@@ -221,6 +252,8 @@ export type WorkoutSummaryInput = Pick<
 > & {
   perceived_effort: number | null;
   subjective_notes: string | null;
+  /** 當天的身體狀況（recoveryNoteFor），沒有時不帶入 */
+  recovery?: string | null;
 };
 
 /** 生成 AI 跑步分析摘要 */
@@ -238,9 +271,13 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `平均心率：${workout.avg_hr || "未記錄"}bpm\n` +
     `最高心率：${workout.max_hr || "未記錄"}bpm\n` +
     `爬升：${workout.elevation_m || 0}m\n` +
-    `${effortLine}\n\n` +
-    `格式：一行數據摘要 ＋ AI評估。` +
-    (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。");
+    `${effortLine}\n` +
+    (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
+    `\n格式：一行數據摘要 ＋ AI評估。` +
+    (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
+    (workout.recovery
+      ? "可以參考當天的身體狀況解讀心率與體感；手錶的恢復數據只是參考，與選手的自評不一致時以選手的感受為主。"
+      : "");
   return (await llm.complete("summary", prompt, 2000)).text;
 }
 
@@ -319,6 +356,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           ...activity,
           perceived_effort: perceivedEffort,
           subjective_notes: subjectiveNotes,
+          recovery: await recoveryNoteFor(db, activity.date),
         });
         await db.saveWorkoutSummary(workoutId, summary);
         activityCache = null;
@@ -379,6 +417,29 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const plan = await db.getActiveTrainingPlan();
         if (!plan) return "目前沒有啟用中的訓練計畫。";
         return `當前訓練計畫（${plan.week_label}）：\n\n${plan.content}`;
+      }
+
+      case "get_recovery_status": {
+        const days = Math.min(28, Math.max(1, input.days === undefined ? 7 : toInt(input.days, "days")));
+        const [wellness, checkins] = await Promise.all([db.getWellness(days + BASELINE_EXTRA_DAYS), db.getCheckins(days)]);
+        return formatRecoveryReport(wellness, checkins, today(), days);
+      }
+
+      case "save_daily_checkin": {
+        const score = (key: string) => {
+          const value = toInt(input[key], key);
+          if (value < 1 || value > 5) throw new Error(`${key} 必須是 1–5`);
+          return value;
+        };
+        const checkin = {
+          date: today(),
+          energy: score("energy"),
+          soreness: score("soreness"),
+          sleep: score("sleep"),
+          notes: str(input.notes).trim() || null,
+        };
+        await db.saveCheckin(checkin);
+        return `已記錄今天（${checkin.date}）的身體狀況：${describeCheckin(checkin)}`;
       }
 
       case "get_full_message": {

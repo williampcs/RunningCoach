@@ -13,7 +13,15 @@ import {
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
-import { clockOffsetMs, loadTestMode, saveTestMode, TEST_DB_FILE, testActivities, type TestMode } from "./test-mode";
+import {
+  clockOffsetMs,
+  loadTestMode,
+  saveTestMode,
+  TEST_DB_FILE,
+  testActivities,
+  testWellness,
+  type TestMode,
+} from "./test-mode";
 import { ChatView } from "./views/Chat";
 import { PlanView } from "./views/Plan";
 import { ProfileView } from "./views/Profile";
@@ -57,7 +65,7 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
     },
     // 測試模式只用假資料，完全不連線 Intervals.icu
     activities: test.enabled
-      ? new FakeActivitySource(testActivities(test), today)
+      ? new FakeActivitySource(testActivities(test), today, testWellness(test))
       : new IntervalsClient({
           apiKey: settings.intervals.apiKey.trim(),
           athleteId: settings.intervals.athleteId.trim(),
