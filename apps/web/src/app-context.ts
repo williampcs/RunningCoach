@@ -4,6 +4,7 @@ import type { Coach } from "@running-coach/core";
 
 import type { BrowserDb } from "./db/driver";
 import type { AppSettings } from "./settings";
+import type { TestMode } from "./test-mode";
 
 export interface AppState {
   coach: Coach;
@@ -13,6 +14,11 @@ export interface AppState {
   llmProblem: string | null;
   /** 啟用密碼鎖時要先加密，所以是非同步的 */
   updateSettings(settings: AppSettings): Promise<void>;
+  testMode: TestMode;
+  /** 測試模式下改變假資料或模擬日期；啟用或停用時重新載入頁面 */
+  updateTestMode(next: TestMode): void;
+  /** 有活動來源可以同步：填了 Intervals.icu 的 key，或在測試模式 */
+  activitiesReady: boolean;
   /** 資料有變動（對話、同步、匯入）時遞增，各頁據此重新讀取 */
   revision: number;
   touch(): void;

@@ -16,7 +16,8 @@ export interface BrowserDb extends SqlDriver {
   reset(): Promise<void>;
 }
 
-export async function openBrowserDb(): Promise<BrowserDb> {
+/** file：OPFS 中的資料庫檔名，預設為正式資料的 /coach.db */
+export async function openBrowserDb(file?: string): Promise<BrowserDb> {
   const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let nextId = 1;
@@ -37,7 +38,7 @@ export async function openBrowserDb(): Promise<BrowserDb> {
       worker.postMessage({ id, ...payload });
     });
 
-  const state = await call<{ persistent: boolean; reason?: string }>({ method: "open" });
+  const state = await call<{ persistent: boolean; reason?: string }>({ method: "open", file });
 
   return {
     ...state,

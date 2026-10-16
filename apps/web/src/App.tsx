@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Coach, IntervalsClient, localDate, type CoachConfig, type LlmProvider, type Logger } from "@running-coach/core";
+import {
+  Coach,
+  FakeActivitySource,
+  IntervalsClient,
+  localDate,
+  type CoachConfig,
+  type LlmProvider,
+  type Logger,
+} from "@running-coach/core";
 
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { clockOffsetMs, loadTestMode, saveTestMode, TEST_DB_FILE, testActivities, type TestMode } from "./test-mode";
 import { ChatView } from "./views/Chat";
 import { PlanView } from "./views/Plan";
 import { ProfileView } from "./views/Profile";
@@ -33,20 +42,28 @@ function unconfiguredProvider(problem: string): LlmProvider {
 
 const logger: Logger = { info: () => undefined, warn: (m) => console.warn(m), error: (m) => console.error(m) };
 
-function coachConfig(settings: AppSettings): CoachConfig {
+// 測試模式可以模擬今天的日期：Coach 與活動來源都經由這個時鐘取得現在時間
+let clockOffset = 0;
+const now = () => new Date(Date.now() + clockOffset);
+
+function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
   const problem = llmProblem(settings);
+  const today = () => localDate(now(), settings.timeZone);
   return {
     llm: {
       provider: problem ? unconfiguredProvider(problem) : buildProvider(settings),
       models: resolvedModels(settings),
       chatEffort: settings.chatEffort,
     },
-    activities: new IntervalsClient({
-      apiKey: settings.intervals.apiKey.trim(),
-      athleteId: settings.intervals.athleteId.trim(),
-      today: () => localDate(new Date(), settings.timeZone),
-      baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
-    }),
+    // 測試模式只用假資料，完全不連線 Intervals.icu
+    activities: test.enabled
+      ? new FakeActivitySource(testActivities(test), today)
+      : new IntervalsClient({
+          apiKey: settings.intervals.apiKey.trim(),
+          athleteId: settings.intervals.athleteId.trim(),
+          today,
+          baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
+        }),
     settings: { timeZone: settings.timeZone },
   };
 }
@@ -57,6 +74,7 @@ export function App() {
   const [coach, setCoach] = useState<Coach | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [settings, setSettings] = useState(loadSettings);
+  const [testMode, setTestMode] = useState(loadTestMode);
   const [tab, setTab] = useState<Tab>("chat");
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
@@ -69,8 +87,12 @@ export function App() {
     if (opening.current) return;
     opening.current = true;
     (async () => {
-      const opened = await openBrowserDb();
-      const created = new Coach({ driver: opened, ...coachConfig(loadSettings()), logger });
+      const initialSettings = loadSettings();
+      const initialTest = loadTestMode();
+      clockOffset = clockOffsetMs(initialTest, initialSettings.timeZone);
+      // 測試模式用另一個資料庫檔案，正式資料不受影響
+      const opened = await openBrowserDb(initialTest.enabled ? TEST_DB_FILE : undefined);
+      const created = new Coach({ driver: opened, ...coachConfig(initialSettings, initialTest), now, logger });
       await created.init();
       setDb(opened);
       setCoach(created);
@@ -90,8 +112,23 @@ export function App() {
       touch,
       async updateSettings(next) {
         await saveSettings(next);
-        coach.configure(coachConfig(next));
+        clockOffset = clockOffsetMs(testMode, next.timeZone);
+        coach.configure(coachConfig(next, testMode));
         setSettings(next);
+      },
+      testMode,
+      activitiesReady: testMode.enabled || settings.intervals.apiKey.trim() !== "",
+      updateTestMode(next) {
+        saveTestMode(next);
+        // 切換正式／測試資料庫要重新載入；其餘（假資料、模擬日期）直接套用
+        if (next.enabled !== testMode.enabled) {
+          location.reload();
+          return;
+        }
+        clockOffset = clockOffsetMs(next, settings.timeZone);
+        coach.configure(coachConfig(settings, next));
+        setTestMode(next);
+        touch();
       },
       async reload() {
         await coach.init();
@@ -102,7 +139,7 @@ export function App() {
         setTab(next);
       },
     };
-  }, [db, coach, settings, problem, revision, touch]);
+  }, [db, coach, settings, testMode, problem, revision, touch]);
 
   if (fatal) {
     return (
@@ -120,9 +157,24 @@ export function App() {
           <h1>Running Coach</h1>
           <span className="muted small">{TABS.find((t) => t.id === tab)?.label}</span>
         </header>
-        {!state.db.persistent && (
-          <div className="notice warn">
-            目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。
+        {(!state.db.persistent || testMode.enabled) && (
+          <div className="notices">
+            {!state.db.persistent && (
+              <div className="notice warn">
+                目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。
+              </div>
+            )}
+            {testMode.enabled && (
+              <div className="notice test-banner">
+                <span>
+                  🧪 測試模式：使用假資料與另一個資料庫，正式資料不受影響。
+                  {testMode.today ? `模擬日期 ${testMode.today}。` : ""}
+                </span>
+                <button className="link" onClick={() => setTab("settings")}>
+                  測試設定
+                </button>
+              </div>
+            )}
           </div>
         )}
         <main className={tab === "chat" ? "page chat-page" : "page"}>

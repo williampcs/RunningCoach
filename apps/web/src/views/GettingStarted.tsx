@@ -56,7 +56,7 @@ function Step({ n, done, title, children }: { n: number; done: boolean; title: s
 
 /** 新手引導：AI 模型 → Intervals.icu → 同步最近 14 天 → 選手資料。必要的三步完成後自動隱藏 */
 export function GettingStarted() {
-  const { coach, settings, llmProblem, revision, goTo } = useApp();
+  const { coach, settings, llmProblem, revision, goTo, activitiesReady, testMode } = useApp();
   const [counts, setCounts] = useState<{ workouts: number; profile: number } | null>(null);
   const [dismissed, setDismissed] = useState(readDismissed);
   const sync = useSync();
@@ -70,7 +70,7 @@ export function GettingStarted() {
   if (!counts || dismissed) return null;
 
   const llmReady = llmProblem === null;
-  const intervalsReady = settings.intervals.apiKey.trim() !== "";
+  const intervalsReady = activitiesReady;
   const synced = counts.workouts > 0;
 
   function dismiss() {
@@ -114,9 +114,15 @@ export function GettingStarted() {
           <button onClick={() => goTo("settings")}>前往設定</button>
         </Step>
         <Step n={2} done={intervalsReady} title="連接 Intervals.icu">
-          <p className="small muted">教練透過 Intervals.icu 讀取你手錶的跑步紀錄。</p>
-          <IntervalsGuide where="設定頁的「Intervals.icu」區塊" />
-          <button onClick={() => goTo("settings")}>前往設定</button>
+          {testMode.enabled ? (
+            <p className="small muted">測試模式使用假的跑步紀錄，不需要 Intervals.icu。</p>
+          ) : (
+            <>
+              <p className="small muted">教練透過 Intervals.icu 讀取你手錶的跑步紀錄。</p>
+              <IntervalsGuide where="設定頁的「Intervals.icu」區塊" />
+              <button onClick={() => goTo("settings")}>前往設定</button>
+            </>
+          )}
         </Step>
         <Step n={3} done={synced} title="同步最近 14 天的訓練">
           <p className="small muted">把最近兩週的跑步紀錄抓進來，教練才知道你的近況。每筆會產生一段 AI 分析。</p>

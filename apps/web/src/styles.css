@@ -322,8 +322,19 @@ a {
   padding-left: 1.2em;
 }
 
-.shell > .notice {
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0 16px 4px;
+}
+
+.notice.test-banner {
+  background: var(--warn);
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
 }
 
 pre {
@@ -525,7 +536,7 @@ pre {
     display: none;
   }
 
-  .shell > .notice {
+  .notices {
     grid-column: 2;
     grid-row: 2;
     margin: 0 0 12px;
@@ -623,3 +634,9 @@ pre {
   padding: 8px 12px;
   font-size: 0.9rem;
 }
+
+/* 測試模式 */
+.card.test-mode {
+  border-color: var(--warn);
+}
+

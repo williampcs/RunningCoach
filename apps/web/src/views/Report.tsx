@@ -35,7 +35,7 @@ function analysisRequest(a: RunData, effort: number, notes: string, backfilled =
 }
 
 export function ReportView() {
-  const { coach, settings, revision, touch, goTo } = useApp();
+  const { coach, settings, revision, touch, goTo, activitiesReady } = useApp();
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,7 +52,7 @@ export function ReportView() {
     void coach.db.getRecentWorkouts(30).then(setWorkouts);
   }, [coach, revision]);
 
-  const hasIntervals = settings.intervals.apiKey.trim() !== "";
+  const hasIntervals = activitiesReady;
 
   async function submit() {
     setBusy(true);
