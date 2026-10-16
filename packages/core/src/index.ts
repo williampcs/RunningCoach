@@ -10,7 +10,7 @@ export { Coach, type ChatReply, type CoachConfig, type CoachOptions, type RunRep
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
 export { addDays, daysBetween, isoWeekLabel, localDate, weekdayName } from "./dates";
-export { formatStatus, formatTokenFooter } from "./format";
+export { formatStatus, formatTokenFooter, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
   AnthropicProvider,
@@ -18,6 +18,8 @@ export {
   OpenAICompatibleError,
   OpenAICompatibleProvider,
   OPENAI_COMPATIBLE_PRESETS,
+  priceOf,
+  turnCostUsd,
   Usage,
   type AnthropicProviderOptions,
   type ChatEvent,
@@ -27,6 +29,7 @@ export {
   type Effort,
   type LlmConfig,
   type LlmProvider,
+  type ModelPrice,
   type NextOptions,
   type OpenAICompatibleOptions,
   type Purpose,

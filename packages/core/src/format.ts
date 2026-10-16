@@ -12,7 +12,14 @@ const LAYER_LABELS = [
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
-/** token 用量摘要，例：📊 輸入 1,847（層1系統~312  訊息~233） | 輸出 412 */
+/** 金額：小額時多留幾位小數，避免顯示成 0 */
+export function formatUsd(n: number): string {
+  if (n >= 1) return `US$${n.toFixed(2)}`;
+  if (n >= 0.01) return `US$${n.toFixed(3)}`;
+  return `US$${n.toFixed(4)}`;
+}
+
+/** token 用量摘要，例：📊 輸入 1,847（層1系統~312  訊息~233） | 輸出 412 | 約 US$0.0156 */
 export function formatTokenFooter(stats: UsageStats): string {
   const u = stats.usage;
   const totalChars = Object.values(stats.layerChars).reduce((a, b) => a + b, 0) + stats.userMsgChars;
@@ -32,6 +39,8 @@ export function formatTokenFooter(stats: UsageStats): string {
   if (u.cacheReadTokens || u.cacheWriteTokens) {
     extra += ` | 快取 讀 ${fmt(u.cacheReadTokens)} 寫 ${fmt(u.cacheWriteTokens)}`;
   }
+  // 依主對話模型的單價估算；模型不在價格表（Claude 以外的供應商）時不顯示
+  if (u.costUsd !== null) extra += ` | 約 ${formatUsd(u.costUsd)}`;
 
   return `📊 輸入 ${fmt(u.firstInputTokens)}（${details.join("  ")}） | 輸出 ${fmt(u.outputTokens)}${extra}`;
 }

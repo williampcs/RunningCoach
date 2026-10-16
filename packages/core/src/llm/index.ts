@@ -19,8 +19,10 @@ import {
   type ToolResult,
   type Turn,
 } from "./types";
+import { turnCostUsd } from "./pricing";
 
 export * from "./types";
+export { priceOf, turnCostUsd, type ModelPrice } from "./pricing";
 export { AnthropicProvider, type AnthropicProviderOptions } from "./anthropic";
 export {
   OpenAICompatibleProvider,
@@ -75,7 +77,7 @@ export class Llm {
       effort: COMPLETE_EFFORT,
     });
     const turn = await session.next();
-    usage.add(turn.usage);
+    usage.add(turn.usage, turnCostUsd(this.config.models[purpose], turn.usage));
     this.logUsage(purpose, usage);
 
     const finish = this.finishOf(turn, purpose);
@@ -111,7 +113,7 @@ export class Llm {
 
     onEvent?.({ type: "thinking" });
     let turn = await session.next(stream);
-    usage.add(turn.usage);
+    usage.add(turn.usage, turnCostUsd(this.config.models.chat, turn.usage));
 
     for (let round = 1; turn.finish === "tool_use"; round++) {
       usage.toolRounds += 1;
@@ -127,7 +129,7 @@ export class Llm {
       if (lastRound) this.logger.warn(`Max tool call rounds (${this.config.toolCallMaxRounds}) reached`);
       onEvent?.({ type: "thinking" });
       turn = await session.next({ toolResults, disableTools: lastRound, ...stream });
-      usage.add(turn.usage);
+      usage.add(turn.usage, turnCostUsd(this.config.models.chat, turn.usage));
       if (lastRound) break;
     }
 
@@ -151,7 +153,8 @@ export class Llm {
     this.logger.info(
       `${purpose} tokens — input: ${usage.totalInputTokens} (cache read ${usage.cacheReadTokens}, ` +
         `write ${usage.cacheWriteTokens}), output: ${usage.outputTokens}, calls: ${usage.apiCalls}, ` +
-        `tool_rounds: ${usage.toolRounds}`,
+        `tool_rounds: ${usage.toolRounds}` +
+        (usage.costUsd === null ? "" : `, cost: US$${usage.costUsd.toFixed(5)}`),
     );
   }
 }

@@ -102,13 +102,17 @@ export class Usage {
   outputTokens = 0;
   apiCalls = 0;
   toolRounds = 0;
+  /** 依模型單價估算的費用（美元）；有任何一次呼叫的模型不在價格表時為 null */
+  costUsd: number | null = 0;
 
   /** 實際計費的輸入總量（未快取 + 快取讀取 + 快取寫入） */
   get totalInputTokens(): number {
     return this.inputTokens + this.cacheReadTokens + this.cacheWriteTokens;
   }
 
-  add(turn: TurnUsage): void {
+  /** cost：這次呼叫的費用（美元），無法估算時為 null */
+  add(turn: TurnUsage, cost: number | null = null): void {
+    this.costUsd = this.costUsd === null || cost === null ? null : this.costUsd + cost;
     if (this.apiCalls === 0) {
       this.firstInputTokens = turn.input + turn.cacheRead + turn.cacheWrite;
     }
