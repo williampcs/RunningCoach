@@ -5,7 +5,15 @@
  * - 活動來源換成假資料，不連線 Intervals.icu（App 本來就只讀取 Intervals.icu，不會寫入）
  * - 可以模擬「今天」的日期；LLM 照常使用使用者的設定
  */
-import { daysBetween, generateActivities, localDate, type Activity, type FakeSpec } from "@running-coach/core";
+import {
+  daysBetween,
+  generateActivities,
+  generateWellness,
+  localDate,
+  type Activity,
+  type FakeSpec,
+  type WellnessDay,
+} from "@running-coach/core";
 
 const KEY = "running-coach.test-mode.v1";
 export const TEST_DB_FILE = "/coach-test.db";
@@ -38,6 +46,11 @@ export function saveTestMode(state: TestMode): void {
 /** 測試模式下活動來源的內容：產生的情境，加上手動新增的單筆 */
 export function testActivities(state: TestMode): Activity[] {
   return [...(state.spec ? generateActivities(state.spec) : []), ...state.custom];
+}
+
+/** 測試模式下的恢復資料：隨情境產生 */
+export function testWellness(state: TestMode): WellnessDay[] {
+  return state.spec ? generateWellness(state.spec) : [];
 }
 
 /** 模擬日期與實際日期相差的毫秒數；保留實際的時刻，只移動日期 */
