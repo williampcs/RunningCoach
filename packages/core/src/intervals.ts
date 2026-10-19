@@ -134,11 +134,21 @@ export class IntervalsClient implements ActivitySource {
     return response.json();
   }
 
-  private async queryRuns(days: number): Promise<RawActivity[]> {
+  /** 最近 N 天跑步以外的活動類型，例：["Walk", "Ride"] */
+  async fetchOtherActivityTypes(days = 14): Promise<string[]> {
+    return (await this.queryActivities(days))
+      .filter((a) => !isRun(a))
+      .map((a) => String(a.type ?? a.sport_type ?? "Other"));
+  }
+
+  private async queryActivities(days: number): Promise<RawActivity[]> {
     const newest = this.options.today();
     const oldest = addDays(newest, -days);
     const data = await this.getJson(`/activities?oldest=${oldest}&newest=${newest}`);
-    if (!Array.isArray(data)) return [];
-    return (data as RawActivity[]).filter(isRun).sort(byStartDesc);
+    return Array.isArray(data) ? (data as RawActivity[]) : [];
+  }
+
+  private async queryRuns(days: number): Promise<RawActivity[]> {
+    return (await this.queryActivities(days)).filter(isRun).sort(byStartDesc);
   }
 }

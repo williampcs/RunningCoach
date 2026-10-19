@@ -67,6 +67,16 @@ describe("IntervalsClient", () => {
     expect(activities[1]).toMatchObject({ avg_pace: "5:37/km", avg_hr: null, training_load: null });
   });
 
+  it("列出跑步以外的活動類型（同步不到跑步時說明用）", async () => {
+    const { intervals } = client([
+      { id: "i1", type: "Run", start_date_local: "2026-10-07T06:30:00" },
+      { id: "i2", type: "Walk", start_date_local: "2026-10-09T06:30:00" },
+      { id: "i3", sport_type: "Ride", start_date_local: "2026-10-08T06:30:00" },
+      { id: "i4", start_date_local: "2026-10-08T07:30:00" },
+    ]);
+    expect(await intervals.fetchOtherActivityTypes(14)).toEqual(["Walk", "Ride", "Other"]);
+  });
+
   it("最新一筆只查最近 7 天；支援 OAuth token 與指定選手", async () => {
     const { intervals, requests } = client([], { apiKey: undefined, accessToken: "tok", athleteId: "i12345" });
     expect(await intervals.fetchLatestActivity()).toBeNull();

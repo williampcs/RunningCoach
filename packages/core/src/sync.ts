@@ -19,6 +19,40 @@ import type { ActivitySource, Activity, Logger } from "./types";
 /** 同步時拉取的天數 */
 export const SYNC_DAYS = 14;
 
+const ACTIVITY_LABELS: Record<string, string> = {
+  Walk: "走路",
+  Hike: "健行",
+  Ride: "騎車",
+  VirtualRide: "騎車",
+  EBikeRide: "騎車",
+  GravelRide: "騎車",
+  MountainBikeRide: "騎車",
+  Swim: "游泳",
+  OpenWaterSwim: "游泳",
+  WeightTraining: "肌力訓練",
+  Yoga: "瑜伽",
+};
+
+/** 例：「另有 2 筆走路、1 筆騎車，教練目前只讀跑步；…」；沒有其他活動或取得失敗時為 null */
+async function otherActivitiesNote(activities: ActivitySource, logger: Logger): Promise<string | null> {
+  if (!activities.fetchOtherActivityTypes) return null;
+  let types: string[];
+  try {
+    types = await activities.fetchOtherActivityTypes(SYNC_DAYS);
+  } catch (e) {
+    logger.warn(`Other activity types fetch failed: ${message(e)}`);
+    return null;
+  }
+  if (!types.length) return null;
+  const counts = new Map<string, number>();
+  for (const t of types) {
+    const label = ACTIVITY_LABELS[t] ?? "其他運動";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const list = [...counts].map(([label, n]) => `${n} 筆${label}`).join("、");
+  return `另有 ${list}，教練目前只讀跑步；如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。`;
+}
+
 /** 同步不到跑步時附上的提示；外殼可以據此再顯示上傳的方式 */
 export const NO_RUNS_HINT = "如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。";
 
@@ -58,7 +92,11 @@ export async function runSync(deps: {
     logger.error(`Intervals.icu fetch error: ${message(e)}`);
     return `❌ 拉取 Intervals.icu 資料時發生錯誤：${message(e)}`;
   }
-  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${wellnessNote}${NO_RUNS_HINT}`;
+  if (!fetched.length) {
+    // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明只讀跑步，不必檢查上傳
+    const others = await otherActivitiesNote(activities, logger);
+    return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${others ?? ""}${wellnessNote}${others ? "" : NO_RUNS_HINT}`;
+  }
 
   let newCount = 0;
   let mergedCount = 0;

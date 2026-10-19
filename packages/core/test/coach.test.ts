@@ -330,6 +330,23 @@ describe("Coach.sync", () => {
     const empty = await makeCoach();
     expect(await empty.coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。");
 
+    // 有走路、騎車等其他活動：說明只讀跑步，不必檢查上傳（常見的是跑步被記成走路）
+    const walker = await makeCoach();
+    Object.assign(walker.activities, { fetchOtherActivityTypes: async () => ["Walk", "Walk", "VirtualRide", "Kayaking"] });
+    expect(await walker.coach.sync()).toBe(
+      "Intervals.icu 最近 14 天無跑步活動。另有 2 筆走路、1 筆騎車、1 筆其他運動，教練目前只讀跑步；" +
+        "如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。",
+    );
+
+    // 取得其他活動失敗時，照原本的訊息
+    const broken = await makeCoach();
+    Object.assign(broken.activities, {
+      fetchOtherActivityTypes: async () => {
+        throw new Error("down");
+      },
+    });
+    expect(await broken.coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。");
+
     const { coach } = await makeCoach([new Error("LLM 掛了")], { activities: [activity()] });
     expect(await coach.sync()).toBe("✅ Intervals.icu 同步完成：新增 1 筆訓練紀錄");
     expect(await coach.db.countWorkouts()).toBe(1);

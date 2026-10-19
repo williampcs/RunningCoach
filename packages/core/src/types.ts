@@ -43,6 +43,8 @@ export interface ActivitySource {
   fetchActivities(days: number): Promise<Activity[]>;
   /** 最近 N 天的恢復資料（手錶經 Intervals.icu 提供）；不支援的來源不實作 */
   fetchWellness?(days: number): Promise<WellnessDay[]>;
+  /** 最近 N 天跑步以外的活動類型（例如 Walk、Ride），同步不到跑步時用來說明；不支援的來源不實作 */
+  fetchOtherActivityTypes?(days: number): Promise<string[]>;
 }
 
 /** 一天的恢復資料；欄位視手錶與設定而定，可能缺 */
