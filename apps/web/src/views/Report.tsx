@@ -311,6 +311,22 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                   <button className="small" disabled={editing !== null} onClick={() => startEdit(w)}>
                     {w.perceived_effort != null ? "修改體感" : "補填體感"}
                   </button>
+                  {(w.duplicate_count ?? 0) > 0 && (
+                    <>
+                      <span className="muted small">已合併 {w.duplicate_count} 筆重複的紀錄</span>
+                      <button
+                        className="link small"
+                        onClick={() =>
+                          void coach.splitDuplicates(w.id).then(() => {
+                            setMessage({ kind: "ok", text: `已拆開 ${w.date} 的紀錄，之後會分開計算。` });
+                            touch();
+                          })
+                        }
+                      >
+                        不是同一趟
+                      </button>
+                    </>
+                  )}
                   {backfilled?.workout.id === w.id && (
                     <button
                       className="small primary"

@@ -6,6 +6,7 @@ import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
+import { sameRun } from "./dedupe";
 import { recoveryNoteFor } from "./recovery";
 import { runSync } from "./sync";
 import { buildTools, createToolExecutor, generateWorkoutSummary, type ToolExecutor } from "./tools";
@@ -269,6 +270,12 @@ export class Coach {
       if (local) listed.add(local.id);
       if (local?.perceived_effort != null) continue;
       if (!local && !activity.intervals_id) continue;
+      if (!local) {
+        // 已存過、但併進別筆的（重複的那筆），或還沒同步、但和已存的某一筆是同一趟：不另外列出
+        const stored = await this.db.getWorkoutByIntervalsId(activity.intervals_id!);
+        if (stored?.duplicate_of != null) continue;
+        if (!stored && saved.some((w) => sameRun(w, activity))) continue;
+      }
       candidates.push({
         target: local ? { kind: "saved", workoutId: local.id } : { kind: "new", intervalsId: activity.intervals_id! },
         activity,
@@ -318,7 +325,13 @@ export class Coach {
       }
     }
 
-    const workoutId = await this.db.saveWorkout(latest, perceivedEffort, subjectiveNotes || null);
+    const saved = await this.db.saveWorkoutChecked(latest, perceivedEffort, subjectiveNotes || null);
+    if (saved.status === "duplicate") {
+      // 和已存的一筆是同一趟：體感存到保留的那筆並重新分析
+      const { workout, summary } = await this.addSubjective(saved.id, perceivedEffort, subjectiveNotes);
+      return { status: "saved", activity: workoutAsActivity(workout), workoutId: workout.id, summary };
+    }
+    const workoutId = saved.id;
     let summary: string | null = null;
     try {
       summary = await generateWorkoutSummary(llm, {
@@ -361,6 +374,25 @@ export class Coach {
       this.logger.warn(`Summary generation failed for workout_id=${workoutId}: ${String(e)}`);
     }
     return { workout: (await this.db.getWorkout(workoutId))!, summary };
+  }
+
+  /** 手動合併：dupId 是 keepId 的重複（教練動態問「是不是同一趟」時選了合併） */
+  async mergeWorkouts(keepId: number, dupId: number): Promise<void> {
+    if (keepId === dupId) throw new Error("不能和自己合併");
+    for (const id of [keepId, dupId]) {
+      if (!(await this.db.getWorkout(id))) throw new Error(`找不到這筆訓練紀錄（id=${id}）`);
+    }
+    await this.db.mergeWorkouts(keepId, dupId);
+  }
+
+  /** 「不是同一趟」：拆開併進這筆的紀錄，之後不再合併；回傳拆開的筆數 */
+  splitDuplicates(workoutId: number): Promise<number> {
+    return this.db.splitDuplicates(workoutId);
+  }
+
+  /** 「不是同一趟」：教練動態不再詢問這兩筆 */
+  markDistinct(a: number, b: number): Promise<void> {
+    return this.db.markDistinct(a, b);
   }
 
   /** 記錄今天的身體狀況自評（1–5 分），同一天再次記錄會覆蓋 */

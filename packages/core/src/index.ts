@@ -17,7 +17,8 @@ export {
   type UsageStats,
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
-export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
+export { Db, SCHEMA_VERSION, type RaceUpdate, type SaveResult } from "./db";
+export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
 export { addDays, daysBetween, isoWeekLabel, localDate, weekdayName } from "./dates";
 export {
   FAKE_DEVICES,

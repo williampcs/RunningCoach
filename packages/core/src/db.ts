@@ -1,5 +1,6 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
 import { addDays, nowIso } from "./dates";
+import { keepScore, sameRun } from "./dedupe";
 import type {
   Activity,
   ConversationRow,
@@ -15,8 +16,31 @@ import type {
   Workout,
 } from "./types";
 
-/** 2：新增 wellness 與 daily_checkins（v1 不讀這兩張表，仍可開啟同一個資料庫） */
-export const SCHEMA_VERSION = 3;
+/**
+ * 2：新增 wellness 與 daily_checkins（v1 不讀這兩張表，仍可開啟同一個資料庫）
+ * 3：wellness.hrv_sdnn
+ * 4：workouts.duplicate_of、workouts.removed_at 與 workout_distinct（去重、跟著 Intervals.icu 的刪除）
+ */
+export const SCHEMA_VERSION = 4;
+
+/** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
+const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
+
+/** 存一筆訓練的結果；id 是保留的那筆 */
+export interface SaveResult {
+  id: number;
+  /**
+   * new：新的一筆；existing：已存過（依活動 id），只補上體感與負荷；
+   * duplicate：和既有的一筆是同一趟，標為重複，保留既有的那筆；
+   * replaced：和既有的一筆是同一趟，新的資料較完整（例如有心率），改保留新的這筆
+   */
+  status: "new" | "existing" | "duplicate" | "replaced";
+}
+
+type WorkoutRow = Pick<
+  Workout,
+  "id" | "date" | "distance_km" | "duration_min" | "avg_hr" | "training_load" | "raw_json" | "perceived_effort" | "subjective_notes"
+>;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS athlete_profile (
@@ -108,6 +132,13 @@ const SCHEMA = `
     updated_at TEXT NOT NULL
   );
 
+  -- 選手確認「不是同一趟」的兩筆（a < b），之後不再詢問或合併
+  CREATE TABLE IF NOT EXISTS workout_distinct (
+    a INTEGER NOT NULL,
+    b INTEGER NOT NULL,
+    PRIMARY KEY (a, b)
+  );
+
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     date             TEXT NOT NULL,
@@ -176,6 +207,11 @@ export class Db {
     return row?.n ?? 0;
   }
 
+  /** 使用者時區的今天 */
+  today(): string {
+    return this.clock.today();
+  }
+
   private stamp(): string {
     return nowIso(this.clock.now());
   }
@@ -205,6 +241,10 @@ export class Db {
       if (!(await columns("wellness")).has("hrv_sdnn")) {
         await d.exec("ALTER TABLE wellness ADD COLUMN hrv_sdnn REAL");
       }
+
+      // --- Migration: workouts.duplicate_of、removed_at（schema 4：去重、跟著 Intervals.icu 的刪除） ---
+      if (!workoutCols.has("duplicate_of")) await d.exec("ALTER TABLE workouts ADD COLUMN duplicate_of INTEGER");
+      if (!workoutCols.has("removed_at")) await d.exec("ALTER TABLE workouts ADD COLUMN removed_at TEXT");
 
       // --- Migration: workouts.training_load ---
       if (!workoutCols.has("training_load")) {
@@ -454,12 +494,24 @@ export class Db {
     return this.get<Workout>("SELECT * FROM workouts WHERE intervals_id=?", [intervalsId]);
   }
 
-  /** 將客觀活動資料與主觀感受合併存入 workouts；同一活動已存在時只補上主觀感受與負荷 */
-  saveWorkout(
+  /** 將客觀活動資料與主觀感受合併存入 workouts，回傳保留的那筆的 id（細節見 saveWorkoutChecked） */
+  async saveWorkout(
     activity: Activity,
     perceivedEffort: number | null = null,
     subjectiveNotes: string | null = null,
   ): Promise<number> {
+    return (await this.saveWorkoutChecked(activity, perceivedEffort, subjectiveNotes)).id;
+  }
+
+  /**
+   * 存一筆訓練。同一活動（活動 id）已存在時只補上主觀感受與負荷；
+   * 和既有的一筆是同一趟（時間重疊，dedupe.ts）時標記為重複，保留資料較完整的那筆。
+   */
+  saveWorkoutChecked(
+    activity: Activity,
+    perceivedEffort: number | null = null,
+    subjectiveNotes: string | null = null,
+  ): Promise<SaveResult> {
     const d = this.driver;
     const intervalsId = activity.intervals_id ?? null;
     const stravaId = activity.strava_id ?? null;
@@ -469,13 +521,15 @@ export class Db {
     return this.tx(async () => {
       let existing: Row | undefined;
       if (intervalsId) {
-        existing = (await d.all("SELECT id FROM workouts WHERE intervals_id=?", [intervalsId]))[0];
+        existing = (await d.all("SELECT id, removed_at FROM workouts WHERE intervals_id=?", [intervalsId]))[0];
       } else if (stravaId) {
-        existing = (await d.all("SELECT id FROM workouts WHERE strava_id=?", [stravaId]))[0];
+        existing = (await d.all("SELECT id, removed_at FROM workouts WHERE strava_id=?", [stravaId]))[0];
       }
 
       if (existing) {
-        const workoutId = Number(existing.id);
+        let workoutId = Number(existing.id);
+        // 已移除的又被存到（例如跑後回報選了它）：先恢復，存到保留的那筆
+        if (existing.removed_at) workoutId = (await this.restoreInTx(workoutId)).id;
         await d.run(
           `UPDATE workouts SET
              perceived_effort = COALESCE(?, perceived_effort),
@@ -485,9 +539,10 @@ export class Db {
            WHERE id = ?`,
           [perceivedEffort, subjectiveNotes, activity.training_load ?? null, this.stamp(), workoutId],
         );
-        return workoutId;
+        return { id: workoutId, status: "existing" } as SaveResult;
       }
 
+      const match = await this.findSameRun(activity, null);
       const result = await d.run(
         `INSERT INTO workouts
            (intervals_id, strava_id, date, type, distance_km, duration_min,
@@ -514,7 +569,8 @@ export class Db {
           this.stamp(),
         ],
       );
-      return result.lastInsertRowid;
+      const id = result.lastInsertRowid;
+      return match ? this.resolveSameRun(id, activity, match) : ({ id, status: "new" } as SaveResult);
     });
   }
 
@@ -524,27 +580,160 @@ export class Db {
    */
   getRecentWorkouts(days: number): Promise<Workout[]> {
     return this.all<Workout>(
-      `SELECT w.*, ws.summary
+      `SELECT w.*, ws.summary,
+              (SELECT COUNT(*) FROM workouts d WHERE d.duplicate_of = w.id AND d.removed_at IS NULL) AS duplicate_count
          FROM workouts w
          LEFT JOIN workout_summaries ws
            ON ws.id = (SELECT MAX(id) FROM workout_summaries WHERE workout_id = w.id)
-        WHERE w.date >= ?
+        WHERE w.date >= ? AND ${ACTIVE}
         ORDER BY w.date DESC, w.id DESC`,
       [addDays(this.clock.today(), -days)],
     );
   }
 
-  /** 訓練紀錄筆數；指定 days 時只計最近 N 天 */
+  /** 訓練紀錄筆數（不含重複與已移除的）；指定 days 時只計最近 N 天 */
   countWorkouts(days?: number): Promise<number> {
-    if (days === undefined) return this.count("SELECT COUNT(*) AS n FROM workouts");
-    return this.count("SELECT COUNT(*) AS n FROM workouts WHERE date >= ?", [addDays(this.clock.today(), -days)]);
+    if (days === undefined) return this.count(`SELECT COUNT(*) AS n FROM workouts w WHERE ${ACTIVE}`);
+    return this.count(`SELECT COUNT(*) AS n FROM workouts w WHERE date >= ? AND ${ACTIVE}`, [
+      addDays(this.clock.today(), -days),
+    ]);
   }
 
   getWorkoutsForPaceTrend(weeks: number): Promise<{ date: string; avg_pace: string; distance_km: number | null }[]> {
     return this.all(
-      "SELECT date, avg_pace, distance_km FROM workouts WHERE date >= ? AND avg_pace IS NOT NULL ORDER BY date",
+      `SELECT date, avg_pace, distance_km FROM workouts w WHERE date >= ? AND avg_pace IS NOT NULL AND ${ACTIVE} ORDER BY date`,
       [addDays(this.clock.today(), -weeks * 7)],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 去重：同一趟從不同來源進來（dedupe.ts 判斷）、跟著 Intervals.icu 的刪除
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 在交易中：dupId 標為 keepId 的重複，原本指向 dupId 的也改指向 keepId。
+   * 保留的那筆沒有體感或 AI 分析時，從重複的那筆帶過來
+   */
+  private async attachDuplicate(keepId: number, dupId: number): Promise<void> {
+    const d = this.driver;
+    await d.run("UPDATE workouts SET duplicate_of = ? WHERE id = ? OR duplicate_of = ?", [keepId, dupId, dupId]);
+    await this.inheritFrom(keepId, dupId);
+  }
+
+  /** 在交易中：toId 沒有體感或 AI 分析時，從 fromId 帶過來 */
+  private async inheritFrom(toId: number, fromId: number): Promise<void> {
+    const d = this.driver;
+    await d.run(
+      `UPDATE workouts SET
+         perceived_effort = COALESCE(perceived_effort, (SELECT perceived_effort FROM workouts WHERE id = ?)),
+         subjective_notes = COALESCE(subjective_notes, (SELECT subjective_notes FROM workouts WHERE id = ?))
+       WHERE id = ?`,
+      [fromId, fromId, toId],
+    );
+    const own = await d.all("SELECT 1 FROM workout_summaries WHERE workout_id = ? LIMIT 1", [toId]);
+    if (!own.length) await d.run("UPDATE workout_summaries SET workout_id = ? WHERE workout_id = ?", [toId, fromId]);
+  }
+
+  /** 在交易中：恢復已移除的一筆，當成單獨的一筆重新判斷是否和其他紀錄是同一趟 */
+  private async restoreInTx(id: number): Promise<SaveResult> {
+    const d = this.driver;
+    await d.run("UPDATE workouts SET removed_at = NULL, duplicate_of = NULL WHERE id = ?", [id]);
+    const row = ((await d.all(
+      `SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json, perceived_effort, subjective_notes
+         FROM workouts WHERE id = ?`,
+      [id],
+    )) as unknown as WorkoutRow[])[0]!;
+    const match = await this.findSameRun(row, id);
+    return match ? this.resolveSameRun(id, row, match) : { id, status: "existing" };
+  }
+
+  /** 在交易中：和 row 同一趟、仍在列表上的另一筆（前後一天內） */
+  private async findSameRun(row: WorkoutRow | Activity, excludeId: number | null): Promise<WorkoutRow | null> {
+    const nearby = (await this.driver.all(
+      `SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json, perceived_effort, subjective_notes
+         FROM workouts w WHERE ${ACTIVE} AND date BETWEEN ? AND ? AND id IS NOT ?`,
+      [addDays(row.date, -1), addDays(row.date, 1), excludeId],
+    )) as unknown as WorkoutRow[];
+    return nearby.find((w) => sameRun(w, row)) ?? null;
+  }
+
+  /** 在交易中：新進來的 id 和既有的 match 是同一趟，依資料完整度決定保留哪一筆 */
+  private async resolveSameRun(id: number, row: WorkoutRow | Activity, match: WorkoutRow): Promise<SaveResult> {
+    if (keepScore(row) > keepScore(match)) {
+      await this.attachDuplicate(id, match.id);
+      return { id, status: "replaced" };
+    }
+    await this.attachDuplicate(match.id, id);
+    return { id: match.id, status: "duplicate" };
+  }
+
+  /** 選手說過「不是同一趟」的組合，例：「12-15」（小的 id 在前） */
+  async getDistinctPairs(): Promise<Set<string>> {
+    const rows = await this.all<{ a: number; b: number }>("SELECT a, b FROM workout_distinct");
+    return new Set(rows.map((r) => `${r.a}-${r.b}`));
+  }
+
+  async markDistinct(a: number, b: number): Promise<void> {
+    await this.run("INSERT OR IGNORE INTO workout_distinct (a, b) VALUES (?, ?)", [Math.min(a, b), Math.max(a, b)]);
+  }
+
+  /** 手動合併：dupId 標為 keepId 的重複 */
+  mergeWorkouts(keepId: number, dupId: number): Promise<void> {
+    return this.tx(async () => {
+      await this.attachDuplicate(keepId, dupId);
+      await this.driver.run("DELETE FROM workout_distinct WHERE a = ? AND b = ?", [Math.min(keepId, dupId), Math.max(keepId, dupId)]);
+    });
+  }
+
+  /** 「不是同一趟」：把併進 id 的紀錄拆開，記住之後不再合併；回傳拆開的筆數 */
+  splitDuplicates(id: number): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const dups = await d.all("SELECT id FROM workouts WHERE duplicate_of = ?", [id]);
+      for (const row of dups) {
+        const dupId = Number(row.id);
+        await d.run("UPDATE workouts SET duplicate_of = NULL WHERE id = ?", [dupId]);
+        await d.run("INSERT OR IGNORE INTO workout_distinct (a, b) VALUES (?, ?)", [Math.min(id, dupId), Math.max(id, dupId)]);
+      }
+      return dups.length;
+    });
+  }
+
+  /**
+   * 跟著 Intervals.icu：since～until 之間，本機有、這次同步沒拿到的（已刪除，或類型不再是跑步），標記為已移除。
+   * 被移除的若是保留的那筆，改由它的重複中資料最完整的一筆接手，體感與分析一起移過去。
+   * 回傳移除的筆數，只算列表上看得到的（重複的那份本來就不顯示）。
+   */
+  markRemovedMissing(seenIntervalsIds: string[], since: string, until: string): Promise<number> {
+    const d = this.driver;
+    const seen = new Set(seenIntervalsIds);
+    return this.tx(async () => {
+      const rows = (await d.all(
+        `SELECT id, intervals_id, duplicate_of FROM workouts
+          WHERE intervals_id IS NOT NULL AND removed_at IS NULL AND date BETWEEN ? AND ?`,
+        [since, until],
+      )) as { id: number; intervals_id: string; duplicate_of: number | null }[];
+      const missing = rows.filter((r) => !seen.has(r.intervals_id));
+      for (const r of missing) await d.run("UPDATE workouts SET removed_at = ? WHERE id = ?", [this.stamp(), r.id]);
+
+      for (const removed of missing.filter((r) => r.duplicate_of === null)) {
+        const dups = (await d.all(
+          "SELECT id, avg_hr, training_load FROM workouts WHERE duplicate_of = ? AND removed_at IS NULL ORDER BY id",
+          [removed.id],
+        )) as { id: number; avg_hr: number | null; training_load: number | null }[];
+        if (!dups.length) continue;
+        const heir = dups.reduce((best, w) => (keepScore(w) > keepScore(best) ? w : best));
+        await d.run("UPDATE workouts SET duplicate_of = NULL WHERE id = ?", [heir.id]);
+        await d.run("UPDATE workouts SET duplicate_of = ? WHERE duplicate_of = ? AND id != ?", [heir.id, removed.id, heir.id]);
+        await this.inheritFrom(heir.id, removed.id);
+      }
+      return missing.filter((r) => r.duplicate_of === null).length;
+    });
+  }
+
+  /** 已移除的又出現了（例如類型改回跑步）：恢復，並重新判斷是否和其他紀錄是同一趟 */
+  restoreWorkout(id: number): Promise<SaveResult> {
+    return this.tx(() => this.restoreInTx(id));
   }
 
   // ---------------------------------------------------------------------------
