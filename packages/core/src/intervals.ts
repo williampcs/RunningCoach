@@ -107,12 +107,15 @@ export class IntervalsClient implements ActivitySource {
         date,
         resting_hr: num(raw.restingHR),
         hrv: num(raw.hrv),
+        hrv_sdnn: num(raw.hrvSDNN),
         sleep_secs: num(raw.sleepSecs),
         sleep_score: num(raw.sleepScore),
         readiness: num(raw.readiness),
         raw_json: JSON.stringify(raw),
       };
-      const empty = [day.resting_hr, day.hrv, day.sleep_secs, day.sleep_score, day.readiness].every((v) => v === null);
+      const empty = [day.resting_hr, day.hrv, day.hrv_sdnn, day.sleep_secs, day.sleep_score, day.readiness].every(
+        (v) => v === null,
+      );
       return empty ? [] : [day];
     });
   }

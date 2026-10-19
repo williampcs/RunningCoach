@@ -12,6 +12,16 @@ const LAYER_LABELS = [
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
+/** 心率：152/171bpm，缺的一個顯示 missing；兩個都沒有（例如只用手機記錄）時為 null */
+export function heartRateText(
+  avg: number | null | undefined,
+  max: number | null | undefined,
+  missing = "?",
+): string | null {
+  if (avg == null && max == null) return null;
+  return `${avg ?? missing}/${max ?? missing}bpm`;
+}
+
 /** 金額：小額時多留幾位小數，避免顯示成 0 */
 export function formatUsd(n: number): string {
   if (n >= 1) return `US$${n.toFixed(2)}`;

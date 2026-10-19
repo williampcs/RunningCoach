@@ -49,8 +49,10 @@ export interface ActivitySource {
 export interface WellnessDay {
   date: string;
   resting_hr: number | null;
-  /** rMSSD，毫秒 */
+  /** rMSSD，毫秒（Garmin 等） */
   hrv: number | null;
+  /** SDNN，毫秒：Apple「健康」只記錄這種，數值與 rMSSD 不能互相比較 */
+  hrv_sdnn: number | null;
   sleep_secs: number | null;
   sleep_score: number | null;
   readiness: number | null;

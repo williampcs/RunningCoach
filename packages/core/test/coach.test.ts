@@ -328,7 +328,7 @@ describe("Coach.sync", () => {
 
   it("沒有活動、摘要失敗時的處理", async () => {
     const empty = await makeCoach();
-    expect(await empty.coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。");
+    expect(await empty.coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。");
 
     const { coach } = await makeCoach([new Error("LLM 掛了")], { activities: [activity()] });
     expect(await coach.sync()).toBe("✅ Intervals.icu 同步完成：新增 1 筆訓練紀錄");
@@ -435,6 +435,21 @@ describe("Coach.reportRun（表單式跑後回報）", () => {
       candidates: [expect.objectContaining({ target: { kind: "saved", workoutId: id } })],
       fetchError: "Intervals.icu 回應 503",
     });
+  });
+
+  it("只用 iPhone、沒有心率：分析的提示不猜心率，紀錄寫明沒有心率", async () => {
+    const run = activity({ avg_hr: null, max_hr: null, training_load: null });
+    const { coach, provider } = await makeCoach([turn({ text: "穩定的慢跑" }), toolTurn("get_recent_workouts", { days: 7 }), turn({ text: "好" })], {
+      activities: [run],
+    });
+    await coach.reportRun(5, "", { kind: "new", intervalsId: "i100" });
+    const prompt = String(provider.calls[0]!.request.messages[0]!.content);
+    expect(prompt).toContain("心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）");
+    expect(prompt).toContain("沒有心率資料：依配速、時長與體感評估，不要推測心率。");
+    expect(prompt).not.toContain("bpm");
+
+    await coach.chat("最近練得怎樣");
+    expect(provider.calls[2]!.toolResults![0]!.content).toContain("【2026-10-10】10.02km｜5:30/km｜沒有心率｜體感 5/10");
   });
 
   it("手錶尚未同步：暫存主觀感受", async () => {

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { addDays, type Activity, type ReportCandidate, type ReportTarget, type RunReport, type Workout } from "@running-coach/core";
+import { addDays, heartRateText, type Activity, type ReportCandidate, type ReportTarget, type RunReport, type Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
+import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -16,7 +17,7 @@ function activityLines(a: RunData): string {
   return [
     `日期：${a.date}`,
     `距離：${a.distance_km ?? "?"}km｜時長：${a.duration_min ?? "?"}分鐘`,
-    `配速：${a.avg_pace ?? "未知"}｜心率：${a.avg_hr ?? "未記錄"}/${a.max_hr ?? "未記錄"}bpm`,
+    `配速：${a.avg_pace ?? "未知"}｜心率：${heartRateText(a.avg_hr, a.max_hr, "未記錄") ?? "沒有資料"}`,
     `爬升：${a.elevation_m ?? 0}m` + (a.training_load != null ? `｜負荷：${a.training_load}` : ""),
   ].join("\n");
 }
@@ -219,7 +220,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
           </button>
         </div>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
-        {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+        <SyncNotice message={sync.message} />
         {report?.status === "saved" && (
           <div className="notice ok">
             <strong>已存檔</strong>
@@ -263,7 +264,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                 </span>
               </div>
               <div className="muted small">
-                心率 {w.avg_hr ?? "?"}/{w.max_hr ?? "?"}bpm
+                {heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}
                 {w.training_load != null && `｜負荷 ${w.training_load}`}
                 {w.perceived_effort != null && `｜體感 ${w.perceived_effort}/10`}
                 {w.subjective_notes && `｜${w.subjective_notes}`}

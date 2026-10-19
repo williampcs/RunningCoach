@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useApp } from "../app-context";
 import { useSync } from "../use-sync";
+import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 
 const DISMISS_KEY = "running-coach.getting-started.dismissed";
 
@@ -120,6 +121,7 @@ export function GettingStarted() {
             <>
               <p className="small muted">教練透過 Intervals.icu 讀取你手錶的跑步紀錄。</p>
               <IntervalsGuide where="設定頁的「Intervals.icu」區塊" />
+              <PhoneGuide />
               <button onClick={() => goTo("settings")}>前往設定</button>
             </>
           )}
@@ -136,7 +138,7 @@ export function GettingStarted() {
               {sync.busy ? "同步中…" : "立即同步"}
             </button>
           </div>
-          {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+          <SyncNotice message={sync.message} />
         </Step>
         <Step n={4} done={counts.profile > 0} title="填寫選手資料（建議）">
           <p className="small muted">

@@ -4,6 +4,7 @@ import type { DailyCheckin, FeedAction, FeedItem } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { useSync } from "../use-sync";
+import { SyncNotice } from "./PhoneGuide";
 
 const STATE_KEY = "running-coach.feed.v1";
 
@@ -222,7 +223,7 @@ export function CoachFeed() {
           </li>
         ))}
       </ul>
-      {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+      <SyncNotice message={sync.message} />
     </section>
   );
 }

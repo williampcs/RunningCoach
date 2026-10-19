@@ -24,6 +24,8 @@ export interface RecoverySignals {
   /** 最近一天（今天或昨天）的手錶資料 */
   latest: WellnessDay | null;
   baseline: { restingHr: number | null; hrv: number | null; sleepHours: number | null };
+  /** HRV 用哪一種：rMSSD（Garmin 等）或 SDNN（Apple「健康」）；兩者不能互相比較，只和同一種的平常比 */
+  hrvKind: "rmssd" | "sdnn" | null;
   /** 基準的說法：「平常」或「前幾天」 */
   baselineLabel: "平常" | "前幾天";
   restingHrDelta: number | null;
@@ -60,15 +62,18 @@ export function analyzeRecovery(wellness: WellnessDay[], checkins: DailyCheckin[
   const baselineLabel = usual.length >= USUAL_MIN_DAYS ? "平常" : "前幾天";
   const prior = baselineLabel === "平常" ? usual : recent;
 
+  const hrvKind = latest?.hrv != null ? "rmssd" : latest?.hrv_sdnn != null ? "sdnn" : null;
+  const hrvOf = (w: WellnessDay) => (hrvKind === "sdnn" ? w.hrv_sdnn : w.hrv);
   const baseline = {
     restingHr: baselineOf(prior, (w) => w.resting_hr),
-    hrv: baselineOf(prior, (w) => w.hrv),
+    hrv: hrvKind ? baselineOf(prior, hrvOf) : null,
     sleepHours: baselineOf(prior, (w) => (w.sleep_secs === null ? null : w.sleep_secs / 3600)),
   };
   const restingHrDelta =
     latest?.resting_hr != null && baseline.restingHr !== null ? Math.round(latest.resting_hr - baseline.restingHr) : null;
+  const latestHrv = latest ? hrvOf(latest) : null;
   const hrvChangePct =
-    latest?.hrv != null && baseline.hrv ? Math.round(((latest.hrv - baseline.hrv) / baseline.hrv) * 100) : null;
+    latestHrv != null && baseline.hrv ? Math.round(((latestHrv - baseline.hrv) / baseline.hrv) * 100) : null;
   const sleepHours = latest?.sleep_secs != null ? Math.round((latest.sleep_secs / 3600) * 10) / 10 : null;
 
   const watchFlags: string[] = [];
@@ -90,7 +95,19 @@ export function analyzeRecovery(wellness: WellnessDay[], checkins: DailyCheckin[
   if (checkin && watchFlags.length && !selfFlags.length && checkin.energy >= 4) mismatch = "watch_worse";
   else if (latest && selfFlags.length && !watchFlags.length) mismatch = "self_worse";
 
-  return { latest, baseline, baselineLabel, restingHrDelta, hrvChangePct, sleepHours, watchFlags, checkin, selfFlags, mismatch };
+  return {
+    latest,
+    baseline,
+    hrvKind,
+    baselineLabel,
+    restingHrDelta,
+    hrvChangePct,
+    sleepHours,
+    watchFlags,
+    checkin,
+    selfFlags,
+    mismatch,
+  };
 }
 
 export function describeCheckin(c: DailyCheckin): string {
@@ -108,9 +125,11 @@ export function describeWatch(s: RecoverySignals): string | null {
         (base !== null ? `（${s.baselineLabel}平均 ${Math.round(base)}，${s.restingHrDelta! >= 0 ? "+" : ""}${s.restingHrDelta}）` : ""),
     );
   }
-  if (s.latest.hrv != null) {
+  const hrv = s.hrvKind === "sdnn" ? s.latest.hrv_sdnn : s.latest.hrv;
+  if (hrv != null) {
     parts.push(
-      `HRV ${Math.round(s.latest.hrv)} ms` + (s.hrvChangePct !== null ? `（${s.hrvChangePct >= 0 ? "+" : ""}${s.hrvChangePct}%）` : ""),
+      `${s.hrvKind === "sdnn" ? "HRV（SDNN）" : "HRV "}${Math.round(hrv)} ms` +
+        (s.hrvChangePct !== null ? `（${s.hrvChangePct >= 0 ? "+" : ""}${s.hrvChangePct}%）` : ""),
     );
   }
   if (s.sleepHours !== null) parts.push(`睡眠 ${s.sleepHours} 小時`);
@@ -154,6 +173,7 @@ export function formatRecoveryReport(
     const watch: string[] = [];
     if (w?.resting_hr != null) watch.push(`靜息心率 ${w.resting_hr}`);
     if (w?.hrv != null) watch.push(`HRV ${Math.round(w.hrv)}`);
+    else if (w?.hrv_sdnn != null) watch.push(`HRV（SDNN）${Math.round(w.hrv_sdnn)}`);
     if (w?.sleep_secs != null) watch.push(`睡眠 ${Math.round((w.sleep_secs / 3600) * 10) / 10}h`);
     lines.push(
       `${date}（${weekdayName(date)}）` +

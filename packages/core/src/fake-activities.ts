@@ -18,6 +18,15 @@ export const FAKE_SCENARIOS = {
 
 export type FakeScenario = keyof typeof FAKE_SCENARIOS;
 
+/** 記錄跑步的裝置：決定有沒有心率、恢復資料是哪一種 */
+export const FAKE_DEVICES = {
+  garmin: { label: "Garmin 等手錶", description: "有心率；恢復資料的 HRV 是 rMSSD" },
+  apple_watch: { label: "Apple Watch", description: "有心率；HRV 是 SDNN，沒有睡眠分數（經 Intervals.icu Companion）" },
+  iphone: { label: "只有 iPhone", description: "沒有心率、沒有訓練負荷，也沒有恢復資料" },
+} as const;
+
+export type FakeDevice = keyof typeof FAKE_DEVICES;
+
 export interface FakeSpec {
   scenario: FakeScenario;
   /** 產生的最後一天（含）；之後模擬日期往後移，就像時間過去了 */
@@ -28,6 +37,8 @@ export interface FakeSpec {
   easyPaceSec: number;
   maxHr: number;
   seed: number;
+  /** 預設 garmin；舊的設定沒有這一欄 */
+  device?: FakeDevice;
 }
 
 /** 每週跑步的日子（星期一 = 0）；最後一天固定是長跑 */
@@ -167,7 +178,10 @@ export function generateActivities(spec: FakeSpec): Activity[] {
     distance = Math.max(1, distance + jitter(distance * 0.08));
     pace += jitter(8);
     const avgHr = hasHr ? Math.round(spec.maxHr * hrFraction + jitter(3)) : null;
-    out.push(build(`fake-${spec.seed}-${date}`, date, distance, pace, avgHr, spec.maxHr, 20 + rand() * 60 + distance * 2));
+    const iphone = spec.device === "iphone";
+    const run = build(`fake-${spec.seed}-${date}`, date, distance, pace, iphone ? null : avgHr, spec.maxHr, 20 + rand() * 60 + distance * 2);
+    // 只有 iPhone：沒有心率，Intervals.icu 也算不出訓練負荷
+    out.push(iphone ? { ...run, training_load: null, raw_json: JSON.stringify({ fake: true }) } : run);
   }
   return out;
 }
@@ -251,17 +265,23 @@ export function generateWellness(spec: FakeSpec): WellnessDay[] {
     }
 
     const sleepSecs = Math.round((sleepHours + jitter(0.5)) * 3600);
+    const dayHrv = Math.round(hrv + jitter(4));
+    const sleepScore = Math.round(Math.min(100, Math.max(40, 55 + (sleepSecs / 3600 - 6) * 15 + jitter(5))));
+    const apple = spec.device === "apple_watch";
     out.push({
       date,
       resting_hr: Math.round(restingHr + jitter(1.5)),
-      hrv: Math.round(hrv + jitter(4)),
+      // Apple「健康」只有 SDNN，數值和 rMSSD 不同；也沒有睡眠分數
+      hrv: apple ? null : dayHrv,
+      hrv_sdnn: apple ? Math.round(dayHrv * 0.85) : null,
       sleep_secs: sleepSecs,
-      sleep_score: Math.round(Math.min(100, Math.max(40, 55 + (sleepSecs / 3600 - 6) * 15 + jitter(5)))),
+      sleep_score: apple ? null : sleepScore,
       readiness: null,
       raw_json: JSON.stringify({ fake: true }),
     });
   }
-  return out;
+  // 只有 iPhone：沒有手錶量測的恢復資料
+  return spec.device === "iphone" ? [] : out;
 }
 
 /**

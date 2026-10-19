@@ -113,6 +113,20 @@ describe("generateWellness", () => {
     expect(overreach.watchFlags.length).toBeGreaterThan(0);
     expect(generateWellness(spec({ scenario: "irregular" })).length).toBeLessThan(42);
   });
+
+  it("follows the device: Apple Watch gives SDNN, an iPhone alone gives no heart rate or recovery data", () => {
+    const garmin = generateWellness(spec());
+    expect(garmin.every((w) => w.hrv !== null && w.hrv_sdnn === null)).toBe(true);
+    const apple = generateWellness(spec({ device: "apple_watch" }));
+    expect(apple.every((w) => w.hrv === null && w.hrv_sdnn !== null && w.sleep_score === null)).toBe(true);
+    expect(analyzeRecovery(apple, [], END).hrvKind).toBe("sdnn");
+    expect(generateWellness(spec({ device: "iphone" }))).toEqual([]);
+
+    const phoneRuns = generateActivities(spec({ device: "iphone" }));
+    // 同樣的亂數種子：距離、配速與手錶記錄的相同，只是沒有心率與負荷
+    expect(phoneRuns.map((r) => [r.date, r.distance_km])).toEqual(generateActivities(spec()).map((r) => [r.date, r.distance_km]));
+    expect(phoneRuns.every((r) => r.avg_hr === null && r.max_hr === null && r.training_load === null)).toBe(true);
+  });
 });
 
 describe("fakeActivity", () => {

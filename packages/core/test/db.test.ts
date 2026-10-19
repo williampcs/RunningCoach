@@ -18,7 +18,27 @@ describe("Db", () => {
     const { db, driver } = await freshDb();
     await db.init();
     const [row] = await driver.all("PRAGMA user_version");
-    expect(row?.user_version).toBe(2);
+    expect(row?.user_version).toBe(3);
+  });
+
+  it("schema 2 → 3：恢復資料補上 Apple 的 HRV（SDNN）欄位，保留原有資料", async () => {
+    const driver = openNodeSqlite(":memory:");
+    await driver.exec(`
+      CREATE TABLE wellness (
+        date TEXT PRIMARY KEY, resting_hr INTEGER, hrv REAL, sleep_secs INTEGER, sleep_score INTEGER,
+        readiness INTEGER, raw_json TEXT, synced_at TEXT NOT NULL);
+      INSERT INTO wellness (date, resting_hr, hrv, synced_at) VALUES ('2026-10-10', 52, 61, 'x');
+      PRAGMA user_version = 2;
+    `);
+    const db = new Db(driver, clock);
+    await db.init();
+    await db.upsertWellness([
+      { date: "2026-10-09", resting_hr: 55, hrv: null, hrv_sdnn: 48, sleep_secs: null, sleep_score: null, readiness: null },
+    ]);
+    expect(await db.getWellness(7)).toEqual([
+      expect.objectContaining({ date: "2026-10-09", hrv: null, hrv_sdnn: 48 }),
+      expect.objectContaining({ date: "2026-10-10", hrv: 61, hrv_sdnn: null }),
+    ]);
   });
 
   it("升級最早期的 v1 資料庫：補上欄位並從 raw_json 回填訓練負荷", async () => {

@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { TestModeCard } from "./TestMode";
 import {
   clearSettings,
@@ -338,6 +339,7 @@ export function SettingsView() {
         {testMode.enabled && <div className="notice info">測試模式中使用假資料，不會連線 Intervals.icu。</div>}
         <p className="small">教練透過 Intervals.icu 讀取你的跑步紀錄：</p>
         <IntervalsGuide where="下方的「API key」欄位" />
+        <PhoneGuide />
         <p className="muted small">key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得。</p>
         <div className="grid">
           <label>
@@ -398,7 +400,7 @@ export function SettingsView() {
               {sync.busy ? "同步中…" : "立即同步"}
             </button>
           )}
-          {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+          <SyncNotice message={sync.message} />
         </div>
       )}
 

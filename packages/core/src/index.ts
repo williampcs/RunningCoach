@@ -20,6 +20,7 @@ export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./cont
 export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
 export { addDays, daysBetween, isoWeekLabel, localDate, weekdayName } from "./dates";
 export {
+  FAKE_DEVICES,
   FAKE_SCENARIOS,
   FakeActivitySource,
   fakeActivity,
@@ -27,11 +28,12 @@ export {
   generateActivities,
   generateWellness,
   parsePace,
+  type FakeDevice,
   type FakeScenario,
   type FakeSpec,
 } from "./fake-activities";
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
-export { formatStatus, formatTokenFooter, formatUsd } from "./format";
+export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
   AnthropicProvider,
@@ -76,7 +78,7 @@ export {
   type WellnessDay,
   type Workout,
 } from "./types";
-export { SYNC_DAYS } from "./sync";
+export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
   analyzeRecovery,
   describeCheckin,
