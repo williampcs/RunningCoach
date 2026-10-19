@@ -40,6 +40,7 @@
 | 2.0-draft | 2026-10-18 | 進度事件 v1 與匯入完整歷史的實作計畫（12.5，提案） |
 | 2.0-draft | 2026-10-19 | 跑後回報先選紀錄再填（9.4）；只有 iPhone 的使用者如何把資料送進 Intervals.icu；讓大家上架遊戲與應用的平台構想（12.6） |
 | 2.0-draft | 2026-10-19 | 跑後回報改為先選紀錄、再填體感（6.1）；12.6 的決定：不考慮 Strava、iPhone 先用 Intervals.icu Companion、平台等有人再做；多來源的去重待討論（11 #15） |
+| 2.0-draft | 2026-10-19 | 配合 Intervals.icu Companion 可以做的事：引導、同步後的提示、Apple 的 HRV（SDNN）（12.6） |
 
 ---
 
@@ -863,3 +864,10 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - iPhone 使用者在有原生 App 之前，先用 Intervals.icu Companion 當權宜之計。
 - 資料來源變多之後的去重（11 #15）之後要討論。目前只依 Intervals.icu 的活動 id 去重；Intervals.icu 自己會不會擋下同一趟的重複上傳，也要確認。
 - 平台：先維持 12.5 的解耦，我們自己的遊戲與朋友的社交平台作為最初的應用示範；真的有人想做了，再考慮平台。
+
+**配合 Intervals.icu Companion，我們可以做的**（2026-10-19，提案）
+- 新手引導與設定頁加上「只有 iPhone／Apple Watch」的步驟：安裝 Companion（第三方，與本專案無關，免費下載、有內購）、以 Intervals.icu 帳號登入、開啟運動與每日健康資料的同步，再回來同步。註明我們沒有實測過。
+- 同步後最近 14 天沒有跑步時，除了「無跑步活動」，再提示檢查手錶或 App 是否已上傳到 Intervals.icu，並連到上面的步驟。
+- Apple 的 HRV：Apple「健康」只存 SDNN，經 Companion 或 HealthFit 進入 Intervals.icu 後放在 wellness 的 `hrvSDNN`；現在只讀 `hrv`（rMSSD），所以 Apple Watch 使用者的恢復資料會沒有 HRV。兩者的數值不能互相比較，要分開存（`wellness` 加一欄，schema 版本升為 3），判讀時只拿同一種和自己的平常比。欄位名稱來自 Intervals.icu 論壇引用的 API 欄位清單，要實測。
+- 之後把課表寫進 Intervals.icu 的行事曆時（12.3），Companion 能把排定的課表送到 Apple Watch，所以「課表推到手錶」不必等 iOS App。開發者在論壇說過不會自動送出，需要手動操作。
+- 做不到的：偵測使用者有沒有安裝 Companion、與它直接串接、保證它的行為。
