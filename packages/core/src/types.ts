@@ -100,6 +100,8 @@ export interface Workout {
   subjective_notes: string | null;
   source: string | null;
   synced_at: string;
+  /** 活動來源的原始資料（JSON） */
+  raw_json?: string | null;
   /** LEFT JOIN workout_summaries */
   summary?: string | null;
 }

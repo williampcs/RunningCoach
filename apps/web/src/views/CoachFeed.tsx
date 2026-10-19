@@ -105,7 +105,7 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
 
 /** 教練動態：打開 App 時教練主動提醒的事項，固定在對話上方 */
 export function CoachFeed() {
-  const { coach, revision, goTo, llmProblem } = useApp();
+  const { coach, revision, goTo, openReport, llmProblem } = useApp();
   const sync = useSync();
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -141,7 +141,7 @@ export function CoachFeed() {
         setCheckinOpen(true);
         return;
       case "report":
-        goTo("report");
+        openReport(action.workoutId);
         return;
       case "plan":
         goTo("plan");

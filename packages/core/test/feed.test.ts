@@ -61,7 +61,10 @@ describe("buildFeed", () => {
     await coach.db.saveWorkout(run(addDays(TODAY, -1), 10));
     await coach.db.savePendingSubjective(TODAY, 6, "還行");
     const items = await coach.feed();
-    expect(items.find((i) => i.kind === "report")).toMatchObject({ title: "昨天的 10 km 還沒回報感受", actions: [{ type: "report" }] });
+    expect(items.find((i) => i.kind === "report")).toMatchObject({
+      title: "昨天的 10 km 還沒回報感受",
+      actions: [{ type: "report", workoutId: 1 }],
+    });
     expect(items.find((i) => i.kind === "pending")).toMatchObject({ actions: [{ type: "sync" }] });
 
     const reported = await makeCoach([]);

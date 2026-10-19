@@ -11,7 +11,8 @@ import type { CoachSettings } from "./types";
 
 export type FeedAction =
   | { type: "checkin" }
-  | { type: "report" }
+  /** 前往跑後回報；有 workoutId 時預先選好那一筆 */
+  | { type: "report"; workoutId?: number }
   | { type: "sync" }
   | { type: "plan" }
   /** 帶著這段文字開始和教練對話 */
@@ -122,7 +123,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
       tone: "info",
       title: `${latest.date === today ? "今天" : "昨天"}的 ${km(latest.distance_km ?? 0)} 還沒回報感受`,
       detail: "補上體感，教練的分析會更準。",
-      actions: [{ type: "report" }],
+      actions: [{ type: "report", workoutId: latest.id }],
     });
   }
 

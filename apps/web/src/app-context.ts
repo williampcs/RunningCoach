@@ -25,6 +25,8 @@ export interface AppState {
   /** 匯入資料庫後重新初始化 */
   reload(): Promise<void>;
   goTo(tab: Tab, draft?: string): void;
+  /** 前往跑後回報；指定 workoutId 時預先選好那一筆 */
+  openReport(workoutId?: number): void;
 }
 
 export type Tab = "chat" | "report" | "plan" | "profile" | "settings";
