@@ -43,6 +43,7 @@
 | 2.0-draft | 2026-10-19 | 配合 Intervals.icu Companion 可以做的事：引導、同步後的提示、Apple 的 HRV（SDNN）（12.6） |
 | 2.0-draft | 2026-10-19 | 實作 12.6 的前三項：iPhone／Apple Watch 的上傳方式、同步不到跑步時的提示、Apple 的 HRV 另存（schema 3）；只用 iPhone、沒有心率時也能用；測試模式可以選裝置（6.1、6.7） |
 | 2.0-draft | 2026-10-19 | 教練動態的版面：項目以細線分隔、先顯示前幾則、開始對話後收起、收起時輪播；標題旁的版本號（6.1、6.7） |
+| 2.0-draft | 2026-10-19 | 以作者的 iPhone 實測 Intervals.icu Companion 的路徑；同步不到跑步時列出其他活動的類型（12.6） |
 
 ---
 
@@ -889,3 +890,11 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - 同步不到跑步時，訊息加上「如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。」（核心的 `NO_RUNS_HINT`，Discord 也看得到）；網頁版再附上同一段上傳方式。
 - Apple 的 HRV 另存，判讀只拿同一種比較（6.7）。
 - 只用 iPhone：沒有心率時的分析與顯示（6.7）。測試模式可以選「只有 iPhone」與「Apple Watch」的假資料來測。
+
+**實測**（2026-10-19，作者的 iPhone，另開的 Intervals.icu 帳號，網頁版開在另一個瀏覽器設定檔）：
+- 路徑可行：iOS 的「健身」App 記錄 → 「健康」→ Intervals.icu Companion 自動上傳 → Intervals.icu → 網頁版同步。
+- Companion 的 Metrics（每日健康資料）同步在只有 iPhone 時會顯示「No health data available」：沒有手錶就沒有 HRV、靜息心率，屬正常。
+- 在「健康」手動補登的運動不會自動上傳，只能匯出成 FIT 檔；實際用「健身」App 記錄的才會。
+- iPhone 若沒有配對 Apple Watch，「健身」App 是否能直接開始記錄，各方說法不一，作者的 iPhone 可以。
+- 記錄成「走路」的活動不會被教練讀到（只讀跑步），同步時顯示「最近 14 天無跑步活動」，讓人以為整條路沒通；在 Intervals.icu 把類型改成 Run 後就能同步。因此同步不到跑步時，改為列出其他活動的類型，例如「另有 1 筆走路，教練目前只讀跑步；如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。」（`ActivitySource.fetchOtherActivityTypes`）。有其他活動時代表上傳的路是通的，就不再顯示「請確認已上傳」與 iPhone 的上傳方式。
+- Garmin Connect 會把運動寫進「健康」，Companion 的清單裡看得到（標示 Connect）。同一個 Intervals.icu 帳號同時接 Garmin 與 Companion 時，可能重複上傳（11 #15）。
