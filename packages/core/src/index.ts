@@ -6,7 +6,16 @@ export {
   type ImportedRace,
   type ImportSuggestion,
 } from "./athlete-import";
-export { Coach, type ChatReply, type CoachConfig, type CoachOptions, type RunReport, type UsageStats } from "./coach";
+export {
+  Coach,
+  type ChatReply,
+  type CoachConfig,
+  type CoachOptions,
+  type ReportCandidate,
+  type ReportTarget,
+  type RunReport,
+  type UsageStats,
+} from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, SCHEMA_VERSION, type RaceUpdate } from "./db";
 export { addDays, daysBetween, isoWeekLabel, localDate, weekdayName } from "./dates";

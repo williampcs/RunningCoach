@@ -263,10 +263,17 @@ createServer((req, res) => {
   };
   if (req.method === "OPTIONS") return void res.writeHead(204, CORS).end();
 
-  const path = new URL(req.url ?? "/", "http://localhost").pathname;
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const path = url.pathname;
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/activities$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
-    return send(200, activities());
+    // 和 Intervals.icu 一樣只回傳 oldest～newest 之間的活動
+    const oldest = url.searchParams.get("oldest") ?? "0000-00-00";
+    const newest = url.searchParams.get("newest") ?? "9999-99-99";
+    return send(
+      200,
+      activities().filter((a) => a.start_date_local.slice(0, 10) >= oldest && a.start_date_local.slice(0, 10) <= newest),
+    );
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/wellness$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });

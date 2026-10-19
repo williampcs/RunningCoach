@@ -86,6 +86,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>("chat");
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
+  const [reportPreselect, setReportPreselect] = useState<number | null>(null);
   const opening = useRef(false);
 
   const problem = llmProblem(settings);
@@ -146,6 +147,10 @@ export function App() {
         if (draft) setOutbox(draft);
         setTab(next);
       },
+      openReport(workoutId) {
+        setReportPreselect(workoutId ?? null);
+        setTab("report");
+      },
     };
   }, [db, coach, settings, testMode, problem, revision, touch]);
 
@@ -187,7 +192,7 @@ export function App() {
         )}
         <main className={tab === "chat" ? "page chat-page" : "page"}>
           {tab === "chat" && <ChatView outbox={outbox} onOutboxSent={() => setOutbox(null)} />}
-          {tab === "report" && <ReportView />}
+          {tab === "report" && <ReportView preselect={reportPreselect} onPreselectUsed={() => setReportPreselect(null)} />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
           {tab === "settings" && <SettingsView />}

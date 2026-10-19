@@ -45,6 +45,56 @@ export type RunReport =
   /** 最新活動不是今天（手錶尚未同步），主觀感受已暫存，之後同步時自動合併 */
   | { status: "pending"; date: string; latest: Activity | null };
 
+/** 跑後回報要存到哪裡 */
+export type ReportTarget =
+  /** 已同步進資料庫的紀錄 */
+  | { kind: "saved"; workoutId: number }
+  /** Intervals.icu 上有、還沒同步的活動 */
+  | { kind: "new"; intervalsId: string }
+  /** 手錶還沒上傳：暫存為今天的回報，同步時配對 */
+  | { kind: "pending" };
+
+/** 跑後回報可以選的一筆跑步 */
+export interface ReportCandidate {
+  target: Exclude<ReportTarget, { kind: "pending" }>;
+  activity: Activity;
+  /** 開始時間（當地），例：07:12；來源沒有提供時為 null */
+  startTime: string | null;
+}
+
+/** 跑後回報列出幾天內的跑步：今天、昨天、前天 */
+const REPORT_LOOKBACK_DAYS = 2;
+
+/** 原始資料中的當地開始時間，例：2026-10-19T07:12:00 → 07:12 */
+function startTimeOf(rawJson: string | null | undefined): string | null {
+  if (!rawJson) return null;
+  try {
+    const start = (JSON.parse(rawJson) as { start_date_local?: unknown }).start_date_local;
+    return typeof start === "string" && /T\d{2}:\d{2}/.test(start) ? start.slice(11, 16) : null;
+  } catch {
+    return null;
+  }
+}
+
+function workoutAsActivity(w: Workout): Activity {
+  return {
+    intervals_id: w.intervals_id,
+    strava_id: w.strava_id,
+    source: w.source ?? undefined,
+    date: w.date,
+    type: w.type,
+    distance_km: w.distance_km,
+    duration_min: w.duration_min,
+    avg_hr: w.avg_hr,
+    max_hr: w.max_hr,
+    avg_pace: w.avg_pace,
+    elevation_m: w.elevation_m,
+    calories: w.calories,
+    training_load: w.training_load,
+    raw_json: w.raw_json ?? null,
+  };
+}
+
 export interface CoachOptions {
   driver: SqlDriver;
   llm: Omit<LlmConfig, "maxResponseTokens" | "toolCallMaxRounds">;
@@ -198,16 +248,74 @@ export class Coach {
   }
 
   /**
-   * 跑後回報（有表單介面的外殼使用）：不經過模型的工具迴圈，直接拉取活動並存檔。
-   * 找到今天的活動時合併主觀感受並生成摘要；否則暫存主觀感受，等同步時合併。
+   * 跑後回報可以選的紀錄：今天、昨天、前天還沒回報體感的跑步，新的在前。
+   * 合併 Intervals.icu 上的活動與已同步的紀錄；連不上活動來源時只列已同步的，並附上錯誤訊息。
    */
-  async reportRun(perceivedEffort: number, subjectiveNotes: string): Promise<RunReport> {
+  async reportCandidates(): Promise<{ candidates: ReportCandidate[]; fetchError: string | null }> {
+    let fetched: Activity[] = [];
+    let fetchError: string | null = null;
+    try {
+      fetched = await this.runtime.activities.fetchActivities(REPORT_LOOKBACK_DAYS);
+    } catch (e) {
+      fetchError = e instanceof Error ? e.message : String(e);
+    }
+    const saved = await this.db.getRecentWorkouts(REPORT_LOOKBACK_DAYS);
+    const byIntervalsId = new Map(saved.filter((w) => w.intervals_id).map((w) => [w.intervals_id!, w]));
+
+    const candidates: ReportCandidate[] = [];
+    const listed = new Set<number>();
+    for (const activity of fetched) {
+      const local = activity.intervals_id ? byIntervalsId.get(activity.intervals_id) : undefined;
+      if (local) listed.add(local.id);
+      if (local?.perceived_effort != null) continue;
+      if (!local && !activity.intervals_id) continue;
+      candidates.push({
+        target: local ? { kind: "saved", workoutId: local.id } : { kind: "new", intervalsId: activity.intervals_id! },
+        activity,
+        startTime: startTimeOf(activity.raw_json),
+      });
+    }
+    // 已同步、但這次沒從來源拿到的（例如連不上 Intervals.icu）
+    for (const w of saved) {
+      if (listed.has(w.id) || w.perceived_effort != null) continue;
+      candidates.push({ target: { kind: "saved", workoutId: w.id }, activity: workoutAsActivity(w), startTime: startTimeOf(w.raw_json) });
+    }
+    candidates.sort(
+      (a, b) => b.activity.date.localeCompare(a.activity.date) || (b.startTime ?? "").localeCompare(a.startTime ?? ""),
+    );
+    return { candidates, fetchError };
+  }
+
+  /**
+   * 跑後回報（有表單介面的外殼使用）：不經過模型的工具迴圈，直接存檔並生成摘要。
+   * 指定 target 時存到那一筆（reportCandidates 列出的）或暫存；
+   * 未指定時沿用舊的行為：今天有活動就存到最新的一筆，否則暫存為今天的回報，等同步時合併。
+   */
+  async reportRun(perceivedEffort: number, subjectiveNotes: string, target?: ReportTarget): Promise<RunReport> {
     const { llm, activities } = this.runtime;
     const today = this.today();
-    const latest = await activities.fetchLatestActivity();
-    if (!latest || latest.date !== today) {
+    if (target?.kind === "saved") {
+      const { workout, summary } = await this.addSubjective(target.workoutId, perceivedEffort, subjectiveNotes);
+      return { status: "saved", activity: workoutAsActivity(workout), workoutId: workout.id, summary };
+    }
+    if (target?.kind === "pending") {
+      // 同一天只留一筆暫存，重送時以新的為準
+      const previous = await this.db.getPendingSubjectiveByDate(today);
+      if (previous) await this.db.deletePendingSubjective(previous.id);
       await this.db.savePendingSubjective(today, perceivedEffort, subjectiveNotes);
-      return { status: "pending", date: today, latest };
+      return { status: "pending", date: today, latest: null };
+    }
+
+    let latest: Activity | null;
+    if (target?.kind === "new") {
+      latest = (await activities.fetchActivities(REPORT_LOOKBACK_DAYS)).find((a) => a.intervals_id === target.intervalsId) ?? null;
+      if (!latest) throw new Error("找不到這筆活動，可能已在 Intervals.icu 刪除。請重新整理後再選一次。");
+    } else {
+      latest = await activities.fetchLatestActivity();
+      if (!latest || latest.date !== today) {
+        await this.db.savePendingSubjective(today, perceivedEffort, subjectiveNotes);
+        return { status: "pending", date: today, latest };
+      }
     }
 
     const workoutId = await this.db.saveWorkout(latest, perceivedEffort, subjectiveNotes || null);

@@ -378,6 +378,65 @@ describe("Coach.reportRun（表單式跑後回報）", () => {
     expect(result).toMatchObject({ summary: null, workout: { perceived_effort: 4, subjective_notes: null, summary: "同步時的摘要" } });
   });
 
+  it("列出最近幾天還沒回報的跑步，指定要存到哪一筆", async () => {
+    const run = (id: string, date: string, start: string | null, km = 8) =>
+      activity({
+        intervals_id: id,
+        date,
+        distance_km: km,
+        raw_json: JSON.stringify(start ? { id, start_date_local: `${date}T${start}:00` } : { id }),
+      });
+    const evening = run("i-pm", "2026-10-10", "18:30", 5);
+    const morning = run("i-am", "2026-10-10", "07:12", 10.2);
+    const yesterday = run("i-y", "2026-10-09", "19:30", 6);
+    const { coach, provider } = await makeCoach([turn({ text: "傍晚那趟的分析" }), turn({ text: "早上那趟的分析" })], {
+      activities: [evening, morning, yesterday],
+    });
+    // 早上那趟已同步、還沒回報；昨天那趟已回報；另有一筆只在資料庫裡（來源這次沒回傳）
+    const morningId = await coach.db.saveWorkout(morning);
+    await coach.db.saveWorkout(yesterday, 6, "順");
+    const localId = await coach.db.saveWorkout(run("i-local", "2026-10-09", null, 4));
+
+    const { candidates, fetchError } = await coach.reportCandidates();
+    expect(fetchError).toBeNull();
+    expect(candidates.map((c) => [c.target, c.activity.date, c.startTime, c.activity.distance_km])).toEqual([
+      [{ kind: "new", intervalsId: "i-pm" }, "2026-10-10", "18:30", 5],
+      [{ kind: "saved", workoutId: morningId }, "2026-10-10", "07:12", 10.2],
+      [{ kind: "saved", workoutId: localId }, "2026-10-09", null, 4],
+    ]);
+
+    // 還沒同步的那筆：存檔並帶著體感產生分析
+    const pm = await coach.reportRun(7, "最後很喘", candidates[0]!.target);
+    expect(pm).toMatchObject({ status: "saved", summary: "傍晚那趟的分析", activity: { intervals_id: "i-pm" } });
+    expect(provider.calls[0]!.request.messages[0]!.content).toContain("體感強度：7/10\n主觀感受：最後很喘");
+
+    // 已同步的那筆：更新體感並重新產生分析，不會存成新的一筆
+    const am = await coach.reportRun(4, "", candidates[1]!.target);
+    expect(am).toMatchObject({ status: "saved", workoutId: morningId, summary: "早上那趟的分析", activity: { intervals_id: "i-am" } });
+    expect(await coach.db.countWorkouts()).toBe(4);
+    expect((await coach.reportCandidates()).candidates.map((c) => c.target)).toEqual([{ kind: "saved", workoutId: localId }]);
+
+    // 還沒同步的這一趟：暫存，同一天重送時以新的為準
+    await coach.reportRun(5, "先記下", { kind: "pending" });
+    expect(await coach.reportRun(6, "改一下", { kind: "pending" })).toMatchObject({ status: "pending", date: "2026-10-10" });
+    expect(await coach.db.countPendingSubjective()).toBe(1);
+    expect(await coach.db.getPendingSubjectiveByDate("2026-10-10")).toMatchObject({ perceived_effort: 6, subjective_notes: "改一下" });
+
+    await expect(coach.reportRun(5, "", { kind: "new", intervalsId: "i-gone" })).rejects.toThrow("找不到這筆活動");
+  });
+
+  it("連不上活動來源時，只列出已同步的紀錄", async () => {
+    const { coach, activities } = await makeCoach();
+    activities.fetchActivities = async () => {
+      throw new Error("Intervals.icu 回應 503");
+    };
+    const id = await coach.db.saveWorkout(activity({ date: "2026-10-09" }));
+    expect(await coach.reportCandidates()).toEqual({
+      candidates: [expect.objectContaining({ target: { kind: "saved", workoutId: id } })],
+      fetchError: "Intervals.icu 回應 503",
+    });
+  });
+
   it("手錶尚未同步：暫存主觀感受", async () => {
     const { coach, provider } = await makeCoach([], { activities: [activity({ date: "2026-10-09" })] });
     const report = await coach.reportRun(6, "輕鬆");
