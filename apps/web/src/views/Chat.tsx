@@ -30,6 +30,8 @@ const TOOL_STATUS: Record<string, string> = {
 export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOutboxSent: () => void }) {
   const { coach, llmProblem, revision, touch, goTo } = useApp();
   const [messages, setMessages] = useState<ConversationRow[]>([]);
+  // 送出幾次：教練動態據此在開始對話後收成一行
+  const [sentCount, setSentCount] = useState(0);
   const [hasSummary, setHasSummary] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState<string | null>(null);
@@ -96,6 +98,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       const content = text.trim();
       if (!content || busy.current) return;
       busy.current = true;
+      setSentCount((n) => n + 1);
       setBaseId(messages.at(-1)?.id ?? 0);
       setSending(content);
       setError(null);
@@ -131,7 +134,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
 
   return (
     <>
-      <CoachFeed />
+      <CoachFeed collapseSignal={sentCount} />
       <div className="messages">
         <GettingStarted />
         {hasSummary && <div className="muted small center">較早的對話已整理成摘要，教練仍記得重點。</div>}

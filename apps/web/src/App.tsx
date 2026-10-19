@@ -27,6 +27,7 @@ import { PlanView } from "./views/Plan";
 import { ProfileView } from "./views/Profile";
 import { ReportView } from "./views/Report";
 import { SettingsView } from "./views/Settings";
+import { BUILD_DETAIL, VERSION_LABEL } from "./version";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "chat", label: "對話", icon: "💬" },
@@ -168,7 +169,10 @@ export function App() {
       <div className="shell">
         <header className="topbar">
           <h1>Running Coach</h1>
-          <span className="muted small">{TABS.find((t) => t.id === tab)?.label}</span>
+          <span className="version" title={BUILD_DETAIL}>
+            {VERSION_LABEL}
+          </span>
+          <span className="page-label muted small">{TABS.find((t) => t.id === tab)?.label}</span>
         </header>
         {(!state.db.persistent || testMode.enabled) && (
           <div className="notices">

@@ -10,6 +10,7 @@
   --user-bubble: #ccfbf1;
   --ok: #dcfce7;
   --warn: #fef3c7;
+  --warn-strong: #d97706;
   --error: #fee2e2;
   --info: #e0f2fe;
   --danger-text: #b91c1c;
@@ -29,6 +30,7 @@
     --user-bubble: #134e4a;
     --ok: #14532d;
     --warn: #57400a;
+    --warn-strong: #fbbf24;
     --error: #5b1d1d;
     --info: #0c3a55;
     --danger-text: #fca5a5;
@@ -71,6 +73,18 @@ body {
   margin: 0;
   font-size: 1.15rem;
   color: var(--accent);
+}
+
+/* 版本號：正式版之前標示 Beta */
+.version {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  align-self: center;
 }
 
 .page {
@@ -349,7 +363,11 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-top: 12px;
   padding-bottom: 8px;
+  /* 往上捲到教練動態下方時淡出，而不是被硬切 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px);
+  mask-image: linear-gradient(to bottom, transparent, #000 12px);
 }
 
 .empty {
@@ -532,7 +550,7 @@ pre {
   }
 
   /* 側欄已標示目前分頁 */
-  .topbar span {
+  .topbar .page-label {
     display: none;
   }
 
@@ -640,20 +658,132 @@ pre {
   border-color: var(--warn);
 }
 
-/* 教練動態：固定在對話上方 */
+/* 教練動態：固定在對話上方。項目之間用細線分隔，不再一格一格的框 */
 .feed {
   flex: none;
-  max-height: 45%;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  padding: 2px 14px 6px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
 }
 
+/* 只有按了「顯示其餘」才可能超過高度，這時才在框內捲動 */
+.feed.all {
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+.feed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0 2px;
+}
+
+.feed-head strong {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.feed-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.feed-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+/* 需要留意的項目：左側一條提示色，不整塊上色 */
+.feed-item.warn {
+  margin-left: -14px;
+  padding-left: 11px;
+  border-left: 3px solid var(--warn-strong);
+}
+
+.feed-icon {
+  flex: none;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+/* 文字在左、按鈕在右；寬度不夠時按鈕換到下一行 */
+.feed-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.feed-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feed-text strong {
+  font-size: 0.95rem;
+}
+
+.feed-text span {
+  color: var(--muted);
+}
+
+.feed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.feed-actions button {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+}
+
+.feed-actions button.link {
+  padding: 0 4px;
+}
+
+.feed-body > .checkin {
+  flex-basis: 100%;
+}
+
+.feed-more {
+  align-self: flex-start;
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 599px) {
+  .feed-item {
+    padding: 8px 0;
+  }
+
+  .feed-text strong {
+    font-size: 0.9rem;
+  }
+
+  .feed-text span {
+    font-size: 0.8rem;
+  }
+}
+
+/* 收起：一行，項目輪流出現 */
 .feed.collapsed {
   padding: 0;
 }
@@ -666,7 +796,31 @@ pre {
   border: 0;
   background: none;
   text-align: left;
-  padding: 8px 12px;
+  padding: 8px 14px;
+  overflow: hidden;
+}
+
+.feed-ticker {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed-ticker.animate {
+  animation: feed-ticker-in 0.35s ease-out;
+}
+
+@keyframes feed-ticker-in {
+  from {
+    opacity: 0;
+    transform: translateY(60%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .feed-summary-text {
@@ -674,40 +828,6 @@ pre {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.feed-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.feed-item {
-  display: flex;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--bg);
-}
-
-.feed-item.warn {
-  background: var(--warn);
-}
-
-.feed-icon {
-  flex: none;
-  font-size: 1.1rem;
-}
-
-.feed-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .checkin {
