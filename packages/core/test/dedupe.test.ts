@@ -106,6 +106,38 @@ describe("同步時去重", () => {
     expect(await coach.db.countWorkouts()).toBe(0);
   });
 
+  it("兩份都被刪、只有手機那份又出現時，它成為單獨的一筆；同步範圍最舊的那天不比對", async () => {
+    const old = addDays(TODAY, -14);
+    const { coach, activities } = await makeCoach([turn({ text: "分析" }), turn({ text: "分析" })], {
+      activities: [watch(), phone(), watch(old)],
+    });
+    await coach.sync();
+    activities.activities = [];
+    await coach.sync();
+    // 14 天前那筆在範圍邊界：不因為沒拿到就移除
+    expect(await coach.db.getRecentWorkouts(30)).toMatchObject([{ intervals_id: `w-${old}` }]);
+
+    activities.activities = [phone()];
+    expect(await coach.sync()).toContain("恢復 1 筆");
+    expect(await coach.db.getRecentWorkouts(7)).toMatchObject([{ intervals_id: `p-${TODAY}`, duplicate_count: 0 }]);
+  });
+
+  it("回報存到已移除的那筆時，先恢復再存", async () => {
+    const { coach, activities } = await makeCoach([turn({ text: "分析" }), turn({ text: "回報後的分析" })], {
+      activities: [watch()],
+    });
+    await coach.sync();
+    activities.activities = [];
+    await coach.sync();
+    expect(await coach.db.countWorkouts()).toBe(0);
+
+    // 還沒同步就在跑後回報選了它（例如類型剛改回跑步）
+    activities.activities = [watch()];
+    const report = await coach.reportRun(6, "", { kind: "new", intervalsId: `w-${TODAY}` });
+    expect(report).toMatchObject({ status: "saved", summary: "回報後的分析" });
+    expect(await coach.db.getRecentWorkouts(7)).toMatchObject([{ intervals_id: `w-${TODAY}`, perceived_effort: 6 }]);
+  });
+
   it("連不上 Intervals.icu 時不移除任何紀錄", async () => {
     const { coach, activities } = await makeCoach([turn({ text: "分析" })], { activities: [watch()] });
     await coach.sync();

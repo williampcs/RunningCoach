@@ -95,11 +95,12 @@ export async function runSync(deps: {
   }
 
   // 跟著 Intervals.icu：同步範圍內本機有、這次沒拿到的（已刪除，或類型不再是跑步），標記為已移除。
-  // 只在成功拿到清單時做，連線失敗不能當成全部被刪了
+  // 只在成功拿到清單時做，連線失敗不能當成全部被刪了。
+  // 範圍最舊的那天不比對：兩邊對「最舊那天」是否包含的認定若不同，那天的紀錄會被誤判為已刪除
   const today = db.today();
   const removedCount = await db.markRemovedMissing(
     fetched.flatMap((a) => (a.intervals_id ? [a.intervals_id] : [])),
-    addDays(today, -SYNC_DAYS),
+    addDays(today, -(SYNC_DAYS - 1)),
     today,
   );
   const removedNote = removedCount ? `移除 ${removedCount} 筆在 Intervals.icu 已刪除或不再是跑步的紀錄` : "";

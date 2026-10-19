@@ -521,13 +521,15 @@ export class Db {
     return this.tx(async () => {
       let existing: Row | undefined;
       if (intervalsId) {
-        existing = (await d.all("SELECT id FROM workouts WHERE intervals_id=?", [intervalsId]))[0];
+        existing = (await d.all("SELECT id, removed_at FROM workouts WHERE intervals_id=?", [intervalsId]))[0];
       } else if (stravaId) {
-        existing = (await d.all("SELECT id FROM workouts WHERE strava_id=?", [stravaId]))[0];
+        existing = (await d.all("SELECT id, removed_at FROM workouts WHERE strava_id=?", [stravaId]))[0];
       }
 
       if (existing) {
-        const workoutId = Number(existing.id);
+        let workoutId = Number(existing.id);
+        // 已移除的又被存到（例如跑後回報選了它）：先恢復，存到保留的那筆
+        if (existing.removed_at) workoutId = (await this.restoreInTx(workoutId)).id;
         await d.run(
           `UPDATE workouts SET
              perceived_effort = COALESCE(?, perceived_effort),
@@ -608,17 +610,41 @@ export class Db {
   // 去重：同一趟從不同來源進來（dedupe.ts 判斷）、跟著 Intervals.icu 的刪除
   // ---------------------------------------------------------------------------
 
-  /** 在交易中：dupId 標為 keepId 的重複，原本指向 dupId 的也改指向 keepId；保留的那筆沒有體感時，從重複的那筆帶過來 */
+  /**
+   * 在交易中：dupId 標為 keepId 的重複，原本指向 dupId 的也改指向 keepId。
+   * 保留的那筆沒有體感或 AI 分析時，從重複的那筆帶過來
+   */
   private async attachDuplicate(keepId: number, dupId: number): Promise<void> {
     const d = this.driver;
     await d.run("UPDATE workouts SET duplicate_of = ? WHERE id = ? OR duplicate_of = ?", [keepId, dupId, dupId]);
+    await this.inheritFrom(keepId, dupId);
+  }
+
+  /** 在交易中：toId 沒有體感或 AI 分析時，從 fromId 帶過來 */
+  private async inheritFrom(toId: number, fromId: number): Promise<void> {
+    const d = this.driver;
     await d.run(
       `UPDATE workouts SET
          perceived_effort = COALESCE(perceived_effort, (SELECT perceived_effort FROM workouts WHERE id = ?)),
          subjective_notes = COALESCE(subjective_notes, (SELECT subjective_notes FROM workouts WHERE id = ?))
        WHERE id = ?`,
-      [dupId, dupId, keepId],
+      [fromId, fromId, toId],
     );
+    const own = await d.all("SELECT 1 FROM workout_summaries WHERE workout_id = ? LIMIT 1", [toId]);
+    if (!own.length) await d.run("UPDATE workout_summaries SET workout_id = ? WHERE workout_id = ?", [toId, fromId]);
+  }
+
+  /** 在交易中：恢復已移除的一筆，當成單獨的一筆重新判斷是否和其他紀錄是同一趟 */
+  private async restoreInTx(id: number): Promise<SaveResult> {
+    const d = this.driver;
+    await d.run("UPDATE workouts SET removed_at = NULL, duplicate_of = NULL WHERE id = ?", [id]);
+    const row = ((await d.all(
+      `SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json, perceived_effort, subjective_notes
+         FROM workouts WHERE id = ?`,
+      [id],
+    )) as unknown as WorkoutRow[])[0]!;
+    const match = await this.findSameRun(row, id);
+    return match ? this.resolveSameRun(id, row, match) : { id, status: "existing" };
   }
 
   /** 在交易中：和 row 同一趟、仍在列表上的另一筆（前後一天內） */
@@ -699,15 +725,7 @@ export class Db {
         const heir = dups.reduce((best, w) => (keepScore(w) > keepScore(best) ? w : best));
         await d.run("UPDATE workouts SET duplicate_of = NULL WHERE id = ?", [heir.id]);
         await d.run("UPDATE workouts SET duplicate_of = ? WHERE duplicate_of = ? AND id != ?", [heir.id, removed.id, heir.id]);
-        await d.run(
-          `UPDATE workouts SET
-             perceived_effort = COALESCE(perceived_effort, (SELECT perceived_effort FROM workouts WHERE id = ?)),
-             subjective_notes = COALESCE(subjective_notes, (SELECT subjective_notes FROM workouts WHERE id = ?))
-           WHERE id = ?`,
-          [removed.id, removed.id, heir.id],
-        );
-        const own = await d.all("SELECT 1 FROM workout_summaries WHERE workout_id = ? LIMIT 1", [heir.id]);
-        if (!own.length) await d.run("UPDATE workout_summaries SET workout_id = ? WHERE workout_id = ?", [heir.id, removed.id]);
+        await this.inheritFrom(heir.id, removed.id);
       }
       return missing.filter((r) => r.duplicate_of === null).length;
     });
@@ -715,17 +733,7 @@ export class Db {
 
   /** 已移除的又出現了（例如類型改回跑步）：恢復，並重新判斷是否和其他紀錄是同一趟 */
   restoreWorkout(id: number): Promise<SaveResult> {
-    const d = this.driver;
-    return this.tx(async () => {
-      await d.run("UPDATE workouts SET removed_at = NULL WHERE id = ?", [id]);
-      const row = ((await d.all(
-        `SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json, perceived_effort, subjective_notes
-           FROM workouts WHERE id = ?`,
-        [id],
-      )) as unknown as WorkoutRow[])[0]!;
-      const match = await this.findSameRun(row, id);
-      return match ? this.resolveSameRun(id, row, match) : { id, status: "existing" };
-    });
+    return this.tx(() => this.restoreInTx(id));
   }
 
   // ---------------------------------------------------------------------------
