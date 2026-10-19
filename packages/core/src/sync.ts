@@ -19,6 +19,9 @@ import type { ActivitySource, Activity, Logger } from "./types";
 /** 同步時拉取的天數 */
 export const SYNC_DAYS = 14;
 
+/** 同步不到跑步時附上的提示；外殼可以據此再顯示上傳的方式 */
+export const NO_RUNS_HINT = "如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。";
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -55,7 +58,7 @@ export async function runSync(deps: {
     logger.error(`Intervals.icu fetch error: ${message(e)}`);
     return `❌ 拉取 Intervals.icu 資料時發生錯誤：${message(e)}`;
   }
-  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${wellnessNote}`;
+  if (!fetched.length) return `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${wellnessNote}${NO_RUNS_HINT}`;
 
   let newCount = 0;
   let mergedCount = 0;

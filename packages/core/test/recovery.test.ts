@@ -5,6 +5,7 @@ import {
   addDays,
   analyzeRecovery,
   Coach,
+  describeWatch,
   FakeActivitySource,
   formatRecoveryReport,
   IntervalsClient,
@@ -19,6 +20,7 @@ const day = (date: string, partial: Partial<WellnessDay> = {}): WellnessDay => (
   date,
   resting_hr: 52,
   hrv: 60,
+  hrv_sdnn: null,
   sleep_secs: 7 * 3600,
   sleep_score: 80,
   readiness: null,
@@ -55,6 +57,26 @@ describe("analyzeRecovery", () => {
     expect(s.baselineLabel).toBe("平常");
     // 平常（8～35 天前）含 2 天偏高：靜息心率平均 52.4、HRV 59
     expect(s.watchFlags).toEqual(["靜息心率比平常平均高 6 bpm", "HRV 比平常平均低 22%"]);
+  });
+
+  it("compares Apple's SDNN only with SDNN, never with rMSSD", () => {
+    // 前 7 天：Garmin 的 rMSSD 60；最近換成 Apple Watch，SDNN 約 50，今天 40
+    const apple = (date: string, sdnn: number) => day(date, { hrv: null, hrv_sdnn: sdnn, sleep_score: null });
+    const wellness = [
+      ...Array.from({ length: 4 }, (_, i) => day(addDays(TODAY, -7 + i))),
+      ...[-3, -2, -1].map((d) => apple(addDays(TODAY, d), 50)),
+      apple(TODAY, 40),
+    ];
+    const s = analyzeRecovery(wellness, [], TODAY);
+    expect(s).toMatchObject({ hrvKind: "sdnn", baseline: { hrv: 50 }, hrvChangePct: -20 });
+    expect(s.watchFlags).toContain("HRV 比前幾天平均低 20%");
+    expect(describeWatch(s)).toContain("HRV（SDNN）40 ms（-20%）");
+    expect(formatRecoveryReport(wellness, [], TODAY, 2)).toContain("手錶：靜息心率 52｜HRV（SDNN）40｜睡眠 7h");
+
+    // 只有幾天的 SDNN：不夠比較，不會拿 rMSSD 的 60 來比
+    const short = analyzeRecovery([...Array.from({ length: 7 }, (_, i) => day(addDays(TODAY, -7 + i))), apple(TODAY, 40)], [], TODAY);
+    expect(short).toMatchObject({ hrvKind: "sdnn", hrvChangePct: null });
+    expect(short.watchFlags).toEqual([]);
   });
 
   it("does not compare without enough earlier days, and ignores stale data", () => {
@@ -100,12 +122,15 @@ describe("wellness from Intervals.icu", () => {
           JSON.stringify([
             { id: "2026-10-10", restingHR: 55, hrv: 58.2, sleepSecs: 25200, sleepScore: 80, ctl: 40 },
             { id: "2026-10-09", weight: 62 },
+            // Apple「健康」經 Intervals.icu Companion 進來：只有 SDNN
+            { id: "2026-10-08", restingHR: 54, hrvSDNN: 47 },
           ]),
         );
       },
     });
     expect(await intervals.fetchWellness(14)).toEqual([
-      expect.objectContaining({ date: "2026-10-10", resting_hr: 55, hrv: 58.2, sleep_secs: 25200, sleep_score: 80, readiness: null }),
+      expect.objectContaining({ date: "2026-10-10", resting_hr: 55, hrv: 58.2, hrv_sdnn: null, sleep_secs: 25200, sleep_score: 80 }),
+      expect.objectContaining({ date: "2026-10-08", resting_hr: 54, hrv: null, hrv_sdnn: 47 }),
     ]);
     expect(requests[0]).toBe("https://intervals.icu/api/v1/athlete/0/wellness?oldest=2026-09-26&newest=2026-10-10");
   });
@@ -122,7 +147,7 @@ describe("wellness from Intervals.icu", () => {
 
     const resting = make(new FakeActivitySource([], () => TODAY, week({})));
     await resting.init();
-    expect(await resting.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。已更新恢復資料 8 天。");
+    expect(await resting.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。已更新恢復資料 8 天。如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。");
     expect(await resting.db.getWellness(7)).toHaveLength(8);
 
     const broken = new FakeActivitySource([], () => TODAY);
@@ -131,7 +156,7 @@ describe("wellness from Intervals.icu", () => {
     };
     const coach = make(broken);
     await coach.init();
-    expect(await coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。（恢復資料暫時無法取得）");
+    expect(await coach.sync()).toBe("Intervals.icu 最近 14 天無跑步活動。（恢復資料暫時無法取得）如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。");
   });
 });
 

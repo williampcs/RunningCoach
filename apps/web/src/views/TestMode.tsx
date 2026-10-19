@@ -2,11 +2,14 @@ import { useState } from "react";
 
 import {
   addDays,
+  FAKE_DEVICES,
   FAKE_SCENARIOS,
   fakeActivity,
   generateActivities,
+  generateWellness,
   parsePace,
   SYNC_DAYS,
+  type FakeDevice,
   type FakeScenario,
   type FakeSpec,
 } from "@running-coach/core";
@@ -33,6 +36,7 @@ export function TestModeCard() {
   const [busy, setBusy] = useState(false);
 
   const [scenario, setScenario] = useState<FakeScenario>(testMode.spec?.scenario ?? DEFAULT_SPEC.scenario);
+  const [device, setDevice] = useState<FakeDevice>(testMode.spec?.device ?? "garmin");
   const [weeks, setWeeks] = useState(String(testMode.spec?.weeks ?? DEFAULT_SPEC.weeks));
   const [runsPerWeek, setRunsPerWeek] = useState(String(testMode.spec?.runsPerWeek ?? DEFAULT_SPEC.runsPerWeek));
   const [easyPace, setEasyPace] = useState(
@@ -73,6 +77,7 @@ export function TestModeCard() {
     const pace = parsePace(easyPace);
     const spec: FakeSpec = {
       scenario,
+      device,
       endDate: today,
       weeks: Math.min(16, Math.max(1, Number(weeks) || 1)),
       runsPerWeek: Math.min(7, Math.max(1, Number(runsPerWeek) || 1)),
@@ -94,11 +99,16 @@ export function TestModeCard() {
       const cutoff = addDays(today, -SYNC_DAYS);
       const older = runs.filter((r) => r.date < cutoff);
       for (const r of older) await coach.db.saveWorkout(r);
+      // 恢復資料也一樣：較早的直接存入，判讀時才有「平常」可以比較
+      const olderWellness = generateWellness(spec).filter((w) => w.date < cutoff);
+      await coach.db.upsertWellness(olderWellness);
       if (sample) await seedSample(spec);
       updateTestMode({ ...testMode, spec, custom: [] });
       setMessage({
         kind: "ok",
-        text: `已產生 ${runs.length} 筆：較早的 ${older.length} 筆已直接存入；最近 ${SYNC_DAYS} 天的 ${runs.length - older.length} 筆請按「同步」帶入（會產生 AI 分析）。`,
+        text:
+          `已產生 ${runs.length} 筆：較早的 ${older.length} 筆已直接存入；最近 ${SYNC_DAYS} 天的 ${runs.length - older.length} 筆請按「同步」帶入（會產生 AI 分析）。` +
+          (olderWellness.length ? `較早的恢復資料 ${olderWellness.length} 天也已存入。` : ""),
       });
     } catch (e) {
       setMessage({ kind: "error", text: `產生失敗：${errorText(e)}` });
@@ -166,7 +176,7 @@ export function TestModeCard() {
     <section className="card test-mode">
       <h2>測試模式</h2>
       <p className="small">
-        目前使用測試資料庫與假資料。{testMode.spec ? `情境「${FAKE_SCENARIOS[testMode.spec.scenario].label}」，${testMode.spec.weeks} 週，共 ${all.length} 筆，產生到 ${testMode.spec.endDate}。` : "還沒產生假資料。"}
+        目前使用測試資料庫與假資料。{testMode.spec ? `情境「${FAKE_SCENARIOS[testMode.spec.scenario].label}」（${FAKE_DEVICES[testMode.spec.device ?? "garmin"].label}），${testMode.spec.weeks} 週，共 ${all.length} 筆，產生到 ${testMode.spec.endDate}。` : "還沒產生假資料。"}
         {testMode.custom.length ? `手動新增 ${testMode.custom.length} 筆。` : ""}
       </p>
 
@@ -182,6 +192,17 @@ export function TestModeCard() {
             ))}
           </select>
           <span className="small">{FAKE_SCENARIOS[scenario].description}</span>
+        </label>
+        <label className="wide">
+          裝置
+          <select value={device} onChange={(e) => setDevice(e.target.value as FakeDevice)}>
+            {(Object.keys(FAKE_DEVICES) as FakeDevice[]).map((key) => (
+              <option key={key} value={key}>
+                {FAKE_DEVICES[key].label}
+              </option>
+            ))}
+          </select>
+          <span className="small">{FAKE_DEVICES[device].description}</span>
         </label>
         <label>
           週數

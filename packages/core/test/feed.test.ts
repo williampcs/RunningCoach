@@ -10,6 +10,7 @@ const normalWeek = (latest: Partial<WellnessDay> = {}): WellnessDay[] =>
     date: addDays(TODAY, -7 + i),
     resting_hr: 52,
     hrv: 60,
+    hrv_sdnn: null,
     sleep_secs: 7 * 3600,
     sleep_score: null,
     readiness: null,
@@ -26,6 +27,8 @@ describe("buildFeed", () => {
     expect(items).toEqual([
       expect.objectContaining({ id: `checkin-${TODAY}`, kind: "checkin", tone: "info", actions: [{ type: "checkin" }] }),
     ]);
+    // 沒有手錶的恢復資料（例如只用 iPhone）時不提手錶
+    expect(items[0]!.detail).toBe("花 10 秒回報精神、痠痛與睡眠，教練會依你的感受調整建議。");
   });
 
   it("mentions what the watch says but asks for the runner's own feeling first", async () => {

@@ -16,7 +16,7 @@ import type {
 } from "./types";
 
 /** 2：新增 wellness 與 daily_checkins（v1 不讀這兩張表，仍可開啟同一個資料庫） */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS athlete_profile (
@@ -91,6 +91,7 @@ const SCHEMA = `
     date        TEXT PRIMARY KEY,
     resting_hr  INTEGER,
     hrv         REAL,
+    hrv_sdnn    REAL,
     sleep_secs  INTEGER,
     sleep_score INTEGER,
     readiness   INTEGER,
@@ -199,6 +200,11 @@ export class Db {
         await d.exec("ALTER TABLE workouts ADD COLUMN intervals_id TEXT");
       }
       await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_intervals_id ON workouts(intervals_id)");
+
+      // --- Migration: wellness.hrv_sdnn（schema 3：Apple「健康」的 HRV） ---
+      if (!(await columns("wellness")).has("hrv_sdnn")) {
+        await d.exec("ALTER TABLE wellness ADD COLUMN hrv_sdnn REAL");
+      }
 
       // --- Migration: workouts.training_load ---
       if (!workoutCols.has("training_load")) {
@@ -549,13 +555,13 @@ export class Db {
   async upsertWellness(days: WellnessDay[]): Promise<void> {
     for (const w of days) {
       await this.run(
-        `INSERT INTO wellness (date, resting_hr, hrv, sleep_secs, sleep_score, readiness, raw_json, synced_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO wellness (date, resting_hr, hrv, hrv_sdnn, sleep_secs, sleep_score, readiness, raw_json, synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(date) DO UPDATE SET
-           resting_hr=excluded.resting_hr, hrv=excluded.hrv, sleep_secs=excluded.sleep_secs,
+           resting_hr=excluded.resting_hr, hrv=excluded.hrv, hrv_sdnn=excluded.hrv_sdnn, sleep_secs=excluded.sleep_secs,
            sleep_score=excluded.sleep_score, readiness=excluded.readiness,
            raw_json=excluded.raw_json, synced_at=excluded.synced_at`,
-        [w.date, w.resting_hr, w.hrv, w.sleep_secs, w.sleep_score, w.readiness, w.raw_json ?? null, this.stamp()],
+        [w.date, w.resting_hr, w.hrv, w.hrv_sdnn, w.sleep_secs, w.sleep_score, w.readiness, w.raw_json ?? null, this.stamp()],
       );
     }
   }
@@ -563,7 +569,8 @@ export class Db {
   /** 到 until（預設今天）為止 N 天的恢復資料（含 until 當天），舊的在前 */
   getWellness(days: number, until = this.clock.today()): Promise<WellnessDay[]> {
     return this.all<WellnessDay>(
-      "SELECT date, resting_hr, hrv, sleep_secs, sleep_score, readiness FROM wellness WHERE date >= ? AND date <= ? ORDER BY date",
+      "SELECT date, resting_hr, hrv, hrv_sdnn, sleep_secs, sleep_score, readiness FROM wellness" +
+        " WHERE date >= ? AND date <= ? ORDER BY date",
       [addDays(until, -days), until],
     );
   }

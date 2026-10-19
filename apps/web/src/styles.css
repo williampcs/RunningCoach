@@ -754,3 +754,17 @@ pre {
   flex-direction: column;
   min-width: 0;
 }
+
+/* 只用 iPhone 或 Apple Watch 的上傳方式 */
+.phone-guide {
+  margin-top: 6px;
+}
+
+.phone-guide > summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.phone-guide > p {
+  margin: 6px 0 4px;
+}

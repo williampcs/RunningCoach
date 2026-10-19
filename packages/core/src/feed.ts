@@ -70,7 +70,10 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
       title: "今天身體感覺如何？",
       detail: recovery.watchFlags.length
         ? `手錶顯示${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你自己的感覺。`
-        : "花 10 秒回報精神、痠痛與睡眠，教練會以你的感受為主，而不只看手錶。",
+        : recovery.latest
+          ? "花 10 秒回報精神、痠痛與睡眠，教練會以你的感受為主，而不只看手錶。"
+          : // 沒有手錶的恢復資料（例如只用 iPhone）：不提手錶
+            "花 10 秒回報精神、痠痛與睡眠，教練會依你的感受調整建議。",
       actions: [{ type: "checkin" }],
     });
   } else {

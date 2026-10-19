@@ -1,6 +1,7 @@
 /** 主對話可用的工具：定義（供模型呼叫）與執行器. */
 import { RECENT_WORKOUT_DAYS } from "./context";
 import { isoWeekLabel } from "./dates";
+import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
@@ -259,6 +260,7 @@ export type WorkoutSummaryInput = Pick<
 /** 生成 AI 跑步分析摘要 */
 export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryInput): Promise<string> {
   const hasSubjective = workout.perceived_effort !== null && workout.perceived_effort !== undefined;
+  const hasHeartRate = workout.avg_hr != null || workout.max_hr != null;
   const effortLine = hasSubjective
     ? `體感強度：${workout.perceived_effort}/10\n主觀感受：${workout.subjective_notes || "未記錄"}`
     : "體感資料：未記錄";
@@ -268,17 +270,23 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `距離：${workout.distance_km}km\n` +
     `時長：${workout.duration_min}分鐘\n` +
     `配速：${workout.avg_pace || "未知"}\n` +
-    `平均心率：${workout.avg_hr || "未記錄"}bpm\n` +
-    `最高心率：${workout.max_hr || "未記錄"}bpm\n` +
+    (hasHeartRate
+      ? `平均心率：${bpmOrMissing(workout.avg_hr)}\n最高心率：${bpmOrMissing(workout.max_hr)}\n`
+      : "心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）\n") +
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
     `\n格式：一行數據摘要 ＋ AI評估。` +
     (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
+    (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率。") +
     (workout.recovery
       ? "可以參考當天的身體狀況解讀心率與體感；手錶的恢復數據只是參考，與選手的自評不一致時以選手的感受為主。"
       : "");
   return (await llm.complete("summary", prompt, 2000)).text;
+}
+
+function bpmOrMissing(value: number | null | undefined): string {
+  return value == null ? "未記錄" : `${value}bpm`;
 }
 
 function str(value: unknown, fallback = ""): string {
@@ -338,7 +346,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           `日期：${activity.date}　${dateNote}\n` +
           `距離：${activity.distance_km}km｜時長：${activity.duration_min}分鐘\n` +
           `配速：${activity.avg_pace || "未知"}｜` +
-          `心率：${activity.avg_hr || "未記錄"}/${activity.max_hr || "未記錄"}bpm\n` +
+          `心率：${heartRateText(activity.avg_hr, activity.max_hr, "未記錄") ?? "沒有資料"}\n` +
           `爬升：${activity.elevation_m || 0}m｜卡路里：${activity.calories || "未記錄"}${loadNote}`
         );
       }
@@ -383,7 +391,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           const subj = w.perceived_effort ? `｜體感 ${w.perceived_effort}/10` : "";
           lines.push(
             `\n【${w.date}】${w.distance_km}km｜${w.avg_pace ?? "?"}｜` +
-              `心率 ${w.avg_hr ?? "?"}/${w.max_hr ?? "?"}bpm${subj}`,
+              `${heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}${subj}`,
           );
           if (w.summary) lines.push(`  AI摘要：${w.summary}`);
         }
