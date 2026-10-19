@@ -39,7 +39,14 @@ export interface FakeSpec {
   seed: number;
   /** 預設 garmin；舊的設定沒有這一欄 */
   device?: FakeDevice;
+  /** 最近 14 天的每一趟也從另一個來源傳一次（模擬手錶與手機都上傳），用來測試去重 */
+  duplicates?: boolean;
 }
+
+/** 開始時間依課表類型固定，不用亂數，同一組設定的其他數值才不會變 */
+const START_TIME: Record<Kind, string> = { easy: "06:30", quality: "19:00", long: "07:00" };
+/** 去重：與 Intervals.icu 的同步範圍相同 */
+const DUPLICATE_WINDOW_DAYS = 14;
 
 /** 每週跑步的日子（星期一 = 0）；最後一天固定是長跑 */
 const RUN_DAYS: Record<number, number[]> = {
@@ -91,11 +98,14 @@ function build(
   avgHr: number | null,
   maxHr: number,
   elevationM: number,
+  startTime: string | null = null,
 ): Activity {
   const distance = Math.round(distanceKm * 100) / 100;
   const durationMin = Math.round((distance * paceSec) / 6) / 10;
   const peakHr = avgHr === null ? null : Math.min(maxHr, avgHr + 12 + Math.round(distance / 2));
   const load = estimateLoad(durationMin, avgHr, maxHr);
+  // 開始時間與經過時間（含停下來的時間）：去重靠時間重疊判斷
+  const timing = startTime ? { start_date_local: `${date}T${startTime}:00`, elapsed_time: Math.round(durationMin * 60) + 90 } : {};
   return {
     intervals_id: id,
     source: "fake",
@@ -109,7 +119,26 @@ function build(
     elevation_m: Math.round(elevationM),
     calories: Math.round(distance * 62),
     training_load: load,
-    raw_json: JSON.stringify({ fake: true, icu_training_load: load }),
+    raw_json: JSON.stringify({ fake: true, icu_training_load: load, ...timing }),
+  };
+}
+
+/** 同一趟從手機（經「健康」與 Intervals.icu Companion）再上傳一次：沒有心率與負荷，開始晚 40 秒、距離與時間略有差異 */
+function phoneCopy(run: Activity): Activity {
+  const raw = JSON.parse(run.raw_json ?? "{}") as { start_date_local?: string; elapsed_time?: number };
+  return {
+    ...run,
+    intervals_id: `${run.intervals_id}-phone`,
+    avg_hr: null,
+    max_hr: null,
+    training_load: null,
+    distance_km: Math.round((run.distance_km ?? 0) * 101) / 100,
+    duration_min: Math.round(((run.duration_min ?? 0) + 0.4) * 10) / 10,
+    raw_json: JSON.stringify({
+      fake: true,
+      start_date_local: raw.start_date_local?.replace(/:00$/, ":40"),
+      elapsed_time: (raw.elapsed_time ?? 0) + 50,
+    }),
   };
 }
 
@@ -179,9 +208,23 @@ export function generateActivities(spec: FakeSpec): Activity[] {
     pace += jitter(8);
     const avgHr = hasHr ? Math.round(spec.maxHr * hrFraction + jitter(3)) : null;
     const iphone = spec.device === "iphone";
-    const run = build(`fake-${spec.seed}-${date}`, date, distance, pace, iphone ? null : avgHr, spec.maxHr, 20 + rand() * 60 + distance * 2);
+    const built = build(
+      `fake-${spec.seed}-${date}`,
+      date,
+      distance,
+      pace,
+      iphone ? null : avgHr,
+      spec.maxHr,
+      20 + rand() * 60 + distance * 2,
+      START_TIME[kind],
+    );
     // 只有 iPhone：沒有心率，Intervals.icu 也算不出訓練負荷
-    out.push(iphone ? { ...run, training_load: null, raw_json: JSON.stringify({ fake: true }) } : run);
+    const run = iphone
+      ? { ...built, training_load: null, raw_json: JSON.stringify({ ...JSON.parse(built.raw_json!), icu_training_load: undefined }) }
+      : built;
+    out.push(run);
+    // 手機的那份放在後面：同一天後進清單的會先同步，先存下沒有心率的這筆，再由有心率的取代
+    if (spec.duplicates && !iphone && daysLeft < DUPLICATE_WINDOW_DAYS) out.push(phoneCopy(run));
   }
   return out;
 }

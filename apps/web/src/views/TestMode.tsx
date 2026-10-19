@@ -45,6 +45,7 @@ export function TestModeCard() {
   const [maxHr, setMaxHr] = useState(String(testMode.spec?.maxHr ?? DEFAULT_SPEC.maxHr));
   const [seed, setSeed] = useState(String(testMode.spec?.seed ?? 1));
   const [sample, setSample] = useState(true);
+  const [duplicates, setDuplicates] = useState(testMode.spec?.duplicates ?? false);
 
   const [run, setRun] = useState({ date: "", distance: "", duration: "", avgHr: "", maxHr: "", elevation: "" });
   const [simDate, setSimDate] = useState(testMode.today ?? "");
@@ -84,6 +85,7 @@ export function TestModeCard() {
       easyPaceSec: pace ?? 345,
       maxHr: Math.min(220, Math.max(140, Number(maxHr) || 188)),
       seed: Number(seed) || 1,
+      duplicates,
     };
     if (pace === null) {
       setMessage({ kind: "error", text: "輕鬆跑配速的格式是「分:秒」，例如 5:45。" });
@@ -228,6 +230,10 @@ export function TestModeCard() {
       <label className="check">
         <input type="checkbox" checked={sample} onChange={(e) => setSample(e.target.checked)} />
         同時填入範例選手資料與一場賽事
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={duplicates} onChange={(e) => setDuplicates(e.target.checked)} />
+        最近 14 天的每一趟也從另一個來源傳一次（模擬手錶與手機都上傳，測試去重）
       </label>
       <div className="row">
         <button className="primary" disabled={busy} onClick={() => void generate()}>

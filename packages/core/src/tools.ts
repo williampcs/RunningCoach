@@ -359,7 +359,12 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             ? null
             : toInt(input.perceived_effort, "perceived_effort");
         const subjectiveNotes = str(input.subjective_notes);
-        const workoutId = await db.saveWorkout(activity, perceivedEffort, subjectiveNotes || null);
+        const saved = await db.saveWorkoutChecked(activity, perceivedEffort, subjectiveNotes || null);
+        if (saved.status === "duplicate") {
+          activityCache = null;
+          return `這筆活動和已存的訓練紀錄（id=${saved.id}）是同一趟（從不同來源上傳），已合併，不另外產生分析。`;
+        }
+        const workoutId = saved.id;
         const summary = await generateWorkoutSummary(llm, {
           ...activity,
           perceived_effort: perceivedEffort,

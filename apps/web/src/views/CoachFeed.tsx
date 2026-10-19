@@ -42,6 +42,7 @@ const ICONS: Record<FeedItem["kind"], string> = {
   plan: "📅",
   volume: "📈",
   gap: "🌱",
+  duplicate: "🔁",
 };
 
 const SCALES = [
@@ -128,7 +129,7 @@ function prefersReducedMotion(): boolean {
  * collapseSignal 每次送出訊息時遞增：開始對話後收成一行，讓對話有空間。
  */
 export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
-  const { coach, revision, goTo, openReport, llmProblem } = useApp();
+  const { coach, revision, goTo, openReport, llmProblem, touch } = useApp();
   const sync = useSync();
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -198,6 +199,12 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
       case "ask":
         goTo("chat", action.message);
         return;
+      case "merge":
+        void coach.mergeWorkouts(action.keepId, action.dupId).then(touch);
+        return;
+      case "distinct":
+        void coach.markDistinct(action.aId, action.bId).then(touch);
+        return;
     }
   }
 
@@ -213,6 +220,10 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
         return sync.busy ? "同步中…" : "同步";
       case "ask":
         return action.label;
+      case "merge":
+        return "合併";
+      case "distinct":
+        return "不是同一趟";
     }
   };
 

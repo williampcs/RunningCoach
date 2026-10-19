@@ -6,6 +6,7 @@
  */
 import { daysBetween, weekdayName } from "./dates";
 import type { Db } from "./db";
+import { keepScore, maybeSameRun } from "./dedupe";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
 
@@ -16,12 +17,15 @@ export type FeedAction =
   | { type: "sync" }
   | { type: "plan" }
   /** 帶著這段文字開始和教練對話 */
-  | { type: "ask"; label: string; message: string };
+  | { type: "ask"; label: string; message: string }
+  /** 兩筆看起來是同一趟：合併（dupId 併進 keepId）或標記不是同一趟 */
+  | { type: "merge"; keepId: number; dupId: number }
+  | { type: "distinct"; aId: number; bId: number };
 
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap";
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
@@ -49,7 +53,7 @@ function todaysPlanLines(content: string, today: string): string[] {
 }
 
 export async function buildFeed(db: Db, today: string, settings: CoachSettings): Promise<FeedItem[]> {
-  const [checkins, wellness, workouts, pending, races, pastRaces, plan] = await Promise.all([
+  const [checkins, wellness, workouts, pending, races, pastRaces, plan, distinct] = await Promise.all([
     db.getCheckins(1),
     db.getWellness(36),
     db.getRecentWorkouts(28),
@@ -57,6 +61,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
     db.getUpcomingRaces(RACE_SOON_DAYS),
     db.getPastRacesWithoutResult(settings.raceLookbackDays),
     db.getActiveTrainingPlan(),
+    db.getDistinctPairs(),
   ]);
   const items: FeedItem[] = [];
   const recovery = analyzeRecovery(wellness, checkins, today);
@@ -114,6 +119,33 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
         detail: describeCheckin(recovery.checkin),
         actions: [{ type: "checkin" }],
       });
+    }
+  }
+
+  // 兩筆看起來是同一趟，但沒有時間可以確定（例如其中一筆是手動新增的）：問選手要不要合併
+  const recentRuns = workouts.filter((w) => daysBetween(w.date, today) <= 7);
+  let asked = 0;
+  for (let i = 0; i < recentRuns.length && asked < 2; i++) {
+    for (let j = i + 1; j < recentRuns.length && asked < 2; j++) {
+      const [a, b] = [recentRuns[i]!, recentRuns[j]!];
+      const pair = `${Math.min(a.id, b.id)}-${Math.max(a.id, b.id)}`;
+      if (distinct.has(pair) || !maybeSameRun(a, b)) continue;
+      // 保留資料較完整的；一樣完整時保留先進來的
+      const [keep, dup] = keepScore(b) > keepScore(a) || (keepScore(b) === keepScore(a) && b.id < a.id) ? [b, a] : [a, b];
+      const day = a.date === today ? "今天" : daysBetween(a.date, today) === 1 ? "昨天" : a.date;
+      const describe = (w: typeof a) => `${km(w.distance_km ?? 0)}・${Math.round(w.duration_min ?? 0)} 分`;
+      items.push({
+        id: `duplicate-${pair}`,
+        kind: "duplicate",
+        tone: "info",
+        title: `${day}的兩筆跑步看起來是同一趟`,
+        detail: `${describe(a)}，和 ${describe(b)}。可能是手錶與手機都上傳了，或手動新增時重複了；合併後只算一次，之後可以再拆開。`,
+        actions: [
+          { type: "merge", keepId: keep.id, dupId: dup.id },
+          { type: "distinct", aId: Math.min(a.id, b.id), bId: Math.max(a.id, b.id) },
+        ],
+      });
+      asked += 1;
     }
   }
 
@@ -214,6 +246,8 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
   }
 
   // 需要注意的排前面
-  const order = { warn: 0, info: 1, ok: 2 } as const;
-  return items.sort((a, b) => order[a.tone] - order[b.tone]);
+  // 「是不是同一趟」排最前面：沒合併的重複會讓跑量等其他提醒失準
+  const order = { warn: 1, info: 2, ok: 3 } as const;
+  const rank = (i: FeedItem) => (i.kind === "duplicate" ? 0 : order[i.tone]);
+  return items.sort((a, b) => rank(a) - rank(b));
 }

@@ -106,6 +106,12 @@ export interface Workout {
   synced_at: string;
   /** 活動來源的原始資料（JSON） */
   raw_json?: string | null;
+  /** 和另一筆是同一趟時，保留的那筆的 id（不在列表上） */
+  duplicate_of?: number | null;
+  /** 在 Intervals.icu 已刪除或類型不再是跑步的時間（不在列表上） */
+  removed_at?: string | null;
+  /** getRecentWorkouts：併進這筆的重複紀錄數 */
+  duplicate_count?: number;
   /** LEFT JOIN workout_summaries */
   summary?: string | null;
 }
