@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { TestModeCard } from "./TestMode";
 import {
@@ -460,6 +461,8 @@ export function SettingsView() {
       </section>
 
       <p className="muted small center">
+        {BUILD_DETAIL}
+        <br />
         Running Coach 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼

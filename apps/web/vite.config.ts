@@ -1,5 +1,22 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
+
+/** 對外的版本號與建置資訊：版本來自 package.json；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
+function buildInfo() {
+  const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+  let commit = process.env.GITHUB_SHA?.slice(0, 7) ?? "";
+  if (!commit) {
+    try {
+      commit = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    } catch {
+      commit = "dev";
+    }
+  }
+  return { version, commit, date: new Date().toISOString().slice(0, 10) };
+}
 
 /**
  * 內容安全政策：只執行本站的腳本，圖片只從本站載入（擋下模型回覆裡用圖片網址把資料帶出去）.
@@ -35,6 +52,7 @@ function contentSecurityPolicy(): Plugin {
 
 export default defineConfig({
   plugins: [react(), contentSecurityPolicy()],
+  define: { __APP_BUILD__: JSON.stringify(buildInfo()) },
   server: { port: 5173, strictPort: true },
   worker: { format: "es" },
   // sqlite-wasm 以相對路徑載入 .wasm，預先打包會讓路徑失效

@@ -104,37 +104,82 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** 教練動態：打開 App 時教練主動提醒的事項，固定在對話上方 */
-export function CoachFeed() {
+/** 展開時先顯示幾則（手機的寬度放不下三則）；其餘按「顯示其餘」 */
+function shownAtFirst(): number {
+  try {
+    return window.matchMedia("(max-width: 599px)").matches ? 2 : 3;
+  } catch {
+    return 3;
+  }
+}
+/** 收起時輪播的間隔 */
+const ROTATE_MS = 4500;
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 教練動態：打開 App 時教練主動提醒的事項，固定在對話上方。
+ * collapseSignal 每次送出訊息時遞增：開始對話後收成一行，讓對話有空間。
+ */
+export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const { coach, revision, goTo, openReport, llmProblem } = useApp();
   const sync = useSync();
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [state, setState] = useState(() => loadState(today));
   const [checkinOpen, setCheckinOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  // 收起時輪播到第幾則；滑鼠移上去或鍵盤聚焦時暫停
+  const [tick, setTick] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [reducedMotion] = useState(prefersReducedMotion);
+  const [firstCount] = useState(shownAtFirst);
   const sectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     void coach.feed().then(setItems);
   }, [coach, revision]);
 
-  // 內容更新（例如存了自評、項目重新排序）後回到最上面，不停在原本捲動的位置
+  // 內容更新（例如存了自評、項目重新排序）或切換顯示全部後回到最上面，不停在原本捲動的位置
   useEffect(() => {
     if (sectionRef.current) sectionRef.current.scrollTop = 0;
-  }, [items]);
+  }, [items, showAll]);
 
   // 模擬日期改變或跨日時重置當天的狀態
   useEffect(() => {
     if (state.date !== today) setState(loadState(today));
   }, [today, state.date]);
 
+  useEffect(() => {
+    if (collapseSignal === 0) return;
+    setState((current) => {
+      const next = { ...current, collapsed: true };
+      saveState(next);
+      return next;
+    });
+  }, [collapseSignal]);
+
   const update = (next: FeedState) => {
     setState(next);
     saveState(next);
   };
   const visible = items.filter((i) => !state.dismissed.includes(i.id));
+
+  // 收起時一則一則輪播；偏好減少動態效果時不輪播
+  const rotating = state.collapsed && visible.length > 1 && !paused && !reducedMotion;
+  useEffect(() => {
+    if (!rotating) return;
+    const timer = setInterval(() => setTick((t) => t + 1), ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [rotating]);
+
   if (visible.length === 0) return null;
-  const top = visible[0]!;
 
   function runAction(action: FeedAction) {
     switch (action.type) {
@@ -172,38 +217,56 @@ export function CoachFeed() {
   };
 
   if (state.collapsed) {
+    const index = tick % visible.length;
+    const current = visible[index]!;
     return (
-      <section className="feed collapsed">
-        <button className="feed-summary" onClick={() => update({ ...state, collapsed: false })}>
-          <span aria-hidden="true">{ICONS[top.kind]}</span>
-          <span className="feed-summary-text">{top.title}</span>
-          <span className="muted small">{visible.length > 1 ? `還有 ${visible.length - 1} 則 ▾` : "▾"}</span>
+      <section className="feed collapsed" aria-label="教練動態">
+        <button
+          className="feed-summary"
+          aria-label={`教練動態（共 ${visible.length} 則）：${current.title}。點一下展開`}
+          onClick={() => update({ ...state, collapsed: false })}
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onFocus={() => setPaused(true)}
+          onBlur={() => setPaused(false)}
+        >
+          <span key={current.id} className={reducedMotion ? "feed-ticker" : "feed-ticker animate"}>
+            <span aria-hidden="true">{ICONS[current.kind]}</span>
+            <span className="feed-summary-text">{current.title}</span>
+          </span>
+          <span className="muted small">
+            {visible.length > 1 ? `${index + 1}/${visible.length} ` : ""}▾
+          </span>
         </button>
       </section>
     );
   }
 
+  const shown = showAll ? visible : visible.slice(0, firstCount);
+  const more = visible.length - shown.length;
   return (
-    <section className="feed" aria-label="教練動態" ref={sectionRef}>
-      <div className="row between">
+    <section className={showAll ? "feed all" : "feed"} aria-label="教練動態" ref={sectionRef}>
+      <div className="feed-head">
         <strong>教練動態</strong>
         <button className="link" onClick={() => update({ ...state, collapsed: true })}>
           收起
         </button>
       </div>
       <ul className="feed-list">
-        {visible.map((item) => (
+        {shown.map((item) => (
           <li key={item.id} className={`feed-item ${item.tone}`}>
             <span className="feed-icon" aria-hidden="true">
               {ICONS[item.kind]}
             </span>
             <div className="feed-body">
-              <strong>{item.title}</strong>
-              {item.detail && <span className="small">{item.detail}</span>}
+              <div className="feed-text">
+                <strong>{item.title}</strong>
+                {item.detail && <span className="small">{item.detail}</span>}
+              </div>
               {item.actions.some((a) => a.type === "checkin") && checkinOpen ? (
                 <CheckinForm onDone={() => setCheckinOpen(false)} />
               ) : (
-                <div className="row">
+                <div className="feed-actions">
                   {item.actions.map((action, i) => (
                     <button
                       key={i}
@@ -223,6 +286,16 @@ export function CoachFeed() {
           </li>
         ))}
       </ul>
+      {more > 0 && (
+        <button className="link feed-more" onClick={() => setShowAll(true)}>
+          顯示其餘 {more} 則
+        </button>
+      )}
+      {showAll && visible.length > firstCount && (
+        <button className="link feed-more" onClick={() => setShowAll(false)}>
+          只顯示前 {firstCount} 則
+        </button>
+      )}
       <SyncNotice message={sync.message} />
     </section>
   );
