@@ -87,6 +87,7 @@ export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
   computeTrainingValues,
   danielsPaces,
+  distanceText,
   durationText,
   estimateVdot,
   formatTrainingValues,

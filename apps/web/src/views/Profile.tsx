@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
 import { ImportFromAi } from "./ImportFromAi";
+import { TrainingValuesCard } from "./TrainingValues";
 
 const GROUPS: { title: string; fields: { key: string; label: string; placeholder?: string; wide?: boolean }[] }[] = [
   {
@@ -76,6 +77,7 @@ export function ProfileView() {
 
   return (
     <>
+      <TrainingValuesCard />
       <ImportFromAi />
       <form
         className="stack"

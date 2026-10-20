@@ -421,7 +421,8 @@ const DISTANCE_LABELS: [number, string][] = [
   [42_195, "全馬"],
 ];
 
-function distanceText(m: number): string {
+/** 5000 → 「5 km」、21097.5 → 「半馬」 */
+export function distanceText(m: number): string {
   const label = DISTANCE_LABELS.find(([d]) => Math.abs(d - m) / d < 0.01)?.[1];
   if (label) return label;
   return Math.abs(m - 1609.34) < 5 ? "1 英里" : `${Math.round(m / 100) / 10} km`;
