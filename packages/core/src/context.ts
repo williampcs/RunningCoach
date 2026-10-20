@@ -7,6 +7,7 @@
  * 層4 — 對話摘要（summaries 最新一筆，對話壓縮後產生）
  * 層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
  */
+import { COACHING_METHOD } from "./coaching-method";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import type { Db } from "./db";
@@ -177,6 +178,8 @@ export class ContextManager {
       "",
       "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
       "",
+      COACHING_METHOD,
+      "",
       "【訓練歷史載入時機】",
       "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
       "・進行跑後回饋分析（save_workout 後）",
@@ -191,10 +194,11 @@ export class ContextManager {
       "・討論訓練強度、強度分配（80/20）、跑量或負荷時",
       "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上三個 tool。",
       "",
-      "【訓練數值】",
-      "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算；提到數值時說明依據。" +
+      "【數值與依據】",
+      "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算。" +
+        "給建議時附上一兩個依據（工具給的數字、選手回報的感受、賽事日期），例如「這週已跑 42 km，比前三週平均多 25%」。" +
         "依據是推算、可能低估或資料不完整時，要跟選手說，並說明怎麼讓數值更準（例如回報比賽成績、做一次計時跑、在 Intervals.icu 設定閾值）。" +
-        "缺的資料不要猜：沒有心率時改看配速與體感。",
+        "缺的資料不要猜：沒有心率時改看配速與體感。要改之前的建議或課表時，先說之前怎麼安排、這次為什麼改。",
       "",
       "【跑後回報】",
       "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +
