@@ -84,4 +84,9 @@ describe("訊息分段", () => {
     expect(replyParts(long, stats)).toEqual([long, footer]);
     for (const part of replyParts("z".repeat(5000), stats)) expect(part.length).toBeLessThanOrEqual(2000);
   });
+
+  it("回覆的依據放在頁尾之前，同樣是小字", () => {
+    expect(replyParts("好", null, ["訓練數值", "最近 14 天的訓練"])).toEqual(["好\n-# 參考了：訓練數值、最近 14 天的訓練"]);
+    expect(replyParts("好", null, [])).toEqual(["好"]);
+  });
 });

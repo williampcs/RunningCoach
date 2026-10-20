@@ -135,6 +135,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   }
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
+  if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];
   return [

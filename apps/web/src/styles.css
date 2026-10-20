@@ -942,3 +942,12 @@ pre {
 .split-bar .high {
   background: var(--danger-text);
 }
+
+/* 教練回覆的依據：這次讀過哪些資料 */
+.bubble .sources {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+}

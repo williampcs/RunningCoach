@@ -23,3 +23,25 @@ describe("教練方法", () => {
     expect(provider.calls[1]!.toolResults![0]!.content.endsWith(PLANNING_RULES)).toBe(true);
   });
 });
+
+describe("回覆的依據", () => {
+  it("由這次呼叫成功的讀取工具產生，同樣的只列一次，並存進對話紀錄", async () => {
+    const { coach } = await makeCoach([
+      toolTurn("get_training_values", {}, "a"),
+      toolTurn("get_recent_workouts", { days: 28 }, "b"),
+      toolTurn("get_training_values", {}, "c"),
+      // 執行失敗的不算；存檔類的工具不算
+      toolTurn("get_recovery_status", { days: "很多" }, "d"),
+      toolTurn("save_daily_checkin", { energy: 4, soreness: 2, sleep: 4 }, "e"),
+      turn({ text: "下週照這樣排" }),
+      turn({ text: "不客氣" }),
+    ]);
+    const first = await coach.chat("幫我排下週");
+    expect(first.sources).toEqual(["訓練數值", "最近 28 天的訓練"]);
+    const second = await coach.chat("謝謝");
+    expect(second.sources).toEqual([]);
+
+    const rows = await coach.db.getRecentConversations(10);
+    expect(rows.map((r) => r.sources)).toEqual([[], ["訓練數值", "最近 28 天的訓練"], [], []]);
+  });
+});

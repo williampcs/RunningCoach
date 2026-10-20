@@ -9,7 +9,14 @@ import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
 import { recoveryNoteFor } from "./recovery";
 import { runSync } from "./sync";
-import { buildTools, createToolExecutor, generateWorkoutSummary, type ToolExecutor } from "./tools";
+import {
+  buildTools,
+  createToolExecutor,
+  generateWorkoutSummary,
+  sourcesOf,
+  TOOL_FAILED_PREFIX,
+  type ToolExecutor,
+} from "./tools";
 import {
   DEFAULT_SETTINGS,
   silentLogger,
@@ -38,6 +45,8 @@ export interface UsageStats {
 export interface ChatReply {
   reply: string;
   stats: UsageStats;
+  /** 回覆前讀過的資料（例如「訓練數值」「最近 14 天的訓練」），由實際呼叫的工具產生 */
+  sources: string[];
 }
 
 export type RunReport =
@@ -193,15 +202,16 @@ export class Coach {
     if (await rt.context.shouldCompress()) this.compressInBackground(rt);
 
     const context = await rt.context.getContextForApi();
+    // 記下這次呼叫成功的工具，作為回覆的依據
+    const calls: { name: string; input: Record<string, unknown> }[] = [];
+    const executeTool: ToolExecutor = async (name, input) => {
+      const output = await rt.executeTool(name, input);
+      if (!output.startsWith(TOOL_FAILED_PREFIX)) calls.push({ name, input });
+      return output;
+    };
     let result;
     try {
-      result = await rt.llm.runWithTools(
-        context.system,
-        context.messages,
-        buildTools(rt.settings),
-        rt.executeTool,
-        onEvent,
-      );
+      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings), executeTool, onEvent);
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
@@ -211,7 +221,8 @@ export class Coach {
     if (result.finish === "refused") reply = REFUSED_REPLY;
     else if (!result.text.trim()) reply = EMPTY_REPLY;
 
-    await this.db.appendConversation("assistant", reply);
+    const sources = sourcesOf(calls);
+    await this.db.appendConversation("assistant", reply, sources);
     // 剛送出的訊息先存進資料庫才組合 context，所以也算在層5；頁尾另列為「訊息」，層5扣掉以免重複計算
     const sentChars = context.messages.at(-1)?.content.length ?? 0;
     return {
@@ -221,6 +232,7 @@ export class Coach {
         userMsgChars: sentChars,
         usage: result.usage,
       },
+      sources,
     };
   }
 
