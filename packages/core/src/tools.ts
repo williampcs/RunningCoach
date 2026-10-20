@@ -325,6 +325,37 @@ function raceLine(r: Race): string {
   return `- [id=${r.id}] ${r.date} ${r.name} ${r.distance_km}km 目標：${target}${result}`;
 }
 
+/** 回覆的依據：讀取資料的工具各對應一種說法；存檔、改賽事這類工具不算 */
+const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> = {
+  get_training_values: () => "訓練數值",
+  get_recent_workouts: (input) => `最近 ${positiveInt(input.days) ?? RECENT_WORKOUT_DAYS} 天的訓練`,
+  get_pace_trend: (input) => `最近 ${positiveInt(input.weeks) ?? 4} 週的配速`,
+  get_training_plan: () => "目前的課表",
+  get_recovery_status: (input) => `最近 ${Math.min(28, positiveInt(input.days) ?? 7)} 天的恢復狀況與自評`,
+  fetch_latest_activity: () => "最新一筆跑步",
+  fetch_latest_strava_activity: () => "最新一筆跑步",
+  save_workout: () => "這次跑步的數據",
+  get_upcoming_races: () => "賽事",
+  get_full_message: () => "較早的對話",
+};
+
+function positiveInt(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return value !== undefined && value !== null && Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * 這次回覆前讀過的資料，由實際呼叫成功的工具產生，不讓模型自己寫；同樣的說法只列一次。
+ * 外殼顯示成「參考了：…」，讓選手知道建議根據什麼。
+ */
+export function sourcesOf(calls: { name: string; input: Record<string, unknown> }[]): string[] {
+  const labels = calls.flatMap(({ name, input }) => (SOURCE_LABELS[name] ? [SOURCE_LABELS[name](input)] : []));
+  return [...new Set(labels)];
+}
+
+/** 工具執行失敗時的回傳開頭（見 createToolExecutor） */
+export const TOOL_FAILED_PREFIX = "執行失敗：";
+
 export interface ToolExecutorDeps {
   db: Db;
   llm: Llm;
@@ -572,7 +603,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       logger.error(`Tool execution error [${name}]: ${message}`);
-      return `執行失敗：${message}`;
+      return `${TOOL_FAILED_PREFIX}${message}`;
     }
   };
 }

@@ -21,8 +21,9 @@ import type {
  * 3：wellness.hrv_sdnn
  * 4：workouts.duplicate_of、workouts.removed_at 與 workout_distinct（去重、跟著 Intervals.icu 的刪除）
  * 5：source_snapshots（同步時存下的跑步設定與最佳配速曲線，訓練數值用）
+ * 6：conversations.sources（教練回覆前讀過的資料，顯示為「參考了：…」）
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -158,6 +159,16 @@ const SCHEMA = `
 const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes"] as const;
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
 
+function parseSources(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const value: unknown = JSON.parse(json);
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export interface DbClock {
   now(): Date;
   /** 使用者時區的今天，YYYY-MM-DD */
@@ -252,6 +263,9 @@ export class Db {
       // --- Migration: workouts.duplicate_of、removed_at（schema 4：去重、跟著 Intervals.icu 的刪除） ---
       if (!workoutCols.has("duplicate_of")) await d.exec("ALTER TABLE workouts ADD COLUMN duplicate_of INTEGER");
       if (!workoutCols.has("removed_at")) await d.exec("ALTER TABLE workouts ADD COLUMN removed_at TEXT");
+
+      // --- Migration: conversations.sources（schema 6：回覆的依據） ---
+      if (!(await columns("conversations")).has("sources")) await d.exec("ALTER TABLE conversations ADD COLUMN sources TEXT");
 
       // --- Migration: workouts.training_load ---
       if (!workoutCols.has("training_load")) {
@@ -367,21 +381,24 @@ export class Db {
   // conversations
   // ---------------------------------------------------------------------------
 
-  async appendConversation(role: "user" | "assistant", content: string): Promise<number> {
-    const result = await this.run("INSERT INTO conversations (role, content, timestamp) VALUES (?, ?, ?)", [
+  /** sources：教練回覆前讀過的資料，沒有時不存 */
+  async appendConversation(role: "user" | "assistant", content: string, sources: string[] = []): Promise<number> {
+    const result = await this.run("INSERT INTO conversations (role, content, timestamp, sources) VALUES (?, ?, ?, ?)", [
       role,
       content,
       this.stamp(),
+      sources.length ? JSON.stringify(sources) : null,
     ]);
     return result.lastInsertRowid;
   }
 
+  /** 最近的對話，舊的在前；附上教練回覆的依據（外殼顯示用） */
   async getRecentConversations(limit: number): Promise<ConversationRow[]> {
-    const rows = await this.all<ConversationRow>(
-      "SELECT id, role, content FROM conversations ORDER BY id DESC LIMIT ?",
+    const rows = await this.all<Omit<ConversationRow, "sources"> & { sources: string | null }>(
+      "SELECT id, role, content, sources FROM conversations ORDER BY id DESC LIMIT ?",
       [limit],
     );
-    return rows.reverse();
+    return rows.reverse().map((r) => ({ ...r, sources: parseSources(r.sources) }));
   }
 
   getConversation(id: number): Promise<ConversationRow | null> {

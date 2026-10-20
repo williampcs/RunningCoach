@@ -72,8 +72,9 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
 
     let reply: string;
     let stats: UsageStats | null = null;
+    let sources: string[] = [];
     try {
-      ({ reply, stats } = await coach.chat(message.content));
+      ({ reply, stats, sources } = await coach.chat(message.content));
     } catch (e) {
       logger.error(`Agent error: ${errorText(e)}`);
       reply = "目前無法回應，請稍後再試。";
@@ -81,7 +82,7 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
       clearInterval(typing);
     }
 
-    for (const part of replyParts(reply, stats)) await channel.send(part);
+    for (const part of replyParts(reply, stats, sources)) await channel.send(part);
   }
 
   async function onCommand(interaction: ChatInputCommandInteraction): Promise<void> {

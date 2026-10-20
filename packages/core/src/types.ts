@@ -163,6 +163,8 @@ export interface ConversationRow {
   content: string;
   /** 傳送時間（UTC，例：2026-10-10T03:06:37Z） */
   timestamp?: string;
+  /** 教練回覆前讀過的資料（getRecentConversations 才有） */
+  sources?: string[];
 }
 
 export interface SummaryRow {

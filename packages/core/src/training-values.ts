@@ -6,6 +6,7 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
+import { PLANNING_RULES } from "./coaching-method";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { formatPace } from "./fake-activities";
@@ -535,6 +536,7 @@ export function formatTrainingValues(v: TrainingValues): string {
     lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : ""}）`);
     lines.push(parts.join("｜"));
   }
+  lines.push("", PLANNING_RULES);
   return lines.join("\n");
 }
 

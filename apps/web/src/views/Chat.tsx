@@ -15,6 +15,7 @@ const TOOL_STATUS: Record<string, string> = {
   get_recent_workouts: "查看最近的訓練",
   get_pace_trend: "計算配速趨勢",
   get_training_plan: "查看訓練計畫",
+  get_training_values: "計算訓練數值",
   get_full_message: "讀取較早的完整訊息",
   get_recovery_status: "查看恢復狀況",
   save_daily_checkin: "記錄今天的身體狀況",
@@ -147,6 +148,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         {messages.map((m) => (
           <div key={m.id} className={`bubble ${m.role}`}>
             {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
+            {m.sources?.length ? <p className="sources">參考了：{m.sources.join("、")}</p> : null}
           </div>
         ))}
         {pendingShown && <div className="bubble user">{sending}</div>}
