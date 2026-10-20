@@ -3,6 +3,7 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { isoWeekLabel } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
+import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
@@ -167,6 +168,18 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
         "以下情況應主動呼叫：制定、調整或審視訓練計畫；確認本週訓練安排；" +
         "將跑後表現與計畫目標對比時。賽事管理、閒聊等不需要呼叫。",
       input_schema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "get_training_values",
+      description:
+        "取得由程式計算的訓練數值與依據：心率區間與輕鬆跑的心率上限、Daniels 的配速（E/M/T/I/R）與推算的完賽時間、" +
+        "臨界速度、最近幾週的跑量與負荷、最近 28 天的強度分配（80/20）、體能與疲勞，以及資料的完整度。" +
+        "制定或調整課表、給配速或心率目標、討論訓練強度或負荷時呼叫；課表裡的數字一律用這裡的，不要自己推算。",
+      input_schema: {
+        type: "object",
+        properties: { weeks: { type: "integer", description: "列出最近幾週的量，預設 4，最多 12" } },
+        required: [],
+      },
     },
     {
       name: "get_recovery_status",
@@ -430,6 +443,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const plan = await db.getActiveTrainingPlan();
         if (!plan) return "目前沒有啟用中的訓練計畫。";
         return `當前訓練計畫（${plan.week_label}）：\n\n${plan.content}`;
+      }
+
+      case "get_training_values": {
+        const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
+        return formatTrainingValues(await computeTrainingValues(db, today(), weeks));
       }
 
       case "get_recovery_status": {

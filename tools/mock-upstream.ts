@@ -4,6 +4,9 @@
  *   POST /v1/messages                         模擬 Anthropic Messages API（依規則回覆，會呼叫工具；支援串流）
  *   POST /v1/chat/completions                 模擬 OpenAI 相容的 Chat Completions（同一套規則；支援串流）
  *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步）
+ *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
+ *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
+ *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
  *
  * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
@@ -32,9 +35,16 @@ function wellness() {
       hrv: tired ? 46 : 60 + (i % 4),
       sleepSecs: tired ? 21_600 : 26_000 + (i % 3) * 600,
       sleepScore: tired ? 62 : 80,
+      ctl: 38 - i * 0.2,
+      atl: tired ? 52 : 40,
+      rampRate: 2.1,
     };
   });
 }
+
+/** 跑步的閾值心率與 Intervals.icu 預設的 7 區（各區的上限） */
+const LTHR = 170;
+const HR_ZONES = [144, 151, 160, 168, 173, 180, 190];
 
 function activities() {
   return [
@@ -50,6 +60,11 @@ function activities() {
       total_elevation_gain: 48,
       calories: 640,
       icu_training_load: 72,
+      lthr: LTHR,
+      icu_hr_zones: HR_ZONES,
+      icu_hr_zone_times: [420, 1500, 1100, 286, 0, 0, 0],
+      icu_ctl: 38,
+      icu_atl: 52,
     },
     { id: "i-mock-ride", type: "Ride", start_date_local: `${daysAgo(1)}T18:00:00`, distance: 30000, moving_time: 3600 },
     {
@@ -62,6 +77,9 @@ function activities() {
       max_heartrate: 158,
       total_elevation_gain: 12,
       icu_training_load: 41,
+      lthr: LTHR,
+      icu_hr_zones: HR_ZONES,
+      icu_hr_zone_times: [1900, 860, 0, 0, 0, 0, 0],
     },
   ];
 }
@@ -274,6 +292,36 @@ createServer((req, res) => {
       200,
       activities().filter((a) => a.start_date_local.slice(0, 10) >= oldest && a.start_date_local.slice(0, 10) <= newest),
     );
+  }
+  if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+$/.test(path)) {
+    if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
+    return send(200, {
+      id: "i0",
+      name: "Mock Runner",
+      email: "mock@example.com",
+      sportSettings: [
+        { types: ["Ride", "VirtualRide"], ftp: 200 },
+        { types: ["Run", "VirtualRun", "TrailRun"], lthr: LTHR, max_hr: 190, hr_zones: HR_ZONES, threshold_pace: null },
+      ],
+    });
+  }
+  if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/pace-curves\.json$/.test(path)) {
+    if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
+    return send(200, {
+      list: [
+        {
+          days: 91,
+          distance: [400, 1000, 1609.34, 3000, 5000, 10000],
+          values: [95, 260, 430, 840, 1450, 3306],
+          activity_id: ["i-mock-3d", "i-mock-3d", "i-mock-3d", "i-mock-today", "i-mock-today", "i-mock-today"],
+          paceModels: [{ type: "CS", criticalSpeed: 3.32, dPrime: 160, r2: 0.999 }],
+        },
+      ],
+      activities: {
+        "i-mock-today": { race: false, start_date_local: `${today()}T06:30:00` },
+        "i-mock-3d": { race: false, start_date_local: `${daysAgo(3)}T19:10:00` },
+      },
+    });
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/wellness$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });

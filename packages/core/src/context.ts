@@ -11,7 +11,8 @@ import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import type { Db } from "./db";
 import type { ChatMessage } from "./llm";
-import type { CoachSettings, ConversationRow, Race } from "./types";
+import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
+import type { CoachSettings, ConversationRow, Race, RunSettings } from "./types";
 
 /** get_recent_workouts tool 的預設查詢天數 */
 export const RECENT_WORKOUT_DAYS = 14;
@@ -106,22 +107,23 @@ export class ContextManager {
     if (profile.body_fat_pct) phys.push(`體脂：${profile.body_fat_pct}%`);
     if (phys.length) lines.push("生理資料：" + phys.join("｜"));
 
-    // 心率資料與區間
-    let maxHr: number | null = null;
-    if (profile.max_hr) {
-      // 填了但不是數字時不顯示，也不用推算值蓋掉使用者的輸入
-      maxHr = toInt(profile.max_hr);
-      if (maxHr) lines.push(`最大心率：${maxHr}bpm（實測）`);
-    } else if (age !== null) {
-      maxHr = 220 - age;
-      lines.push(`最大心率：${maxHr}bpm（推算，220－年齡）`);
+    // 心率資料與區間：Intervals.icu 有閾值心率與區間時用它的（和它算的區間時間一致），
+    // 否則依實測或推算的最大心率；填了但不是數字時不顯示，也不用推算值蓋掉使用者的輸入
+    const runSettings = (await this.db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS))?.value ?? null;
+    const hr = heartRateInfo(profile, runSettings, today);
+    if (hr?.maxHr) {
+      const label = hr.source === "estimate" ? "推算，220－年齡" : toInt(profile.max_hr) ? "實測" : "Intervals.icu 的設定";
+      lines.push(`最大心率：${hr.maxHr}bpm（${label}）`);
     }
     const restingHr = toInt(profile.resting_hr);
     if (restingHr) lines.push(`靜息心率：${restingHr}bpm`);
-    if (maxHr) {
+    if (hr?.source === "intervals") {
+      lines.push(`閾值心率：${hr.lthr}bpm（Intervals.icu 的設定）`);
+      lines.push(`心率區間（Intervals.icu）：${zonesText(hr)}`);
+    } else if (hr?.maxHr) {
       // 以整數百分比計算；v1 用浮點數相乘（180 × 0.7 = 125.99…）會讓區間邊界少 1
-      const hr = maxHr;
-      const [z1, z2, z3, z4] = [60, 70, 80, 90].map((pct) => Math.floor((hr * pct) / 100));
+      const max = hr.maxHr;
+      const [z1, z2, z3, z4] = [60, 70, 80, 90].map((pct) => Math.floor((max * pct) / 100));
       lines.push(`心率區間：Z1 <${z1}  Z2 ${z1}–${z2}  Z3 ${z2}–${z3}  Z4 ${z3}–${z4}  Z5 >${z4}`);
     }
 
@@ -184,7 +186,15 @@ export class ContextManager {
       "・制定、調整或審視訓練計畫",
       "・需要確認本週計畫安排或訓練目標時",
       "・與當前計畫進行對比分析時",
-      "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上兩個 tool。",
+      "get_training_values — 以下情況請主動呼叫：",
+      "・制定或調整課表，或給配速、心率目標時",
+      "・討論訓練強度、強度分配（80/20）、跑量或負荷時",
+      "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上三個 tool。",
+      "",
+      "【訓練數值】",
+      "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算；提到數值時說明依據。" +
+        "依據是推算、可能低估或資料不完整時，要跟選手說，並說明怎麼讓數值更準（例如回報比賽成績、做一次計時跑、在 Intervals.icu 設定閾值）。" +
+        "缺的資料不要猜：沒有心率時改看配速與體感。",
       "",
       "【跑後回報】",
       "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +

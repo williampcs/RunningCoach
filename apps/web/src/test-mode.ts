@@ -7,11 +7,13 @@
  */
 import {
   daysBetween,
+  fakeRunSettings,
   generateActivities,
   generateWellness,
   localDate,
   type Activity,
   type FakeSpec,
+  type RunSettings,
   type WellnessDay,
 } from "@running-coach/core";
 
@@ -51,6 +53,11 @@ export function testActivities(state: TestMode): Activity[] {
 /** 測試模式下的恢復資料：隨情境產生 */
 export function testWellness(state: TestMode): WellnessDay[] {
   return state.spec ? generateWellness(state.spec) : [];
+}
+
+/** 測試模式下的跑步設定（閾值心率與區間）：隨裝置產生 */
+export function testRunSettings(state: TestMode): RunSettings | null {
+  return state.spec ? fakeRunSettings(state.spec) : null;
 }
 
 /** 模擬日期與實際日期相差的毫秒數；保留實際的時刻，只移動日期 */

@@ -888,3 +888,57 @@ pre {
 .phone-guide > p {
   margin: 6px 0 4px;
 }
+
+/* 訓練數值 */
+.training-values h3 {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+}
+
+.values {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.values dt {
+  color: var(--muted);
+}
+
+.values dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 一組一組的值，不在中間斷行 */
+.values dd.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+
+.values dd.chips > span {
+  white-space: nowrap;
+}
+
+.split-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.split-bar .low {
+  background: var(--accent);
+}
+
+.split-bar .moderate {
+  background: var(--warn-strong);
+}
+
+.split-bar .high {
+  background: var(--danger-text);
+}

@@ -5,7 +5,8 @@
  * 活動以 `fake-` 開頭的 intervals_id 標示，source 為 "fake"。
  */
 import { addDays, daysBetween, weekdayIndex } from "./dates";
-import type { Activity, ActivitySource, WellnessDay } from "./types";
+import { EFFORT_DISTANCES } from "./intervals";
+import type { Activity, ActivitySource, BestEffort, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
 
 export const FAKE_SCENARIOS = {
   steady: { label: "穩定訓練", description: "每週固定的次數與距離，週日長跑" },
@@ -90,6 +91,35 @@ function estimateLoad(durationMin: number, avgHr: number | null, maxHr: number):
   return Math.round(durationMin * fraction * fraction * 1.6);
 }
 
+/** 假的閾值心率：最大心率的 90% */
+function fakeLthr(maxHr: number): number {
+  return Math.round(maxHr * 0.9);
+}
+
+/** Intervals.icu 預設的 7 區心率（Friel，依閾值心率），各區的上限 */
+function fakeHrZones(maxHr: number): number[] {
+  const lthr = fakeLthr(maxHr);
+  return [...[0.845, 0.89, 0.94, 0.99, 1.02, 1.06].map((f) => Math.round(lthr * f)), maxHr];
+}
+
+/** 各心率區間的秒數：平均心率所在的區佔 70%，前後兩區各 15%（沒有前後區時併入該區） */
+function zoneTimes(avgHr: number, secs: number, zones: number[]): number[] {
+  const found = zones.findIndex((z) => avgHr <= z);
+  const at = found < 0 ? zones.length - 1 : found;
+  const times = zones.map(() => 0);
+  times[at] = Math.round(secs * 0.7);
+  for (const side of [at - 1, at + 1]) {
+    times[side >= 0 && side < zones.length ? side : at]! += Math.round(secs * 0.15);
+  }
+  return times;
+}
+
+/** 測試模式的跑步設定：只有 iPhone 時沒有心率，也就沒有閾值心率與區間 */
+export function fakeRunSettings(spec: FakeSpec): RunSettings {
+  if (spec.device === "iphone") return { lthr: null, max_hr: null, hr_zones: null, threshold_pace: null };
+  return { lthr: fakeLthr(spec.maxHr), max_hr: spec.maxHr, hr_zones: fakeHrZones(spec.maxHr), threshold_pace: null };
+}
+
 function build(
   id: string,
   date: string,
@@ -106,6 +136,10 @@ function build(
   const load = estimateLoad(durationMin, avgHr, maxHr);
   // 開始時間與經過時間（含停下來的時間）：去重靠時間重疊判斷
   const timing = startTime ? { start_date_local: `${date}T${startTime}:00`, elapsed_time: Math.round(durationMin * 60) + 90 } : {};
+  // 有心率時，Intervals.icu 依當時的閾值心率與區間算出各區的時間
+  const zones = fakeHrZones(maxHr);
+  const hrZones =
+    avgHr === null ? {} : { lthr: fakeLthr(maxHr), icu_hr_zones: zones, icu_hr_zone_times: zoneTimes(avgHr, durationMin * 60, zones) };
   return {
     intervals_id: id,
     source: "fake",
@@ -119,7 +153,7 @@ function build(
     elevation_m: Math.round(elevationM),
     calories: Math.round(distance * 62),
     training_load: load,
-    raw_json: JSON.stringify({ fake: true, icu_training_load: load, ...timing }),
+    raw_json: JSON.stringify({ fake: true, icu_training_load: load, ...timing, ...hrZones }),
   };
 }
 
@@ -273,8 +307,25 @@ export function generateWellness(spec: FakeSpec): WellnessDay[] {
   const start = addDays(spec.endDate, -(days - 1));
   const out: WellnessDay[] = [];
 
+  // 體能與疲勞：每天負荷的指數平均（42 天與 7 天），和 Intervals.icu 的算法相同；從整段期間的每日平均開始
+  const loads = new Map<string, number>();
+  for (const run of generateActivities(spec)) loads.set(run.date, (loads.get(run.date) ?? 0) + (run.training_load ?? 0));
+  let ctl = [...loads.values()].reduce((a, b) => a + b, 0) / days;
+  let atl = ctl;
+  const ctlHistory: number[] = [];
+
   for (let d = 0; d < days; d++) {
     const date = addDays(start, d);
+    const load = loads.get(date) ?? 0;
+    ctl += (load - ctl) / 42;
+    atl += (load - atl) / 7;
+    ctlHistory.push(ctl);
+    const weekAgo = ctlHistory[d - 7];
+    const fitness = {
+      ctl: Math.round(ctl * 10) / 10,
+      atl: Math.round(atl * 10) / 10,
+      rampRate: weekAgo === undefined ? null : Math.round((ctl - weekAgo) * 10) / 10,
+    };
     const daysLeft = days - 1 - d;
     let restingHr = 52;
     let hrv = 62;
@@ -320,7 +371,7 @@ export function generateWellness(spec: FakeSpec): WellnessDay[] {
       sleep_secs: sleepSecs,
       sleep_score: apple ? null : sleepScore,
       readiness: null,
-      raw_json: JSON.stringify({ fake: true }),
+      raw_json: JSON.stringify({ fake: true, ...fitness }),
     });
   }
   // 只有 iPhone：沒有手錶量測的恢復資料
@@ -339,6 +390,7 @@ export class FakeActivitySource implements ActivitySource {
     activities: Activity[],
     private readonly today: () => string,
     private readonly wellness: WellnessDay[] = [],
+    private readonly runSettings: RunSettings | null = null,
   ) {
     // 新的在前；同一天的，清單中較後面的（例如後來新增的自訂紀錄）視為較晚跑的
     this.activities = activities
@@ -369,5 +421,34 @@ export class FakeActivitySource implements ActivitySource {
       const age = daysBetween(w.date, today);
       return age >= 0 && age <= days;
     });
+  }
+
+  async fetchRunSettings(): Promise<RunSettings | null> {
+    return this.runSettings;
+  }
+
+  /**
+   * 最佳配速曲線：假資料沒有逐秒的速度，當成每一趟都是平均配速，
+   * 各標準距離的最佳成績取「夠長的那幾趟」用平均配速跑完這段距離的最短時間。
+   * 臨界速度由 3 km 與 10 km 的最佳成績兩點推算（Intervals.icu 用更多點擬合）。
+   */
+  async fetchPaceCurve(days = 90): Promise<PaceCurveSummary | null> {
+    const runs = this.within(days).filter((a) => a.distance_km && a.duration_min);
+    if (!runs.length) return null;
+    const efforts: BestEffort[] = [];
+    for (const target of EFFORT_DISTANCES) {
+      let best: BestEffort | null = null;
+      for (const a of runs) {
+        const meters = a.distance_km! * 1000;
+        if (meters < target * 0.99) continue;
+        const secs = Math.round((a.duration_min! * 60 * target) / meters);
+        if (!best || secs < best.secs) best = { distance_m: target, secs, race: false, date: a.date };
+      }
+      if (best) efforts.push(best);
+    }
+    const three = efforts.find((e) => e.distance_m === 3000);
+    const ten = efforts.find((e) => e.distance_m === 10_000);
+    const cs = three && ten && ten.secs > three.secs ? (10_000 - 3000) / (ten.secs - three.secs) : null;
+    return { days, critical_speed: cs, d_prime: null, efforts };
   }
 }
