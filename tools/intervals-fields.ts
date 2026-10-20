@@ -45,8 +45,8 @@ const ID_KEY = /(^|_)ids?$|^id_|serial|token|api_key|secret|password|strava|exte
 /** 只有這些欄位的文字會印出（類型、單位、模型這類列舉值） */
 const ENUM_KEY =
   /^(type|types|sub_type|category|source|file_type|target|pace_units|power_field|measurement_preference|gap_model|elevation_correction)$|_(type|types|units|model|keys|order)$/;
-/** 動態的鍵（例如以活動 id 為鍵的物件）合併成一個 */
-const DYNAMIC_KEY = /^[a-z]?\d+$/i;
+/** 動態的鍵（例如以活動 id 為鍵的物件）合併成一個；只看長的數字，`r2` 這類欄位名稱不算 */
+const DYNAMIC_KEY = /^[a-z]?\d{4,}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}([T ][\d:.]+Z?)?$/;
 
 interface Stat {
@@ -60,6 +60,8 @@ interface Stat {
   lenMin: number;
   lenMax: number;
   samples: Set<string>;
+  /** 列舉值太多，沒有全部列出 */
+  more: boolean;
   masked: boolean;
 }
 
@@ -90,6 +92,7 @@ class Collector {
         lenMin: Infinity,
         lenMax: -Infinity,
         samples: new Set(),
+        more: false,
         masked: false,
       };
       this.stats.set(path, s);
@@ -144,8 +147,9 @@ class Collector {
         s.kinds.add(`date${suffix}`);
       } else {
         s.kinds.add(`string${suffix}`);
-        if (ENUM_KEY.test(key) && !ID_KEY.test(key) && value.length <= 40 && s.samples.size < 12) s.samples.add(value);
-        else s.masked = true;
+        if (!ENUM_KEY.test(key) || ID_KEY.test(key) || value.length > 40) s.masked = true;
+        else if (s.samples.size < 20) s.samples.add(value);
+        else if (!s.samples.has(value)) s.more = true;
       }
     } else {
       s.kinds.add(Array.isArray(value) ? `array${suffix}` : typeof value);
@@ -164,10 +168,11 @@ function fmt(n: number): string {
 function describe(s: Stat): string {
   const parts: string[] = [];
   const kinds = [...s.kinds].filter((k) => k !== "null");
+  if (!kinds.length && s.lenMax >= 0) kinds.push("array");
   if (s.lenMax >= 0) parts.push(s.lenMin === s.lenMax ? `長度 ${s.lenMin}` : `長度 ${s.lenMin}–${s.lenMax}`);
   if (!namesOnly && s.min <= s.max) parts.push(s.min === s.max ? fmt(s.min) : `${fmt(s.min)} – ${fmt(s.max)}`);
   if (s.trues + s.falses) parts.push(`true ${s.trues}／false ${s.falses}`);
-  if (s.samples.size) parts.push([...s.samples].join(", "));
+  if (s.samples.size) parts.push([...s.samples].join(", ") + (s.more ? " …" : ""));
   if (s.masked) parts.push("（不印）");
   return `${kinds.join("|") || "null"}  ${parts.join("  ")}`.trimEnd();
 }
@@ -234,7 +239,9 @@ function report(title: string, note: string, r: Result, records?: unknown[]): vo
   const width = Math.min(48, Math.max(...[...c.stats.keys()].map((k) => k.length)));
   print("```");
   for (const [path, s] of c.stats) {
-    print(`${path.padEnd(width)}  ${`${s.present}/${c.total(path)}`.padStart(7)}  ${describe(s)}`);
+    // 以 id 為鍵的物件：列出有幾個，不是有值的比例
+    const count = path.endsWith("{id}") ? `${s.present} 個` : `${s.present}/${c.total(path)}`;
+    print(`${path.padEnd(width)}  ${count.padStart(7)}  ${describe(s)}`);
   }
   print("```");
   print();
@@ -300,11 +307,6 @@ report(
   "GET /athlete/{id}/pace-curves.json",
   "跑步的最佳配速曲線，最近 90 天與 1 年，附臨界速度模型（pmType=CS）",
   await get(`${athlete}/pace-curves.json`, { type: "Run", curves: "90d,1y", pmType: "CS" }),
-);
-report(
-  "GET /athlete/{id}/activity-pace-curves.json",
-  `最近 ${days} 天每一筆跑步在 1、5、10 km 的最佳配速`,
-  await get(`${athlete}/activity-pace-curves.json`, { oldest, newest: today, type: "Run", distances: "1000,5000,10000" }),
 );
 report("GET /athlete/{id}/hr-curves.json", "跑步的最佳心率曲線，最近 90 天", await get(`${athlete}/hr-curves.json`, { type: "Run", curves: "90d" }));
 

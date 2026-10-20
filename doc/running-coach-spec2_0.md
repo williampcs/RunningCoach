@@ -1112,3 +1112,32 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不下載串流，GPS 不會經手。
   - `--names-only` 連數字範圍都不印。
 - 結果寫到 `data/intervals-fields/`，不進版控。
+
+**實測結果**（2026-10-20，作者的帳號：Garmin 手錶、只有跑步，最近 42 天 14 筆）
+
+只記欄位有沒有值與單位，不記數值。
+
+- **閾值與區間**
+  - 跑步的運動設定有閾值心率、最大心率與 7 個心率區間（`hr_zones` 是各區的上限），負荷算法是 HRSS。
+  - **閾值配速沒有設**，所以沒有配速區間、配速負荷，也沒有配速與 GAP 的區間時間。
+  - 每筆活動另外記下當時的 `lthr` 與 `icu_hr_zones`，區間時間要用活動自己的這兩欄來分類。
+- **強度分配**：每筆都有 `icu_hr_zone_times`（7 區的秒數）；`polarization_index` 只有部分活動有。強度分配只能依心率算。
+- **臨界速度**
+  - `pace-curves.json` 加 `pmType=CS` 有回傳 `criticalSpeed`（m/s）與 `dPrime`（公尺）。
+  - 擬合只用了 3 個點，`r2` 幾乎都是 1，不能當成可信度。要看的是用了多長的努力、是不是全力跑的。
+  - 曲線本身是 `distance`（公尺）對 `values`（秒）。`activities` 以活動 id 為鍵，帶 `race` 旗標，可以分出最佳表現是不是來自比賽。
+- **單筆最佳努力**：`best-efforts`（`stream=velocity_smooth`）可用，`average` 是 m/s。`activity-pace-curves` 用個人 API key 會得到 403，不用。
+- **負荷**：`icu_training_load`（等於 `hr_load`）、`trimp`、`icu_intensity`（佔閾值的百分比）。恢復資料每天都有 `ctl`、`atl`、`rampRate`。週摘要（`athlete-summary`）每週一筆，有 `fitness`、`fatigue`、`form`、`rampRate`、`timeInZones`（長度 8，對應待確認）。
+- **沒有值的**
+  - `decoupling` 與 `icu_efficiency_factor`：跑步沒有功率時，Intervals.icu 不算。要用的話，得自己從串流算（只取心率與速度，不需要 GPS）。
+  - 天氣欄位：沒開天氣設定。`average_temp` 是手錶的溫度計，會受體溫影響偏高，不能當氣溫。
+  - 主觀欄位（`icu_rpe`、`feel`、`session_rpe`）：沒在 Intervals.icu 填。session RPE 改用我們跑後回報的體感算。
+  - 行事曆與計畫完成度：沒有課表、沒有套用訓練計畫，`compliance` 與 `paired_event_id` 都是空的。
+  - 推課表到 Garmin：「上傳計畫課表」目前沒開。
+- **分段**：沒有結構化課表時，`icu_intervals` 是手錶的自動圈（每公里一段），類型都是 WORK，不能直接當成間歇的趟數。
+- **跑步動態**：觸地時間、垂直振幅、步長都有。`average_cadence` 是單腳的步頻（乘 2 才是每分鐘步數），`average_stride` 是每步的長度（公尺）。
+- **成就**：`icu_achievements` 有 `LTHR_UP` 類型，表示 Intervals.icu 偵測到閾值心率可能上升了，可以拿來提醒使用者更新設定。
+- **恢復資料**
+  - `sleepSecs` 確定以秒計；HRV 在 `hrv`（Garmin），`hrvSDNN` 沒有值。
+  - 另有睡眠分數、睡眠品質（1–4）、SpO2、步數，以及偶爾出現的 `vo2max`（Garmin 的估計）。
+  - 痠痛、疲勞、壓力等主觀欄位沒填，由我們的每日自評補上。
