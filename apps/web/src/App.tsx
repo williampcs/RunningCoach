@@ -19,6 +19,7 @@ import {
   saveTestMode,
   TEST_DB_FILE,
   testActivities,
+  testRunSettings,
   testWellness,
   type TestMode,
 } from "./test-mode";
@@ -66,7 +67,7 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
     },
     // 測試模式只用假資料，完全不連線 Intervals.icu
     activities: test.enabled
-      ? new FakeActivitySource(testActivities(test), today, testWellness(test))
+      ? new FakeActivitySource(testActivities(test), today, testWellness(test), testRunSettings(test))
       : new IntervalsClient({
           apiKey: settings.intervals.apiKey.trim(),
           athleteId: settings.intervals.athleteId.trim(),

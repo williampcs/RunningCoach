@@ -1,6 +1,6 @@
 /** Intervals.icu — API 連線、活動拉取、資料正規化. */
 import { addDays } from "./dates";
-import type { Activity, ActivitySource, WellnessDay } from "./types";
+import type { Activity, ActivitySource, BestEffort, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
 
 const BASE_URL = "https://intervals.icu/api/v1";
 
@@ -36,6 +36,11 @@ export function speedToPace(speedMps: number | null | undefined): string | null 
 function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
+
+/** 最佳配速曲線中，推算 VDOT 用的標準距離（公尺） */
+export const EFFORT_DISTANCES = [1609.34, 3000, 5000, 10_000, 21_097.5, 42_195];
+
+const positive = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
 
 function isRun(activity: RawActivity): boolean {
   const sport = String(activity.type ?? activity.sport_type ?? "").toLowerCase();
@@ -118,6 +123,48 @@ export class IntervalsClient implements ActivitySource {
       );
       return empty ? [] : [day];
     });
+  }
+
+  /** 跑步的運動設定（包含 Run 的那組）；只取閾值與區間，選手的其他資料（姓名、email 等）不留 */
+  async fetchRunSettings(): Promise<RunSettings | null> {
+    const athlete = await this.getJson("");
+    const all = (athlete as { sportSettings?: unknown } | null)?.sportSettings;
+    const run = Array.isArray(all)
+      ? (all as Record<string, unknown>[]).find((s) => Array.isArray(s.types) && s.types.includes("Run"))
+      : undefined;
+    if (!run) return null;
+    const zones = Array.isArray(run.hr_zones) ? run.hr_zones.map(positive).filter((z): z is number => z !== null) : [];
+    return {
+      lthr: positive(run.lthr),
+      max_hr: positive(run.max_hr),
+      hr_zones: zones.length ? zones : null,
+      threshold_pace: positive(run.threshold_pace),
+    };
+  }
+
+  /** 最近 N 天跑步的最佳配速曲線：Intervals.icu 擬合的臨界速度，以及標準距離的最佳成績 */
+  async fetchPaceCurve(days = 90): Promise<PaceCurveSummary | null> {
+    const data = (await this.getJson(`/pace-curves.json?type=Run&curves=${days}d&pmType=CS`)) as {
+      list?: Record<string, unknown>[];
+      activities?: Record<string, { race?: unknown; start_date_local?: unknown }>;
+    } | null;
+    const curve = data?.list?.[0];
+    if (!curve) return null;
+    const distances = Array.isArray(curve.distance) ? (curve.distance as unknown[]) : [];
+    const secs = Array.isArray(curve.values) ? (curve.values as unknown[]) : [];
+    const ids = Array.isArray(curve.activity_id) ? (curve.activity_id as unknown[]) : [];
+    const efforts: BestEffort[] = [];
+    for (const target of EFFORT_DISTANCES) {
+      const i = distances.findIndex((d) => typeof d === "number" && Math.abs(d - target) / target < 0.01);
+      const time = i >= 0 ? positive(secs[i]) : null;
+      if (time === null) continue;
+      const activity = data?.activities?.[String(ids[i])];
+      const start = typeof activity?.start_date_local === "string" ? activity.start_date_local.slice(0, 10) : null;
+      efforts.push({ distance_m: target, secs: time, race: activity?.race === true, date: start });
+    }
+    const models = Array.isArray(curve.paceModels) ? (curve.paceModels as Record<string, unknown>[]) : [];
+    const cs = models.find((m) => m.type === "CS");
+    return { days, critical_speed: positive(cs?.criticalSpeed), d_prime: positive(cs?.dPrime), efforts };
   }
 
   private async getJson(path: string): Promise<unknown> {

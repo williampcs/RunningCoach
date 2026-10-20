@@ -20,8 +20,9 @@ import type {
  * 2：新增 wellness 與 daily_checkins（v1 不讀這兩張表，仍可開啟同一個資料庫）
  * 3：wellness.hrv_sdnn
  * 4：workouts.duplicate_of、workouts.removed_at 與 workout_distinct（去重、跟著 Intervals.icu 的刪除）
+ * 5：source_snapshots（同步時存下的跑步設定與最佳配速曲線，訓練數值用）
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -137,6 +138,12 @@ const SCHEMA = `
     a INTEGER NOT NULL,
     b INTEGER NOT NULL,
     PRIMARY KEY (a, b)
+  );
+
+  CREATE TABLE IF NOT EXISTS source_snapshots (
+    key        TEXT PRIMARY KEY,
+    json       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS pending_subjective (
@@ -755,6 +762,11 @@ export class Db {
     }
   }
 
+  /** 最近 N 筆恢復資料的原始資料（含 Intervals.icu 的體能與疲勞），新的在前 */
+  getWellnessRaw(limit: number): Promise<{ date: string; raw_json: string | null }[]> {
+    return this.all("SELECT date, raw_json FROM wellness ORDER BY date DESC LIMIT ?", [limit]);
+  }
+
   /** 到 until（預設今天）為止 N 天的恢復資料（含 until 當天），舊的在前 */
   getWellness(days: number, until = this.clock.today()): Promise<WellnessDay[]> {
     return this.all<WellnessDay>(
@@ -783,6 +795,28 @@ export class Db {
       "SELECT date, energy, soreness, sleep, notes FROM daily_checkins WHERE date >= ? AND date <= ? ORDER BY date",
       [addDays(this.clock.today(), -days), this.clock.today()],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // source_snapshots：活動來源的設定與統計，每次同步整份換掉
+  // ---------------------------------------------------------------------------
+
+  async saveSnapshot(key: string, value: unknown): Promise<void> {
+    await this.run(
+      "INSERT INTO source_snapshots (key, json, fetched_at) VALUES (?, ?, ?)" +
+        " ON CONFLICT(key) DO UPDATE SET json=excluded.json, fetched_at=excluded.fetched_at",
+      [key, JSON.stringify(value), this.stamp()],
+    );
+  }
+
+  async getSnapshot<T>(key: string): Promise<{ value: T; fetched_at: string } | null> {
+    const row = await this.get<{ json: string; fetched_at: string }>("SELECT json, fetched_at FROM source_snapshots WHERE key=?", [key]);
+    if (!row) return null;
+    try {
+      return { value: JSON.parse(row.json) as T, fetched_at: row.fetched_at };
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------

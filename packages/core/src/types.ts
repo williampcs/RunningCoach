@@ -45,6 +45,39 @@ export interface ActivitySource {
   fetchWellness?(days: number): Promise<WellnessDay[]>;
   /** 最近 N 天跑步以外的活動類型（例如 Walk、Ride），同步不到跑步時用來說明；不支援的來源不實作 */
   fetchOtherActivityTypes?(days: number): Promise<string[]>;
+  /** 跑步的閾值與心率區間（Intervals.icu 的運動設定）；不支援的來源不實作 */
+  fetchRunSettings?(): Promise<RunSettings | null>;
+  /** 最近 N 天跑步的最佳配速曲線；不支援的來源不實作 */
+  fetchPaceCurve?(days: number): Promise<PaceCurveSummary | null>;
+}
+
+/** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */
+export interface RunSettings {
+  /** 閾值心率 */
+  lthr: number | null;
+  max_hr: number | null;
+  /** 各心率區間的上限，由低到高 */
+  hr_zones: number[] | null;
+  /** 閾值配速，m/s */
+  threshold_pace: number | null;
+}
+
+/** 一段期間的最佳配速曲線：臨界速度，以及標準距離的最佳成績 */
+export interface PaceCurveSummary {
+  days: number;
+  /** 臨界速度，m/s；沒有擬合時為 null */
+  critical_speed: number | null;
+  /** D′，公尺 */
+  d_prime: number | null;
+  efforts: BestEffort[];
+}
+
+export interface BestEffort {
+  distance_m: number;
+  secs: number;
+  /** 來自標為比賽的活動 */
+  race: boolean;
+  date: string | null;
 }
 
 /** 一天的恢復資料；欄位視手錶與設定而定，可能缺 */

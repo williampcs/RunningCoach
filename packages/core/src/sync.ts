@@ -7,7 +7,8 @@
  * 4. 合併主客觀資料（或僅存客觀資料）後存入 workouts
  * 5. 生成 AI 摘要存入 workout_summaries
  * 6. 清理超過 7 天的 pending_subjective
- * 另外更新恢復資料（靜息心率、HRV、睡眠）；沒有跑步時也更新，失敗不影響活動的同步
+ * 另外更新恢復資料（靜息心率、HRV、睡眠），以及訓練數值用的跑步設定與最佳配速曲線；
+ * 沒有跑步時也更新，失敗不影響活動的同步
  */
 import { addDays } from "./dates";
 import type { Db, SaveResult } from "./db";
@@ -15,6 +16,7 @@ import { IntervalsError } from "./intervals";
 import type { Llm } from "./llm";
 import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
+import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
 import type { ActivitySource, Activity, Logger } from "./types";
 
 /** 同步時拉取的天數 */
@@ -61,6 +63,24 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** 訓練數值用的跑步設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄 */
+async function refreshTrainingSnapshots(db: Db, activities: ActivitySource, logger: Logger): Promise<void> {
+  if (activities.fetchRunSettings) {
+    try {
+      await db.saveSnapshot(SNAPSHOT_RUN_SETTINGS, await activities.fetchRunSettings());
+    } catch (e) {
+      logger.warn(`Run settings fetch failed: ${message(e)}`);
+    }
+  }
+  if (activities.fetchPaceCurve) {
+    try {
+      await db.saveSnapshot(SNAPSHOT_PACE_CURVE, await activities.fetchPaceCurve(VDOT_LOOKBACK_DAYS));
+    } catch (e) {
+      logger.warn(`Pace curve fetch failed: ${message(e)}`);
+    }
+  }
+}
+
 /** 執行同步，回傳結果摘要字串 */
 export async function runSync(deps: {
   db: Db;
@@ -104,6 +124,7 @@ export async function runSync(deps: {
     today,
   );
   const removedNote = removedCount ? `移除 ${removedCount} 筆在 Intervals.icu 已刪除或不再是跑步的紀錄` : "";
+  await refreshTrainingSnapshots(db, activities, logger);
 
   if (!fetched.length) {
     // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明只讀跑步，不必檢查上傳
