@@ -10,7 +10,7 @@ import { PLANNING_RULES } from "./coaching-method";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { formatPace } from "./fake-activities";
-import type { PaceCurveSummary, Race, RunSettings, Workout } from "./types";
+import type { OtherActivity, PaceCurveSummary, Race, RunSettings, Workout } from "./types";
 
 /** 推算 VDOT 用的比賽與最佳表現，只看最近這麼多天：太久以前的成績不代表現在的體能 */
 export const VDOT_LOOKBACK_DAYS = 90;
@@ -291,10 +291,12 @@ export interface WeekSummary {
   /** session RPE（體感 × 分鐘）的合計；沒有一筆有體感時為 null */
   srpe: number | null;
   longestKm: number;
+  /** 跑步以外的運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞 */
+  other: { count: number; minutes: number; load: number | null };
 }
 
 /** 最近 N 週（週一起算，含這週），舊的在前 */
-export function weeklySummaries(workouts: Workout[], today: string, weeks: number): WeekSummary[] {
+export function weeklySummaries(workouts: Workout[], today: string, weeks: number, others: OtherActivity[] = []): WeekSummary[] {
   const thisMonday = addDays(today, -weekdayIndex(today));
   const out: WeekSummary[] = [];
   for (let i = weeks - 1; i >= 0; i--) {
@@ -314,6 +316,15 @@ export function weeklySummaries(workouts: Workout[], today: string, weeks: numbe
       load: loads.length ? loads.reduce((a, b) => a + b, 0) : null,
       srpe: srpes.length ? Math.round(srpes.reduce((a, b) => a + b, 0)) : null,
       longestKm: Math.max(0, ...inWeek.map((w) => w.distance_km ?? 0)),
+      other: (() => {
+        const list = others.filter((a) => a.date >= start && a.date <= end);
+        const otherLoads = list.flatMap((a) => (a.training_load != null ? [a.training_load] : []));
+        return {
+          count: list.length,
+          minutes: list.reduce((sum, a) => sum + (a.duration_min ?? 0), 0),
+          load: otherLoads.length ? otherLoads.reduce((a, b) => a + b, 0) : null,
+        };
+      })(),
     });
   }
   return out;
@@ -373,7 +384,7 @@ export const SNAPSHOT_RUN_SETTINGS = "run_settings";
 export const SNAPSHOT_PACE_CURVE = "pace_curve";
 
 export async function computeTrainingValues(db: Db, today: string, weeks = 4): Promise<TrainingValues> {
-  const [profile, settings, curve, races, workouts, wellness] = await Promise.all([
+  const [profile, settings, curve, races, workouts, wellness, others] = await Promise.all([
     db.getProfile(),
     // 來源沒有跑步設定或配速曲線時，同步存的是 null
     db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS),
@@ -381,6 +392,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     db.getAllRaces(),
     db.getRecentWorkouts(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
     db.getWellnessRaw(7),
+    db.getOtherActivities(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
   ]);
   const hr = heartRateInfo(profile, settings?.value ?? null, today);
   const vdot = estimateVdot(races, curve?.value ?? null, today);
@@ -400,7 +412,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     paces: vdot ? danielsPaces(vdot.value) : null,
     curve: curve?.value ?? null,
     thresholdPace: settings?.value?.threshold_pace ?? null,
-    weeks: weeklySummaries(workouts, today, weeks),
+    weeks: weeklySummaries(workouts, today, weeks, others),
     distribution,
     efforts,
     fitness: latestFitness(wellness, workouts),
@@ -506,9 +518,12 @@ export function formatTrainingValues(v: TrainingValues): string {
     if (w.load !== null) parts.push(`負荷 ${Math.round(w.load)}`);
     if (w.srpe !== null) parts.push(`sRPE ${w.srpe}`);
     if (w.runs) parts.push(`最長 ${round1(w.longestKm)} km`);
+    if (w.other.count) {
+      parts.push(`其他運動 ${w.other.count} 次 ${Math.round(w.other.minutes)} 分鐘${w.other.load !== null ? `（負荷 ${Math.round(w.other.load)}）` : ""}`);
+    }
     lines.push(`・${w.label}（${w.start.slice(5)} 起）：${parts.join("｜")}`);
   }
-  lines.push("（負荷是 Intervals.icu 的訓練負荷；sRPE 是體感 × 分鐘，只算有回報體感的）");
+  lines.push("（負荷是 Intervals.icu 的訓練負荷；sRPE 是體感 × 分鐘，只算有回報體感的；其他運動不算跑量）");
 
   lines.push("", `【強度分配】最近 ${DISTRIBUTION_DAYS} 天`);
   const d = v.distribution;
@@ -534,7 +549,7 @@ export function formatTrainingValues(v: TrainingValues): string {
     const form = f.ctl - f.atl;
     const parts = [`體能（CTL）${round1(f.ctl)}`, `疲勞（ATL）${round1(f.atl)}`, `狀態（CTL−ATL）${round1(form)}`];
     if (f.rampRate !== null) parts.push(`體能每週變化 ${f.rampRate >= 0 ? "+" : ""}${round1(f.rampRate)}`);
-    lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : ""}）`);
+    lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : "，包含所有運動"}）`);
     lines.push(parts.join("｜"));
   }
   lines.push("", PLANNING_RULES);

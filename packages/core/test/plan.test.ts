@@ -62,6 +62,7 @@ const ctx = (partial: Partial<CheckContext> = {}): CheckContext => ({
   workouts: history(),
   races: [],
   recovery: null,
+  others: [],
   ...partial,
 });
 
@@ -170,6 +171,17 @@ describe("檢查器", () => {
     expect(parseWeekdays("週一、星期五、禮拜天")).toEqual([0, 4, 6]);
   });
 
+  it("肌力訓練不排在強度課前一天；前一天騎很久，隔天不排強度課", () => {
+    const strength: SessionDraft = { date: "2026-10-14", kind: "strength", title: "肌力", steps: [{ duration_min: 25, note: "深蹲、弓箭步" }], purpose: "肌力", success: "做完", fallback: null };
+    expect(rules([...goodWeek(), strength])).toContain("strength_timing");
+    expect(rules([...goodWeek(), { ...strength, date: "2026-10-15" }])).not.toContain("strength_timing");
+    const ride = { intervals_id: "r1", date: "2026-10-14", type: "Ride", duration_min: 150, distance_km: 60, avg_hr: 130, training_load: 110 };
+    expect(rules(goodWeek(), { others: [ride] })).toContain("cross_fatigue");
+    expect(rules(goodWeek(), { others: [{ ...ride, duration_min: 40, training_load: 25 }] })).not.toContain("cross_fatigue");
+    // 肌力與交叉訓練不算跑量
+    expect(estimateSession(strength, { values: values(), challenge: false, fallbackPaceSec: 360 }).km).toBe(0);
+  });
+
   it("沒有配速依據時提醒", () => {
     expect(rules(goodWeek(), { values: values(false) })).toContain("no_paces");
   });
@@ -254,5 +266,43 @@ describe("教練存課表與調整", () => {
     const system = provider.calls[0]!.request.system!;
     expect(system).toContain("訓練偏好：目標：練速度（5–10 km）｜強度：適度（每週一堂強度課）｜節奏：彈性");
     expect(system).toContain("排課前先看選手的訓練偏好");
+  });
+});
+
+describe("其他運動", () => {
+  const ride = (date: string, id = "r1") => ({
+    intervals_id: id,
+    date,
+    type: "Ride",
+    duration_min: 150,
+    distance_km: 60,
+    avg_hr: 128,
+    training_load: 110,
+  });
+
+  it("同步時記下、跟著來源的刪除；教練在訓練紀錄、訓練數值與系統提示看得到", async () => {
+    const { coach, activities, provider } = await makeCoach([
+      toolTurn("get_recent_workouts", { days: 7 }),
+      toolTurn("get_training_values"),
+      turn({ text: "好" }),
+    ]);
+    let list = [ride("2026-10-09"), { ...ride("2026-10-08", "w1"), type: "WeightTraining", duration_min: 30, distance_km: null, training_load: 20 }];
+    Object.assign(activities, { fetchOtherActivities: async () => list });
+    expect(await coach.sync()).toBe(
+      "Intervals.icu 最近 14 天無跑步活動。另有 1 筆騎車、1 筆肌力訓練，已一併記下，教練會參考；如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。",
+    );
+    expect((await coach.db.getOtherActivities(7)).map((a) => a.intervals_id)).toEqual(["r1", "w1"]);
+
+    await coach.chat("最近練得如何");
+    expect(provider.calls[0]!.request.system).toContain("昨天與今天的其他運動");
+    expect(provider.calls[0]!.request.system).toContain("- 2026-10-09 騎車：150 分鐘｜60 km｜負荷 110｜心率 128");
+    expect(provider.calls[1]!.toolResults![0]!.content).toContain("最近 7 天沒有跑步。");
+    expect(provider.calls[1]!.toolResults![0]!.content).toContain("- 2026-10-08 肌力訓練：30 分鐘｜負荷 20");
+    expect(provider.calls[2]!.toolResults![0]!.content).toContain("其他運動 2 次 180 分鐘（負荷 130）");
+
+    // 在 Intervals.icu 刪掉的，下次同步就移除
+    list = [ride("2026-10-09")];
+    await coach.sync();
+    expect((await coach.db.getOtherActivities(7)).map((a) => a.intervals_id)).toEqual(["r1"]);
   });
 });

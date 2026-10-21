@@ -53,6 +53,7 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
       { key: "pref_schedule", label: "節奏", options: PREFERENCE_OPTIONS.pref_schedule, wide: true },
       { key: "pref_runs_per_week", label: "每週最多幾次", placeholder: "4" },
       { key: "pref_max_minutes", label: "每次最多幾分鐘", placeholder: "60" },
+      { key: "pref_other", label: "其他會做的運動", placeholder: "騎車、重訓", wide: true },
       { key: "pref_long_run_day", label: "長跑日", placeholder: "週日" },
       { key: "pref_rest_days", label: "休息日", placeholder: "週一、週五" },
       { key: "pref_train_time", label: "偏好時段", placeholder: "清晨" },

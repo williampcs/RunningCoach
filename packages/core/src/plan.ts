@@ -11,7 +11,7 @@ import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
 import type { TrainingValues } from "./training-values";
-import type { Race, Workout } from "./types";
+import type { OtherActivity, Race, Workout } from "./types";
 
 export const SESSION_KINDS = {
   easy: "輕鬆跑",
@@ -22,6 +22,7 @@ export const SESSION_KINDS = {
   repetition: "R 反覆跑",
   rest: "休息",
   cross: "交叉訓練",
+  strength: "肌力訓練",
   race: "比賽",
 } as const;
 export type SessionKind = keyof typeof SESSION_KINDS;
@@ -29,7 +30,7 @@ export type SessionKind = keyof typeof SESSION_KINDS;
 /** 強度課：一週最多兩堂、不連排兩天，要附狀況不好時的替代 */
 export const QUALITY_KINDS: ReadonlySet<SessionKind> = new Set(["marathon", "threshold", "interval", "repetition"]);
 /** 不是跑步的課：不算跑量 */
-const NON_RUN_KINDS: ReadonlySet<SessionKind> = new Set(["rest", "cross"]);
+export const NON_RUN_KINDS: ReadonlySet<SessionKind> = new Set(["rest", "cross", "strength"]);
 
 export type PaceCode = "E" | "M" | "T" | "I" | "R";
 const PACE_CODES: readonly PaceCode[] = ["E", "M", "T", "I", "R"];
@@ -87,6 +88,7 @@ export const EXPECTED_RPE: Record<SessionKind, [number, number] | null> = {
   repetition: [8, 9],
   rest: null,
   cross: null,
+  strength: null,
   race: null,
 };
 const PACE_RPE: Record<PaceCode, [number, number]> = { E: [2, 4], M: [5, 6], T: [6, 7], I: [8, 9], R: [8, 9] };
@@ -300,7 +302,12 @@ export interface CheckContext extends TargetContext {
   workouts: Workout[];
   races: Race[];
   recovery: RecoverySignals | null;
+  /** 最近的其他運動（騎車、游泳、肌力訓練等）：前一天騎很久，隔天不排強度課 */
+  others: OtherActivity[];
 }
+
+/** 其他運動算「很久或很硬」的門檻：隔天不排強度課 */
+const HEAVY_OTHER = { minutes: 90, load: 60 };
 
 /**
  * 每堂強度課的量：Daniels 的上限（週跑量的比例與公里數）。週跑量低時，至少允許一堂常見的最短量
@@ -451,6 +458,27 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   sessions.forEach((s, i) => {
     if (s.date === ctx.today && QUALITY_KINDS.has(s.kind) && flags.length) warn("today", `今天${flags.join("、")}，今天不要排強度課（${label(s, i)}）。`);
   });
+
+  // 11. 肌力訓練不排在強度課前一天；前一天騎很久或很硬（已經做的或排進課表的），隔天不排強度課
+  for (const { s, i } of quality) {
+    if (!s.date) continue;
+    const before = addDays(s.date, -1);
+    if (sessions.some((x) => x.kind === "strength" && x.date === before)) {
+      warn("strength_timing", `${label(s, i)} 的前一天排了肌力訓練；肌力訓練放在強度課當天（課後）或輕鬆日。`);
+    }
+    const heavyPlanned = sessions.some((x, j) => x.kind === "cross" && x.date === before && estimates[j]!.minutes >= HEAVY_OTHER.minutes);
+    const heavyDone = ctx.others.find(
+      (a) => (a.date === before || a.date === s.date) && ((a.duration_min ?? 0) >= HEAVY_OTHER.minutes || (a.training_load ?? 0) >= HEAVY_OTHER.load),
+    );
+    if (heavyPlanned || heavyDone) {
+      warn(
+        "cross_fatigue",
+        heavyDone
+          ? `${heavyDone.date} 有 ${Math.round(heavyDone.duration_min ?? 0)} 分鐘的其他運動（負荷 ${heavyDone.training_load ?? "?"}），${label(s, i)} 建議延後或減量。`
+          : `${label(s, i)} 的前一天排了很久的交叉訓練，強度課建議延後或減量。`,
+      );
+    }
+  }
 
   // 沒有配速依據：配速的目標會以體感顯示
   const usesPace = sessions.some((s) => s.steps.some((st) => (isRepeat(st) ? st.steps : [st]).some((x) => x.target && "pace" in x.target)));

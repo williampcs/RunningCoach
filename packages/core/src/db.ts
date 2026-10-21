@@ -6,6 +6,7 @@ import type {
   Activity,
   ConversationRow,
   DailyCheckin,
+  OtherActivity,
   PendingSubjective,
   Race,
   Row,
@@ -24,8 +25,9 @@ import type {
  * 5：source_snapshots（同步時存下的跑步設定與最佳配速曲線，訓練數值用）
  * 6：conversations.sources（教練回覆前讀過的資料，顯示為「參考了：…」）
  * 7：planned_sessions 與 training_plans 的 week_start、style、reason、outline、notes（結構化課表）
+ * 8：other_activities（跑步以外的運動：騎車、游泳、肌力訓練等）
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -157,6 +159,18 @@ const SCHEMA = `
     status     TEXT NOT NULL DEFAULT 'planned',
     note       TEXT,
     updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS other_activities (
+    intervals_id  TEXT PRIMARY KEY,
+    date          TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    duration_min  REAL,
+    distance_km   REAL,
+    avg_hr        INTEGER,
+    training_load INTEGER,
+    raw_json      TEXT,
+    synced_at     TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS source_snapshots (
@@ -903,6 +917,40 @@ export class Db {
     return this.all<DailyCheckin>(
       "SELECT date, energy, soreness, sleep, notes FROM daily_checkins WHERE date >= ? AND date <= ? ORDER BY date",
       [addDays(this.clock.today(), -days), this.clock.today()],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // other_activities：跑步以外的運動，同步時整批更新，跟著來源的刪除
+  // ---------------------------------------------------------------------------
+
+  async upsertOtherActivities(list: OtherActivity[]): Promise<void> {
+    for (const a of list) {
+      await this.run(
+        `INSERT INTO other_activities (intervals_id, date, type, duration_min, distance_km, avg_hr, training_load, raw_json, synced_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(intervals_id) DO UPDATE SET
+           date=excluded.date, type=excluded.type, duration_min=excluded.duration_min, distance_km=excluded.distance_km,
+           avg_hr=excluded.avg_hr, training_load=excluded.training_load, raw_json=excluded.raw_json, synced_at=excluded.synced_at`,
+        [a.intervals_id, a.date, a.type, a.duration_min, a.distance_km, a.avg_hr, a.training_load, a.raw_json ?? null, this.stamp()],
+      );
+    }
+  }
+
+  /** 範圍內本機有、這次沒拿到的（在來源已刪除）直接刪掉：這些紀錄沒有選手填的內容 */
+  async removeOtherActivitiesMissing(seenIds: string[], since: string, until: string): Promise<void> {
+    const placeholders = seenIds.map(() => "?").join(", ");
+    await this.run(
+      `DELETE FROM other_activities WHERE date >= ? AND date <= ?${seenIds.length ? ` AND intervals_id NOT IN (${placeholders})` : ""}`,
+      [since, until, ...seenIds],
+    );
+  }
+
+  /** 最近 N 天跑步以外的運動，新的在前 */
+  getOtherActivities(days: number): Promise<OtherActivity[]> {
+    return this.all<OtherActivity>(
+      "SELECT intervals_id, date, type, duration_min, distance_km, avg_hr, training_load FROM other_activities WHERE date >= ? ORDER BY date DESC",
+      [addDays(this.clock.today(), -days)],
     );
   }
 

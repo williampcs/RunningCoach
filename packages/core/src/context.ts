@@ -7,6 +7,7 @@
  * 層4 — 對話摘要（summaries 最新一筆，對話壓縮後產生）
  * 層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
  */
+import { otherActivitiesText } from "./activity-labels";
 import { COACHING_METHOD } from "./coaching-method";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
@@ -159,6 +160,12 @@ export class ContextManager {
           `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${targetLabel(r)}｜${daysBetween(r.date, today)} 天前`,
         );
       }
+    }
+
+    // 最近兩天的其他運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞
+    const recentOthers = await this.db.getOtherActivities(1);
+    if (recentOthers.length) {
+      lines.push("", otherActivitiesText(recentOthers, "昨天與今天的其他運動（不算跑量，但會累積疲勞，排強度課時要考慮）："));
     }
 
     // 今日身體狀況：選手自評與手錶的恢復資料；都沒有時不加，避免多餘的提示

@@ -7,6 +7,7 @@ import { changeSession, planTextForTool, savePlanFromTool, type SessionAction } 
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
+import { otherActivitiesText } from "./activity-labels";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
 
 const RACE_ID_HINT =
@@ -84,7 +85,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
               "pref_goal（health 只想運動／speed 練速度／distance 加強長距離／race 準備比賽）、" +
               "pref_intensity（easy 輕鬆就好／moderate 適度／challenge 想要挑戰）、" +
               "pref_runs_per_week（每週最多幾次，整數）、pref_max_minutes（每次最多幾分鐘，整數）、" +
-              "pref_schedule（fixed 固定／flexible 彈性）",
+              "pref_schedule（fixed 固定／flexible 彈性）、pref_other（其他會做的運動，例：騎車、重訓）",
           },
           value: { type: "string", description: "欄位值" },
         },
@@ -111,7 +112,8 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
                 date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" },
                 kind: {
                   type: "string",
-                  enum: ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "race"],
+                  enum: ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"],
+                  description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
                 },
                 title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
                 steps: {
@@ -486,9 +488,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "get_recent_workouts": {
         const days = toInt(input.days ?? RECENT_WORKOUT_DAYS, "days");
-        const workouts = await db.getRecentWorkouts(days);
-        if (!workouts.length) return `最近 ${days} 天無訓練紀錄。`;
-        const lines = [`最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：`];
+        const [workouts, others] = await Promise.all([db.getRecentWorkouts(days), db.getOtherActivities(days)]);
+        if (!workouts.length && !others.length) return `最近 ${days} 天無訓練紀錄。`;
+        const lines = [workouts.length ? `最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：` : `最近 ${days} 天沒有跑步。`];
         for (const w of workouts) {
           const subj = w.perceived_effort ? `｜體感 ${w.perceived_effort}/10` : "";
           lines.push(
@@ -497,6 +499,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           );
           if (w.summary) lines.push(`  AI摘要：${w.summary}`);
         }
+        if (others.length) lines.push("", otherActivitiesText(others));
         return lines.join("\n");
       }
 

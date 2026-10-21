@@ -49,19 +49,21 @@ export function preferenceText(profile: Record<string, string>): string[] {
   if (profile.pref_runs_per_week) out.push(`每週最多 ${profile.pref_runs_per_week} 次`);
   if (profile.pref_max_minutes) out.push(`每次最多 ${profile.pref_max_minutes} 分鐘`);
   pick("pref_schedule", "節奏");
+  if (profile.pref_other) out.push(`其他運動：${profile.pref_other}`);
   return out;
 }
 
 const mondayOf = (date: string) => addDays(date, -weekdayIndex(date));
 
 async function contextFor(db: Db, today: string, weekStart: string, style: PlanStyle): Promise<CheckContext> {
-  const [values, profile, workouts, races, wellness, checkins] = await Promise.all([
+  const [values, profile, workouts, races, wellness, checkins, others] = await Promise.all([
     computeTrainingValues(db, today),
     db.getProfile(),
     db.getRecentWorkouts(70),
     db.getAllRaces(),
     db.getWellness(36),
     db.getCheckins(1),
+    db.getOtherActivities(14),
   ]);
   return {
     values,
@@ -74,6 +76,7 @@ async function contextFor(db: Db, today: string, weekStart: string, style: PlanS
     workouts,
     races,
     recovery: analyzeRecovery(wellness, checkins, today),
+    others,
   };
 }
 
