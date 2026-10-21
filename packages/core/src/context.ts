@@ -170,7 +170,11 @@ export class ContextManager {
           ? `・選手自評：${describeCheckin(recovery.checkin)}`
           : "・選手今天還沒自評；需要判斷能不能練時，先問今天的精神、痠痛與睡眠",
       );
-      if (watchLine) lines.push(`・手錶（${recovery.latest!.date}）：${watchLine}`);
+      if (watchLine) {
+        // 手錶早上同步之前，最新的是昨天的資料：寫明，教練才不會當成今天的
+        const date = recovery.latest!.date;
+        lines.push(`・手錶（${date}，${date === today ? "今天" : "昨天的資料"}）：${watchLine}`);
+      }
       lines.push(`【身體狀況的判讀】${RECOVERY_RULES}需要更多天的資料時呼叫 get_recovery_status。`);
     }
 

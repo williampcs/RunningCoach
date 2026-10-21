@@ -335,6 +335,16 @@ describe("訓練數值進到教練", () => {
     expect(result).toContain("sRPE");
   });
 
+  it("來源沒有跑步設定或配速曲線時（同步存下 null）照樣算", async () => {
+    const { coach, provider } = await makeCoach([toolTurn("get_training_values"), turn({ text: "好" })]);
+    await coach.db.saveSnapshot("run_settings", null);
+    await coach.db.saveSnapshot("pace_curve", null);
+    await coach.chat("我的配速區間？");
+    const result = provider.calls[1]!.toolResults![0]!.content;
+    expect(result).not.toContain("執行失敗");
+    expect(result).toContain("Intervals.icu 沒有設定閾值配速");
+  });
+
   it("什麼都沒有時說明缺什麼、怎麼補", async () => {
     const { coach, provider } = await makeCoach([
       toolTurn("get_training_values"),

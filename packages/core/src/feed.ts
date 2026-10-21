@@ -65,6 +65,8 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
   ]);
   const items: FeedItem[] = [];
   const recovery = analyzeRecovery(wellness, checkins, today);
+  // 手錶早上同步之前，最新的恢復資料是昨天的：寫明是昨天的
+  const watchSays = recovery.latest && recovery.latest.date !== today ? "手錶昨天的資料顯示" : "手錶顯示";
 
   // 身體狀況：先問感受；手錶的數據只當參考
   if (!recovery.checkin) {
@@ -74,7 +76,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
       tone: "info",
       title: "今天身體感覺如何？",
       detail: recovery.watchFlags.length
-        ? `手錶顯示${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你自己的感覺。`
+        ? `${watchSays}${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你自己的感覺。`
         : recovery.latest
           ? "花 10 秒回報精神、痠痛與睡眠，教練會以你的感受為主，而不只看手錶。"
           : // 沒有手錶的恢復資料（例如只用 iPhone）：不提手錶
@@ -92,7 +94,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
         title: "今天狀況不太好，建議降低強度",
         detail:
           `${self.join("、")}。` +
-          (recovery.mismatch === "self_worse" ? "手錶數據看起來正常，但以你的感受為主。" : watch.length ? `手錶也顯示${watch.join("、")}。` : ""),
+          (recovery.mismatch === "self_worse" ? "手錶數據看起來正常，但以你的感受為主。" : watch.length ? `${watchSays.replace("顯示", "也顯示")}${watch.join("、")}。` : ""),
         actions: [
           ask("問教練怎麼調整", `我今天的狀況是${describeCheckin(recovery.checkin)}，今天的訓練該怎麼調整？`),
           { type: "checkin" },
@@ -104,9 +106,9 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
         kind: "recovery",
         tone: "info",
         title: "手錶的恢復數據偏差，但你自評不錯",
-        detail: `${watch.join("、")}。以你的感受為主，照計畫進行，過程中留意身體的反應。`,
+        detail: `${watchSays}${watch.join("、")}。以你的感受為主，照計畫進行，過程中留意身體的反應。`,
         actions: [
-          ask("問教練", `手錶顯示${watch.join("、")}，但我自己覺得還不錯（${describeCheckin(recovery.checkin)}），今天照課表跑可以嗎？`),
+          ask("問教練", `${watchSays}${watch.join("、")}，但我自己覺得還不錯（${describeCheckin(recovery.checkin)}），今天照課表跑可以嗎？`),
           { type: "checkin" },
         ],
       });

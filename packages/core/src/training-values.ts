@@ -375,8 +375,9 @@ export const SNAPSHOT_PACE_CURVE = "pace_curve";
 export async function computeTrainingValues(db: Db, today: string, weeks = 4): Promise<TrainingValues> {
   const [profile, settings, curve, races, workouts, wellness] = await Promise.all([
     db.getProfile(),
-    db.getSnapshot<RunSettings>(SNAPSHOT_RUN_SETTINGS),
-    db.getSnapshot<PaceCurveSummary>(SNAPSHOT_PACE_CURVE),
+    // 來源沒有跑步設定或配速曲線時，同步存的是 null
+    db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS),
+    db.getSnapshot<PaceCurveSummary | null>(SNAPSHOT_PACE_CURVE),
     db.getAllRaces(),
     db.getRecentWorkouts(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
     db.getWellnessRaw(7),
@@ -398,7 +399,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     vdot,
     paces: vdot ? danielsPaces(vdot.value) : null,
     curve: curve?.value ?? null,
-    thresholdPace: settings?.value.threshold_pace ?? null,
+    thresholdPace: settings?.value?.threshold_pace ?? null,
     weeks: weeklySummaries(workouts, today, weeks),
     distribution,
     efforts,
