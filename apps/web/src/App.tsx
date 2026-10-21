@@ -112,6 +112,31 @@ export function App() {
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
 
+  const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
+
+  // 手機把 App 放在背景、隔天再打開時，頁面不會重新載入：回到前景與跨日時重新讀取，
+  // 恢復資料（手錶早上才同步的靜息心率、HRV、睡眠）過期時也重新取得（只讀取，不花 LLM 的費用）
+  useEffect(() => {
+    if (!coach) return;
+    let day = coach.today();
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      const today = coach.today();
+      if (today !== day) {
+        day = today;
+        touch();
+      }
+      if (activitiesReady) void coach.refreshWellness().then((fetched) => fetched && touch());
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    const timer = setInterval(refresh, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      clearInterval(timer);
+    };
+  }, [coach, touch, activitiesReady]);
+
   const state = useMemo<AppState | null>(() => {
     if (!db || !coach) return null;
     return {
@@ -128,7 +153,7 @@ export function App() {
         setSettings(next);
       },
       testMode,
-      activitiesReady: testMode.enabled || settings.intervals.apiKey.trim() !== "",
+      activitiesReady,
       updateTestMode(next) {
         saveTestMode(next);
         // 切換正式／測試資料庫要重新載入；其餘（假資料、模擬日期）直接套用
@@ -154,7 +179,7 @@ export function App() {
         setTab("report");
       },
     };
-  }, [db, coach, settings, testMode, problem, revision, touch]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady]);
 
   if (fatal) {
     return (

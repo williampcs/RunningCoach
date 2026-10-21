@@ -8,7 +8,7 @@ import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from ".
 import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
 import { recoveryNoteFor } from "./recovery";
-import { runSync } from "./sync";
+import { runSync, SYNC_DAYS } from "./sync";
 import {
   buildTools,
   createToolExecutor,
@@ -126,12 +126,18 @@ interface Runtime {
   executeTool: ToolExecutor;
 }
 
+/** 恢復資料超過這麼久沒更新時，打開 App 或對話前自動重新取得 */
+export const WELLNESS_MAX_AGE_MS = 30 * 60_000;
+
 export class Coach {
   readonly db: Db;
   private readonly logger: Logger;
   private readonly now: () => Date;
   private runtime: Runtime;
   private compressing: Promise<void> | null = null;
+  /** 上次從活動來源取得恢復資料的時間（毫秒）；同步也算 */
+  private wellnessFetchedAt = -Infinity;
+  private wellnessRefresh: Promise<boolean> | null = null;
 
   constructor(options: CoachOptions) {
     this.now = options.now ?? (() => new Date());
@@ -148,6 +154,8 @@ export class Coach {
    */
   configure(config: CoachConfig): void {
     this.runtime = this.buildRuntime(config);
+    // 活動來源可能換了（新的 API key、測試模式的假資料），下次重新取得恢復資料
+    this.wellnessFetchedAt = -Infinity;
   }
 
   private buildRuntime(config: CoachConfig): Runtime {
@@ -197,6 +205,8 @@ export class Coach {
   async chat(userMessage: string, onEvent?: (event: ChatEvent) => void): Promise<ChatReply> {
     const rt = this.runtime;
     await this.db.appendConversation("user", userMessage);
+    // 手錶早上才同步的靜息心率、HRV 與睡眠，對話前先取得，教練才不會拿昨天的資料當今天的
+    await this.refreshWellness();
 
     // 背景觸發壓縮（不阻塞主流程）
     if (await rt.context.shouldCompress()) this.compressInBackground(rt);
@@ -255,9 +265,35 @@ export class Coach {
   }
 
   /** 從活動來源同步最近的跑步活動，並合併主觀暫存 */
-  sync(): Promise<string> {
+  async sync(): Promise<string> {
     const { llm, activities } = this.runtime;
-    return runSync({ db: this.db, llm, activities, logger: this.logger });
+    const result = await runSync({ db: this.db, llm, activities, logger: this.logger });
+    this.wellnessFetchedAt = this.now().getTime();
+    return result;
+  }
+
+  /**
+   * 恢復資料（靜息心率、HRV、睡眠）超過 maxAgeMs 沒更新時，從活動來源重新取得最近 14 天的。
+   * 只讀取，不呼叫 LLM、不花費用；打開 App、回到前景與對話前呼叫。失敗只記錄。回傳是否取得了資料。
+   */
+  refreshWellness(maxAgeMs = WELLNESS_MAX_AGE_MS): Promise<boolean> {
+    const { activities } = this.runtime;
+    if (!activities.fetchWellness || this.now().getTime() - this.wellnessFetchedAt < maxAgeMs) return Promise.resolve(false);
+    // 同時有好幾個地方要求更新（例如回到前景時正好送出訊息）時只取一次
+    this.wellnessRefresh ??= (async () => {
+      try {
+        await this.db.upsertWellness(await activities.fetchWellness!(SYNC_DAYS));
+        return true;
+      } catch (e) {
+        this.logger.warn(`Wellness refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
+      } finally {
+        // 失敗時也等下一個間隔再試：連不上時，不要每則訊息都卡在逾時
+        this.wellnessFetchedAt = this.now().getTime();
+        this.wellnessRefresh = null;
+      }
+    })();
+    return this.wellnessRefresh;
   }
 
   /**

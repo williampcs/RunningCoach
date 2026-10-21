@@ -171,7 +171,7 @@ describe("recovery in the coach", () => {
     await coach.chat("今天可以練嗎");
     const system = provider.calls[1]!.request.system!;
     expect(system).toContain("今日身體狀況：\n・選手自評：精神 2/5、痠痛 3/5、睡眠 4/5；有點累");
-    expect(system).toContain("・手錶（2026-10-10）：靜息心率 58（前幾天平均 52，+6）｜HRV 60 ms（+0%）｜睡眠 7 小時｜睡眠分數 80");
+    expect(system).toContain("・手錶（2026-10-10，今天）：靜息心率 58（前幾天平均 52，+6）｜HRV 60 ms（+0%）｜睡眠 7 小時｜睡眠分數 80");
     expect(system).toContain("【身體狀況的判讀】手錶的恢復數據只是參考。");
   });
 
@@ -212,5 +212,72 @@ describe("recovery in the coach", () => {
   it("rejects check-in scores outside 1–5", async () => {
     const { coach } = await makeCoach([]);
     await expect(coach.saveCheckin({ energy: 0, soreness: 1, sleep: 1, notes: null })).rejects.toThrow("energy 必須是 1–5");
+  });
+});
+
+describe("恢復資料的更新與日期", () => {
+  const make = (source: FakeActivitySource, clock: { now: Date }) =>
+    new Coach({
+      driver: openNodeSqlite(":memory:"),
+      llm: {
+        provider: new ScriptedProvider([turn({ text: "a" }), turn({ text: "b" })]),
+        models: { chat: "c", summary: "s", compress: "p" },
+        chatEffort: "medium",
+      },
+      activities: source,
+      now: () => clock.now,
+      logger: silentLogger,
+    });
+
+  it("超過 30 分鐘沒更新才重新取得；失敗也等下一個間隔；換了活動來源就重新取得", async () => {
+    const clock = { now: new Date(`${TODAY}T00:00:00Z`) };
+    const source = new FakeActivitySource([], () => TODAY, week({ resting_hr: 58 }));
+    let calls = 0;
+    const fetch = source.fetchWellness.bind(source);
+    source.fetchWellness = async (days) => {
+      calls += 1;
+      return fetch(days);
+    };
+    const coach = make(source, clock);
+    await coach.init();
+
+    expect(await coach.refreshWellness()).toBe(true);
+    expect(await coach.db.getWellness(7)).toHaveLength(8);
+    clock.now = new Date(clock.now.getTime() + 29 * 60_000);
+    expect(await coach.refreshWellness()).toBe(false);
+    clock.now = new Date(clock.now.getTime() + 2 * 60_000);
+    // 同時要求兩次只取一次
+    expect(await Promise.all([coach.refreshWellness(), coach.refreshWellness()])).toEqual([true, true]);
+    expect(calls).toBe(2);
+
+    source.fetchWellness = async () => {
+      calls += 1;
+      throw new Error("down");
+    };
+    clock.now = new Date(clock.now.getTime() + 31 * 60_000);
+    expect(await coach.refreshWellness()).toBe(false);
+    expect(await coach.refreshWellness()).toBe(false);
+    expect(calls).toBe(3);
+
+    coach.configure({ llm: { provider: new ScriptedProvider([]), models: { chat: "c", summary: "s", compress: "p" }, chatEffort: "medium" }, activities: source });
+    expect(await coach.refreshWellness()).toBe(false);
+    expect(calls).toBe(4);
+  });
+
+  it("對話前先取得恢復資料；最新的是昨天的時寫明", async () => {
+    const yesterday = addDays(TODAY, -1);
+    const days = Array.from({ length: 8 }, (_, i) => day(addDays(yesterday, -7 + i), i === 7 ? { resting_hr: 59 } : {}));
+    const clock = { now: new Date(`${TODAY}T01:00:00Z`) };
+    const coach = make(new FakeActivitySource([], () => TODAY, days), clock);
+    await coach.init();
+    const provider = new ScriptedProvider([turn({ text: "好" })]);
+    coach.configure({
+      llm: { provider, models: { chat: "c", summary: "s", compress: "p" }, chatEffort: "medium" },
+      activities: new FakeActivitySource([], () => TODAY, days),
+    });
+    await coach.chat("今天可以練嗎");
+    expect(provider.calls[0]!.request.system).toContain(`・手錶（${yesterday}，昨天的資料）：靜息心率 59`);
+    const feed = await coach.feed();
+    expect(feed[0]!.detail).toContain("手錶昨天的資料顯示靜息心率比前幾天平均高");
   });
 });
