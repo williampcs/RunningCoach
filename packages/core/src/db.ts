@@ -561,6 +561,15 @@ export class Db {
     });
   }
 
+  /** 每週最新的一份結構化課表（週一在 since 之後的），舊的在前；依結果調整配速時看最近幾週 */
+  getWeeklyPlansSince(since: string): Promise<TrainingPlan[]> {
+    return this.all<TrainingPlan>(
+      "SELECT * FROM training_plans WHERE id IN (SELECT MAX(id) FROM training_plans WHERE week_start IS NOT NULL AND week_start >= ? GROUP BY week_start)" +
+        " ORDER BY week_start",
+      [since],
+    );
+  }
+
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
       "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note FROM planned_sessions WHERE plan_id=? ORDER BY position",

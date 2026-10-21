@@ -2,7 +2,7 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
-import { activePlan, changeSession, type ActivePlan, type SessionAction } from "./planning";
+import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
@@ -388,6 +388,7 @@ export class Coach {
         perceived_effort: perceivedEffort,
         subjective_notes: subjectiveNotes,
         recovery: await recoveryNoteFor(this.db, latest.date),
+        plan: await planNoteFor(this.db, this.today(), workoutId),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -417,6 +418,7 @@ export class Coach {
         perceived_effort: perceivedEffort,
         subjective_notes: notes,
         recovery: await recoveryNoteFor(this.db, existing.date),
+        plan: await planNoteFor(this.db, this.today(), workoutId),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {

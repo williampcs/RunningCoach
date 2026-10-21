@@ -7,6 +7,8 @@
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
 import { PLANNING_RULES } from "./coaching-method";
+import { typicalPaceSec } from "./plan";
+import { recentAdjustment } from "./plan-match";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { formatPace } from "./fake-activities";
@@ -369,7 +371,10 @@ export interface TrainingValues {
   coverage: { runs: number; withHr: number; withZones: number; rated: number };
   hr: HeartRateInfo | null;
   vdot: VdotEstimate | null;
+  /** 課表用的配速（依最近強度課的結果可能放慢）；預測完賽時間仍用 vdot */
   paces: DanielsPaces | null;
+  /** 依最近強度課的結果放慢配速：VDOT 減多少與原因；沒有時為 null */
+  adjustment: { penalty: number; reason: string } | null;
   curve: PaceCurveSummary | null;
   /** Intervals.icu 設定的閾值配速，m/s */
   thresholdPace: number | null;
@@ -399,6 +404,22 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
   const recent = workouts.filter((w) => daysBetween(w.date, today) < DISTRIBUTION_DAYS);
   const distribution = intensityDistribution(recent, hr?.lthr ?? null);
   const efforts = effortDistribution(recent);
+  const basePaces = vdot ? danielsPaces(vdot.value) : null;
+  // 依最近強度課的結果：太難或沒做到就放慢一級（只會放慢，要變快靠新的成績）
+  const adjust = vdot
+    ? await recentAdjustment(
+        db,
+        today,
+        {
+          values: { hr, paces: basePaces } as TrainingValues,
+          challenge: profile.pref_intensity === "challenge",
+          fallbackPaceSec: typicalPaceSec(workouts),
+        },
+        workouts,
+        others,
+      )
+    : { penalty: 0, reason: null };
+  const adjustment = adjust.penalty > 0 && adjust.reason ? { penalty: adjust.penalty, reason: adjust.reason } : null;
   return {
     today,
     coverage: {
@@ -409,7 +430,8 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     },
     hr,
     vdot,
-    paces: vdot ? danielsPaces(vdot.value) : null,
+    paces: vdot ? (adjustment ? danielsPaces(vdot.value - adjustment.penalty) : basePaces) : null,
+    adjustment,
     curve: curve?.value ?? null,
     thresholdPace: settings?.value?.threshold_pace ?? null,
     weeks: weeklySummaries(workouts, today, weeks, others),
@@ -483,6 +505,12 @@ export function formatTrainingValues(v: TrainingValues): string {
   if (v.vdot && v.paces) {
     const p = v.paces;
     lines.push(`Daniels 的 VDOT ${round1(v.vdot.value)}，依據：${vdotSourceText(v.vdot)}`);
+    if (v.adjustment) {
+      lines.push(
+        `依最近的結果放慢：課表用 VDOT ${round1(v.vdot.value - v.adjustment.penalty)}（${v.adjustment.reason}）；` +
+          "之後的強度課達成且不覺得難就逐步回升。下面的配速已經放慢。",
+      );
+    }
     lines.push(`・E 輕鬆跑、長跑：${formatPace(p.easy[0]).replace("/km", "")}–${formatPace(p.easy[1])}（慢一點沒關係）`);
     lines.push(`・M 馬拉松配速：${formatPace(p.marathon)}`);
     lines.push(`・T 閾值配速：${formatPace(p.threshold)}`);

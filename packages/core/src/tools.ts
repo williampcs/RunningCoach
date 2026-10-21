@@ -3,7 +3,7 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { isoWeekLabel } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
-import { changeSession, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
@@ -323,6 +323,8 @@ export type WorkoutSummaryInput = Pick<
   subjective_notes: string | null;
   /** 當天的身體狀況（recoveryNoteFor），沒有時不帶入 */
   recovery?: string | null;
+  /** 這趟對應的課與程式的判斷（planNoteFor）；沒有結構化課表時不加 */
+  plan?: string | null;
 };
 
 /** 生成 AI 跑步分析摘要 */
@@ -344,11 +346,15 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
+    (workout.plan ? `課表：${workout.plan}\n` : "") +
     `\n格式：一行數據摘要 ＋ AI評估。` +
     (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
     (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率。") +
     (workout.recovery
       ? "可以參考當天的身體狀況解讀心率與體感；手錶的恢復數據只是參考，與選手的自評不一致時以選手的感受為主。"
+      : "") +
+    (workout.plan
+      ? "對照課表說明這趟和計畫的差異；跑了不一樣的課或沒做完時，用「這次偏難／不一樣，下次怎麼調整」的說法，不要寫失敗。"
       : "");
   return (await llm.complete("summary", prompt, 2000)).text;
 }
@@ -469,6 +475,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           perceived_effort: perceivedEffort,
           subjective_notes: subjectiveNotes,
           recovery: await recoveryNoteFor(db, activity.date),
+          plan: await planNoteFor(db, today(), workoutId),
         });
         await db.saveWorkoutSummary(workoutId, summary);
         activityCache = null;

@@ -1,7 +1,7 @@
 /**
  * 課表的存檔、檢查與調整：教練的工具與網頁版共用（規格 12.8 的第三步 3a）.
  */
-import { addDays, isoWeekLabel, weekdayIndex } from "./dates";
+import { addDays, isoWeekLabel, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
 import {
   checkPlan,
@@ -21,6 +21,7 @@ import {
   type SessionView,
   type TargetContext,
 } from "./plan";
+import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
 import { analyzeRecovery } from "./recovery";
 import { computeTrainingValues } from "./training-values";
 import type { TrainingPlan } from "./types";
@@ -95,6 +96,13 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
 
   const ctx = await contextFor(db, today, weekStart, style);
   const warnings = checkPlan(sessions, ctx);
+  const past = sessions.filter((s) => s.date && s.date < today);
+  if (past.length) {
+    warnings.push({
+      rule: "past_date",
+      message: `${past.map((s) => s.date!.slice(5)).join("、")} 的課排在今天以前；已經跑過的紀錄會自動配對，只排剩下的日子就好。`,
+    });
+  }
   const notesInput = typeof input.warning_notes === "string" ? input.warning_notes.trim() : "";
   if (warnings.length && input.accept_warnings !== true) {
     return (
@@ -113,10 +121,25 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
   return `課表已儲存（${meta.weekLabel}）。\n\n${sessionsText(saved, ctx)}`;
 }
 
-function sessionsText(sessions: PlannedSession[], ctx: TargetContext): string {
+/** 結果的一行，例：「→ 部分達成：強度課的時間比計畫少｜實際：8.1 km、50 分鐘、心率 158、體感 8｜體感偏難」 */
+export function resultText(r: SessionResult | undefined): string {
+  if (!r || r.outcome === "pending") return "";
+  const label = OUTCOME_LABELS[r.outcome];
+  const parts = [`→ ${label}${r.reasons.length ? `：${r.reasons.join("、")}` : ""}`];
+  if (r.actual) parts.push(`實際：${r.actual}`);
+  if (r.difficulty) parts.push(DIFFICULTY_LABELS[r.difficulty]);
+  return parts.join("｜");
+}
+
+function extrasText(match: WeekMatch): string[] {
+  return match.extraRuns.map((w) => `${w.date.slice(5)}（${weekdayName(w.date)}）${w.distance_km ?? "?"} km、${Math.round(w.duration_min ?? 0)} 分鐘`);
+}
+
+function sessionsText(sessions: PlannedSession[], ctx: TargetContext, match?: WeekMatch): string {
   return sortSessions(sessions)
     .map((s) => {
       const v = sessionView(s, ctx);
+      const result = resultText(match?.results.get(s.id));
       const status = STATUS_LABELS[v.status];
       const detail = [v.purpose && `目的：${v.purpose}`, v.success && `完成的標準：${v.success}`, v.fallback && `狀況不好時：${v.fallback}`]
         .filter(Boolean)
@@ -124,7 +147,8 @@ function sessionsText(sessions: PlannedSession[], ctx: TargetContext): string {
       return (
         `[session_id=${v.id}] ${v.when}｜${v.kindLabel}：${v.title}${status ? `（${status}${v.note ? `：${v.note}` : ""}）` : ""}\n` +
         (v.steps ? `  ${v.steps}（約 ${v.km} km、${v.minutes} 分鐘）\n` : "") +
-        (detail ? `  ${detail}` : "")
+        (detail ? `  ${detail}\n` : "") +
+        (result ? `  ${result}` : "")
       ).trimEnd();
     })
     .join("\n");
@@ -133,21 +157,25 @@ function sessionsText(sessions: PlannedSession[], ctx: TargetContext): string {
 export interface ActivePlan {
   plan: TrainingPlan;
   /** 結構化的課表才有；舊的文字課表是空的 */
-  sessions: SessionView[];
+  sessions: (SessionView & { result: SessionResult | null })[];
   styleLabel: string | null;
   totalKm: number;
+  /** 這週沒有配到課的跑步（排課前已跑、課表外多跑的） */
+  extras: string[];
 }
 
 /** 啟用中的課表，目標依現在的訓練數值換算 */
 export async function activePlan(db: Db, today: string): Promise<ActivePlan | null> {
   const plan = await db.getActiveTrainingPlan();
   if (!plan) return null;
-  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0 };
+  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, extras: [] };
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
-  const sessions = sortSessions(await db.getPlannedSessions(plan.id)).map((s) => sessionView(s, ctx));
+  const planned = await db.getPlannedSessions(plan.id);
+  const match = matchWeek(planned, ctx.workouts, ctx.others, plan.week_start, today, ctx);
+  const sessions = sortSessions(planned).map((s) => ({ ...sessionView(s, ctx), result: match.results.get(s.id) ?? null }));
   const totalKm = Math.round(sessions.filter((s) => s.status !== "skipped").reduce((sum, s) => sum + s.km, 0) * 10) / 10;
-  return { plan, sessions, styleLabel: STYLE_LABELS[style], totalKm };
+  return { plan, sessions, styleLabel: STYLE_LABELS[style], totalKm, extras: extrasText(match) };
 }
 
 /** get_training_plan 的內容 */
@@ -158,10 +186,14 @@ export async function planTextForTool(db: Db, today: string): Promise<string> {
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
   const sessions = await db.getPlannedSessions(plan.id);
+  const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start, today, ctx);
   const lines = [`當前訓練計畫（${plan.week_label}，${plan.week_start} 起，${STYLE_LABELS[style]}）`];
   if (plan.reason) lines.push(`排課的原因：${plan.reason}`);
   if (plan.notes) lines.push(`檢查器的提醒與理由：${plan.notes}`);
-  lines.push("", sessionsText(sessions, ctx));
+  lines.push("", sessionsText(sessions, ctx, match));
+  const extras = extrasText(match);
+  if (extras.length) lines.push("", `課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：${extras.join("；")}`);
+  lines.push("（→ 後面是程式依實際紀錄的判斷；跑了不一樣的課、沒跑的課都不是失敗，沒跑的跳過即可，不要補）");
   if (plan.outline) lines.push("", "之後幾週：", plan.outline);
   lines.push("", "目標由程式依目前的訓練數值換算；單堂調整用 update_planned_session，整週重排用 save_training_plan。");
   return lines.join("\n");
@@ -225,4 +257,29 @@ export async function changeSession(
   const warnings = checkPlan(counted, ctx);
   const done = { move: "已移動", skip: "已跳過", fallback: "已改用替代的課", restore: "已恢復原本的課" }[action];
   return `${done}（session_id=${id}）。` + (warnings.length ? `\n調整後的檢查：\n${warningList(warnings)}` : "");
+}
+
+/**
+ * 跑後分析用：這趟對應課表上的哪一堂課，以及程式的判斷；這週沒有結構化課表時為 null。
+ * 例：「這趟對應的課：T 閾值 4×1 km（…）；完成的標準：…；程式的判斷：部分達成（…）」
+ */
+export async function planNoteFor(db: Db, today: string, workoutId: number): Promise<string | null> {
+  const plan = await db.getActiveTrainingPlan();
+  const workout = await db.getWorkout(workoutId);
+  if (!plan?.week_start || !workout) return null;
+  if (workout.date < plan.week_start || workout.date > addDays(plan.week_start, 6)) return null;
+  const style = (plan.style ?? "fixed") as PlanStyle;
+  const ctx = await contextFor(db, today, plan.week_start, style);
+  const sessions = await db.getPlannedSessions(plan.id);
+  const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start, today, ctx);
+  const session = sessions.find((s) => match.results.get(s.id)?.workoutId === workoutId);
+  if (!session) return "這趟不在課表上（課表外的跑步），算進這週的跑量。";
+  const v = sessionView(session, ctx);
+  const r = match.results.get(session.id)!;
+  return (
+    `這趟對應的課：${v.kindLabel}「${v.title}」（${v.steps}）` +
+    (v.success ? `；完成的標準：${v.success}` : "") +
+    `；程式的判斷：${OUTCOME_LABELS[r.outcome]}${r.reasons.length ? `（${r.reasons.join("、")}）` : ""}` +
+    (r.difficulty ? `；${DIFFICULTY_LABELS[r.difficulty]}` : "")
+  );
 }

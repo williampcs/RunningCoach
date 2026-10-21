@@ -15,6 +15,7 @@ import type { Db, SaveResult } from "./db";
 import { IntervalsError } from "./intervals";
 import type { Llm } from "./llm";
 import { activityLabel } from "./activity-labels";
+import { planNoteFor } from "./planning";
 import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
 import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
@@ -191,6 +192,7 @@ export async function runSync(deps: {
         perceived_effort: workout?.perceived_effort ?? null,
         subjective_notes: workout?.subjective_notes ?? null,
         recovery: await recoveryNoteFor(db, activity.date),
+        plan: await planNoteFor(db, db.today(), saved.id),
       });
       await db.saveWorkoutSummary(saved.id, summary);
     } catch (e) {

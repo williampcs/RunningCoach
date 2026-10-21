@@ -343,7 +343,15 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   const warn = (rule: string, message: string) => warnings.push({ rule, message });
   const estimates = sessions.map((s) => estimateSession(s, ctx));
   const runs = sessions.filter((s) => !NON_RUN_KINDS.has(s.kind));
-  const weekKm = estimates.reduce((sum, e) => sum + e.km, 0);
+  // 固定的課表：這週已經跑過、那天沒有排課的，也算進這週的跑量（彈性的菜單會把它們配進去，不重複算）
+  const sessionDates = new Set(sessions.flatMap((s) => (s.date ? [s.date] : [])));
+  const doneKm =
+    ctx.style === "fixed"
+      ? ctx.workouts
+          .filter((w) => w.date >= ctx.weekStart && w.date < ctx.today && w.date <= addDays(ctx.weekStart, 6) && !sessionDates.has(w.date))
+          .reduce((sum, w) => sum + (w.distance_km ?? 0), 0)
+      : 0;
+  const weekKm = estimates.reduce((sum, e) => sum + e.km, 0) + doneKm;
   const quality = sessions.map((s, i) => ({ s, i })).filter(({ s }) => QUALITY_KINDS.has(s.kind));
 
   // 1. 每週至少一天休息或很輕鬆

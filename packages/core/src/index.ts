@@ -96,6 +96,9 @@ export {
   type SessionView,
 } from "./plan";
 export { DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
+export { activityLabel } from "./activity-labels";
+export type { OtherActivity } from "./types";
 export {
   computeTrainingValues,
   danielsPaces,

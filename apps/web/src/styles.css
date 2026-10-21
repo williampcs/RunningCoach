@@ -1010,3 +1010,23 @@ pre {
 .session-actions button {
   font-size: 0.85rem;
 }
+
+.session-result {
+  color: var(--text);
+}
+
+.badge.achieved,
+.badge.rested {
+  background: var(--ok);
+}
+
+.badge.partial,
+.badge.different,
+.badge.not_rested {
+  background: var(--info);
+}
+
+.badge.missed,
+.badge.skipped {
+  background: var(--border);
+}

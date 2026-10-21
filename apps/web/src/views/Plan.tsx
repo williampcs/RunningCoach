@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 
-import { addDays, daysBetween, QUALITY_KINDS, STATUS_LABELS, weekdayName, type ActivePlan, type Race, type SessionView } from "@running-coach/core";
+import {
+  addDays,
+  daysBetween,
+  DIFFICULTY_LABELS,
+  OUTCOME_LABELS,
+  QUALITY_KINDS,
+  STATUS_LABELS,
+  weekdayName,
+  type ActivePlan,
+  type Race,
+} from "@running-coach/core";
+
+type SessionRow = ActivePlan["sessions"][number];
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
@@ -26,10 +38,13 @@ function raceStatus(race: Race, today: string): string {
 }
 
 /** 一堂課：換算後的目標、目的、完成的標準與替代；可以跳過、改用替代、移到這週的別天 */
-function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionView; weekStart: string; fixed: boolean; onChange: (action: "move" | "skip" | "fallback" | "restore", date?: string) => void }) {
+function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionRow; weekStart: string; fixed: boolean; onChange: (action: "move" | "skip" | "fallback" | "restore", date?: string) => void }) {
   const [moving, setMoving] = useState(false);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const status = STATUS_LABELS[s.status];
+  const r = s.result && s.result.outcome !== "pending" ? s.result : null;
+  // 跳過與改用替代以外，顯示程式依實際紀錄的判斷
+  const status = r && !["skipped", "fallback"].includes(r.outcome) ? OUTCOME_LABELS[r.outcome] : STATUS_LABELS[s.status];
+  const done = r !== null && r.workoutId !== null;
   return (
     <li className={`session ${s.kind} ${s.status}`}>
       <div className="session-head">
@@ -37,7 +52,7 @@ function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionView; weekSt
         <strong>
           {s.kindLabel}：{s.title}
         </strong>
-        {status && <span className="badge">{status}</span>}
+        {status && <span className={`badge ${r?.outcome ?? s.status}`}>{status}</span>}
       </div>
       {s.steps && (
         <p className="small">
@@ -54,7 +69,14 @@ function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionView; weekSt
       )}
       {s.fallback && <p className="small muted">狀況不好時：{s.fallback}</p>}
       {s.note && <p className="small muted">調整的原因：{s.note}</p>}
-      {s.id !== null && (
+      {r && (r.actual || r.reasons.length > 0) && (
+        <p className="small session-result">
+          {r.actual && `實際：${r.actual}`}
+          {r.reasons.length > 0 && `${r.actual ? "。" : ""}${r.reasons.join("、")}`}
+          {r.difficulty && `。${DIFFICULTY_LABELS[r.difficulty]}`}
+        </p>
+      )}
+      {s.id !== null && !done && (
         <div className="row session-actions">
           {s.status === "planned" ? (
             <>
@@ -174,6 +196,10 @@ export function PlanView() {
                   />
                 ))}
               </ul>
+              {current.extras.length > 0 && (
+                <p className="small muted">課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：{current.extras.join("；")}</p>
+              )}
+              <p className="small muted">實際的紀錄同步後自動對照課表。跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
               {plan!.outline && (
                 <>
                   <h3>之後幾週</h3>

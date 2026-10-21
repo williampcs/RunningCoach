@@ -84,14 +84,16 @@ function activities() {
   ];
 }
 
-/** 這週的範例課表：週二輕鬆跑、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
-function samplePlan() {
+/** 範例課表（這週或下週）：週二輕鬆跑、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
+function samplePlan(text: string) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
-  const day = (offset: number) => daysAgo(weekday - offset);
+  // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
+  const start = /下週/.test(text) ? 7 : 0;
+  const day = (offset: number) => daysAgo(weekday - start - offset);
   return {
     week_start: day(0),
     style: "fixed",
-    reason: "（模擬）依最近的跑量排這週",
+    reason: `（模擬）依最近的跑量排${start ? "下週" : "這週"}`,
     accept_warnings: true,
     warning_notes: "（模擬）測試用的課表",
     outline: "- 下週：維持跑量\n- 之後：每兩週加一點",
@@ -166,7 +168,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   }
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
-  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan())];
+  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];

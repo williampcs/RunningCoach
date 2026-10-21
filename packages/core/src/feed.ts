@@ -4,9 +4,11 @@
  * 全部依本機資料的固定規則產生，不呼叫模型：沒有費用、打開就看得到。
  * 內容只有這一份；之後的通知（推播、LINE、Discord）只負責提醒使用者來看，不另外產生內容。
  */
-import { daysBetween, weekdayName } from "./dates";
+import { addDays, daysBetween, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
+import { QUALITY_KINDS } from "./plan";
+import { activePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
 
@@ -39,6 +41,61 @@ const VOLUME_SPIKE = 1.3;
 const RACE_SOON_DAYS = 30;
 
 const ask = (label: string, message: string): FeedAction => ({ type: "ask", label, message });
+
+/** 結構化課表的提醒：課表是建議，不是考核——沒跑的跳過即可，跑了不一樣的課問要不要調整 */
+async function planItems(db: Db, today: string): Promise<FeedItem[]> {
+  const active = await activePlan(db, today);
+  if (!active?.plan.week_start) return [];
+  const items: FeedItem[] = [];
+  const yesterday = addDays(today, -1);
+  for (const s of active.sessions) {
+    const r = s.result;
+    if (s.date === today && s.status !== "skipped" && s.kind !== "rest") {
+      if (!r || r.outcome === "pending") {
+        items.push({
+          id: `plan-today-${s.id}`,
+          kind: "plan",
+          tone: "info",
+          title: `今天：${s.kindLabel}「${s.title}」`,
+          detail: [s.steps, s.fallback && `狀況不好時：${s.fallback}`].filter(Boolean).join("。"),
+          actions: [{ type: "plan" }, ask("想改輕鬆一點", `今天的${s.title}我想改輕鬆一點，可以怎麼調整？`)],
+        });
+      } else if (r.outcome === "different") {
+        items.push({
+          id: `plan-different-${s.id}`,
+          kind: "plan",
+          tone: "info",
+          title: "今天跑的和課表不同",
+          detail: `${r.reasons.join("、")}。不算失敗；要調整這週剩下的課嗎？`,
+          actions: [ask("調整這週剩下的課", `今天的${s.title}我跑得不一樣（${r.reasons.join("、")}），這週剩下的課要怎麼調整？`), { type: "plan" }],
+        });
+      }
+    }
+    if (s.date === yesterday && r?.outcome === "missed" && QUALITY_KINDS.has(s.kind)) {
+      items.push({
+        id: `plan-missed-${s.id}`,
+        kind: "plan",
+        tone: "info",
+        title: `昨天的${s.title}沒跑`,
+        detail: "跳過即可，不要補，也不要把強度課擠在一起；照課表繼續。",
+        actions: [{ type: "plan" }],
+      });
+    }
+  }
+  // 這週的最後一天，或課表已經過了：提醒排下週
+  const weekEnd = addDays(active.plan.week_start, 6);
+  if (today >= weekEnd) {
+    items.push({
+      id: `plan-next-${weekEnd}`,
+      kind: "plan",
+      tone: "info",
+      title: today > weekEnd ? "這週還沒有課表" : "下週的課表要排了嗎？",
+      detail: "教練會參考這週實際跑的與體感，再排下週。",
+      actions: [ask("請教練排課表", today > weekEnd ? "幫我排這週的課表" : "幫我排下週的課表")],
+    });
+  }
+  return items;
+}
 const km = (n: number) => `${Math.round(n * 10) / 10} km`;
 
 /** 課表裡寫到今天星期幾的行，例：「週四：節奏跑 8km」 */
@@ -201,8 +258,11 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
     });
   }
 
-  // 今日課表：課表裡寫到今天星期幾的行
-  if (plan) {
+  // 結構化的課表：今天的課、昨天沒跑的課、跑了不一樣的課、該排下週了
+  if (plan?.week_start) {
+    items.push(...(await planItems(db, today)));
+  } else if (plan) {
+    // 文字課表：課表裡寫到今天星期幾的行
     const lines = todaysPlanLines(plan.content, today);
     if (lines.length) {
       items.push({
