@@ -3,9 +3,11 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { isoWeekLabel } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
+import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import type { Db, RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
+import { otherActivitiesText } from "./activity-labels";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
 
 const RACE_ID_HINT =
@@ -79,7 +81,11 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
               "・PB：pb_5k、pb_10k、pb_half、pb_full\n" +
               "・生理：gender、birth_year、height_cm、weight_kg、" +
               "body_fat_pct、max_hr、resting_hr\n" +
-              "・訓練偏好：pref_long_run_day、pref_rest_days、pref_train_time",
+              "・訓練偏好：pref_long_run_day、pref_rest_days、pref_train_time、" +
+              "pref_goal（health 只想運動／speed 練速度／distance 加強長距離／race 準備比賽）、" +
+              "pref_intensity（easy 輕鬆就好／moderate 適度／challenge 想要挑戰）、" +
+              "pref_runs_per_week（每週最多幾次，整數）、pref_max_minutes（每次最多幾分鐘，整數）、" +
+              "pref_schedule（fixed 固定／flexible 彈性）、pref_other（其他會做的運動，例：騎車、重訓）",
           },
           value: { type: "string", description: "欄位值" },
         },
@@ -88,14 +94,63 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
     },
     {
       name: "save_training_plan",
-      description: "儲存訓練計畫到 DB（會停用舊計畫）。" + "制定或更新訓練計畫時呼叫。",
+      description:
+        "儲存一週的結構化課表（會停用舊計畫）。存檔前由程式依教練方法檢查；有問題時不存，回傳問題，" +
+        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再存。目標一律寫代號，由程式依訓練數值換算成配速或心率。",
       input_schema: {
         type: "object",
         properties: {
-          week_label: { type: "string", description: "週標籤，ISO 週（週一起算），例：2026-W14" },
-          content: { type: "string", description: "訓練計畫完整內容" },
+          week_start: { type: "string", description: "這週的星期一 YYYY-MM-DD；不是星期一時以那週的星期一為準" },
+          style: { type: "string", enum: ["fixed", "flexible"], description: "fixed 照星期排（每堂要有日期）；flexible 一週的菜單（date 可以不填）" },
+          reason: { type: "string", description: "這次排或改課表的原因（會保存並顯示給選手）" },
+          sessions: {
+            type: "array",
+            description: "這週的每一堂課",
+            items: {
+              type: "object",
+              properties: {
+                date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" },
+                kind: {
+                  type: "string",
+                  enum: ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"],
+                  description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
+                },
+                title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
+                steps: {
+                  type: "array",
+                  description:
+                    "依序的步驟。一步：{distance_km 或 duration_min, target?, note?}；重複組：{repeat: 次數, steps: [...]}。" +
+                    'target 寫代號：{"pace":"E|M|T|I|R"}、{"hr":"easy"}（輕鬆跑的心率上限）、{"zone":"Z2"}、{"rpe":[6,7]}',
+                  items: { type: "object" },
+                },
+                purpose: { type: "string", description: "這堂課的目的" },
+                success: { type: "string", description: "完成的標準，例：心率不超過輕鬆跑上限、最後一趟仍能保持配速" },
+                fallback: { type: "string", description: "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有" },
+              },
+              required: ["kind", "title", "steps", "purpose", "success"],
+            },
+          },
+          outline: { type: "string", description: "往後幾週的週期大綱（文字）" },
+          accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
+          warning_notes: { type: "string", description: "保留的理由（accept_warnings=true 時必填）" },
         },
-        required: ["week_label", "content"],
+        required: ["style", "reason", "sessions"],
+      },
+    },
+    {
+      name: "update_planned_session",
+      description:
+        "調整目前課表中的一堂課：移到這週的別天、跳過、改用替代的課，或恢復原本的課。" +
+        "選手說某天沒空、太累、想改輕鬆一點時呼叫；調整後會重新檢查整週。大幅修改時用 save_training_plan 重排。",
+      input_schema: {
+        type: "object",
+        properties: {
+          session_id: { type: "integer", description: "get_training_plan 列出的 session_id" },
+          action: { type: "string", enum: ["move", "skip", "fallback", "restore"] },
+          date: { type: "string", description: "move 時的新日期 YYYY-MM-DD" },
+          reason: { type: "string", description: "調整的原因" },
+        },
+        required: ["session_id", "action", "reason"],
       },
     },
     {
@@ -268,6 +323,8 @@ export type WorkoutSummaryInput = Pick<
   subjective_notes: string | null;
   /** 當天的身體狀況（recoveryNoteFor），沒有時不帶入 */
   recovery?: string | null;
+  /** 這趟對應的課與程式的判斷（planNoteFor）；沒有結構化課表時不加 */
+  plan?: string | null;
 };
 
 /** 生成 AI 跑步分析摘要 */
@@ -289,11 +346,15 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
+    (workout.plan ? `課表：${workout.plan}\n` : "") +
     `\n格式：一行數據摘要 ＋ AI評估。` +
     (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
     (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率。") +
     (workout.recovery
       ? "可以參考當天的身體狀況解讀心率與體感；手錶的恢復數據只是參考，與選手的自評不一致時以選手的感受為主。"
+      : "") +
+    (workout.plan
+      ? "對照課表說明這趟和計畫的差異；跑了不一樣的課或沒做完時，用「這次偏難／不一樣，下次怎麼調整」的說法，不要寫失敗。"
       : "");
   return (await llm.complete("summary", prompt, 2000)).text;
 }
@@ -414,6 +475,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           perceived_effort: perceivedEffort,
           subjective_notes: subjectiveNotes,
           recovery: await recoveryNoteFor(db, activity.date),
+          plan: await planNoteFor(db, today(), workoutId),
         });
         await db.saveWorkoutSummary(workoutId, summary);
         activityCache = null;
@@ -433,9 +495,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "get_recent_workouts": {
         const days = toInt(input.days ?? RECENT_WORKOUT_DAYS, "days");
-        const workouts = await db.getRecentWorkouts(days);
-        if (!workouts.length) return `最近 ${days} 天無訓練紀錄。`;
-        const lines = [`最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：`];
+        const [workouts, others] = await Promise.all([db.getRecentWorkouts(days), db.getOtherActivities(days)]);
+        if (!workouts.length && !others.length) return `最近 ${days} 天無訓練紀錄。`;
+        const lines = [workouts.length ? `最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：` : `最近 ${days} 天沒有跑步。`];
         for (const w of workouts) {
           const subj = w.perceived_effort ? `｜體感 ${w.perceived_effort}/10` : "";
           lines.push(
@@ -444,6 +506,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           );
           if (w.summary) lines.push(`  AI摘要：${w.summary}`);
         }
+        if (others.length) lines.push("", otherActivitiesText(others));
         return lines.join("\n");
       }
 
@@ -470,11 +533,8 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         return lines.join("\n");
       }
 
-      case "get_training_plan": {
-        const plan = await db.getActiveTrainingPlan();
-        if (!plan) return "目前沒有啟用中的訓練計畫。";
-        return `當前訓練計畫（${plan.week_label}）：\n\n${plan.content}`;
-      }
+      case "get_training_plan":
+        return planTextForTool(db, today());
 
       case "get_training_values": {
         const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
@@ -565,11 +625,16 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         return `選手資料已更新：${key} = ${str(input.value)}`;
       }
 
-      case "save_training_plan": {
-        const weekLabel = str(input.week_label);
-        if (!weekLabel) throw new Error("缺少 week_label");
-        await db.saveTrainingPlan(weekLabel, str(input.content));
-        return `訓練計畫已儲存（${weekLabel}）`;
+      case "save_training_plan":
+        return savePlanFromTool(db, today(), input);
+
+      case "update_planned_session": {
+        const action = str(input.action);
+        if (!["move", "skip", "fallback", "restore"].includes(action)) throw new Error("action 只能是 move、skip、fallback、restore");
+        return changeSession(db, today(), toInt(input.session_id, "session_id"), action as SessionAction, {
+          date: input.date === undefined ? undefined : str(input.date) || null,
+          reason: str(input.reason),
+        });
       }
 
       case "update_race": {

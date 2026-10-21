@@ -85,6 +85,21 @@ export {
 } from "./types";
 export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
+  EXPECTED_RPE,
+  QUALITY_KINDS,
+  SESSION_KINDS,
+  STATUS_LABELS,
+  type PlannedSession,
+  type PlanStyle,
+  type SessionKind,
+  type SessionStatus,
+  type SessionView,
+} from "./plan";
+export { DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
+export { activityLabel } from "./activity-labels";
+export type { OtherActivity } from "./types";
+export {
   computeTrainingValues,
   danielsPaces,
   distanceText,

@@ -88,6 +88,11 @@ export function TrainingValuesCard() {
             VDOT {vdot.value.toFixed(1)}，依據：{distanceText(vdot.distanceM)} {durationText(vdot.secs)}
             {vdot.date ? `（${vdot.date}）` : ""}，{VDOT_KIND[vdot.kind]}
           </p>
+          {values.adjustment && (
+            <p className="small">
+              依最近的結果放慢：課表用 VDOT {(vdot.value - values.adjustment.penalty).toFixed(1)}（{values.adjustment.reason}）。之後的強度課達成且不覺得難，就逐步回升。
+            </p>
+          )}
           <dl className="values">
             <dt>E 輕鬆、長跑</dt>
             <dd>

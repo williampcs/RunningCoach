@@ -1,6 +1,6 @@
 /** Intervals.icu — API 連線、活動拉取、資料正規化. */
 import { addDays } from "./dates";
-import type { Activity, ActivitySource, BestEffort, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
+import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
 
 const BASE_URL = "https://intervals.icu/api/v1";
 
@@ -179,6 +179,25 @@ export class IntervalsClient implements ActivitySource {
       throw new IntervalsError(`Intervals.icu 回應 ${response.status}${hint}`);
     }
     return response.json();
+  }
+
+  /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等） */
+  async fetchOtherActivities(days = 14): Promise<OtherActivity[]> {
+    return (await this.queryActivities(days)).filter((a) => !isRun(a) && a.id != null).map((raw) => {
+      const start = typeof raw.start_date_local === "string" ? raw.start_date_local : "";
+      const seconds = num(raw.moving_time) || num(raw.elapsed_time);
+      const meters = num(raw.distance);
+      return {
+        intervals_id: String(raw.id),
+        date: start ? start.slice(0, 10) : this.options.today(),
+        type: String(raw.type ?? raw.sport_type ?? "Other"),
+        duration_min: seconds ? Math.round(seconds / 6) / 10 : null,
+        distance_km: meters ? Math.round(meters / 10) / 100 : null,
+        avg_hr: num(raw.average_heartrate),
+        training_load: num(raw.icu_training_load),
+        raw_json: JSON.stringify(raw),
+      };
+    });
   }
 
   /** 最近 N 天跑步以外的活動類型，例：["Walk", "Ride"] */

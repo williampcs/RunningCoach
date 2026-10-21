@@ -84,6 +84,39 @@ function activities() {
   ];
 }
 
+/** 範例課表（這週或下週）：週二輕鬆跑、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
+function samplePlan(text: string) {
+  const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
+  const start = /下週/.test(text) ? 7 : 0;
+  const day = (offset: number) => daysAgo(weekday - start - offset);
+  return {
+    week_start: day(0),
+    style: "fixed",
+    reason: `（模擬）依最近的跑量排${start ? "下週" : "這週"}`,
+    accept_warnings: true,
+    warning_notes: "（模擬）測試用的課表",
+    outline: "- 下週：維持跑量\n- 之後：每兩週加一點",
+    sessions: [
+      { date: day(1), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" },
+      {
+        date: day(3),
+        kind: "threshold",
+        title: "4×1 km 閾值",
+        steps: [
+          { duration_min: 15, target: { hr: "easy" } },
+          { repeat: 4, steps: [{ distance_km: 1, target: { pace: "T" } }, { duration_min: 1, target: { hr: "easy" } }] },
+          { duration_min: 10, target: { hr: "easy" } },
+        ],
+        purpose: "提高閾值",
+        success: "每一趟都在配速範圍內",
+        fallback: "改成 40 分鐘輕鬆跑",
+      },
+      { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: 10, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
+    ],
+  };
+}
+
 const textOf = (m: Message | undefined) =>
   !m ? "" : typeof m.content === "string" ? m.content : m.content.map((b) => String(b.text ?? b.content ?? "")).join("\n");
 
@@ -135,6 +168,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   }
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
+  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];

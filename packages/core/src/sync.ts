@@ -14,6 +14,8 @@ import { addDays } from "./dates";
 import type { Db, SaveResult } from "./db";
 import { IntervalsError } from "./intervals";
 import type { Llm } from "./llm";
+import { activityLabel } from "./activity-labels";
+import { planNoteFor } from "./planning";
 import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
 import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
@@ -22,39 +24,45 @@ import type { ActivitySource, Activity, Logger } from "./types";
 /** 同步時拉取的天數 */
 export const SYNC_DAYS = 14;
 
-const ACTIVITY_LABELS: Record<string, string> = {
-  Walk: "走路",
-  Hike: "健行",
-  Ride: "騎車",
-  VirtualRide: "騎車",
-  EBikeRide: "騎車",
-  GravelRide: "騎車",
-  MountainBikeRide: "騎車",
-  Swim: "游泳",
-  OpenWaterSwim: "游泳",
-  WeightTraining: "肌力訓練",
-  Yoga: "瑜伽",
-};
-
-/** 例：「另有 2 筆走路、1 筆騎車，教練目前只讀跑步；…」；沒有其他活動或取得失敗時為 null */
-async function otherActivitiesNote(activities: ActivitySource, logger: Logger): Promise<string | null> {
-  if (!activities.fetchOtherActivityTypes) return null;
+/**
+ * 跑步以外的運動：能取得完整資料的來源，記下來讓教練參考（跟著來源的刪除）；只能取得類型的，只用來說明。
+ * 回傳各類型的筆數與是否記下；沒有其他運動或取得失敗時為 null
+ */
+async function syncOtherActivities(
+  db: Db,
+  activities: ActivitySource,
+  logger: Logger,
+): Promise<{ counts: Map<string, number>; stored: boolean } | null> {
   let types: string[];
+  let stored = false;
   try {
-    types = await activities.fetchOtherActivityTypes(SYNC_DAYS);
+    if (activities.fetchOtherActivities) {
+      const others = await activities.fetchOtherActivities(SYNC_DAYS);
+      const today = db.today();
+      await db.upsertOtherActivities(others);
+      await db.removeOtherActivitiesMissing(
+        others.map((a) => a.intervals_id),
+        addDays(today, -(SYNC_DAYS - 1)),
+        today,
+      );
+      types = others.map((a) => a.type);
+      stored = true;
+    } else if (activities.fetchOtherActivityTypes) {
+      types = await activities.fetchOtherActivityTypes(SYNC_DAYS);
+    } else {
+      return null;
+    }
   } catch (e) {
-    logger.warn(`Other activity types fetch failed: ${message(e)}`);
+    logger.warn(`Other activities fetch failed: ${message(e)}`);
     return null;
   }
   if (!types.length) return null;
   const counts = new Map<string, number>();
-  for (const t of types) {
-    const label = ACTIVITY_LABELS[t] ?? "其他運動";
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  const list = [...counts].map(([label, n]) => `${n} 筆${label}`).join("、");
-  return `另有 ${list}，教練目前只讀跑步；如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。`;
+  for (const t of types) counts.set(activityLabel(t), (counts.get(activityLabel(t)) ?? 0) + 1);
+  return { counts, stored };
 }
+
+const countsText = (counts: Map<string, number>) => [...counts].map(([label, n]) => `${n} 筆${label}`).join("、");
 
 /** 同步不到跑步時附上的提示；外殼可以據此再顯示上傳的方式 */
 export const NO_RUNS_HINT = "如果最近有跑步，請確認手錶或 App 已把紀錄上傳到 Intervals.icu。";
@@ -125,12 +133,16 @@ export async function runSync(deps: {
   );
   const removedNote = removedCount ? `移除 ${removedCount} 筆在 Intervals.icu 已刪除或不再是跑步的紀錄` : "";
   await refreshTrainingSnapshots(db, activities, logger);
+  const others = await syncOtherActivities(db, activities, logger);
 
   if (!fetched.length) {
-    // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明只讀跑步，不必檢查上傳
-    const others = await otherActivitiesNote(activities, logger);
+    // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明怎麼改，不必檢查上傳
+    const othersNote = others
+      ? `另有 ${countsText(others.counts)}，${others.stored ? "已一併記下，教練會參考" : "教練目前只讀跑步"}；` +
+        "如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。"
+      : "";
     return (
-      `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${others ?? ""}${removedNote ? `已${removedNote}。` : ""}` +
+      `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${othersNote}${removedNote ? `已${removedNote}。` : ""}` +
       `${wellnessNote}${others ? "" : NO_RUNS_HINT}`
     );
   }
@@ -180,6 +192,7 @@ export async function runSync(deps: {
         perceived_effort: workout?.perceived_effort ?? null,
         subjective_notes: workout?.subjective_notes ?? null,
         recovery: await recoveryNoteFor(db, activity.date),
+        plan: await planNoteFor(db, db.today(), saved.id),
       });
       await db.saveWorkoutSummary(saved.id, summary);
     } catch (e) {
@@ -206,6 +219,7 @@ export async function runSync(deps: {
   if (restoredCount) details.push(`恢復 ${restoredCount} 筆`);
   if (removedNote) details.push(removedNote);
   if (skippedCount) details.push(`略過 ${skippedCount} 筆已存在資料`);
+  if (others?.stored) details.push(`其他運動 ${countsText(others.counts)}（教練會參考）`);
   if (wellnessDays) details.push(`更新恢復資料 ${wellnessDays} 天`);
   return `✅ Intervals.icu 同步完成：${details.join("，")}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
 }

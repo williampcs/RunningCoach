@@ -1,10 +1,20 @@
+import { PREFERENCE_OPTIONS } from "@running-coach/core";
 import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
 import { ImportFromAi } from "./ImportFromAi";
 import { TrainingValuesCard } from "./TrainingValues";
 
-const GROUPS: { title: string; fields: { key: string; label: string; placeholder?: string; wide?: boolean }[] }[] = [
+interface Field {
+  key: string;
+  label: string;
+  placeholder?: string;
+  wide?: boolean;
+  /** 有選項時顯示成下拉選單 */
+  options?: Record<string, string>;
+}
+
+const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   {
     title: "目標與狀況",
     fields: [
@@ -36,7 +46,14 @@ const GROUPS: { title: string; fields: { key: string; label: string; placeholder
   },
   {
     title: "訓練偏好",
+    note: "教練依這些排課表；沒填的，教練排課前會先問。",
     fields: [
+      { key: "pref_goal", label: "目標", options: PREFERENCE_OPTIONS.pref_goal, wide: true },
+      { key: "pref_intensity", label: "強度", options: PREFERENCE_OPTIONS.pref_intensity, wide: true },
+      { key: "pref_schedule", label: "節奏", options: PREFERENCE_OPTIONS.pref_schedule, wide: true },
+      { key: "pref_runs_per_week", label: "每週最多幾次", placeholder: "4" },
+      { key: "pref_max_minutes", label: "每次最多幾分鐘", placeholder: "60" },
+      { key: "pref_other", label: "其他會做的運動", placeholder: "騎車、重訓", wide: true },
       { key: "pref_long_run_day", label: "長跑日", placeholder: "週日" },
       { key: "pref_rest_days", label: "休息日", placeholder: "週一、週五" },
       { key: "pref_train_time", label: "偏好時段", placeholder: "清晨" },
@@ -89,15 +106,27 @@ export function ProfileView() {
         {GROUPS.map((group) => (
           <section className="card" key={group.title}>
             <h2>{group.title}</h2>
+            {group.note && <p className="small muted">{group.note}</p>}
             <div className="grid">
               {group.fields.map((field) => (
                 <label key={field.key} className={field.wide ? "wide" : ""}>
                   {field.label}
-                  <input
-                    value={form[field.key] ?? ""}
-                    placeholder={field.placeholder}
-                    onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
-                  />
+                  {field.options ? (
+                    <select value={form[field.key] ?? ""} onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}>
+                      <option value="">未填</option>
+                      {Object.entries(field.options).map(([value, text]) => (
+                        <option key={value} value={value}>
+                          {text}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={form[field.key] ?? ""}
+                      placeholder={field.placeholder}
+                      onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
+                    />
+                  )}
                 </label>
               ))}
             </div>

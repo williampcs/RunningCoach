@@ -2,6 +2,7 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
+import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
@@ -387,6 +388,7 @@ export class Coach {
         perceived_effort: perceivedEffort,
         subjective_notes: subjectiveNotes,
         recovery: await recoveryNoteFor(this.db, latest.date),
+        plan: await planNoteFor(this.db, this.today(), workoutId),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -416,6 +418,7 @@ export class Coach {
         perceived_effort: perceivedEffort,
         subjective_notes: notes,
         recovery: await recoveryNoteFor(this.db, existing.date),
+        plan: await planNoteFor(this.db, this.today(), workoutId),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -456,6 +459,16 @@ export class Coach {
   /** 教練動態：打開 App 時要提醒的事項 */
   feed(): Promise<FeedItem[]> {
     return buildFeed(this.db, this.today(), this.settings);
+  }
+
+  /** 啟用中的課表，目標依現在的訓練數值換算（網頁版的計畫頁） */
+  activePlan(): Promise<ActivePlan | null> {
+    return activePlan(this.db, this.today());
+  }
+
+  /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
+  changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
+    return changeSession(this.db, this.today(), id, action, options);
   }
 
   /** 以本週的 ISO 週標籤儲存訓練計畫（/plan） */

@@ -45,10 +45,25 @@ export interface ActivitySource {
   fetchWellness?(days: number): Promise<WellnessDay[]>;
   /** 最近 N 天跑步以外的活動類型（例如 Walk、Ride），同步不到跑步時用來說明；不支援的來源不實作 */
   fetchOtherActivityTypes?(days: number): Promise<string[]>;
+  /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等），教練排課與判斷疲勞時參考；不支援的來源不實作 */
+  fetchOtherActivities?(days: number): Promise<OtherActivity[]>;
   /** 跑步的閾值與心率區間（Intervals.icu 的運動設定）；不支援的來源不實作 */
   fetchRunSettings?(): Promise<RunSettings | null>;
   /** 最近 N 天跑步的最佳配速曲線；不支援的來源不實作 */
   fetchPaceCurve?(days: number): Promise<PaceCurveSummary | null>;
+}
+
+/** 跑步以外的運動：只記教練用得到的欄位 */
+export interface OtherActivity {
+  intervals_id: string;
+  date: string;
+  /** Intervals.icu 的類型，例：Ride、WeightTraining */
+  type: string;
+  duration_min: number | null;
+  distance_km: number | null;
+  avg_hr: number | null;
+  training_load: number | null;
+  raw_json?: string | null;
 }
 
 /** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */
@@ -155,6 +170,15 @@ export interface TrainingPlan {
   content: string;
   created_at: string;
   is_active: number;
+  /** 結構化的課表才有（schema 7）；舊的文字課表是 null */
+  week_start?: string | null;
+  style?: "fixed" | "flexible" | null;
+  /** 這次排或改課表的原因 */
+  reason?: string | null;
+  /** 往後幾週的週期大綱 */
+  outline?: string | null;
+  /** 檢查器的提醒與教練寫的理由 */
+  notes?: string | null;
 }
 
 export interface ConversationRow {

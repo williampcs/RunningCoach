@@ -951,3 +951,82 @@ pre {
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+/* 結構化課表 */
+.sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session:first-child {
+  border-top: none;
+}
+
+.session-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.session-when {
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-width: 6.5em;
+}
+
+.session.skipped .session-head strong,
+.session.skipped p {
+  opacity: 0.6;
+}
+
+.session.skipped .session-head strong {
+  text-decoration: line-through;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn);
+}
+
+.session-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.session-actions button {
+  font-size: 0.85rem;
+}
+
+.session-result {
+  color: var(--text);
+}
+
+.badge.achieved,
+.badge.rested {
+  background: var(--ok);
+}
+
+.badge.partial,
+.badge.different,
+.badge.not_rested {
+  background: var(--info);
+}
+
+.badge.missed,
+.badge.skipped {
+  background: var(--border);
+}

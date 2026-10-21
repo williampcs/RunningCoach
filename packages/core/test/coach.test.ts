@@ -131,7 +131,6 @@ describe("Coach.chat", () => {
       toolTurn("update_race", { race_id: 1, target_time: "1:48:00", confirmed: 0 }),
       toolTurn("get_upcoming_races", {}),
       toolTurn("update_athlete_profile", { key: "max_hr", value: "185" }),
-      toolTurn("save_training_plan", { week_label: "2026-W41", content: "週二間歇、週日長跑" }),
       turn({ text: "好了" }),
       toolTurn("get_training_plan"),
       toolTurn("cancel_race", { race_id: 1, notes: "受傷" }),
@@ -139,6 +138,8 @@ describe("Coach.chat", () => {
       turn({ text: "好了" }),
     ]);
     await coach.chat("一");
+    // 手動填寫的文字課表（網頁版、Discord 的 /plan）
+    await coach.savePlanForThisWeek("週二間歇、週日長跑");
     await coach.chat("二");
 
     const results = provider.calls.flatMap((c) => c.toolResults ?? []).map((r) => r.content);
@@ -147,14 +148,13 @@ describe("Coach.chat", () => {
       "賽事 id=1 已更新：target_time=1:48:00、confirmed=0",
       "未來 90 天內的賽事（共 1 筆）：\n- [id=1] 2026-11-01 萬金石 21.1km 目標：1:48:00",
       "選手資料已更新：max_hr = 185",
-      "訓練計畫已儲存（2026-W41）",
-      "當前訓練計畫（2026-W41）：\n\n週二間歇、週日長跑",
+      "當前訓練計畫（2026-W41，文字版）：\n\n週二間歇、週日長跑",
       "賽事 id=1 已標記為取消，紀錄保留於 DB。",
       "未來 30 天內無已記錄賽事。",
     ]);
     // 第二則訊息的 system prompt 已反映第一則訊息中更新的資料
-    expect(provider.calls[6]!.request.system).toContain("最大心率：185bpm（實測）");
-    expect(provider.calls[6]!.request.system).toContain("- [1] 2026-11-01 萬金石 21.1km｜目標 1:48:00｜距今 22 天（考慮中）");
+    expect(provider.calls[5]!.request.system).toContain("最大心率：185bpm（實測）");
+    expect(provider.calls[5]!.request.system).toContain("- [1] 2026-11-01 萬金石 21.1km｜目標 1:48:00｜距今 22 天（考慮中）");
   });
 
   it("訓練歷史與配速趨勢", async () => {
