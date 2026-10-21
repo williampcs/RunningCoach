@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { daysBetween, type Race, type TrainingPlan } from "@running-coach/core";
+import { addDays, daysBetween, QUALITY_KINDS, STATUS_LABELS, weekdayName, type ActivePlan, type Race, type SessionView } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
@@ -25,9 +25,74 @@ function raceStatus(race: Race, today: string): string {
   return (days === 0 ? "今天" : `還有 ${days} 天`) + (race.confirmed ? "" : "（考慮中）");
 }
 
+/** 一堂課：換算後的目標、目的、完成的標準與替代；可以跳過、改用替代、移到這週的別天 */
+function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionView; weekStart: string; fixed: boolean; onChange: (action: "move" | "skip" | "fallback" | "restore", date?: string) => void }) {
+  const [moving, setMoving] = useState(false);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const status = STATUS_LABELS[s.status];
+  return (
+    <li className={`session ${s.kind} ${s.status}`}>
+      <div className="session-head">
+        <span className="session-when">{s.when}</span>
+        <strong>
+          {s.kindLabel}：{s.title}
+        </strong>
+        {status && <span className="badge">{status}</span>}
+      </div>
+      {s.steps && (
+        <p className="small">
+          {s.steps}
+          <span className="muted">（約 {s.km} km、{s.minutes} 分鐘）</span>
+        </p>
+      )}
+      {(s.purpose || s.success) && (
+        <p className="small muted">
+          {s.purpose && `目的：${s.purpose}`}
+          {s.purpose && s.success ? "；" : ""}
+          {s.success && `完成的標準：${s.success}`}
+        </p>
+      )}
+      {s.fallback && <p className="small muted">狀況不好時：{s.fallback}</p>}
+      {s.note && <p className="small muted">調整的原因：{s.note}</p>}
+      {s.id !== null && (
+        <div className="row session-actions">
+          {s.status === "planned" ? (
+            <>
+              {s.fallback && QUALITY_KINDS.has(s.kind) && <button onClick={() => onChange("fallback")}>改用替代</button>}
+              {fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
+              <button onClick={() => onChange("skip")}>跳過</button>
+            </>
+          ) : (
+            <button onClick={() => onChange("restore")}>恢復原本的課</button>
+          )}
+        </div>
+      )}
+      {moving && (
+        <div className="row session-actions">
+          {days
+            .filter((d) => d !== s.date)
+            .map((d) => (
+              <button
+                key={d}
+                className="small"
+                onClick={() => {
+                  setMoving(false);
+                  onChange("move", d);
+                }}
+              >
+                {d.slice(5)}（{weekdayName(d).replace("星期", "")}）
+              </button>
+            ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function PlanView() {
   const { coach, revision, touch } = useApp();
-  const [plan, setPlan] = useState<TrainingPlan | null>(null);
+  const [current, setCurrent] = useState<ActivePlan | null>(null);
+  const [changeNote, setChangeNote] = useState<string | null>(null);
   const [planDraft, setPlanDraft] = useState<string | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
   const [form, setForm] = useState<RaceForm | null>(null);
@@ -35,8 +100,11 @@ export function PlanView() {
   const [error, setError] = useState<string | null>(null);
   const today = coach.today();
 
+  const plan = current?.plan ?? null;
+  const structured = current !== null && current.plan.week_start != null;
+
   useEffect(() => {
-    void coach.db.getActiveTrainingPlan().then(setPlan);
+    void coach.activePlan().then(setCurrent);
     void coach.db.getAllRaces().then(setRaces);
   }, [coach, revision]);
 
@@ -79,11 +147,41 @@ export function PlanView() {
     <>
       <section className="card">
         <div className="row between">
-          <h2>訓練計畫{plan ? `（${plan.week_label}）` : ""}</h2>
-          {planDraft === null && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
+          <h2>訓練計畫{plan ? `（${plan.week_label}${structured ? `，${plan.week_start!.slice(5)} 起` : ""}）` : ""}</h2>
+          {planDraft === null && !structured && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
         </div>
         {planDraft === null ? (
-          plan ? (
+          structured ? (
+            <>
+              <p className="small muted">
+                {current.styleLabel}｜約 {current.totalKm} km。配速與心率由程式依你的訓練數值換算；想改課表可以直接跟教練說，或在下面調整單堂課。
+              </p>
+              {plan!.reason && <p className="small">排課的原因：{plan!.reason}</p>}
+              {plan!.notes && <div className="notice warn small">檢查器的提醒與教練的理由：{plan!.notes}</div>}
+              {changeNote && <div className="notice ok small">{changeNote}</div>}
+              <ul className="sessions">
+                {current.sessions.map((s) => (
+                  <SessionCard
+                    key={s.id ?? s.title}
+                    s={s}
+                    weekStart={plan!.week_start!}
+                    fixed={plan!.style !== "flexible"}
+                    onChange={(action, date) =>
+                      void run(async () => {
+                        setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
+                      })
+                    }
+                  />
+                ))}
+              </ul>
+              {plan!.outline && (
+                <>
+                  <h3>之後幾週</h3>
+                  <Markdown>{plan!.outline}</Markdown>
+                </>
+              )}
+            </>
+          ) : plan ? (
             <Markdown>{plan.content}</Markdown>
           ) : (
             <p className="muted">還沒有訓練計畫。可以在對話中請教練排，或自己填寫。</p>

@@ -1,6 +1,7 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
+import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
 import type {
   Activity,
   ConversationRow,
@@ -22,8 +23,9 @@ import type {
  * 4：workouts.duplicate_of、workouts.removed_at 與 workout_distinct（去重、跟著 Intervals.icu 的刪除）
  * 5：source_snapshots（同步時存下的跑步設定與最佳配速曲線，訓練數值用）
  * 6：conversations.sources（教練回覆前讀過的資料，顯示為「參考了：…」）
+ * 7：planned_sessions 與 training_plans 的 week_start、style、reason、outline、notes（結構化課表）
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -141,6 +143,22 @@ const SCHEMA = `
     PRIMARY KEY (a, b)
   );
 
+  CREATE TABLE IF NOT EXISTS planned_sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id    INTEGER NOT NULL,
+    position   INTEGER NOT NULL,
+    date       TEXT,
+    kind       TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    steps      TEXT NOT NULL,
+    purpose    TEXT NOT NULL DEFAULT '',
+    success    TEXT NOT NULL DEFAULT '',
+    fallback   TEXT,
+    status     TEXT NOT NULL DEFAULT 'planned',
+    note       TEXT,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS source_snapshots (
     key        TEXT PRIMARY KEY,
     json       TEXT NOT NULL,
@@ -158,6 +176,16 @@ const SCHEMA = `
 
 const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes"] as const;
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
+
+function parseJsonArray(json: string | null): unknown[] {
+  if (!json) return [];
+  try {
+    const value: unknown = JSON.parse(json);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
 
 function parseSources(json: string | null): string[] {
   if (!json) return [];
@@ -263,6 +291,12 @@ export class Db {
       // --- Migration: workouts.duplicate_of、removed_at（schema 4：去重、跟著 Intervals.icu 的刪除） ---
       if (!workoutCols.has("duplicate_of")) await d.exec("ALTER TABLE workouts ADD COLUMN duplicate_of INTEGER");
       if (!workoutCols.has("removed_at")) await d.exec("ALTER TABLE workouts ADD COLUMN removed_at TEXT");
+
+      // --- Migration: training_plans 的結構化欄位（schema 7）；舊的文字課表這些欄位是 NULL ---
+      const planCols = await columns("training_plans");
+      for (const col of ["week_start", "style", "reason", "outline", "notes"]) {
+        if (!planCols.has(col)) await d.exec(`ALTER TABLE training_plans ADD COLUMN ${col} TEXT`);
+      }
 
       // --- Migration: conversations.sources（schema 6：回覆的依據） ---
       if (!(await columns("conversations")).has("sources")) await d.exec("ALTER TABLE conversations ADD COLUMN sources TEXT");
@@ -487,6 +521,64 @@ export class Db {
         this.stamp(),
       ]);
     });
+  }
+
+  /** 儲存結構化的課表並停用舊計畫，回傳新計畫的 id */
+  saveStructuredPlan(
+    plan: { weekLabel: string; weekStart: string; style: PlanStyle; reason: string; outline: string | null; notes: string | null; content: string },
+    sessions: SessionDraft[],
+  ): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      await d.exec("UPDATE training_plans SET is_active=0");
+      const { lastInsertRowid: planId } = await d.run(
+        "INSERT INTO training_plans (week_label, content, created_at, is_active, week_start, style, reason, outline, notes)" +
+          " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",
+        [plan.weekLabel, plan.content, this.stamp(), plan.weekStart, plan.style, plan.reason, plan.outline, plan.notes],
+      );
+      for (const [i, s] of sessions.entries()) {
+        await d.run(
+          "INSERT INTO planned_sessions (plan_id, position, date, kind, title, steps, purpose, success, fallback, updated_at)" +
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [planId, i, s.date, s.kind, s.title, JSON.stringify(s.steps), s.purpose, s.success, s.fallback, this.stamp()],
+        );
+      }
+      return planId;
+    });
+  }
+
+  async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
+    const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note FROM planned_sessions WHERE plan_id=? ORDER BY position",
+      [planId],
+    );
+    return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
+  }
+
+  async getPlannedSession(id: number): Promise<PlannedSession | null> {
+    const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note FROM planned_sessions WHERE id=?",
+      [id],
+    );
+    return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
+  }
+
+  async updatePlannedSession(id: number, fields: { date?: string | null; status?: SessionStatus; note?: string | null }): Promise<void> {
+    const sets: string[] = [];
+    const params: SqlValue[] = [];
+    for (const key of ["date", "status", "note"] as const) {
+      if (fields[key] !== undefined) {
+        sets.push(`${key}=?`);
+        params.push(fields[key] ?? null);
+      }
+    }
+    if (!sets.length) return;
+    await this.run(`UPDATE planned_sessions SET ${sets.join(", ")}, updated_at=? WHERE id=?`, [...params, this.stamp(), id]);
+  }
+
+  /** 改了單堂課之後，更新計畫的文字版 */
+  async updatePlanContent(planId: number, content: string): Promise<void> {
+    await this.run("UPDATE training_plans SET content=? WHERE id=?", [content, planId]);
   }
 
   // ---------------------------------------------------------------------------

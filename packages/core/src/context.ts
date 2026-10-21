@@ -12,6 +12,7 @@ import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import type { Db } from "./db";
 import type { ChatMessage } from "./llm";
+import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import type { CoachSettings, ConversationRow, Race, RunSettings } from "./types";
 
@@ -133,6 +134,7 @@ export class ContextManager {
     if (profile.pref_long_run_day) prefs.push(`長跑日：${profile.pref_long_run_day}`);
     if (profile.pref_rest_days) prefs.push(`休息日：${profile.pref_rest_days}`);
     if (profile.pref_train_time) prefs.push(`偏好時段：${profile.pref_train_time}`);
+    prefs.push(...preferenceText(profile));
     if (prefs.length) lines.push("訓練偏好：" + prefs.join("｜"));
 
     // 動態注入近期賽事（距今 N 天內）
@@ -197,6 +199,11 @@ export class ContextManager {
       "・制定或調整課表，或給配速、心率目標時",
       "・討論訓練強度、強度分配（80/20）、跑量或負荷時",
       "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上三個 tool。",
+      "",
+      "【排課表】",
+      "排課前先看選手的訓練偏好（目標、強度、每週次數、每次最多多久、固定或彈性）；沒有的先問，" +
+        `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
+        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整，並說明改了什麼。",
       "",
       "【數值與依據】",
       "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算。" +

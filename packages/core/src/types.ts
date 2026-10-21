@@ -155,6 +155,15 @@ export interface TrainingPlan {
   content: string;
   created_at: string;
   is_active: number;
+  /** 結構化的課表才有（schema 7）；舊的文字課表是 null */
+  week_start?: string | null;
+  style?: "fixed" | "flexible" | null;
+  /** 這次排或改課表的原因 */
+  reason?: string | null;
+  /** 往後幾週的週期大綱 */
+  outline?: string | null;
+  /** 檢查器的提醒與教練寫的理由 */
+  notes?: string | null;
 }
 
 export interface ConversationRow {
