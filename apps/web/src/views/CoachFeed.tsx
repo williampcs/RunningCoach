@@ -105,6 +105,11 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** 今天的身體狀況（可以回報或修改自評的）一直留著，那是查看與修改自評的地方；其他的可以按「知道了」略過 */
+function dismissible(item: FeedItem): boolean {
+  return !item.actions.some((a) => a.type === "checkin");
+}
+
 /** 展開時先顯示幾則（手機的寬度放不下三則）；其餘按「顯示其餘」 */
 function shownAtFirst(): number {
   try {
@@ -170,7 +175,9 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
     setState(next);
     saveState(next);
   };
-  const visible = items.filter((i) => !state.dismissed.includes(i.id));
+  const visible = items.filter((i) => !dismissible(i) || !state.dismissed.includes(i.id));
+  const hidden = items.length - visible.length;
+  const restore = () => update({ ...state, dismissed: [] });
 
   // 收起時一則一則輪播；偏好減少動態效果時不輪播
   const rotating = state.collapsed && visible.length > 1 && !paused && !reducedMotion;
@@ -180,7 +187,15 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
     return () => clearInterval(timer);
   }, [rotating]);
 
-  if (visible.length === 0) return null;
+  if (visible.length === 0) {
+    return hidden ? (
+      <section className="feed" aria-label="教練動態">
+        <button className="link feed-more" onClick={restore}>
+          顯示略過的 {hidden} 則教練動態
+        </button>
+      </section>
+    ) : null;
+  }
 
   function runAction(action: FeedAction) {
     switch (action.type) {
@@ -288,9 +303,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                       {label(action, item)}
                     </button>
                   ))}
-                  <button className="link" onClick={() => update({ ...state, dismissed: [...state.dismissed, item.id] })}>
-                    知道了
-                  </button>
+                  {dismissible(item) && (
+                    <button className="link" onClick={() => update({ ...state, dismissed: [...state.dismissed, item.id] })}>
+                      知道了
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -305,6 +322,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
       {showAll && visible.length > firstCount && (
         <button className="link feed-more" onClick={() => setShowAll(false)}>
           只顯示前 {firstCount} 則
+        </button>
+      )}
+      {hidden > 0 && (
+        <button className="link feed-more" onClick={restore}>
+          顯示略過的 {hidden} 則
         </button>
       )}
       <SyncNotice message={sync.message} />
