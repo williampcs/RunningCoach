@@ -90,9 +90,9 @@ export function GettingStarted() {
       <section className="card getting-started">
         <h2>準備好了</h2>
         <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>
-        <p className="small">可以直接在下面和教練聊聊近況，或到「跑後回報」看每次訓練的分析。</p>
+        <p className="small">可以直接在下面和教練聊聊近況，或到「紀錄」看每次訓練的分析。</p>
         <div className="row">
-          <button onClick={() => goTo("report")}>查看訓練紀錄</button>
+          <button onClick={() => goTo("history")}>查看訓練紀錄</button>
           <button className="link" onClick={dismiss}>
             知道了
           </button>

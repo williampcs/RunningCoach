@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { addDays, heartRateText, type Activity, type ReportCandidate, type ReportTarget, type RunReport, type Workout } from "@running-coach/core";
+import { addDays, heartRateText, type Activity, type ReportCandidate, type ReportTarget, type RunCard, type RunReport } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
-import { Markdown } from "../Markdown";
 import { SyncNotice } from "./PhoneGuide";
+import { RunCardView } from "./RunCard";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -23,7 +23,7 @@ function activityLines(a: RunData): string {
 }
 
 /** 交給教練分析的訊息：資料已由表單存檔，一次呼叫就能完成，不必再走工具迴圈 */
-function analysisRequest(a: RunData, effort: number, notes: string, backfilled = false): string {
+export function analysisRequest(a: RunData, effort: number, notes: string, backfilled = false): string {
   return [
     backfilled ? `我補記了 ${a.date} 那次跑步的感受，請以教練角度給我回饋。` : "我剛完成今天的跑步，請以教練角度給我回饋。",
     "",
@@ -62,15 +62,21 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   const sync = useSync();
   const [report, setReport] = useState<RunReport | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
-  // 補填已存檔紀錄的體感：一次只開一筆的表單
-  const [editing, setEditing] = useState<{ id: number; effort: number; notes: string } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [backfilled, setBackfilled] = useState<{ workout: Workout; summary: string | null } | null>(null);
+  // 剛存檔那一趟的卡片
+  const [card, setCard] = useState<RunCard | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void coach.db.getRecentWorkouts(30).then(setWorkouts);
-  }, [coach, revision]);
+    if (report?.status !== "saved") {
+      setCard(null);
+      return;
+    }
+    let alive = true;
+    void coach.runCards(7).then((cards) => alive && setCard(cards.find((c) => c.workout.id === report.workoutId) ?? null));
+    return () => {
+      alive = false;
+    };
+  }, [coach, report, revision]);
 
   const hasIntervals = activitiesReady;
 
@@ -99,6 +105,11 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     setSelected((current) => (current && (current === PENDING || keys.includes(current)) ? current : (keys[0] ?? PENDING)));
   }, [choices, preselect, onPreselectUsed]);
 
+  // 結果在表單下方：存檔後捲到結果
+  useEffect(() => {
+    if (card) resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [card?.workout.id]);
+
   const chosen = choices?.candidates.find((c) => targetKey(c.target) === selected) ?? null;
   const when = (c: ReportCandidate) => `${dayLabel(c.activity.date, today)}${c.startTime ? ` ${c.startTime}` : ""}`;
   const submitLabel = chosen
@@ -123,25 +134,6 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     }
   }
 
-  function startEdit(w: Workout) {
-    setEditing({ id: w.id, effort: w.perceived_effort ?? 5, notes: w.subjective_notes ?? "" });
-    setBackfilled(null);
-  }
-
-  async function saveBackfill() {
-    if (!editing) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      setBackfilled(await coach.addSubjective(editing.id, editing.effort, editing.notes));
-      setEditing(null);
-      touch();
-    } catch (e) {
-      setMessage({ kind: "error", text: errorText(e) });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <>
@@ -156,7 +148,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
 
       <section className="card">
         <h2>跑後回報</h2>
-        <p className="muted small">選一趟跑步，填上體感。更早的跑步可以在下方的訓練紀錄補填。</p>
+        <p className="muted small">選一趟跑步，填上體感。更早的跑步可以在「紀錄」補填。</p>
         {hasIntervals &&
           (choices === null ? (
             <p className="muted small">讀取最近的跑步…</p>
@@ -222,26 +214,30 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         <SyncNotice message={sync.message} />
         {report?.status === "saved" && (
-          <div className="notice ok">
-            <strong>已存檔</strong>
-            <pre>{activityLines(report.activity)}</pre>
-            {report.summary ? <Markdown>{report.summary}</Markdown> : <p className="muted">這次沒有產生分析摘要。</p>}
-            <button
-              className="primary"
-              onClick={() =>
-                goTo(
-                  "chat",
-                  analysisRequest(
-                    report.activity,
-                    submitted?.effort ?? 5,
-                    submitted?.notes ?? "",
-                    report.activity.date !== today,
-                  ),
-                )
-              }
-            >
-              請教練分析
-            </button>
+          <div className="report-result" ref={resultRef}>
+            <div className="notice ok">已存檔。</div>
+            {card ? (
+              <RunCardView card={card} today={today}>
+                <div className="row">
+                  <button
+                    className="primary"
+                    onClick={() =>
+                      goTo(
+                        "chat",
+                        analysisRequest(report.activity, submitted?.effort ?? 5, submitted?.notes ?? "", report.activity.date !== today),
+                      )
+                    }
+                  >
+                    請教練分析
+                  </button>
+                  <button className="link" onClick={() => goTo("history")}>
+                    看所有紀錄
+                  </button>
+                </div>
+              </RunCardView>
+            ) : (
+              <p className="muted small">讀取中…</p>
+            )}
           </div>
         )}
         {report?.status === "pending" && (
@@ -249,110 +245,6 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
             已暫存今天（{report.date}）的回報。等手錶上傳到 Intervals.icu 後按「同步最近 14 天」，就會配對到今天的跑步。
           </div>
         )}
-      </section>
-
-      <section className="card">
-        <h2>最近 30 天的訓練</h2>
-        {workouts.length === 0 && <p className="muted">還沒有訓練紀錄。</p>}
-        <ul className="list">
-          {workouts.map((w) => (
-            <li key={w.id}>
-              <div className="row between">
-                <strong>{w.date}</strong>
-                <span>
-                  {w.distance_km ?? "?"}km｜{w.avg_pace ?? "?"}
-                </span>
-              </div>
-              <div className="muted small">
-                {heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}
-                {w.training_load != null && `｜負荷 ${w.training_load}`}
-                {w.perceived_effort != null && `｜體感 ${w.perceived_effort}/10`}
-                {w.subjective_notes && `｜${w.subjective_notes}`}
-              </div>
-              {w.summary && (
-                <div className="small">
-                  <Markdown>{w.summary}</Markdown>
-                </div>
-              )}
-              {editing?.id === w.id ? (
-                <div className="backfill">
-                  <label>
-                    <span>
-                      體感強度：<strong>{editing.effort}</strong> / 10
-                    </span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={editing.effort}
-                      onChange={(e) => setEditing({ ...editing, effort: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label>
-                    主觀感受
-                    <textarea
-                      rows={2}
-                      value={editing.notes}
-                      placeholder="例如：最後兩公里很喘，腿還好"
-                      onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-                    />
-                  </label>
-                  <div className="row">
-                    <button className="primary" disabled={saving} onClick={() => void saveBackfill()}>
-                      {saving ? "儲存並分析中…" : "儲存並重新分析"}
-                    </button>
-                    <button disabled={saving} onClick={() => setEditing(null)}>
-                      取消
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="row">
-                  <button className="small" disabled={editing !== null} onClick={() => startEdit(w)}>
-                    {w.perceived_effort != null ? "修改體感" : "補填體感"}
-                  </button>
-                  {(w.duplicate_count ?? 0) > 0 && (
-                    <>
-                      <span className="muted small">已合併 {w.duplicate_count} 筆重複的紀錄</span>
-                      <button
-                        className="link small"
-                        onClick={() =>
-                          void coach.splitDuplicates(w.id).then(() => {
-                            setMessage({ kind: "ok", text: `已拆開 ${w.date} 的紀錄，之後會分開計算。` });
-                            touch();
-                          })
-                        }
-                      >
-                        不是同一趟
-                      </button>
-                    </>
-                  )}
-                  {backfilled?.workout.id === w.id && (
-                    <button
-                      className="small primary"
-                      onClick={() =>
-                        goTo(
-                          "chat",
-                          analysisRequest(
-                            backfilled.workout,
-                            backfilled.workout.perceived_effort ?? 5,
-                            backfilled.workout.subjective_notes ?? "",
-                            true,
-                          ),
-                        )
-                      }
-                    >
-                      請教練分析
-                    </button>
-                  )}
-                </div>
-              )}
-              {backfilled?.workout.id === w.id && !backfilled.summary && (
-                <p className="muted small">體感已存檔；這次沒有重新產生分析。</p>
-              )}
-            </li>
-          ))}
-        </ul>
       </section>
     </>
   );

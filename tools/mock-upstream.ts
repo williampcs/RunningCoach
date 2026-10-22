@@ -151,7 +151,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
     return [
       {
         type: "text",
-        text: "**（模擬摘要）10 公里有氧跑**｜配速 5:30/km｜心率 152\n\n- 配速穩定，心率落在 Z3\n- 體感與數據相符",
+        text: "（模擬摘要）穩定的有氧跑，心率控制得不錯\n\n- 配速穩定，心率大多在輕鬆跑的範圍\n- 體感與數據相符",
       },
     ];
   }

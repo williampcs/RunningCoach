@@ -29,7 +29,7 @@ export interface AppState {
   openReport(workoutId?: number): void;
 }
 
-export type Tab = "chat" | "report" | "plan" | "profile" | "settings";
+export type Tab = "chat" | "report" | "history" | "plan" | "profile" | "settings";
 
 export const AppContext = createContext<AppState | null>(null);
 

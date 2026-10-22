@@ -259,6 +259,42 @@ export async function changeSession(
   return `${done}（session_id=${id}）。` + (warnings.length ? `\n調整後的檢查：\n${warningList(warnings)}` : "");
 }
 
+/** 一趟跑步在課表上的位置：對應的課與程式的判斷（紀錄頁用） */
+export interface RunPlanResult {
+  kind: SessionView["kind"];
+  kindLabel: string;
+  title: string;
+  result: SessionResult;
+}
+
+/**
+ * since 以後每週的結構化課表與實際的對照，依跑步的 id 列出。
+ * inPlannedWeek：落在有課表的週、但沒有配到課的跑步（課表外的跑步）.
+ */
+export async function planResultsSince(
+  db: Db,
+  today: string,
+  since: string,
+): Promise<{ byWorkout: Map<number, RunPlanResult>; inPlannedWeek: Set<number> }> {
+  const byWorkout = new Map<number, RunPlanResult>();
+  const inPlannedWeek = new Set<number>();
+  const plans = await db.getWeeklyPlansSince(addDays(since, -6));
+  if (!plans.length) return { byWorkout, inPlannedWeek };
+  const ctx = await contextFor(db, today, plans[0]!.week_start!, "fixed");
+  for (const plan of plans) {
+    const sessions = await db.getPlannedSessions(plan.id);
+    const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start!, today, ctx);
+    for (const s of sessions) {
+      const result = match.results.get(s.id);
+      if (result?.workoutId == null) continue;
+      const v = sessionView(s, ctx);
+      byWorkout.set(result.workoutId, { kind: s.kind, kindLabel: v.kindLabel, title: s.title, result });
+    }
+    for (const w of match.extraRuns) inPlannedWeek.add(w.id);
+  }
+  return { byWorkout, inPlannedWeek };
+}
+
 /**
  * 跑後分析用：這趟對應課表上的哪一堂課，以及程式的判斷；這週沒有結構化課表時為 null。
  * 例：「這趟對應的課：T 閾值 4×1 km（…）；完成的標準：…；程式的判斷：部分達成（…）」

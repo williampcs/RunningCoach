@@ -347,7 +347,9 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
     (workout.plan ? `課表：${workout.plan}\n` : "") +
-    `\n格式：一行數據摘要 ＋ AI評估。` +
+    // 網頁版以數字與圖顯示數據，摘要的第一行當結論顯示，其餘預設收起（規格 12.9）
+    `\n格式：第一行是一句話的結論（例如「穩定的有氧跑，心率控制得很好」），不加標題、粗體，也不重複列出數據；` +
+    `之後用 2–4 個條列說明。` +
     (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
     (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率。") +
     (workout.recovery

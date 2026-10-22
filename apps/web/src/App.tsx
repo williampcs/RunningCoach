@@ -24,19 +24,22 @@ import {
   type TestMode,
 } from "./test-mode";
 import { ChatView } from "./views/Chat";
+import { HistoryView } from "./views/History";
 import { PlanView } from "./views/Plan";
 import { ProfileView } from "./views/Profile";
 import { ReportView } from "./views/Report";
 import { SettingsView } from "./views/Settings";
 import { BUILD_DETAIL, VERSION_LABEL } from "./version";
 
+// 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "chat", label: "對話", icon: "💬" },
   { id: "report", label: "跑後回報", icon: "🏃" },
+  { id: "history", label: "紀錄", icon: "📖" },
   { id: "plan", label: "計畫與賽事", icon: "📅" },
   { id: "profile", label: "選手資料", icon: "👤" },
-  { id: "settings", label: "設定", icon: "⚙️" },
 ];
+const PAGE_LABELS: Record<Tab, string> = { ...Object.fromEntries(TABS.map((t) => [t.id, t.label])), settings: "設定" } as Record<Tab, string>;
 
 /** LLM 尚未設定時的替身：資料頁照常可用，需要模型的動作會得到明確的錯誤 */
 function unconfiguredProvider(problem: string): LlmProvider {
@@ -198,7 +201,16 @@ export function App() {
           <span className="version" title={BUILD_DETAIL}>
             {VERSION_LABEL}
           </span>
-          <span className="page-label muted small">{TABS.find((t) => t.id === tab)?.label}</span>
+          <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
+          <button
+            className={tab === "settings" ? "settings-button active" : "settings-button"}
+            aria-label="設定"
+            aria-current={tab === "settings"}
+            title="設定"
+            onClick={() => setTab("settings")}
+          >
+            <span aria-hidden="true">⚙️</span>
+          </button>
         </header>
         {(!state.db.persistent || testMode.enabled) && (
           <div className="notices">
@@ -223,6 +235,7 @@ export function App() {
         <main className={tab === "chat" ? "page chat-page" : "page"}>
           {tab === "chat" && <ChatView outbox={outbox} onOutboxSent={() => setOutbox(null)} />}
           {tab === "report" && <ReportView preselect={reportPreselect} onPreselectUsed={() => setReportPreselect(null)} />}
+          {tab === "history" && <HistoryView />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
           {tab === "settings" && <SettingsView />}
