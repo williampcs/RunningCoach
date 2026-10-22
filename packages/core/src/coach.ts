@@ -2,6 +2,7 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
+import { runCards, type RunCard } from "./history";
 import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
@@ -464,6 +465,11 @@ export class Coach {
   /** 啟用中的課表，目標依現在的訓練數值換算（網頁版的計畫頁） */
   activePlan(): Promise<ActivePlan | null> {
     return activePlan(this.db, this.today());
+  }
+
+  /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */
+  runCards(days = 30): Promise<RunCard[]> {
+    return runCards(this.db, this.today(), days);
   }
 
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */

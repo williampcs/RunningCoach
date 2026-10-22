@@ -101,7 +101,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       if (!content || busy.current) return;
       busy.current = true;
       setSentCount((n) => n + 1);
-      setBaseId(messages.at(-1)?.id ?? 0);
+      // 從資料庫讀：其他分頁交辦的訊息在剛切到對話頁時就送出，這時對話可能還沒讀進來
+      setBaseId((await coach.db.getRecentConversations(1)).at(-1)?.id ?? 0);
       setSending(content);
       setError(null);
       setFooter("");
@@ -119,7 +120,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         touch();
       }
     },
-    [coach, touch, load, messages, onEvent, clearDraft],
+    [coach, touch, load, onEvent, clearDraft],
   );
 
   // 其他分頁交辦的訊息（例如跑後回報的「請教練分析」）
