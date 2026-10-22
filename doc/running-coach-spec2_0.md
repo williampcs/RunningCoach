@@ -1428,6 +1428,8 @@ Intervals.icu 算的數字建立在設定值上：閾值心率設錯，負荷、
   - 「更早的跑步沒有出現？」說明 Garmin 的舊資料（依 Intervals.icu 論壇的說明，未實測）：Garmin 連上 Intervals.icu 時只讓它補抓約一年；更早的要在 Garmin 帳戶的「資料管理」申請匯出全部資料，再到 Intervals.icu 設定頁的「Import all Garmin data」貼上下載連結，處理可能要一天以上；匯出檔太大時有人只保留 DI_CONNECT 資料夾才成功。從 Strava 來的活動改上傳 Strava 的帳戶匯出檔。
   - 模擬服務多了 2024 年起每 4 天一趟的舊紀錄與一筆 Strava 的空殼，一般的同步碰不到。
 - 查 Intervals.icu 上的資料從哪裡來（2026-10-22，使用者：Garmin 從 2022 年中就有紀錄，但 Intervals.icu 最早只到 2023 年 6 月；近一兩個月用過「Import all Garmin data」，沒有收到完成的信）：`tools/intervals-sources.ts` 在本機以自己的 API key 執行，從指定的年份起一年一年讀活動清單，列出各來源（`source`）的筆數、最早與最晚的月份、檔案格式與裝置型號，以及從最早一筆到今天每個月的筆數（沒有活動的月份也列出，看得出缺哪一段）。只印年月、筆數與列舉值，不印名稱、id 與數據；結果寫到 `data/intervals-sources/`（不進版控）。各來源的值（例如 Garmin 連線與上傳的檔案）還沒以真實帳號看過。
+  - 作者的結果：241 筆都是 `GARMIN_CONNECT`、fit，最早 2023-06。帳號是 2026-09 才申請的，Garmin 連線最多回補約一年，所以 2023-06 到 2025-03 是「Import all Garmin data」匯入的（匯入的活動也標成 `GARMIN_CONNECT`），只是缺了 2022 年中到 2023-05。可能是最舊的分割壓縮檔沒有處理，或那段是用別的裝置記錄的，還沒確認。
+- 自己補上缺的那段（2026-10-22）：`tools/garmin-export-fit.ts` 在本機讀 Garmin 的匯出檔（整個 zip、解壓後的資料夾或其中的 `UploadedFiles_…_PartN.zip`，壓縮檔裡的壓縮檔與 zip64 都讀得到，不把大檔整個讀進記憶體），從 FIT 的 file_id、session 與 activity 訊息取得活動的當地時間與是否為跑步（TCX、GPX 取第一個時間），列出每個壓縮檔涵蓋的日期與每個月的筆數，可以和 `intervals-sources.ts` 的結果對照；`--after`、`--before`、`--runs-only` 挑出一段，`--out` 複製出來（`--zip` 每 200 個打包成一個），檔名改成日期，不沿用原本的檔名（可能含 email）。不連網、不上傳。以產生的假 FIT 與 zip 測過（含大端序、非活動的檔案、TCX、zip64、壞掉的壓縮檔），還沒用真的匯出檔跑過。
 
 ### 12.10 電腦與手機的資料共通（2026-10-21，提案）
 
