@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { splitSummary } from "../src/history";
+import { accumulate, splitSummary } from "../src/history";
+import type { Workout } from "../src/types";
 import { activity, makeCoach, toolTurn, turn } from "./helpers";
 
 const ZONES = [145, 153, 161, 170, 175, 182, 190];
@@ -11,6 +12,20 @@ describe("分析摘要的結論與細節", () => {
     expect(splitSummary("\n穩定的有氧跑\n\n- 配速穩定\n- 體感相符")).toEqual({ headline: "穩定的有氧跑", details: "- 配速穩定\n- 體感相符" });
     expect(splitSummary("只有一句")).toEqual({ headline: "只有一句", details: null });
     expect(splitSummary(null)).toEqual({ headline: null, details: null });
+  });
+
+  it("舊格式：第一行的數據與「AI評估」的標籤略過；數據之後直接是條列時沒有結論", () => {
+    expect(splitSummary("**10 公里有氧跑**｜配速 5:30/km｜心率 152\n\n- 配速穩定\n- 體感相符")).toEqual({
+      headline: null,
+      details: "- 配速穩定\n- 體感相符",
+    });
+    expect(splitSummary("📊 數據摘要：10.02km、55 分鐘、5:30/km\n\n🤖 **AI評估**：有氧跑得很穩，心率控制好。\n下次可以多 1 km。")).toEqual({
+      headline: "有氧跑得很穩，心率控制好。",
+      details: "下次可以多 1 km。",
+    });
+    expect(splitSummary("10km｜55分鐘｜5:30/km｜心率 152/171\n**AI評估**\n穩定的有氧跑")).toEqual({ headline: "穩定的有氧跑", details: null });
+    // 結論裡提到數字不算數據行
+    expect(splitSummary("配速 5:30、心率 152，都在輕鬆跑的範圍").headline).toBe("配速 5:30、心率 152，都在輕鬆跑的範圍");
   });
 });
 
@@ -46,5 +61,30 @@ describe("紀錄頁的卡片", () => {
     expect(e).toMatchObject({ plan: null, outsidePlan: true, expectedRpe: null });
     // 課表以前的週；沒有心率區間
     expect(old).toMatchObject({ plan: null, outsidePlan: false, intensity: null, headline: null });
+  });
+});
+
+describe("紀錄頁頁首的累積", () => {
+  let id = 1;
+  const w = (date: string, km: number, minutes: number, elevation = 0) =>
+    ({ id: id++, date, distance_km: km, duration_min: minutes, elevation_m: elevation }) as Workout;
+
+  it("總量、週數、最長的一趟、里程碑與每一趟的格子", () => {
+    const a = accumulate([w("2025-12-30", 21.1, 120, 300), w("2026-10-06", 8, 48, 50), w("2026-10-08", 12, 70, 200), w("2026-10-01", 4, 25)], "2026-10-10");
+    expect(a).toMatchObject({ runs: 4, km: 45.1, minutes: 263, elevationM: 550, weeks: 3, since: "2025-12-30", thisYearKm: 24, marathons: 1.1, taipei101: 1.1 });
+    expect(a.thisWeek).toEqual({ runs: 2, km: 20, minutes: 118 });
+    expect(a.longest).toEqual({ km: 21.1, date: "2025-12-30" });
+    expect(a.passed).toEqual({ name: "台北到桃園", km: 40 });
+    expect(a.next).toEqual({ name: "台北到新竹", km: 70 });
+    expect(a.blocks.map((b) => b.size)).toEqual([3, 0, 1, 2]);
+  });
+
+  it("這週沒跑不顯示 0；紀錄都在今年時不另外列今年；沒有紀錄", () => {
+    const a = accumulate([w("2026-09-28", 5, 30)], "2026-10-10");
+    expect(a.thisWeek).toBeNull();
+    expect(a.thisYearKm).toBeNull();
+    expect(a.passed).toBeNull();
+    expect(a.next).toEqual({ name: "台北到桃園", km: 40 });
+    expect(accumulate([], "2026-10-10")).toMatchObject({ runs: 0, km: 0, since: null, thisWeek: null, longest: null });
   });
 });

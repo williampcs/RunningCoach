@@ -69,7 +69,7 @@ export function PlanBadge({ card }: { card: RunCard }) {
 }
 
 /** 一趟跑步：判斷、數字、強度、體感、分析摘要（第一句以外預設收起）；children 放動作 */
-/** showDate：紀錄頁的列上已經有日期時不再顯示 */
+/** showDate：紀錄頁點開時，列上已經有日期、課與結果，卡片不再顯示 */
 export function RunCardView({ card, today, showDate = true, children }: { card: RunCard; today: string; showDate?: boolean; children?: ReactNode }) {
   const w = card.workout;
   const extra = [
@@ -80,15 +80,17 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
   ].filter(Boolean);
   return (
     <div className="run-card">
-      <div className="run-card-head">
-        {showDate && <strong>{dayText(w.date, today)}</strong>}
-        {card.plan && (
-          <span className="muted small">
-            {card.plan.kindLabel}：{card.plan.title}
-          </span>
-        )}
-        {showDate && <PlanBadge card={card} />}
-      </div>
+      {showDate && (
+        <div className="run-card-head">
+          <strong>{dayText(w.date, today)}</strong>
+          {card.plan && (
+            <span className="muted small">
+              {card.plan.kindLabel}：{card.plan.title}
+            </span>
+          )}
+          <PlanBadge card={card} />
+        </div>
+      )}
       {card.plan && card.plan.reasons.length > 0 && <p className="small">{card.plan.reasons.join("、")}</p>}
       <dl className="stats">
         <div>
@@ -112,12 +114,12 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
       {card.intensity && <IntensityBar intensity={card.intensity} />}
       <EffortScale effort={w.perceived_effort} expected={card.expectedRpe} difficulty={card.plan?.difficultyLabel ?? null} />
       {w.subjective_notes && <p className="small">「{w.subjective_notes}」</p>}
-      {card.headline && (
+      {(card.headline || card.details) && (
         <div className="run-summary">
-          <Markdown>{card.headline}</Markdown>
+          {card.headline && <Markdown>{card.headline}</Markdown>}
           {card.details && (
             <details>
-              <summary>看完整分析</summary>
+              <summary>{card.headline ? "看完整分析" : "看教練的分析"}</summary>
               <Markdown>{card.details}</Markdown>
             </details>
           )}
