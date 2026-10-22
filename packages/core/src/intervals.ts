@@ -42,9 +42,21 @@ export const EFFORT_DISTANCES = [1609.34, 3000, 5000, 10_000, 21_097.5, 42_195];
 
 const positive = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
 
+/** 匯入完整歷史時一次抓一年，比一般的請求久 */
+const HISTORY_TIMEOUT_MS = 60_000;
+
 function isRun(activity: RawActivity): boolean {
   const sport = String(activity.type ?? activity.sport_type ?? "").toLowerCase();
   return sport.includes("run");
+}
+
+/**
+ * Intervals.icu 不經 API 提供從 Strava 匯入的活動，只列出一筆沒有內容的紀錄（附 _note）。
+ * 欄位依搜尋到的說明，還沒有以真實帳號確認：有 _note，或來源是 Strava 又沒有距離與時間，就當成拿不到內容
+ */
+function isUnavailable(activity: RawActivity): boolean {
+  if (typeof activity._note === "string" && activity._note) return true;
+  return String(activity.source ?? "").toUpperCase() === "STRAVA" && activity.distance == null && activity.moving_time == null;
 }
 
 function byStartDesc(a: RawActivity, b: RawActivity): number {
@@ -167,12 +179,21 @@ export class IntervalsClient implements ActivitySource {
     return { days, critical_speed: positive(cs?.criticalSpeed), d_prime: positive(cs?.dPrime), efforts };
   }
 
-  private async getJson(path: string): Promise<unknown> {
+  /** 匯入完整歷史：一次抓一段期間，請求放寬逾時 */
+  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }> {
+    const data = await this.getJson(`/activities?oldest=${oldest}&newest=${newest}`, HISTORY_TIMEOUT_MS);
+    const all = Array.isArray(data) ? (data as RawActivity[]) : [];
+    const unavailable = all.filter(isUnavailable).length;
+    const runs = all.filter((a) => !isUnavailable(a) && isRun(a) && a.id != null).sort(byStartDesc);
+    return { runs: runs.map((raw) => this.normalize(raw)), unavailable };
+  }
+
+  private async getJson(path: string, timeoutMs = 15_000): Promise<unknown> {
     const athleteId = this.options.athleteId || "0";
     const base = (this.options.baseUrl ?? BASE_URL).replace(/\/+$/, "");
     const response = await this.fetchImpl(`${base}/athlete/${encodeURIComponent(athleteId)}${path}`, {
       headers: { authorization: this.authHeader(), accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       const hint = response.status === 401 || response.status === 403 ? "（請確認 API Key 與 Athlete ID）" : "";

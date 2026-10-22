@@ -2,7 +2,8 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
-import { runCards, type RunCard } from "./history";
+import { accumulation, runCards, type Accumulation, type RunCard } from "./history";
+import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
 import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
@@ -274,6 +275,16 @@ export class Coach {
     return result;
   }
 
+  /** 匯入完整歷史：只存紀錄，不產生 AI 分析（不花模型的費用）；可以重跑 */
+  importHistory(onProgress?: (p: ImportProgress) => void): Promise<ImportResult> {
+    return importHistory(this.db, this.runtime.activities, this.today(), onProgress);
+  }
+
+  /** 活動來源能不能匯入完整歷史 */
+  get canImportHistory(): boolean {
+    return typeof this.runtime.activities.fetchRunsBetween === "function";
+  }
+
   /**
    * 恢復資料（靜息心率、HRV、睡眠）超過 maxAgeMs 沒更新時，從活動來源重新取得最近 14 天的。
    * 只讀取，不呼叫 LLM、不花費用；打開 App、回到前景與對話前呼叫。失敗只記錄。回傳是否取得了資料。
@@ -470,6 +481,11 @@ export class Coach {
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */
   runCards(days = 30): Promise<RunCard[]> {
     return runCards(this.db, this.today(), days);
+  }
+
+  /** 紀錄頁頁首的累積（只增不減） */
+  accumulation(): Promise<Accumulation> {
+    return accumulation(this.db, this.today());
   }
 
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */

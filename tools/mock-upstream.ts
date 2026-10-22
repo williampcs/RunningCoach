@@ -3,7 +3,7 @@
  *
  *   POST /v1/messages                         模擬 Anthropic Messages API（依規則回覆，會呼叫工具；支援串流）
  *   POST /v1/chat/completions                 模擬 OpenAI 相容的 Chat Completions（同一套規則；支援串流）
- *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步）
+ *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步；匯入完整歷史時另有 2024 年起的舊紀錄）
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
  *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
@@ -45,6 +45,33 @@ function wellness() {
 /** 跑步的閾值心率與 Intervals.icu 預設的 7 區（各區的上限） */
 const LTHR = 170;
 const HR_ZONES = [144, 151, 160, 168, 173, 180, 190];
+
+/**
+ * 匯入完整歷史用的舊紀錄：2024-01 起每 4 天一趟，到 45 天前為止（一般的同步只抓 14 天，碰不到）；
+ * 另有一筆從 Strava 匯入的空殼（Intervals.icu 不經 API 提供內容）
+ */
+function history() {
+  const runs: Record<string, unknown>[] = [];
+  const end = daysAgo(45);
+  for (let date = "2024-01-05", i = 0; date <= end; date = new Date(Date.parse(date) + 4 * 86_400_000).toISOString().slice(0, 10), i++) {
+    const km = [6, 8, 10, 6, 12, 8, 21.1][i % 7]!;
+    const secs = Math.round(km * (330 + (i % 5) * 10));
+    runs.push({
+      id: `i-hist-${i}`,
+      type: "Run",
+      start_date_local: `${date}T06:30:00`,
+      distance: km * 1000,
+      moving_time: secs,
+      average_speed: (km * 1000) / secs,
+      average_heartrate: 145 + (i % 6) * 3,
+      max_heartrate: 165 + (i % 6) * 3,
+      total_elevation_gain: 30 + (i % 4) * 25,
+      icu_training_load: Math.round(km * 6),
+    });
+  }
+  runs.push({ id: "i-strava-1", start_date_local: "2023-06-01T07:00:00", source: "STRAVA", _note: "STRAVA activities are not available via the API" });
+  return runs;
+}
 
 function activities() {
   return [
@@ -325,7 +352,10 @@ createServer((req, res) => {
     const newest = url.searchParams.get("newest") ?? "9999-99-99";
     return send(
       200,
-      activities().filter((a) => a.start_date_local.slice(0, 10) >= oldest && a.start_date_local.slice(0, 10) <= newest),
+      [...activities(), ...history()].filter((a) => {
+        const date = String(a.start_date_local).slice(0, 10);
+        return date >= oldest && date <= newest;
+      }),
     );
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+$/.test(path)) {

@@ -1224,3 +1224,328 @@ pre {
 .run-row .intensity {
   grid-column: 2 / -1;
 }
+
+.run-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.run-summary details summary {
+  width: fit-content;
+  padding: 4px 0;
+}
+
+.run-summary details[open] summary {
+  margin-bottom: 6px;
+}
+
+/* 紀錄頁頁首的累積（規格 12.9）：只增不減的數字 */
+.totals {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--surface)), var(--surface) 70%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.totals-hero {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-value {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-value small,
+.tile-value small {
+  font-size: 0.45em;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.tile-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tile-sub {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.tile.accent {
+  border-color: var(--accent);
+}
+
+.tile-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 每一趟一格：距離越長格子越大 */
+.blocks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.block {
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.block.s0 {
+  width: 7px;
+  height: 7px;
+  opacity: 0.45;
+}
+
+.block.s1 {
+  width: 9px;
+  height: 9px;
+  opacity: 0.65;
+}
+
+.block.s2 {
+  width: 11px;
+  height: 11px;
+  opacity: 0.85;
+}
+
+.block.s3 {
+  width: 13px;
+  height: 13px;
+}
+
+.block.recent {
+  background: var(--warn-strong);
+  opacity: 1;
+}
+
+.blocks-more {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-right: 4px;
+}
+
+/* 頁首的圖：路線、獎牌、台北 101、每一趟的格子；都從 0 長上來 */
+.journey {
+  margin-top: 10px;
+}
+
+.journey-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  margin-top: 18px;
+}
+
+.journey-fill {
+  position: relative;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent));
+  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.journey-runner {
+  position: absolute;
+  right: -10px;
+  bottom: 4px;
+  font-size: 1.25rem;
+  line-height: 1;
+  /* 表情符號的跑者面向左邊：翻過來往右跑 */
+  transform: scaleX(-1);
+  animation: bob 0.5s ease-in-out infinite alternate;
+}
+
+.journey-ends {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+@keyframes bob {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 0 -3px;
+  }
+}
+
+.showcases {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.showcase {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.medals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 1.3rem;
+  line-height: 1.2;
+}
+
+.medal {
+  display: inline-block;
+  animation: pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 60ms);
+}
+
+.medals .more,
+.towers .more {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.towers {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 56px;
+}
+
+.tower {
+  height: 52px;
+  width: auto;
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i) * 90ms);
+  transform-origin: bottom;
+}
+
+.tower-shape {
+  fill: var(--border);
+}
+
+.tower-shape.filled {
+  fill: var(--accent);
+}
+
+.tower-clip {
+  transition: y 1s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.block {
+  animation: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: scaleY(0.1);
+  }
+}
+
+/* 匯入完整歷史 */
+.import-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.import-history ul {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.indeterminate {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) var(--border);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: slide 1.2s linear infinite;
+}
+
+@keyframes slide {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+.year-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-fill,
+  .tower-clip {
+    transition: none;
+  }
+
+  .journey-runner,
+  .medal,
+  .tower,
+  .block,
+  .indeterminate {
+    animation: none;
+  }
+}
+
+.import-history .notice p {
+  margin: 0;
+}

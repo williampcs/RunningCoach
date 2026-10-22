@@ -415,6 +415,10 @@ export class FakeActivitySource implements ActivitySource {
     return this.within(days);
   }
 
+  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }> {
+    return { runs: this.activities.filter((a) => a.date >= oldest && a.date <= newest), unavailable: 0 };
+  }
+
   async fetchWellness(days = 14): Promise<WellnessDay[]> {
     const today = this.today();
     return this.wellness.filter((w) => {

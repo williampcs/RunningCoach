@@ -45,6 +45,11 @@ export interface ActivitySource {
   fetchWellness?(days: number): Promise<WellnessDay[]>;
   /** 最近 N 天跑步以外的活動類型（例如 Walk、Ride），同步不到跑步時用來說明；不支援的來源不實作 */
   fetchOtherActivityTypes?(days: number): Promise<string[]>;
+  /**
+   * 一段期間（含頭尾的日期）的跑步，匯入完整歷史用；unavailable 是來源列出、但不提供內容的活動數
+   * （Intervals.icu 不經 API 提供從 Strava 匯入的活動）。不支援的來源不實作
+   */
+  fetchRunsBetween?(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }>;
   /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等），教練排課與判斷疲勞時參考；不支援的來源不實作 */
   fetchOtherActivities?(days: number): Promise<OtherActivity[]>;
   /** 跑步的閾值與心率區間（Intervals.icu 的運動設定）；不支援的來源不實作 */

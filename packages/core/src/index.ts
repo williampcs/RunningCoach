@@ -35,7 +35,8 @@ export {
   type FakeSpec,
 } from "./fake-activities";
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
-export { splitSummary, type RunCard } from "./history";
+export { accumulate, splitSummary, type Accumulation, type RunCard } from "./history";
+export { type ImportProgress, type ImportResult } from "./history-import";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
