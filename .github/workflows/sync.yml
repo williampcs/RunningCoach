@@ -1,0 +1,62 @@
+# 部署多裝置同步服務到 Cloudflare Workers（規格 12.10）：push 到 main 且同步服務有改動時執行，也可以手動執行。
+#
+# 同步服務只存加密後的資料；不記錄請求（wrangler.toml 關閉了觀測日誌）。
+# 帳號相關的值不寫進 repo：
+#   repo 的 Secrets：CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID
+#   repo 的 Variables：SYNC_D1_DATABASE_ID（D1 資料庫的 id）
+# 還沒設定 SYNC_D1_DATABASE_ID 時只跑測試，不部署。
+# 部署完成後，把 Workers 的網址設成 repo 的 Variables：SYNC_URL，再手動執行一次「Deploy web app」。
+name: Deploy sync service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/sync/**
+      - packages/core/**
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - .github/workflows/sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck -w @running-coach/sync
+      - run: npx vitest run apps/sync
+      - name: Fill in account values
+        if: ${{ vars.SYNC_D1_DATABASE_ID != '' }}
+        working-directory: apps/sync
+        env:
+          DATABASE_ID: ${{ vars.SYNC_D1_DATABASE_ID }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # 網頁版的來源：https://<owner>.github.io（全小寫）
+          origin="https://$(echo "$OWNER" | tr '[:upper:]' '[:lower:]').github.io"
+          sed -i "s|^database_id = \"\"|database_id = \"$DATABASE_ID\"|; s|^ALLOWED_ORIGINS = \"\"|ALLOWED_ORIGINS = \"$origin\"|" wrangler.toml
+      - name: Deploy
+        if: ${{ vars.SYNC_D1_DATABASE_ID != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy
+      - name: Not configured
+        if: ${{ vars.SYNC_D1_DATABASE_ID == '' }}
+        run: echo "還沒設定 SYNC_D1_DATABASE_ID，只跑測試、不部署（設定步驟見規格 12.10）。"

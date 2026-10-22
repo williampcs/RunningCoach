@@ -2,6 +2,7 @@
 #
 # 網頁版建置出來是靜態檔案；對話、訓練紀錄與金鑰都留在使用者的瀏覽器，不經過這裡（KI-026）。
 # 第一次使用前，要在 repo 的 Settings → Pages 把 Source 設為「GitHub Actions」。
+# 改了 repo 的 Variables：SYNC_URL（多裝置同步服務的網址）之後，要手動執行一次。
 name: Deploy web app
 
 on:
@@ -38,6 +39,9 @@ jobs:
       - run: npm test
       # 網站在 https://<owner>.github.io/<repo>/ 底下
       - run: npm run build -w @running-coach/web -- --base "/${GITHUB_REPOSITORY#*/}/"
+        env:
+          # 多裝置同步服務的網址（repo 的 Variables）；沒有時設定頁顯示「還沒設定」
+          VITE_SYNC_URL: ${{ vars.SYNC_URL }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/web/dist
