@@ -1427,6 +1427,7 @@ Intervals.icu 算的數字建立在設定值上：閾值心率設錯，負荷、
   - 紀錄頁頁首的按鈕，完成後顯示新增幾趟、原本就有幾趟、最早的一趟與每年的趟數。
   - 「更早的跑步沒有出現？」說明 Garmin 的舊資料（依 Intervals.icu 論壇的說明，未實測）：Garmin 連上 Intervals.icu 時只讓它補抓約一年；更早的要在 Garmin 帳戶的「資料管理」申請匯出全部資料，再到 Intervals.icu 設定頁的「Import all Garmin data」貼上下載連結，處理可能要一天以上；匯出檔太大時有人只保留 DI_CONNECT 資料夾才成功。從 Strava 來的活動改上傳 Strava 的帳戶匯出檔。
   - 模擬服務多了 2024 年起每 4 天一趟的舊紀錄與一筆 Strava 的空殼，一般的同步碰不到。
+- 查 Intervals.icu 上的資料從哪裡來（2026-10-22，使用者：Garmin 從 2022 年中就有紀錄，但 Intervals.icu 最早只到 2023 年 6 月；近一兩個月用過「Import all Garmin data」，沒有收到完成的信）：`tools/intervals-sources.ts` 在本機以自己的 API key 執行，從指定的年份起一年一年讀活動清單，列出各來源（`source`）的筆數、最早與最晚的月份、檔案格式與裝置型號，以及從最早一筆到今天每個月的筆數（沒有活動的月份也列出，看得出缺哪一段）。只印年月、筆數與列舉值，不印名稱、id 與數據；結果寫到 `data/intervals-sources/`（不進版控）。各來源的值（例如 Garmin 連線與上傳的檔案）還沒以真實帳號看過。
 
 ### 12.10 電腦與手機的資料共通（2026-10-21，提案）
 
