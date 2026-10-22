@@ -63,11 +63,45 @@ export interface Snapshot {
   local: Map<string, number>;
 }
 
-/** 這台目前的資料；先替還沒有 sync_id 的賽事與課表補上 */
+/** 兩筆內容相同（id 與建立時間以外）時視為同一筆 */
+const same = (cols: readonly string[]) => cols.map((c) => `o.${c} IS t.${c}`).join(" AND ");
+
+/**
+ * 合併重複的賽事、課表與課：兩台各自有同一份資料（例如之前用匯出、匯入搬過去，或兩台各自新增了同一場賽事），
+ * 加入同步時各自有不同的 sync_id，合併後就會出現兩份. 內容相同的只留 sync_id 最小的一份
+ * （各台的判斷一致），其他的刪掉，下次送出時成為刪除，別台也跟著刪.
+ * 課表重複時，被刪的那份的課先移到留下的那份，再依日期、順序、種類與標題合併，留下最近更新的
+ */
+async function mergeDuplicates(sql: Sql): Promise<void> {
+  const raceCols = RACE_COLS.filter((c) => c !== "created_at");
+  await sql.run(`DELETE FROM races AS t WHERE EXISTS (SELECT 1 FROM races o WHERE o.sync_id < t.sync_id AND ${same(raceCols)})`);
+
+  const planCols = PLAN_COLS.filter((c) => c !== "created_at" && c !== "is_active");
+  const plans = await sql.all(
+    `SELECT t.id AS dup, (SELECT o.id FROM training_plans o WHERE o.sync_id < t.sync_id AND ${same(planCols)} ORDER BY o.sync_id LIMIT 1) AS keep` +
+      " FROM training_plans t",
+  );
+  for (const row of plans) {
+    const [dup, keep] = [row.dup ?? null, row.keep ?? null];
+    if (keep === null || dup === null) continue;
+    await sql.run("UPDATE planned_sessions SET plan_id=? WHERE plan_id=?", [keep, dup]);
+    await sql.run("UPDATE training_plans SET is_active = MAX(is_active, (SELECT is_active FROM training_plans WHERE id=?)) WHERE id=?", [dup, keep]);
+    await sql.run("DELETE FROM training_plans WHERE id=?", [dup]);
+  }
+
+  const sessionKey = ["plan_id", "position", "date", "kind", "title"].map((c) => `o.${c} IS t.${c}`).join(" AND ");
+  await sql.run(
+    `DELETE FROM planned_sessions AS t WHERE EXISTS (SELECT 1 FROM planned_sessions o WHERE ${sessionKey}` +
+      " AND (o.updated_at > t.updated_at OR (o.updated_at = t.updated_at AND o.sync_id < t.sync_id)))",
+  );
+}
+
+/** 這台目前的資料；先替還沒有 sync_id 的賽事與課表補上，合併重複的 */
 export async function snapshot(sql: Sql): Promise<Snapshot> {
   for (const table of ["races", "training_plans", "planned_sessions"]) {
     await sql.run(`UPDATE ${table} SET sync_id = lower(hex(randomblob(16))) WHERE sync_id IS NULL`);
   }
+  await mergeDuplicates(sql);
   const data = new Map<string, EntityData>();
   const local = new Map<string, number>();
 
