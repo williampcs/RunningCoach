@@ -82,6 +82,8 @@ export interface SyncResult {
   sent: number;
   /** 還在等這台有對應跑步的筆數 */
   pending: number;
+  /** 這台和雲端一致的筆數（不含刪除） */
+  total: number;
   at: string;
 }
 
@@ -140,7 +142,7 @@ export class SyncEngine {
       if (space !== null && space !== keys.space) await clearState(sql);
       await setMeta(sql, "space", keys.space);
     });
-    const result: SyncResult = { received: 0, sent: 0, pending: 0, at: nowIso(this.now()) };
+    const result: SyncResult = { received: 0, sent: 0, pending: 0, total: 0, at: nowIso(this.now()) };
     try {
       if (!this.spaceReady) {
         await this.api.request("PUT", `/v1/spaces/${keys.space}`, undefined, keys.token);
@@ -157,6 +159,9 @@ export class SyncEngine {
       if (e instanceof SyncApiError && e.status === 404) await this.db.syncTransaction((sql) => setMeta(sql, "gone", keys.space));
       throw e;
     }
+    result.total = Number(
+      (await this.db.syncTransaction((sql) => sql.all("SELECT COUNT(*) AS n FROM sync_state WHERE hash<>?", [DELETED])))[0]?.n ?? 0,
+    );
     result.pending = Number(
       (await this.db.syncTransaction((sql) => sql.all("SELECT COUNT(*) AS n FROM sync_pending")))[0]?.n ?? 0,
     );

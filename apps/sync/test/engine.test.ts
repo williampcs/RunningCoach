@@ -92,9 +92,13 @@ describe("兩台裝置同步", () => {
     expect(bw1).toMatchObject({ perceived_effort: 6, subjective_notes: "腿有點重" });
     expect((await b.db.getRecentWorkouts(30)).find((w) => w.intervals_id === "i1")?.summary).toBe("穩定的有氧跑\n\n- 心率穩");
 
-    // 沒有變更時不重送，也不重複套用
-    expect(await engineB.sync()).toMatchObject({ received: 0, sent: 0 });
-    expect(await engineA.sync()).toMatchObject({ received: 0, sent: 0 });
+    // 沒有變更時不重送，也不重複套用；兩台同步的總筆數一樣
+    const againB = await engineB.sync();
+    const againA = await engineA.sync();
+    expect(againB).toMatchObject({ received: 0, sent: 0 });
+    expect(againA).toMatchObject({ received: 0, sent: 0 });
+    expect(againB.total).toBeGreaterThanOrEqual(10);
+    expect(againA.total).toBe(againB.total);
 
     // 那趟跑步同步到 B 之後，暫存的「不是同一趟」就套用
     const bw3 = await b.db.saveWorkout(run("i3", "2026-10-21", { raw_json: JSON.stringify({ id: "i3", start_date_local: "2026-10-21T18:00:00" }) }));

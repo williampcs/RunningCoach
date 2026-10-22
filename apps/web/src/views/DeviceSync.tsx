@@ -472,7 +472,7 @@ export function DeviceSyncCard() {
           <span className="badge achieved">已開啟</span> 上次同步：{timeText(deviceSync.lastAt)}
           {last && (
             <span className="muted small">
-              （收到 {last.received}、送出 {last.sent}
+              （共同步 {last.total} 筆；這次收到 {last.received}、送出 {last.sent}
               {last.pending ? `；${last.pending} 筆等這台同步到對應的跑步` : ""}）
             </span>
           )}
