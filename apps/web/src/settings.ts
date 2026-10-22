@@ -31,6 +31,8 @@ export interface AppSettings {
   chatEffort: Effort;
   proxy: { url: string; token: string };
   intervals: { apiKey: string; athleteId: string };
+  /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
+  sync: { url: string; key: string };
   timeZone: string;
   /** 使用者已確認過資料流向的組合，例：byok:anthropic */
   consents: string[];
@@ -67,6 +69,7 @@ export function defaultSettings(): AppSettings {
     chatEffort: "medium",
     proxy: { url: import.meta.env.VITE_PROXY_URL ?? "", token: "" },
     intervals: { apiKey: "", athleteId: "" },
+    sync: { url: import.meta.env.VITE_SYNC_URL ?? "", key: "" },
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
     consents: [],
   };
@@ -83,6 +86,8 @@ function loadPlainSettings(): AppSettings {
       models: { ...defaults.models, ...stored.models },
       proxy: { ...defaults.proxy, ...stored.proxy },
       intervals: { ...defaults.intervals, ...stored.intervals },
+      // 服務網址以建置時的為準：換了部署位置時不必每台重設
+      sync: { ...defaults.sync, key: stored.sync?.key ?? "", url: defaults.sync.url || stored.sync?.url || "" },
     };
   } catch {
     return defaults;
@@ -90,7 +95,7 @@ function loadPlainSettings(): AppSettings {
 }
 
 function secretsOf(s: AppSettings): Secrets {
-  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey };
+  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey, syncKey: s.sync.key };
 }
 
 function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
@@ -99,10 +104,11 @@ function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
     apiKey: secrets.apiKey,
     proxy: { ...s.proxy, token: secrets.proxyToken },
     intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey },
+    sync: { ...s.sync, key: secrets.syncKey ?? "" },
   };
 }
 
-const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "" };
+const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "" };
 
 /** 設定；啟用密碼鎖時，憑證只有在解鎖後才會出現 */
 export function loadSettings(): AppSettings {

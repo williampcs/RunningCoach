@@ -7,12 +7,18 @@
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
  *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
+ *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
  *
  * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
  * 搭配方式見 README 的「本機開發」。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+
+import { openNodeSqlite } from "@running-coach/sqlite-node";
+
+import { createSyncHandler } from "../apps/sync/src/handler";
+import { SyncStore } from "../apps/sync/src/store";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8788);
 // 模擬思考的停頓與串流時每段文字的間隔（毫秒）
@@ -336,7 +342,28 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: { inpu
   res.end();
 }
 
+// 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空
+const syncStore = new SyncStore(openNodeSqlite(":memory:"));
+await syncStore.init();
+const syncHandle = createSyncHandler({ store: syncStore, allowedOrigins: ["*"] });
+
+function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
+  const chunks: Buffer[] = [];
+  req.on("data", (c: Buffer) => chunks.push(c));
+  req.on("end", () => {
+    const hasBody = req.method !== "GET" && req.method !== "HEAD" && chunks.length > 0;
+    const headers = Object.entries(req.headers).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : []));
+    void syncHandle(new Request(`http://localhost${path}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined })).then(
+      async (response) => {
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(Buffer.from(await response.arrayBuffer()));
+      },
+    );
+  });
+}
+
 createServer((req, res) => {
+  if (req.url?.startsWith("/sync/")) return proxySync(req, res, req.url.slice("/sync".length));
   const send = (status: number, payload: unknown) => {
     res.writeHead(status, { "content-type": "application/json", ...CORS });
     res.end(JSON.stringify(payload));

@@ -14,12 +14,14 @@
   "dependencies": {
     "@running-coach/core": "*",
     "@sqlite.org/sqlite-wasm": "^3.53.4-build2",
+    "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "*",
     "remark-gfm": "*"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.2",

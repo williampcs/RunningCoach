@@ -3,6 +3,7 @@ import { createContext, useContext } from "react";
 import type { Coach } from "@running-coach/core";
 
 import type { BrowserDb } from "./db/driver";
+import type { DeviceSyncState } from "./device-sync";
 import type { AppSettings } from "./settings";
 import type { TestMode } from "./test-mode";
 
@@ -27,6 +28,11 @@ export interface AppState {
   goTo(tab: Tab, draft?: string): void;
   /** 前往跑後回報；指定 workoutId 時預先選好那一筆 */
   openReport(workoutId?: number): void;
+  /** 多裝置同步（規格 12.10） */
+  deviceSync: DeviceSyncState;
+  /** 從配對連結（#pair=配對碼）打開時的配對碼；設定頁的同步區塊用完後清掉 */
+  pairFromLink: string | null;
+  clearPairFromLink(): void;
 }
 
 export type Tab = "chat" | "report" | "history" | "plan" | "profile" | "settings";

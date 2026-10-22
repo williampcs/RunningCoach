@@ -9,6 +9,8 @@ export interface Secrets {
   apiKey: string;
   proxyToken: string;
   intervalsApiKey: string;
+  /** 多裝置同步的金鑰（規格 12.10）；之前建立的密碼鎖沒有這一項 */
+  syncKey?: string;
 }
 
 /** 存進 localStorage 的密文 */
