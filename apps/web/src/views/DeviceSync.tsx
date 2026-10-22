@@ -6,28 +6,37 @@ import {
   deriveKeys,
   fromBase64url,
   newPairKey,
+  newPairNonce,
   newRootKey,
   openRoot,
+  pairCommitment,
+  pairFingerprint,
   pairSecrets,
   parseRecoveryCode,
   recoveryCode,
   sealRoot,
   SyncEngine,
   toBase64url,
-  type PairKey,
   type PairSecrets,
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { lockEnabled } from "../settings";
 
 interface Slot {
   newPub: string;
+  commitment: string;
   oldPub: string | null;
+  nonce: string | null;
   box: string | null;
 }
 
 const POLL_MS = 2_000;
 const PAIR_TTL_MS = 10 * 60_000;
+/** 舊裝置送出公開金鑰後，等新裝置回應多久 */
+const HELLO_WAIT_MS = 60_000;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function timeText(iso: string | null): string {
   if (!iso) return "還沒同步過";
@@ -35,7 +44,10 @@ function timeText(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-/** 新裝置：顯示 QR code 與配對碼，等舊裝置傳來加密的同步金鑰 */
+/**
+ * 新裝置：顯示 QR code 與配對碼，等舊裝置的公開金鑰；收到後才公開亂數（規格 12.10 的配對），
+ * 顯示確認數字讓使用者在舊裝置輸入，再等舊裝置傳來加密的同步金鑰
+ */
 function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<void>; onCancel: () => void }) {
   const { deviceSync } = useApp();
   const api = deviceSync.api!;
@@ -44,7 +56,6 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
   const [confirm, setConfirm] = useState<string | null>(null);
   const [box, setBox] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const key = useRef<PairKey | null>(null);
   const secrets = useRef<PairSecrets | null>(null);
 
   useEffect(() => {
@@ -52,13 +63,16 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
     (async () => {
-      key.current = await newPairKey();
-      const { slot: code } = await api.request<{ slot: string }>("POST", "/v1/pair", { pub: key.current.pub });
+      const key = await newPairKey();
+      const nonce = newPairNonce();
+      const commitment = await pairCommitment(nonce);
+      const { slot: code } = await api.request<{ slot: string }>("POST", "/v1/pair", { pub: key.pub, commitment });
       if (!alive) return;
       setSlot(code);
-      const link = `${location.origin}${location.pathname}#pair=${code}`;
+      const link = `${location.origin}${location.pathname}#pair=${code}.${await pairFingerprint(key.pub, commitment)}`;
       const svg = await QRCode.toString(link, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
       if (alive) setQr(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+      let oldPub: string | null = null;
       const poll = async () => {
         if (!alive) return;
         if (Date.now() - started > PAIR_TTL_MS) {
@@ -67,11 +81,15 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
         }
         try {
           const s = await api.request<Slot>("GET", `/v1/pair/${code}`);
+          // 只用第一次收到的公開金鑰；之後被換掉就整個作廢
+          if (oldPub !== null && s.oldPub !== oldPub) throw new Error("配對的資料被改過，請重新開始。");
           if (s.oldPub && !secrets.current) {
-            secrets.current = await pairSecrets(key.current!, s.oldPub, key.current!.pub, s.oldPub);
+            oldPub = s.oldPub;
+            secrets.current = await pairSecrets(key, s.oldPub, key.pub, s.oldPub, nonce);
+            await api.request("POST", `/v1/pair/${code}/nonce`, { nonce });
             if (alive) setConfirm(secrets.current.confirm);
           }
-          if (s.box) {
+          if (s.box && secrets.current) {
             if (alive) setBox(s.box);
             return;
           }
@@ -108,10 +126,10 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
     <div className="pairing">
       <ol className="small">
         <li>在已經開啟同步的那台：手機可以直接用相機掃下面的 QR code；電腦的話到「設定 → 多裝置同步 → 新增裝置」輸入配對碼。</li>
-        <li>兩台會顯示同一組六位數字，確認一樣後，在那台按「傳送」，再在這台按「加入」。</li>
+        <li>這裡會顯示一組六位數字，在那台輸入。那台顯示「已傳送」之後，再在這台按「加入」。</li>
       </ol>
-      {qr && <img className="pair-qr" src={qr} alt={`配對用的 QR code，配對碼 ${slot}`} />}
-      {slot && (
+      {qr && !confirm && <img className="pair-qr" src={qr} alt={`配對用的 QR code，配對碼 ${slot}`} />}
+      {slot && !confirm && (
         <p>
           配對碼：<strong className="pair-code">{slot.slice(0, 4)}-{slot.slice(4)}</strong>
           <span className="muted small">（10 分鐘內有效）</span>
@@ -123,13 +141,13 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
           <span>
             確認數字：<strong className="pair-confirm">{confirm}</strong>
           </span>
-          <span className="small">另一台顯示的數字一樣才繼續；不一樣的話按取消。</span>
+          <span className="small">在另一台輸入這組數字。另一台顯示「已傳送」之後才按「加入」；另一台說數字不對的話，按取消。</span>
         </div>
       )}
       {error && <div className="notice error">{error}</div>}
       <div className="row">
-        <button className="primary" disabled={!box || !confirm} onClick={() => void accept()}>
-          {box ? "數字一樣，加入" : confirm ? "等另一台按傳送…" : "等另一台…"}
+        <button className="primary" disabled={!box || !confirm || Boolean(error)} onClick={() => void accept()}>
+          {box ? "另一台已傳送，加入" : confirm ? "等另一台輸入數字…" : "等另一台…"}
         </button>
         <button onClick={() => void cancel()}>取消</button>
       </div>
@@ -137,27 +155,53 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
   );
 }
 
-/** 舊裝置：輸入或從連結帶入配對碼，確認數字後把加密的同步金鑰傳給新裝置 */
+/** 配對碼與 QR code 帶的指紋（手動輸入時沒有指紋） */
+function parsePairCode(text: string): { slot: string; fingerprint: string | null } {
+  const [code = "", fingerprint] = text.trim().split(".");
+  return { slot: code.toUpperCase().replace(/[^0-9A-Z]/g, ""), fingerprint: fingerprint ?? null };
+}
+
+/** 舊裝置：輸入或從連結帶入配對碼，輸入新裝置上顯示的數字，相符才把加密的同步金鑰傳給新裝置 */
 function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose: () => void }) {
   const { deviceSync, settings } = useApp();
   const api = deviceSync.api!;
+  const fromLink = Boolean(initialCode);
   const [code, setCode] = useState(initialCode);
-  const [confirm, setConfirm] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [tries, setTries] = useState(0);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const secrets = useRef<PairSecrets | null>(null);
-  const slot = code.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  const { slot, fingerprint } = parsePairCode(code);
 
   async function start() {
     setBusy(true);
     setError(null);
     try {
-      const s = await api.request<Slot>("GET", `/v1/pair/${slot}`);
+      // 新裝置的公開金鑰與承諾只讀這一次
+      const first = await api.request<Slot>("GET", `/v1/pair/${slot}`);
+      if (fingerprint && (await pairFingerprint(first.newPub, first.commitment)) !== fingerprint) {
+        throw new Error("配對的資料和 QR code 不符，可能被改過。已停止配對。");
+      }
       const mine = await newPairKey();
       await api.request("POST", `/v1/pair/${slot}/hello`, { pub: mine.pub });
-      secrets.current = await pairSecrets(mine, s.newPub, s.newPub, mine.pub);
-      setConfirm(secrets.current.confirm);
+      // 等新裝置公開亂數，確認和一開始的承諾相符
+      const until = Date.now() + HELLO_WAIT_MS;
+      let nonce: string | null = null;
+      while (!nonce) {
+        if (Date.now() > until) throw new Error("新裝置沒有回應。請確認那台還開著配對畫面，再重新開始。");
+        await wait(POLL_MS);
+        const s = await api.request<Slot>("GET", `/v1/pair/${slot}`);
+        if (s.newPub !== first.newPub || s.commitment !== first.commitment || s.oldPub !== mine.pub) {
+          throw new Error("配對的資料被改過。已停止配對。");
+        }
+        nonce = s.nonce;
+      }
+      if ((await pairCommitment(nonce)) !== first.commitment) throw new Error("配對的資料被改過。已停止配對。");
+      secrets.current = await pairSecrets(mine, first.newPub, first.newPub, mine.pub, nonce);
+      setReady(true);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -165,18 +209,20 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
     }
   }
 
-  // 從連結打開時直接開始
-  const started = useRef(false);
-  useEffect(() => {
-    if (initialCode && !started.current) {
-      started.current = true;
-      void start();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCode]);
-
   async function send() {
+    const digits = typed.replace(/\D/g, "");
+    if (`${digits.slice(0, 3)} ${digits.slice(3)}` !== secrets.current!.confirm) {
+      const next = tries + 1;
+      setTries(next);
+      setError(
+        next >= 3
+          ? "數字還是不一樣，已停止配對。如果你確定輸入的是新裝置上的數字，可能有人在中間攔截，請不要繼續。"
+          : "數字不一樣。請再看一次新裝置上的數字；如果確定沒有看錯，按取消，可能有人在中間攔截。",
+      );
+      return;
+    }
     setBusy(true);
+    setError(null);
     try {
       await api.request("POST", `/v1/pair/${slot}/box`, { box: await sealRoot(secrets.current!, fromBase64url(settings.sync.key)) });
       setSent(true);
@@ -187,33 +233,48 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
     }
   }
 
+  const stopped = tries >= 3;
   return (
     <div className="pairing">
-      {!confirm && (
+      {!ready && (
         <>
-          <label>
-            新裝置上顯示的配對碼
-            <input value={code} placeholder="例：K7P2-9QX4" autoCapitalize="characters" onChange={(e) => setCode(e.target.value)} />
-          </label>
+          {fromLink ? (
+            <div className="notice warn">
+              <span>
+                你打開了一個配對連結。<strong>只有在你自己的另一台裝置正顯示這個 QR code 時才繼續</strong>
+                ：別人傳給你的連結，繼續的話會讓對方取得你所有的同步資料。
+              </span>
+            </div>
+          ) : (
+            <label>
+              新裝置上顯示的配對碼
+              <input value={code} placeholder="例：K7P2-9QX4" autoCapitalize="characters" onChange={(e) => setCode(e.target.value)} />
+            </label>
+          )}
           <div className="row">
             <button className="primary" disabled={busy || slot.length !== 8} onClick={() => void start()}>
-              {busy ? "連線中…" : "下一步"}
+              {busy ? "等新裝置回應…" : fromLink ? "是我的裝置，繼續" : "下一步"}
             </button>
             <button onClick={onClose}>取消</button>
           </div>
         </>
       )}
-      {confirm && !sent && (
+      {ready && !sent && (
         <>
-          <div className="notice info">
-            <span>
-              確認數字：<strong className="pair-confirm">{confirm}</strong>
-            </span>
-            <span className="small">新裝置上顯示的數字一樣才傳送；不一樣的話按取消，可能有人用了這組配對碼。</span>
-          </div>
+          <label>
+            新裝置上顯示的六位數字
+            <input
+              value={typed}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="例：482 913"
+              disabled={stopped}
+              onChange={(e) => setTyped(e.target.value)}
+            />
+          </label>
           <div className="row">
-            <button className="primary" disabled={busy} onClick={() => void send()}>
-              一樣，傳送
+            <button className="primary" disabled={busy || stopped || typed.replace(/\D/g, "").length !== 6} onClick={() => void send()}>
+              傳送
             </button>
             <button onClick={onClose}>取消</button>
           </div>
@@ -417,6 +478,11 @@ export function DeviceSyncCard() {
           )}
         </p>
         {deviceSync.error && <div className="notice error">同步失敗：{deviceSync.error}</div>}
+        {!lockEnabled() && (
+          <div className="notice warn">
+            建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡，和這個 App 放在同一個 github.io 網址下的其他網頁也讀得到。
+          </div>
+        )}
         {mode === "add" ? (
           <AddDeviceFlow
             key={linkCode}

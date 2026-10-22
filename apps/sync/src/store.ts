@@ -8,7 +8,6 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS spaces (
     id          TEXT PRIMARY KEY,
     token_hash  TEXT NOT NULL,
-    seq         INTEGER NOT NULL DEFAULT 0,
     bytes       INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
@@ -24,7 +23,9 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS pair_slots (
     slot        TEXT PRIMARY KEY,
     new_pub     TEXT NOT NULL,
+    commitment  TEXT NOT NULL,
     old_pub     TEXT,
+    nonce       TEXT,
     box         TEXT,
     expires_at  INTEGER NOT NULL
   );
@@ -38,7 +39,11 @@ export interface SyncRecord {
 
 export interface PairSlot {
   newPub: string;
+  /** 新裝置亂數的雜湊（承諾） */
+  commitment: string;
   oldPub: string | null;
+  /** 新裝置在收到 oldPub 之後才公開的亂數 */
+  nonce: string | null;
   box: string | null;
 }
 
@@ -78,13 +83,19 @@ export class SyncStore {
   }
 
   /** since 之後（不含）的紀錄，依序號排序 */
-  async changes(space: string, since: number, limit: number): Promise<{ items: SyncRecord[]; latest: number }> {
+  async changes(space: string, since: number, limit: number): Promise<SyncRecord[]> {
     const rows = await this.driver.all("SELECT id, seq, blob FROM records WHERE space=? AND seq>? ORDER BY seq LIMIT ?", [space, since, limit]);
-    const latest = (await this.driver.all("SELECT seq FROM spaces WHERE id=?", [space]))[0];
-    return {
-      items: rows.map((r) => ({ id: String(r.id), seq: Number(r.seq), blob: String(r.blob) })),
-      latest: Number(latest?.seq ?? 0),
-    };
+    return rows.map((r) => ({ id: String(r.id), seq: Number(r.seq), blob: String(r.blob) }));
+  }
+
+  /** 全部同步空間的數量與大小：限制整個服務的用量 */
+  async totals(): Promise<{ spaces: number; bytes: number }> {
+    const row = (await this.driver.all("SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM spaces"))[0];
+    return { spaces: Number(row?.n ?? 0), bytes: Number(row?.b ?? 0) };
+  }
+
+  async activeSlots(): Promise<number> {
+    return Number((await this.driver.all("SELECT COUNT(*) AS n FROM pair_slots WHERE expires_at>=?", [this.now().getTime()]))[0]?.n ?? 0);
   }
 
   /**
@@ -94,36 +105,52 @@ export class SyncStore {
   async put(space: string, id: string, base: number, blob: string): Promise<number | null> {
     const current = (await this.driver.all("SELECT seq, LENGTH(blob) AS size FROM records WHERE space=? AND id=?", [space, id]))[0];
     if ((current ? Number(current.seq) : 0) !== base) return null;
-    const next = (await this.driver.all("UPDATE spaces SET seq=seq+1, updated_at=? WHERE id=? RETURNING seq", [this.now().toISOString(), space]))[0];
-    const seq = Number(next?.seq);
+    // 配序號和寫入在同一個 SQL 敘述裡完成（這個空間目前最大的序號加一）：
+    // 同時有好幾台在送出時，別台取回的序號不會跳過還沒寫入的那筆.
     // 寫入時再檢查一次版本：同時有兩台寫同一筆時，後到的會失敗
-    const written = await this.driver.run(
-      "INSERT INTO records (space, id, seq, blob) VALUES (?, ?, ?, ?) ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob WHERE records.seq=?",
-      [space, id, seq, blob, base],
-    );
-    if (written.changes === 0) return null;
-    await this.driver.run("UPDATE spaces SET bytes=bytes+? WHERE id=?", [blob.length - Number(current?.size ?? 0), space]);
-    return seq;
+    const written = (
+      await this.driver.all(
+        "INSERT INTO records (space, id, seq, blob) VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM records WHERE space=?), ?)" +
+          " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob WHERE records.seq=? RETURNING seq",
+        [space, id, space, blob, base],
+      )
+    )[0];
+    if (!written) return null;
+    await this.driver.run("UPDATE spaces SET bytes=bytes+?, updated_at=? WHERE id=?", [blob.length - Number(current?.size ?? 0), this.now().toISOString(), space]);
+    return Number(written.seq);
   }
 
   // -------------------------------------------------------------------------
-  // 配對：新裝置的臨時公開金鑰、舊裝置的臨時公開金鑰與加密後的同步金鑰，十分鐘後失效
+  // 配對：依序是新裝置的臨時公開金鑰與承諾、舊裝置的臨時公開金鑰、新裝置公開的亂數、
+  // 加密後的同步金鑰；每一項只能寫一次，十分鐘後失效
   // -------------------------------------------------------------------------
 
-  async createSlot(slot: string, newPub: string, ttlMs: number): Promise<boolean> {
+  async createSlot(slot: string, newPub: string, commitment: string, ttlMs: number): Promise<boolean> {
     const now = this.now().getTime();
     await this.driver.run("DELETE FROM pair_slots WHERE expires_at<?", [now]);
     const result = await this.driver.run(
-      "INSERT INTO pair_slots (slot, new_pub, expires_at) VALUES (?, ?, ?) ON CONFLICT(slot) DO NOTHING",
-      [slot, newPub, now + ttlMs],
+      "INSERT INTO pair_slots (slot, new_pub, commitment, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(slot) DO NOTHING",
+      [slot, newPub, commitment, now + ttlMs],
     );
     return result.changes > 0;
   }
 
   async getSlot(slot: string): Promise<PairSlot | null> {
-    const row = (await this.driver.all("SELECT new_pub, old_pub, box FROM pair_slots WHERE slot=? AND expires_at>=?", [slot, this.now().getTime()]))[0];
+    const row = (
+      await this.driver.all("SELECT new_pub, commitment, old_pub, nonce, box FROM pair_slots WHERE slot=? AND expires_at>=?", [slot, this.now().getTime()])
+    )[0];
     if (!row) return null;
-    return { newPub: String(row.new_pub), oldPub: row.old_pub === null ? null : String(row.old_pub), box: row.box === null ? null : String(row.box) };
+    const text = (v: unknown) => (v === null || v === undefined ? null : String(v));
+    return { newPub: String(row.new_pub), commitment: String(row.commitment), oldPub: text(row.old_pub), nonce: text(row.nonce), box: text(row.box) };
+  }
+
+  /** 新裝置的亂數：舊裝置的公開金鑰要先到、只能設一次 */
+  async setSlotNonce(slot: string, nonce: string): Promise<boolean> {
+    const result = await this.driver.run(
+      "UPDATE pair_slots SET nonce=? WHERE slot=? AND old_pub IS NOT NULL AND nonce IS NULL AND expires_at>=?",
+      [nonce, slot, this.now().getTime()],
+    );
+    return result.changes > 0;
   }
 
   /** 舊裝置的公開金鑰：只能設一次 */
@@ -136,10 +163,10 @@ export class SyncStore {
     return result.changes > 0;
   }
 
-  /** 加密後的同步金鑰：舊裝置的公開金鑰要先到、只能設一次 */
+  /** 加密後的同步金鑰：新裝置的亂數要先公開、只能設一次 */
   async setSlotBox(slot: string, box: string): Promise<boolean> {
     const result = await this.driver.run(
-      "UPDATE pair_slots SET box=? WHERE slot=? AND old_pub IS NOT NULL AND box IS NULL AND expires_at>=?",
+      "UPDATE pair_slots SET box=? WHERE slot=? AND nonce IS NOT NULL AND box IS NULL AND expires_at>=?",
       [box, slot, this.now().getTime()],
     );
     return result.changes > 0;

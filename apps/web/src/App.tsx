@@ -54,11 +54,12 @@ function unconfiguredProvider(problem: string): LlmProvider {
   };
 }
 
-/** 網址的 #pair=配對碼（掃了另一台的 QR code）；讀到後從網址清掉 */
+/** 網址的 #pair=配對碼.指紋（掃了另一台的 QR code）；讀到後從網址清掉 */
 function readPairLink(): string | null {
-  const code = location.hash.match(/^#pair=([0-9A-Za-z]{8})$/)?.[1]?.toUpperCase() ?? null;
-  if (code) history.replaceState(null, "", location.pathname + location.search);
-  return code;
+  const match = location.hash.match(/^#pair=([0-9A-Za-z]{8})(\.[A-Za-z0-9_-]{22})?$/);
+  if (!match) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  return `${match[1]!.toUpperCase()}${match[2] ?? ""}`;
 }
 
 const logger: Logger = { info: () => undefined, warn: (m) => console.warn(m), error: (m) => console.error(m) };

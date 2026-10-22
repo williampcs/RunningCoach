@@ -183,7 +183,8 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS sync_state (
     key      TEXT PRIMARY KEY,
     hash     TEXT NOT NULL,
-    seq      INTEGER NOT NULL
+    seq      INTEGER NOT NULL,
+    v        INTEGER NOT NULL DEFAULT 0
   );
   -- 別台傳來、但這台還沒有對應紀錄的（例如另一台的跑步還沒同步到這台）
   CREATE TABLE IF NOT EXISTS sync_pending (
@@ -368,6 +369,8 @@ export class Db {
         if (!(await columns(table)).has("sync_id")) await d.exec(`ALTER TABLE ${table} ADD COLUMN sync_id TEXT`);
         await d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_sync_id ON ${table}(sync_id)`);
       }
+      // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
+      if (!(await columns("sync_state")).has("v")) await d.exec("ALTER TABLE sync_state ADD COLUMN v INTEGER NOT NULL DEFAULT 0");
 
       await d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });

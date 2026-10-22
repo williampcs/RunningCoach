@@ -16,6 +16,9 @@ export type EntityData = Record<string, SqlValue>;
 /** 掛在跑步上的資料：這台還沒有那趟跑步時先暫存，不因為找不到就當成刪除 */
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
+/** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|w|ws|wd):/.test(name);
+
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

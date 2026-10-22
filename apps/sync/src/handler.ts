@@ -12,7 +12,17 @@ export interface SyncDeps {
   allowedOrigins: string[];
   /** 產生配對碼用的亂數；測試時可以替換 */
   random?: (bytes: number) => Uint8Array;
+  /** 整個服務的上限（建立空間與配對碼不需要帳號，避免被灌爆）；測試時可以調小 */
+  limits?: Partial<ServiceLimits>;
 }
+
+export interface ServiceLimits {
+  spaces: number;
+  bytes: number;
+  pairSlots: number;
+}
+
+const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 2_000_000_000, pairSlots: 200 };
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -64,6 +74,7 @@ const isKey = (value: unknown, max = 200): value is string => typeof value === "
 
 export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise<Response> {
   const random = deps.random ?? ((n: number) => crypto.getRandomValues(new Uint8Array(n)));
+  const limits = { ...DEFAULT_LIMITS, ...deps.limits };
 
   function corsHeaders(request: Request): Record<string, string> {
     const origin = request.headers.get("origin");
@@ -97,10 +108,19 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     if (parts[1] === "spaces" && parts[2]) {
       const space = parts[2];
       if (!SPACE.test(space)) throw new HttpError(400, "同步空間的 id 格式不對");
+      // PUT：確認憑證；?create=1 時不存在就建立（只有「開始同步」的第一台會這樣做，
+      // 其他時候空間不存在是 404，不會把已經刪除的空間默默建回來）
       if (parts.length === 3 && method === "PUT") {
         const token = request.headers.get("authorization")?.match(/^Bearer ([A-Za-z0-9_-]{40,64})$/)?.[1];
         if (!token) throw new HttpError(401, "缺少憑證");
         const hash = await sha256Hex(token);
+        const stored = await deps.store.spaceToken(space);
+        if (stored !== null) {
+          if (stored !== hash) throw new HttpError(403, "憑證不符");
+          return { created: false };
+        }
+        if (url.searchParams.get("create") !== "1") throw new HttpError(404, "同步空間不存在");
+        if ((await deps.store.totals()).spaces >= limits.spaces) throw new HttpError(503, "同步服務已滿");
         const created = await deps.store.createSpace(space, hash);
         if (!created && (await deps.store.spaceToken(space)) !== hash) throw new HttpError(403, "憑證不符");
         return { created };
@@ -113,8 +133,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       if (parts[3] === "changes" && parts.length === 4 && method === "GET") {
         const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
         const limit = Math.min(MAX_PULL, Math.max(1, Number(url.searchParams.get("limit")) || MAX_PULL));
-        const { items, latest } = await deps.store.changes(space, since, limit);
-        return { items, latest, more: items.length === limit };
+        const items = await deps.store.changes(space, since, limit);
+        return { items, more: items.length === limit };
       }
       if (parts[3] === "changes" && parts.length === 4 && method === "POST") {
         const body = await readJson(request);
@@ -123,6 +143,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const usage = await deps.store.spaceUsage(space);
         const incoming = items.reduce((sum: number, item) => sum + String((item as Record<string, unknown>)?.blob ?? "").length, 0);
         if (usage.records + items.length > MAX_RECORDS || usage.bytes + incoming > MAX_BYTES) throw new HttpError(413, "同步空間已滿");
+        if ((await deps.store.totals()).bytes + incoming > limits.bytes) throw new HttpError(503, "同步服務已滿");
         const applied: { id: string; seq: number }[] = [];
         const conflicts: string[] = [];
         for (const raw of items) {
@@ -142,14 +163,16 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       throw new HttpError(405, "不支援的方法");
     }
 
-    // /v1/pair[/:slot[/hello|/box]]
+    // /v1/pair[/:slot[/hello|/nonce|/box]]
     if (parts[1] === "pair") {
       if (parts.length === 2 && method === "POST") {
         const body = await readJson(request);
         if (!isKey(body.pub)) throw new HttpError(400, "pub 格式不對");
+        if (!isKey(body.commitment, 100)) throw new HttpError(400, "commitment 格式不對");
+        if ((await deps.store.activeSlots()) >= limits.pairSlots) throw new HttpError(503, "暫時無法建立配對碼，請稍後再試");
         for (let attempt = 0; attempt < 5; attempt++) {
           const slot = [...random(8)].map((b) => SLOT_ALPHABET[b % 32]).join("");
-          if (await deps.store.createSlot(slot, body.pub, PAIR_TTL_MS)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
+          if (await deps.store.createSlot(slot, body.pub, body.commitment, PAIR_TTL_MS)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
         }
         throw new HttpError(503, "暫時無法建立配對碼");
       }
@@ -164,11 +187,16 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         await deps.store.deleteSlot(slot);
         return { deleted: true };
       }
-      if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "box")) {
+      if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "nonce" || parts[3] === "box")) {
         const body = await readJson(request);
-        const value = parts[3] === "hello" ? body.pub : body.box;
+        const value = parts[3] === "hello" ? body.pub : parts[3] === "nonce" ? body.nonce : body.box;
         if (!isKey(value, 4000)) throw new HttpError(400, "格式不對");
-        const ok = parts[3] === "hello" ? await deps.store.setSlotHello(slot, value) : await deps.store.setSlotBox(slot, value);
+        const ok =
+          parts[3] === "hello"
+            ? await deps.store.setSlotHello(slot, value)
+            : parts[3] === "nonce"
+              ? await deps.store.setSlotNonce(slot, value)
+              : await deps.store.setSlotBox(slot, value);
         if (!ok) throw new HttpError(409, "配對碼已被使用、順序不對或已過期");
         return { ok: true };
       }

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Coach, Db, newRootKey, SyncApi, SyncEngine, type Activity, type LlmProvider } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
+import { deriveKeys, recordId, seal } from "../../../packages/core/src/device-sync/crypto";
+
 import { createSyncHandler } from "../src/handler";
 import { SyncStore } from "../src/store";
 
@@ -107,6 +109,7 @@ describe("兩台裝置同步", () => {
     const b = await device();
     const engineA = new SyncEngine(a.db, api, root, () => clock);
     const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
     await a.db.setProfileKey("goal", "半馬破 2 小時");
     await a.db.saveCheckin({ date: "2026-10-21", energy: 3, soreness: 3, sleep: 3, notes: null });
     const race = await a.db.addRace({ name: "田中馬", date: "2026-11-08", distance_km: 42.195 });
@@ -142,6 +145,7 @@ describe("兩台裝置同步", () => {
     const b = await device();
     const engineA = new SyncEngine(a.db, api, root, () => clock);
     const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
     const ids = [];
     for (let i = 0; i < 4; i++) ids.push(await a.db.appendConversation(i % 2 ? "assistant" : "user", `第 ${i} 則`));
     await engineA.sync();
@@ -160,6 +164,7 @@ describe("兩台裝置同步", () => {
     await a.db.setProfileKey("notes", "右膝曾經受傷");
     await a.db.setProfileKey("goal", "全馬");
     const engineA = new SyncEngine(a.db, api, root, () => clock);
+    await engineA.ensureSpace();
     await engineA.sync();
 
     const rows = await serverDriver.all("SELECT id, blob FROM records");
@@ -177,7 +182,9 @@ describe("兩台裝置同步", () => {
 
     // 別的同步金鑰：自己一個空間，看不到這裡的資料
     const c = await device();
-    expect(await new SyncEngine(c.db, api, newRootKey(), () => clock).sync()).toMatchObject({ received: 0 });
+    const engineC = new SyncEngine(c.db, api, newRootKey(), () => clock);
+    await engineC.ensureSpace();
+    expect(await engineC.sync()).toMatchObject({ received: 0 });
     expect(await c.db.getProfile()).toEqual({});
   });
 
@@ -186,13 +193,28 @@ describe("兩台裝置同步", () => {
     const a = await device();
     await a.db.setProfileKey("goal", "全馬");
     const engineA = new SyncEngine(a.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    const b = await device();
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
     await engineA.sync();
+    await engineB.sync();
     await engineA.deleteRemote();
     expect(await serverDriver.all("SELECT * FROM records")).toEqual([]);
     expect((await a.db.getProfile()).goal).toBe("全馬");
-    // 再開始同步：重新建立空間並送出全部
-    const again = new SyncEngine(a.db, api, root, () => clock);
-    expect(await again.sync()).toMatchObject({ sent: 1 });
+
+    // 另一台：同步失敗，而且記住了。之後即使有人用同一把金鑰把空間建回來，也不再送出資料
+    await expect(engineB.sync()).rejects.toMatchObject({ status: 404 });
+    await new SyncEngine(a.db, api, root, () => clock).ensureSpace();
+    await b.db.setProfileKey("notes", "被偷之後的新資料");
+    await expect(new SyncEngine(b.db, api, root, () => clock).sync()).rejects.toMatchObject({ status: 404 });
+    expect(await serverDriver.all("SELECT * FROM records")).toEqual([]);
+    // 在那台停止同步之後才能重新加入
+    await engineB.forget();
+    expect(await new SyncEngine(b.db, api, root, () => clock).sync()).toMatchObject({ sent: 2 });
+
+    // 開始同步的第一台以外，空間不存在時不會建立
+    const c = await device();
+    await expect(new SyncEngine(c.db, api, newRootKey(), () => clock).sync()).rejects.toMatchObject({ status: 404 });
   });
 
   it("另一台分析過的跑步：同步 Intervals.icu 時直接用，不再呼叫模型", async () => {
@@ -200,7 +222,9 @@ describe("兩台裝置同步", () => {
     const a = await device();
     const w = await a.db.saveWorkout(run("i9", "2026-10-21"), 5, null);
     await a.db.saveWorkoutSummary(w, "A 的分析");
-    await new SyncEngine(a.db, api, root, () => clock).sync();
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    await engineA.sync();
 
     let calls = 0;
     const provider: LlmProvider = {
@@ -224,5 +248,62 @@ describe("兩台裝置同步", () => {
     await coach.sync();
     expect(calls).toBe(0);
     expect((await coach.db.getRecentWorkouts(30))[0]?.summary).toBe("A 的分析");
+  });
+
+  it("伺服器把某一筆換回之前的版本：會被發現，不會套用", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const b = await device();
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    await a.db.setProfileKey("goal", "半馬");
+    await engineA.sync();
+    await engineB.sync();
+    const [old] = await serverDriver.all("SELECT id, blob FROM records");
+
+    await a.db.setProfileKey("goal", "全馬");
+    await engineA.sync();
+    await engineB.sync();
+    expect((await b.db.getProfile()).goal).toBe("全馬");
+
+    // 伺服器把舊的加密內容當成新的一版送出（序號變大，內容是之前的）
+    await serverDriver.run("UPDATE records SET blob=?, seq=seq+10 WHERE id=?", [old!.blob ?? null, old!.id ?? null]);
+    await expect(engineB.sync()).rejects.toThrow(/更舊/);
+    expect((await b.db.getProfile()).goal).toBe("全馬");
+  });
+
+  it("這個版本不認得的種類、還在暫存的：不會被當成刪除送出", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    // 新版本才有的種類（直接放到伺服器上）
+    const keys = await deriveKeys(root);
+    const id = await recordId(keys, "zz:future");
+    await api.request("POST", `/v1/spaces/${keys.space}/changes`, { items: [{ id, base: 0, blob: await seal(keys, id, { k: "zz:future", v: 1, m: "2026-10-22T00:00:00Z", d: { x: 1 } }) }] }, keys.token);
+    // 課表還沒到的課（課表不在伺服器上）
+    const sessionName = "ps:0123456789abcdef0123456789abcdef";
+    const sid = await recordId(keys, sessionName);
+    const session = { plan: "fedcba9876543210fedcba9876543210", position: 0, date: "2026-10-23", kind: "easy", title: "輕鬆跑", steps: "[]", purpose: null, success: null, fallback: null, status: null, note: null, updated_at: "2026-10-22T00:00:00Z" };
+    await api.request("POST", `/v1/spaces/${keys.space}/changes`, { items: [{ id: sid, base: 0, blob: await seal(keys, sid, { k: sessionName, v: 1, m: "2026-10-22T00:00:00Z", d: session }) }] }, keys.token);
+
+    await engineA.sync();
+    await a.db.setProfileKey("goal", "全馬");
+    expect(await engineA.sync()).toMatchObject({ sent: 1 });
+    const rows = await serverDriver.all("SELECT id, seq FROM records WHERE id IN (?, ?)", [id, sid]);
+    expect(rows.map((r) => Number(r.seq)).sort()).toEqual([1, 2]);
+  });
+
+  it("換了一組同步金鑰：舊的同步狀態不沿用，資料全部送到新的空間", async () => {
+    const a = await device();
+    await a.db.setProfileKey("goal", "全馬");
+    const first = new SyncEngine(a.db, api, newRootKey(), () => clock);
+    await first.ensureSpace();
+    expect(await first.sync()).toMatchObject({ sent: 1 });
+    // 沒有先停止同步就換了金鑰（例如清除設定後重新開始）
+    const second = new SyncEngine(a.db, api, newRootKey(), () => clock);
+    await second.ensureSpace();
+    expect(await second.sync()).toMatchObject({ sent: 1 });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveKeys, newPairKey, newRootKey, openRoot, pairSecrets, parseRecoveryCode, recoveryCode, sealRoot } from "../src";
+import { deriveKeys, newPairKey, newPairNonce, newRootKey, openRoot, pairCommitment, pairFingerprint, pairSecrets, parseRecoveryCode, recoveryCode, sealRoot } from "../src";
 import { open, paddedSize, recordId, seal } from "../src/device-sync/crypto";
 
 describe("同步的加密", () => {
@@ -45,10 +45,11 @@ describe("同步的加密", () => {
 });
 
 describe("配對", () => {
-  it("兩台算出同樣的數字，能傳遞同步金鑰；公開金鑰被換掉時數字不同", async () => {
+  it("兩台算出同樣的數字，能傳遞同步金鑰；公開金鑰或亂數被換掉時數字不同", async () => {
     const [fresh, old, evil] = await Promise.all([newPairKey(), newPairKey(), newPairKey()]);
-    const onNew = await pairSecrets(fresh, old.pub, fresh.pub, old.pub);
-    const onOld = await pairSecrets(old, fresh.pub, fresh.pub, old.pub);
+    const nonce = newPairNonce();
+    const onNew = await pairSecrets(fresh, old.pub, fresh.pub, old.pub, nonce);
+    const onOld = await pairSecrets(old, fresh.pub, fresh.pub, old.pub, nonce);
     expect(onNew.confirm).toMatch(/^\d{3} \d{3}$/);
     expect(onNew.confirm).toBe(onOld.confirm);
 
@@ -56,8 +57,31 @@ describe("配對", () => {
     expect(await openRoot(onNew, await sealRoot(onOld, root))).toEqual(root);
 
     // 伺服器把舊裝置的公開金鑰換成自己的
-    const tampered = await pairSecrets(fresh, evil.pub, fresh.pub, evil.pub);
+    const tampered = await pairSecrets(fresh, evil.pub, fresh.pub, evil.pub, nonce);
     expect(tampered.confirm).not.toBe(onOld.confirm);
     await expect(openRoot(tampered, await sealRoot(onOld, root))).rejects.toThrow();
+    // 亂數不同，數字也不同
+    expect((await pairSecrets(old, fresh.pub, fresh.pub, old.pub, newPairNonce())).confirm).not.toBe(onOld.confirm);
+  });
+
+  it("承諾與指紋：公開的亂數要對得上一開始的承諾；指紋綁定新裝置的公開金鑰與承諾", async () => {
+    const fresh = await newPairKey();
+    const nonce = newPairNonce();
+    const commitment = await pairCommitment(nonce);
+    expect(await pairCommitment(nonce)).toBe(commitment);
+    expect(await pairCommitment(newPairNonce())).not.toBe(commitment);
+    const fingerprint = await pairFingerprint(fresh.pub, commitment);
+    expect(fingerprint).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(await pairFingerprint((await newPairKey()).pub, commitment)).not.toBe(fingerprint);
+    expect(await pairFingerprint(fresh.pub, await pairCommitment(newPairNonce()))).not.toBe(fingerprint);
+  });
+
+  it("中間人先換好金鑰才知道亂數：試很多把金鑰，也無法事先算出新裝置會顯示的數字", async () => {
+    // 伺服器扮成舊裝置：要先送出公開金鑰，新裝置才公開亂數. 送出前它能算的只有「不含亂數」的結果，
+    // 公開亂數後數字才確定. 這裡確認同一把金鑰配上不同亂數，數字幾乎都不一樣（無法預先決定）
+    const [fresh, evil] = await Promise.all([newPairKey(), newPairKey()]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 20; i++) seen.add((await pairSecrets(evil, fresh.pub, fresh.pub, evil.pub, newPairNonce())).confirm);
+    expect(seen.size).toBeGreaterThanOrEqual(19);
   });
 });
