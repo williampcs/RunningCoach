@@ -186,17 +186,23 @@ export async function runSync(deps: {
 
     // 體感可能是從被取代的那筆帶過來的，以存好的為準
     const workout = await db.getWorkout(saved.id);
-    try {
-      const summary = await generateWorkoutSummary(llm, {
-        ...activity,
-        perceived_effort: workout?.perceived_effort ?? null,
-        subjective_notes: workout?.subjective_notes ?? null,
-        recovery: await recoveryNoteFor(db, activity.date),
-        plan: await planNoteFor(db, db.today(), saved.id),
-      });
-      await db.saveWorkoutSummary(saved.id, summary);
-    } catch (e) {
-      logger.warn(`Summary generation failed for workout_id=${saved.id}: ${message(e)}`);
+    // 另一台已經分析過這趟（多裝置同步傳來的）：直接用，不重複花費用
+    const synced = activity.intervals_id ? await db.syncedSummaryFor(activity.intervals_id) : null;
+    if (synced) {
+      await db.saveWorkoutSummary(saved.id, synced);
+    } else {
+      try {
+        const summary = await generateWorkoutSummary(llm, {
+          ...activity,
+          perceived_effort: workout?.perceived_effort ?? null,
+          subjective_notes: workout?.subjective_notes ?? null,
+          recovery: await recoveryNoteFor(db, activity.date),
+          plan: await planNoteFor(db, db.today(), saved.id),
+        });
+        await db.saveWorkoutSummary(saved.id, summary);
+      } catch (e) {
+        logger.warn(`Summary generation failed for workout_id=${saved.id}: ${message(e)}`);
+      }
     }
 
     // 清除已配對的 pending 資料
