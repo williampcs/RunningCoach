@@ -5,6 +5,7 @@ import { formatStatus, type Effort, type Purpose } from "@running-coach/core";
 import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
+import { DeviceSyncCard } from "./DeviceSync";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
@@ -406,6 +407,8 @@ export function SettingsView() {
       )}
 
       <KeyProtection settings={settings} locked={locked} onChange={setLocked} />
+
+      <DeviceSyncCard />
 
       <section className="card">
         <h2>資料</h2>

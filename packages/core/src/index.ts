@@ -126,3 +126,4 @@ export {
   RECOVERY_RULES,
   type RecoverySignals,
 } from "./recovery";
+export * from "./device-sync";

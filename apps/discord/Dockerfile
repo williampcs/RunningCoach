@@ -13,6 +13,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/sqlite-node/package.json packages/sqlite-node/
 COPY apps/discord/package.json apps/discord/
 COPY apps/proxy/package.json apps/proxy/
+COPY apps/sync/package.json apps/sync/
 COPY apps/web/package.json apps/web/
 
 FROM manifests AS build

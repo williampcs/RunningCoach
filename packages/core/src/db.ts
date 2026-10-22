@@ -27,7 +27,7 @@ import type {
  * 7：planned_sessions 與 training_plans 的 week_start、style、reason、outline、notes（結構化課表）
  * 8：other_activities（跑步以外的運動：騎車、游泳、肌力訓練等）
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -179,6 +179,22 @@ const SCHEMA = `
     fetched_at TEXT NOT NULL
   );
 
+  -- 多裝置同步（schema 9，規格 12.10）：上次同步時每一筆的雜湊與伺服器序號
+  CREATE TABLE IF NOT EXISTS sync_state (
+    key      TEXT PRIMARY KEY,
+    hash     TEXT NOT NULL,
+    seq      INTEGER NOT NULL,
+    v        INTEGER NOT NULL DEFAULT 0
+  );
+  -- 別台傳來、但這台還沒有對應紀錄的（例如另一台的跑步還沒同步到這台）
+  CREATE TABLE IF NOT EXISTS sync_pending (
+    key   TEXT PRIMARY KEY,
+    data  TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sync_meta (
+    k  TEXT PRIMARY KEY,
+    v  TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     date             TEXT NOT NULL,
@@ -267,6 +283,29 @@ export class Db {
     return row?.n ?? 0;
   }
 
+  /**
+   * 多裝置同步用（sync/）：在交易中直接執行 SQL。fn 裡只能用傳入的 sql，
+   * 不能呼叫 Db 的其他方法（它們也要排隊，會互相等待）
+   */
+  syncTransaction<T>(fn: (sql: Pick<SqlDriver, "all" | "run">) => Promise<T>): Promise<T> {
+    return this.tx(() => fn({ all: (q, p) => this.driver.all(q, p), run: (q, p) => this.driver.run(q, p) }));
+  }
+
+  /**
+   * 別台已經對這趟跑步產生過的分析（多裝置同步傳來、這台當時還沒有這趟跑步而暫存的）；
+   * 同步 Intervals.icu 存進這趟時直接用它，不再花費用產生
+   */
+  async syncedSummaryFor(intervalsId: string): Promise<string | null> {
+    const row = await this.get<{ data: string }>("SELECT data FROM sync_pending WHERE key=?", [`ws:i${intervalsId}`]);
+    if (!row) return null;
+    try {
+      const data = JSON.parse(row.data) as { s?: unknown };
+      return typeof data.s === "string" && data.s ? data.s : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** 使用者時區的今天 */
   today(): string {
     return this.clock.today();
@@ -324,6 +363,14 @@ export class Db {
             " WHERE json_valid(raw_json)",
         );
       }
+
+      // --- Migration: sync_id（schema 9：多裝置同步時跨裝置不變的 id，同步時才補上） ---
+      for (const table of ["races", "training_plans", "planned_sessions"]) {
+        if (!(await columns(table)).has("sync_id")) await d.exec(`ALTER TABLE ${table} ADD COLUMN sync_id TEXT`);
+        await d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_sync_id ON ${table}(sync_id)`);
+      }
+      // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
+      if (!(await columns("sync_state")).has("v")) await d.exec("ALTER TABLE sync_state ADD COLUMN v INTEGER NOT NULL DEFAULT 0");
 
       await d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });

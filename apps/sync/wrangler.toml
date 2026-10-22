@@ -1,0 +1,19 @@
+# Cloudflare Workers 的部署設定（規格 12.10）。
+# 部署由 GitHub Actions 進行（.github/workflows/sync.yml），database_id 與 ALLOWED_ORIGINS
+# 在部署時由 repo 的變數填入，不寫在這裡；本機手動部署時自己填。
+name = "running-coach-sync"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+# 不保留請求日誌（含 IP）
+workers_dev = true
+
+[observability]
+enabled = false
+
+[vars]
+ALLOWED_ORIGINS = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "running-coach-sync"
+database_id = ""

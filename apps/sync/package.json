@@ -1,0 +1,19 @@
+{
+  "name": "@running-coach/sync",
+  "version": "2.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/node.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json"
+  },
+  "dependencies": {
+    "@running-coach/core": "*",
+    "@running-coach/sqlite-node": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261010.1",
+    "@types/node": "^22"
+  }
+}

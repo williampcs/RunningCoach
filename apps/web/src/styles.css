@@ -1549,3 +1549,49 @@ pre {
 .import-history .notice p {
   margin: 0;
 }
+
+/* 多裝置同步（規格 12.10） */
+.pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pairing ol {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.pair-qr {
+  width: 200px;
+  height: 200px;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 6px;
+}
+
+.pair-code,
+.pair-confirm,
+.recovery-code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.pair-code,
+.pair-confirm {
+  font-size: 1.3rem;
+}
+
+.recovery-code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  word-break: break-all;
+  user-select: all;
+}
+
+button.link.danger {
+  color: var(--danger-text);
+}

@@ -11,6 +11,7 @@ import {
 } from "@running-coach/core";
 
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
+import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
 import {
@@ -53,6 +54,14 @@ function unconfiguredProvider(problem: string): LlmProvider {
   };
 }
 
+/** 網址的 #pair=配對碼.指紋（掃了另一台的 QR code）；讀到後從網址清掉 */
+function readPairLink(): string | null {
+  const match = location.hash.match(/^#pair=([0-9A-Za-z]{8})(\.[A-Za-z0-9_-]{22})?$/);
+  if (!match) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  return `${match[1]!.toUpperCase()}${match[2] ?? ""}`;
+}
+
 const logger: Logger = { info: () => undefined, warn: (m) => console.warn(m), error: (m) => console.error(m) };
 
 // 測試模式可以模擬今天的日期：Coach 與活動來源都經由這個時鐘取得現在時間
@@ -92,6 +101,17 @@ export function App() {
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
   const [reportPreselect, setReportPreselect] = useState<number | null>(null);
+  // 用手機掃了另一台顯示的 QR code：網址的 #pair= 後面是配對碼（不會送到伺服器）
+  const [pairFromLink, setPairFromLink] = useState<string | null>(readPairLink);
+  // 已經開著的分頁貼上配對連結：只有 # 後面改變，頁面不會重新載入
+  useEffect(() => {
+    const onHash = () => {
+      const code = readPairLink();
+      if (code) setPairFromLink(code);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const opening = useRef(false);
 
   const problem = llmProblem(settings);
@@ -114,6 +134,7 @@ export function App() {
   }, []);
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
+  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch);
 
   const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
 
@@ -181,8 +202,16 @@ export function App() {
         setReportPreselect(workoutId ?? null);
         setTab("report");
       },
+      deviceSync,
+      pairFromLink,
+      clearPairFromLink: () => setPairFromLink(null),
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink]);
+
+  // 從配對連結打開：直接到設定頁的同步區塊
+  useEffect(() => {
+    if (pairFromLink) setTab("settings");
+  }, [pairFromLink]);
 
   if (fatal) {
     return (
