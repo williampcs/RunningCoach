@@ -112,7 +112,7 @@ export async function runCards(db: Db, today: string, days: number): Promise<Run
   return workouts.map((w) => runCardOf(w, lthr, planned));
 }
 
-/** 累積的里程碑：只說到過哪裡，不說還差多少以外的事（規格 12.5：休息不會失去任何東西） */
+/** 累積的里程碑（距離都是約略值；國外的是直線距離）：只說到過哪裡與下一站（規格 12.5：休息不會失去任何東西） */
 const PLACES: [string, number][] = [
   ["台北到桃園", 40],
   ["台北到新竹", 70],
@@ -121,6 +121,11 @@ const PLACES: [string, number][] = [
   ["台北到高雄", 350],
   ["環島一圈", 1000],
   ["台北到東京", 2100],
+  ["台北到新加坡", 3200],
+  ["台北到雪梨", 7300],
+  ["台北到倫敦", 9800],
+  ["台北到紐約", 12500],
+  ["地球半圈", 20000],
   ["地球一圈", 40075],
 ];
 const MARATHON_KM = 42.195;

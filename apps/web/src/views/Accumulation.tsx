@@ -1,12 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, type Accumulation } from "@running-coach/core";
+import { addDays, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+
+import { errorText, useApp } from "../app-context";
 
 /** 最多畫幾格；更早的以「+N」表示 */
 const MAX_BLOCKS = 300;
+/** 最多畫幾面獎牌、幾座 101 */
+const MAX_MEDALS = 24;
+const MAX_TOWERS = 12;
+
+function reducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 /** 數字從 0 跑到目標值；系統設定減少動態效果時直接顯示 */
-function useCountUp(target: number, ms = 900): number {
+function useCountUp(target: number, ms = 1000): number {
   const [value, setValue] = useState(() => (reducedMotion() ? target : 0));
   useEffect(() => {
     if (reducedMotion()) {
@@ -26,18 +35,29 @@ function useCountUp(target: number, ms = 900): number {
   return value;
 }
 
-function reducedMotion(): boolean {
-  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** 第一次畫出來之後才設成 true：讓寬度、高度的轉場從 0 開始 */
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return mounted;
 }
 
 const number = (n: number, digits = 0) => n.toLocaleString("zh-TW", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+/** 「台北到高雄」→「高雄」 */
+const placeName = (name: string) => name.split("到").at(-1)!;
 
-function Tile({ label, value, unit, sub, accent = false }: { label: string; value: string; unit: string; sub?: string; accent?: boolean }) {
+function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: string; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
+  const shown = useCountUp(value);
   return (
     <div className={accent ? "tile accent" : "tile"}>
-      <span className="tile-label">{label}</span>
+      <span className="tile-label">
+        <span aria-hidden="true">{icon}</span> {label}
+      </span>
       <span className="tile-value">
-        {value}
+        {number(shown, digits)}
         <small> {unit}</small>
       </span>
       {sub && <span className="tile-sub">{sub}</span>}
@@ -45,13 +65,183 @@ function Tile({ label, value, unit, sub, accent = false }: { label: string; valu
   );
 }
 
-/** 紀錄頁頁首（規格 12.9、12.5）：只增不減的累積；這週沒跑就不出現這週 */
-export function AccumulationView({ totals, today }: { totals: Accumulation; today: string }) {
-  const km = useCountUp(totals.km);
+/** 從已經超過的一站到下一站的路線，跑者停在現在的位置 */
+function Journey({ totals }: { totals: Accumulation }) {
+  const mounted = useMounted();
+  if (!totals.next) return null;
+  const from = totals.passed?.km ?? 0;
+  const pct = Math.min(100, Math.max(2, ((totals.km - from) / (totals.next.km - from)) * 100));
+  return (
+    <div className="journey" role="img" aria-label={`從${totals.passed ? placeName(totals.passed.name) : "起點"}往${placeName(totals.next.name)}，已經跑了這段的 ${Math.round(pct)}%`}>
+      <div className="journey-track">
+        <div className="journey-fill" style={{ width: mounted ? `${pct}%` : "0%" }}>
+          <span className="journey-runner" aria-hidden="true">
+            🏃
+          </span>
+        </div>
+      </div>
+      <div className="journey-ends small">
+        <span>📍 {totals.passed ? placeName(totals.passed.name) : "起點"}</span>
+        <span>🏁 {placeName(totals.next.name)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** 一面獎牌是一場全馬的距離 */
+function Medals({ count }: { count: number }) {
+  const whole = Math.floor(count);
+  if (whole < 1) return null;
+  const shown = Math.min(whole, MAX_MEDALS);
+  return (
+    <div className="showcase">
+      <div className="medals" role="img" aria-label={`相當於 ${number(count, 1)} 場全馬`}>
+        {Array.from({ length: shown }, (_, i) => (
+          <span key={i} className="medal" style={{ "--i": i } as CSSProperties}>
+            🏅
+          </span>
+        ))}
+        {whole > shown && <span className="more">+{number(whole - shown)}</span>}
+      </div>
+      <span className="tile-sub">每一面是一場全馬的距離，共 {number(count, 1)} 場</span>
+    </div>
+  );
+}
+
+/** 台北 101 的剪影：塔身八節、塔頂與天線 */
+function Tower({ fill, index }: { fill: number; index: number }) {
+  const mounted = useMounted();
+  return (
+    <svg className="tower" viewBox="0 0 24 64" style={{ "--i": index } as CSSProperties} aria-hidden="true">
+      <defs>
+        <clipPath id={`tower-fill-${index}`}>
+          <rect x="0" width="24" y={64 - 64 * (mounted ? fill : 0)} height="64" className="tower-clip" />
+        </clipPath>
+      </defs>
+      <g className="tower-shape">
+        <path d="M11.5 0h1v6h-1z M9 6h6v4H9z" />
+        {Array.from({ length: 8 }, (_, i) => (
+          <path key={i} d={`M${6 + 0.2 * i} ${10 + i * 6}h${12 - 0.4 * i}l-1.5 6h${-9 + 0.4 * i}z`} />
+        ))}
+        <path d="M4 58h16v6H4z" />
+      </g>
+      <g className="tower-shape filled" clipPath={`url(#tower-fill-${index})`}>
+        <path d="M11.5 0h1v6h-1z M9 6h6v4H9z" />
+        {Array.from({ length: 8 }, (_, i) => (
+          <path key={i} d={`M${6 + 0.2 * i} ${10 + i * 6}h${12 - 0.4 * i}l-1.5 6h${-9 + 0.4 * i}z`} />
+        ))}
+        <path d="M4 58h16v6H4z" />
+      </g>
+    </svg>
+  );
+}
+
+function Towers({ count, meters }: { count: number; meters: number }) {
+  if (meters <= 0) return null;
+  const whole = Math.floor(count);
+  const shown = Math.min(Math.ceil(count), MAX_TOWERS);
+  return (
+    <div className="showcase">
+      <div className="towers" role="img" aria-label={`累積爬升 ${number(meters)} 公尺，約 ${number(count, 1)} 座台北 101`}>
+        {Array.from({ length: Math.max(1, shown) }, (_, i) => (
+          <Tower key={i} index={i} fill={i < whole ? 1 : Math.max(0.05, count - whole)} />
+        ))}
+        {Math.ceil(count) > shown && <span className="more">+{number(Math.ceil(count) - shown)}</span>}
+      </div>
+      <span className="tile-sub">
+        累積爬升 {number(meters)} m，約 {number(count, 1)} 座台北 101
+      </span>
+    </div>
+  );
+}
+
+/** 匯入完整歷史：只存紀錄，不產生 AI 分析 */
+function ImportHistory({ onDone }: { onDone: () => void }) {
+  const { coach } = useApp();
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (!coach.canImportHistory) return null;
+
+  async function run() {
+    setError(null);
+    setResult(null);
+    setProgress({ oldest: coach.today(), newest: coach.today(), found: 0 });
+    try {
+      setResult(await coach.importHistory(setProgress));
+      onDone();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  return (
+    <div className="import-history">
+      {progress ? (
+        <div className="import-progress" role="status">
+          <div className="indeterminate" />
+          <span className="small">
+            正在讀 {progress.oldest} – {progress.newest} 的跑步…已找到 {number(progress.found)} 趟
+          </span>
+        </div>
+      ) : (
+        <div className="row">
+          <button className="small" onClick={() => void run()}>
+            {result ? "再匯入一次" : "匯入 Intervals.icu 的完整歷史"}
+          </button>
+          {!result && <span className="muted small">只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</span>}
+        </div>
+      )}
+      {error && <div className="notice error">匯入失敗：{error}（再按一次會從頭重抓，已存的不會重複）</div>}
+      {result && (
+        <div className="notice ok">
+          <p>
+            <strong>匯入完成：新增 {number(result.added)} 趟</strong>
+            {result.existing + result.merged > 0 && `，${number(result.existing + result.merged)} 趟原本就有`}
+            {result.earliest && `。最早的一趟是 ${result.earliest}`}。
+          </p>
+          {result.perYear.length > 0 && (
+            <div className="year-chips">
+              {result.perYear.map((y) => (
+                <span key={y.year} className="badge">
+                  {y.year}：{number(y.runs)} 趟
+                </span>
+              ))}
+            </div>
+          )}
+          {result.unavailable > 0 && (
+            <p className="small">
+              另有 {number(result.unavailable)} 筆是從 Strava 匯入 Intervals.icu 的，Intervals.icu 不經 API 提供它們的內容，所以沒有匯入。
+            </p>
+          )}
+        </div>
+      )}
+      <details className="small">
+        <summary>更早的跑步沒有出現？</summary>
+        <ul>
+          <li>這裡只讀得到 Intervals.icu 上已經有的紀錄。Garmin 連上 Intervals.icu 時，Garmin 只讓它補抓約一年的舊資料，所以更早的常常不在 Intervals.icu 上。</li>
+          <li>
+            補齊的方法：在 Garmin 帳戶的「資料管理」申請匯出全部資料（下載連結的信通常兩天內寄到），再到 Intervals.icu 的設定頁選「Import all Garmin data」，貼上信裡下載按鈕的連結；Intervals.icu 處理可能要一天以上。完成後回來再按一次匯入。
+          </li>
+          <li>匯出檔太大時曾有人匯入失敗或顯示 0 筆；論壇上的做法是只保留壓縮檔裡的 DI_CONNECT 資料夾再上傳。以上依 Intervals.icu 論壇的說明，我們沒有實測。</li>
+          <li>從 Strava 匯入 Intervals.icu 的活動，Intervals.icu 不經 API 提供；改上傳 Strava 的「匯出帳戶資料」檔案就沒有這個限制。</li>
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+/** 紀錄頁頁首（規格 12.9、12.5）：只增不減的累積，數字與圖都從 0 長上來；這週沒跑就不出現這週 */
+export function AccumulationView({ totals, today, onImported }: { totals: Accumulation; today: string; onImported: () => void }) {
+  const km = useCountUp(totals.km, 1200);
   const hours = totals.minutes / 60;
   const weekStart = addDays(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7));
   const shown = totals.blocks.slice(-MAX_BLOCKS);
   const hidden = totals.blocks.length - shown.length;
+  // 格子依序長出來，整段約一秒
+  const delay = (i: number) => `${Math.round((i / Math.max(1, shown.length)) * 900)}ms`;
   return (
     <section className="card totals">
       <div className="totals-hero">
@@ -60,46 +250,36 @@ export function AccumulationView({ totals, today }: { totals: Accumulation; toda
           {number(km, 1)}
           <small> km</small>
         </span>
-        {(totals.passed || totals.next) && (
-          <span className="tile-sub">
-            {totals.passed && `已經超過${totals.passed.name}（約 ${number(totals.passed.km)} km）`}
-            {totals.passed && totals.next && "，"}
-            {totals.next && `下一站：${totals.next.name}`}
-          </span>
-        )}
+        {totals.passed && <span className="tile-sub">已經超過{totals.passed.name}（約 {number(totals.passed.km)} km）</span>}
+        <Journey totals={totals} />
       </div>
       <div className="tiles">
         {totals.thisWeek && (
-          <Tile
-            accent
-            label="這週"
-            value={number(totals.thisWeek.km, 1)}
-            unit="km"
-            sub={`${totals.thisWeek.runs} 趟・${number(totals.thisWeek.minutes)} 分鐘`}
-          />
+          <Tile accent icon="🔥" label="這週" value={totals.thisWeek.km} digits={1} unit="km" sub={`${totals.thisWeek.runs} 趟・${number(totals.thisWeek.minutes)} 分鐘`} />
         )}
-        <Tile label="跑了" value={number(totals.runs)} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
-        <Tile label="時間" value={number(hours, hours < 10 ? 1 : 0)} unit="小時" />
-        {totals.marathons >= 1 && <Tile label="相當於" value={number(totals.marathons, 1)} unit="場全馬" />}
-        {totals.elevationM > 0 && (
-          <Tile
-            label="累積爬升"
-            value={number(totals.elevationM)}
-            unit="m"
-            sub={totals.taipei101 >= 1 ? `約 ${number(totals.taipei101, 1)} 座台北 101` : undefined}
-          />
-        )}
-        {totals.thisYearKm !== null && <Tile label={`${today.slice(0, 4)} 年`} value={number(totals.thisYearKm, 1)} unit="km" />}
-        {totals.longest && <Tile label="最長的一趟" value={number(totals.longest.km, 1)} unit="km" sub={totals.longest.date} />}
+        <Tile icon="👟" label="跑了" value={totals.runs} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
+        <Tile icon="⏱️" label="時間" value={hours} digits={hours < 10 ? 1 : 0} unit="小時" />
+        {totals.thisYearKm !== null && <Tile icon="📅" label={`${today.slice(0, 4)} 年`} value={totals.thisYearKm} digits={1} unit="km" />}
+        {totals.longest && <Tile icon="📏" label="最長的一趟" value={totals.longest.km} digits={1} unit="km" sub={totals.longest.date} />}
+      </div>
+      <div className="showcases">
+        <Medals count={totals.marathons} />
+        <Towers count={totals.taipei101} meters={totals.elevationM} />
       </div>
       {/* 每一趟一格，只有跑過的才出現，沒有空白的日子（12.5） */}
       <div className="blocks" role="img" aria-label={`每一趟一格，共 ${totals.runs} 趟`}>
         {hidden > 0 && <span className="blocks-more">+{number(hidden)}</span>}
-        {shown.map((b) => (
-          <span key={b.id} className={`block s${b.size}${b.date >= weekStart ? " recent" : ""}`} title={b.date} />
+        {shown.map((b, i) => (
+          <span
+            key={b.id}
+            className={`block s${b.size}${b.date >= weekStart ? " recent" : ""}`}
+            style={{ animationDelay: delay(i) }}
+            title={b.date}
+          />
         ))}
       </div>
-      {totals.since && <p className="muted small">從 {totals.since} 起已同步到 App 的跑步。</p>}
+      {totals.since && <p className="muted small">從 {totals.since} 起已存進 App 的跑步；每一格是一趟，越長的格子越大，這週的是另一個顏色。</p>}
+      <ImportHistory onDone={onImported} />
     </section>
   );
 }

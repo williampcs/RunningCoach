@@ -3,6 +3,7 @@ import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from ".
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
 import { accumulation, runCards, type Accumulation, type RunCard } from "./history";
+import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
 import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
@@ -272,6 +273,16 @@ export class Coach {
     const result = await runSync({ db: this.db, llm, activities, logger: this.logger });
     this.wellnessFetchedAt = this.now().getTime();
     return result;
+  }
+
+  /** 匯入完整歷史：只存紀錄，不產生 AI 分析（不花模型的費用）；可以重跑 */
+  importHistory(onProgress?: (p: ImportProgress) => void): Promise<ImportResult> {
+    return importHistory(this.db, this.runtime.activities, this.today(), onProgress);
+  }
+
+  /** 活動來源能不能匯入完整歷史 */
+  get canImportHistory(): boolean {
+    return typeof this.runtime.activities.fetchRunsBetween === "function";
   }
 
   /**

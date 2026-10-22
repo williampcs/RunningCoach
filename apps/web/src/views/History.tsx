@@ -145,7 +145,7 @@ export function HistoryView() {
 
   return (
     <>
-      {totals && totals.runs > 0 && <AccumulationView totals={totals} today={today} />}
+      {totals && totals.runs > 0 && <AccumulationView totals={totals} today={today} onImported={touch} />}
       <section className="card">
         <h2>最近 {HISTORY_DAYS} 天的跑步</h2>
         <p className="muted small">點一趟看數據、強度與教練的分析；也可以在這裡補填或修改體感。</p>
