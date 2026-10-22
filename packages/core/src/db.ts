@@ -369,6 +369,8 @@ export class Db {
         if (!(await columns(table)).has("sync_id")) await d.exec(`ALTER TABLE ${table} ADD COLUMN sync_id TEXT`);
         await d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_sync_id ON ${table}(sync_id)`);
       }
+      // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
+      await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
       if (!(await columns("sync_state")).has("v")) await d.exec("ALTER TABLE sync_state ADD COLUMN v INTEGER NOT NULL DEFAULT 0");
 
@@ -490,7 +492,7 @@ export class Db {
   /** 最近的對話，舊的在前；附上教練回覆的依據（外殼顯示用） */
   async getRecentConversations(limit: number): Promise<ConversationRow[]> {
     const rows = await this.all<Omit<ConversationRow, "sources"> & { sources: string | null }>(
-      "SELECT id, role, content, sources FROM conversations ORDER BY id DESC LIMIT ?",
+      "SELECT id, role, content, sources FROM conversations ORDER BY timestamp DESC, id DESC LIMIT ?",
       [limit],
     );
     return rows.reverse().map((r) => ({ ...r, sources: parseSources(r.sources) }));
@@ -505,7 +507,7 @@ export class Db {
   }
 
   getOldestConversations(n: number): Promise<ConversationRow[]> {
-    return this.all<ConversationRow>("SELECT id, role, content, timestamp FROM conversations ORDER BY id ASC LIMIT ?", [
+    return this.all<ConversationRow>("SELECT id, role, content, timestamp FROM conversations ORDER BY timestamp, id LIMIT ?", [
       n,
     ]);
   }
@@ -515,7 +517,7 @@ export class Db {
   // ---------------------------------------------------------------------------
 
   getLatestSummary(): Promise<SummaryRow | null> {
-    return this.get<SummaryRow>("SELECT * FROM summaries ORDER BY id DESC LIMIT 1");
+    return this.get<SummaryRow>("SELECT * FROM summaries ORDER BY created_at DESC, id DESC LIMIT 1");
   }
 
   /**
@@ -525,9 +527,9 @@ export class Db {
    */
   getMemorySnapshot(limit: number): Promise<{ summary: SummaryRow | null; conversations: ConversationRow[] }> {
     return this.serial(async () => {
-      const summary = (await this.driver.all("SELECT * FROM summaries ORDER BY id DESC LIMIT 1"))[0];
+      const summary = (await this.driver.all("SELECT * FROM summaries ORDER BY created_at DESC, id DESC LIMIT 1"))[0];
       const rows = await this.driver.all(
-        "SELECT id, role, content, timestamp FROM conversations ORDER BY id DESC LIMIT ?",
+        "SELECT id, role, content, timestamp FROM conversations ORDER BY timestamp DESC, id DESC LIMIT ?",
         [limit],
       );
       return {
@@ -537,7 +539,10 @@ export class Db {
     });
   }
 
-  /** 存入新摘要（只保留最新一筆），並刪除已被摘要涵蓋的對話 */
+  /**
+   * 存入新摘要（只保留最新一筆），並刪除已被摘要涵蓋的對話：依時間排在 coversUpToId 那一則（含）之前的.
+   * 對話的先後一律看時間，不看 id：多裝置同步時，別台較早的訊息可能較晚才寫進這台
+   */
   applyCompression(summaryText: string, coversUpToId: number): Promise<void> {
     const d = this.driver;
     return this.tx(async () => {
@@ -546,8 +551,11 @@ export class Db {
         coversUpToId,
         this.stamp(),
       ]);
-      await d.exec("DELETE FROM summaries WHERE id NOT IN (SELECT id FROM summaries ORDER BY id DESC LIMIT 1)");
-      await d.run("DELETE FROM conversations WHERE id <= ?", [coversUpToId]);
+      await d.exec("DELETE FROM summaries WHERE id NOT IN (SELECT id FROM summaries ORDER BY created_at DESC, id DESC LIMIT 1)");
+      await d.run(
+        "DELETE FROM conversations WHERE (timestamp, id) <= (SELECT timestamp, id FROM conversations WHERE id=?)",
+        [coversUpToId],
+      );
     });
   }
 
@@ -568,7 +576,8 @@ export class Db {
   // ---------------------------------------------------------------------------
 
   getActiveTrainingPlan(): Promise<TrainingPlan | null> {
-    return this.get<TrainingPlan>("SELECT * FROM training_plans WHERE is_active=1 ORDER BY id DESC LIMIT 1");
+    // 依建立時間：多裝置同步時，別台較早的課表可能較晚才寫進這台
+    return this.get<TrainingPlan>("SELECT * FROM training_plans WHERE is_active=1 ORDER BY created_at DESC, id DESC LIMIT 1");
   }
 
   /** 儲存新計畫並停用舊計畫 */
@@ -611,7 +620,8 @@ export class Db {
   /** 每週最新的一份結構化課表（週一在 since 之後的），舊的在前；依結果調整配速時看最近幾週 */
   getWeeklyPlansSince(since: string): Promise<TrainingPlan[]> {
     return this.all<TrainingPlan>(
-      "SELECT * FROM training_plans WHERE id IN (SELECT MAX(id) FROM training_plans WHERE week_start IS NOT NULL AND week_start >= ? GROUP BY week_start)" +
+      "SELECT * FROM training_plans p WHERE week_start IS NOT NULL AND week_start >= ?" +
+        " AND id = (SELECT id FROM training_plans q WHERE q.week_start = p.week_start ORDER BY created_at DESC, id DESC LIMIT 1)" +
         " ORDER BY week_start",
       [since],
     );

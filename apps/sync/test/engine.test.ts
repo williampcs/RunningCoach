@@ -310,4 +310,78 @@ describe("兩台裝置同步", () => {
     await second.ensureSpace();
     expect(await second.sync()).toMatchObject({ sent: 1 });
   });
+
+  it("兩台原本各有同一份賽事與課表（例如之前匯出、匯入過）：加入同步後只留一份，課的狀態取最近更新的", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const b = await device();
+    for (const d of [a, b]) {
+      await d.db.addRace({ name: "台北馬", date: "2026-12-20", distance_km: 42.195, target_time: "3:45:00" });
+      await d.db.saveStructuredPlan(
+        { weekLabel: "2026-W43", weekStart: "2026-10-19", style: "fixed", reason: "這週", outline: null, notes: null, content: "文字版" },
+        [
+          { date: "2026-10-20", kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40, target: { hr: "easy" } }], purpose: "恢復", success: "心率", fallback: null },
+          { date: "2026-10-22", kind: "threshold", title: "節奏跑", steps: [{ duration_min: 30, target: { hr: "easy" } }], purpose: "乳酸閾值", success: "配速", fallback: null },
+        ],
+      );
+      clock = new Date(clock.getTime() + 1000);
+    }
+    // B 把第一堂課標成跳過（比較新）
+    const planB = (await b.db.getActiveTrainingPlan())!;
+    const firstB = (await b.db.getPlannedSessions(planB.id))[0]!;
+    clock = new Date(clock.getTime() + 60_000);
+    await b.db.updatePlannedSession(firstB.id, { status: "skipped" });
+
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    for (let i = 0; i < 3; i++) {
+      await engineA.sync();
+      await engineB.sync();
+    }
+    for (const d of [a, b]) {
+      expect((await d.db.getAllRaces()).map((r) => r.name)).toEqual(["台北馬"]);
+      const active = (await d.db.getActiveTrainingPlan())!;
+      expect((await d.db.getPlannedSessions(active.id)).map((s) => [s.title, s.status])).toEqual([
+        ["輕鬆跑", "skipped"],
+        ["節奏跑", "planned"],
+      ]);
+    }
+    expect(await engineA.sync()).toMatchObject({ received: 0, sent: 0 });
+    expect(await engineB.sync()).toMatchObject({ received: 0, sent: 0 });
+  });
+
+  it("對話依時間排序：另一台較早的對話後來才同步進來，不會蓋過這台新的訊息；壓縮依時間刪除", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const b = await device();
+    // B（手機）有較早的對話
+    await b.db.appendConversation("user", "手機上的舊問題");
+    clock = new Date(clock.getTime() + 60_000);
+    await b.db.appendConversation("assistant", "手機上的舊回答");
+    clock = new Date(clock.getTime() + 60_000);
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    await engineB.sync();
+    // A（電腦）在還沒取回 B 的對話前，先寫了新的訊息
+    await a.db.appendConversation("user", "電腦上的新問題");
+    clock = new Date(clock.getTime() + 60_000);
+    await a.db.appendConversation("assistant", "電腦上的新回答");
+    await engineA.sync();
+    await engineB.sync();
+    const order = ["手機上的舊問題", "手機上的舊回答", "電腦上的新問題", "電腦上的新回答"];
+    for (const d of [a, b]) {
+      expect((await d.db.getRecentConversations(10)).map((c) => c.content)).toEqual(order);
+      expect((await d.db.getMemorySnapshot(2)).conversations.map((c) => c.content)).toEqual(order.slice(2));
+    }
+    // A 壓縮最早的兩則：依時間刪除，不是依這台的 id
+    const oldest = await a.db.getOldestConversations(2);
+    expect(oldest.map((c) => c.content)).toEqual(order.slice(0, 2));
+    await a.db.applyCompression("摘要", oldest.at(-1)!.id);
+    expect((await a.db.getRecentConversations(10)).map((c) => c.content)).toEqual(order.slice(2));
+    await engineA.sync();
+    await engineB.sync();
+    expect((await b.db.getRecentConversations(10)).map((c) => c.content)).toEqual(order.slice(2));
+  });
 });
