@@ -1707,6 +1707,16 @@ span.quote {
   padding-left: 1.2em;
 }
 
+/* 第一次抓紀錄的兩個選項（FirstSync） */
+.first-sync {
+  margin: 4px 0 8px;
+  padding-left: 1.2em;
+}
+
+.first-sync li + li {
+  margin-top: 4px;
+}
+
 .import-progress {
   display: flex;
   flex-direction: column;

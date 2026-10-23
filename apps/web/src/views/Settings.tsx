@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { DeviceSyncCard } from "./DeviceSync";
+import { FirstSync } from "./FirstSync";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
@@ -410,14 +411,8 @@ export function SettingsView() {
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
       {(syncNext || sync.message) && (
         <div className="notice info">
-          <strong>下一步：同步最近 14 天的訓練</strong>
-          <span>把最近兩週的跑步紀錄抓進來，教練才知道你的近況。每筆會產生一段 AI 分析。</span>
-          {syncNext && (
-            <button className="primary" disabled={sync.busy} onClick={() => void sync.run()}>
-              {sync.busy ? "同步中…" : "同步最近 14 天"}
-            </button>
-          )}
-          <SyncNotice message={sync.message} />
+          <strong>下一步：抓進你的跑步紀錄</strong>
+          {syncNext ? <FirstSync sync={sync} /> : <SyncNotice message={sync.message} />}
         </div>
       )}
 
