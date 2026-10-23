@@ -174,7 +174,10 @@ export function SettingsView() {
     void coach.db.countWorkouts().then(setWorkouts);
   }, [coach, settings, revision]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
+  // 這張表單只管 AI 模型與 Intervals.icu（還有時區、同意紀錄）；同步金鑰由多裝置同步的卡片管理，
+  // 表單打開之後才開始同步時，存檔不能用表單打開時的舊值蓋掉它
+  const formOf = (s: AppSettings) => ({ ...s, sync: null });
+  const dirty = JSON.stringify(formOf(draft)) !== JSON.stringify(formOf(settings));
   // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
   const syncNext = !dirty && llmProblem === null && activitiesReady && workouts === 0;
   const consented = draft.consents.includes(consentKey(draft));
@@ -395,7 +398,7 @@ export function SettingsView() {
               return;
             }
             try {
-              await updateSettings(draft);
+              await updateSettings({ ...draft, sync: settings.sync });
               setMessage({ kind: "ok", text: "設定已儲存在這個瀏覽器。" });
             } catch (e) {
               setMessage({ kind: "error", text: `儲存失敗：${errorText(e)}` });
