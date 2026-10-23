@@ -1,5 +1,5 @@
 import { PREFERENCE_OPTIONS, REGION_CHOICES } from "@running-coach/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
@@ -71,10 +71,15 @@ export function ProfileView() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
+  // 重新讀取（例如別台同步過來）時，保留這裡改到一半、還沒儲存的欄位，其他的換成最新的
+  const latest = useRef({ saved, form });
+  latest.current = { saved, form };
   useEffect(() => {
     void coach.db.getProfile().then((profile) => {
+      const { saved: before, form: editing } = latest.current;
+      const edited = Object.fromEntries(Object.entries(editing).filter(([key, value]) => (value ?? "").trim() !== (before[key] ?? "")));
       setSaved(profile);
-      setForm(profile);
+      setForm({ ...profile, ...edited });
     });
   }, [coach, revision]);
 
