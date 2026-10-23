@@ -378,7 +378,10 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
 function mockWeather(url: URL) {
   const past = Number(url.searchParams.get("past_days") ?? 0);
   const days = Number(url.searchParams.get("forecast_days") ?? 7);
-  const dates = Array.from({ length: past + days }, (_, i) => daysAgo(past - i));
+  // 日期依查詢的時區（和 Open-Meteo 一樣），不然測試的瀏覽器在 UTC 時跨日前後會對不上
+  const zone = url.searchParams.get("timezone") || "Asia/Taipei";
+  const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date());
+  const dates = Array.from({ length: past + days }, (_, i) => new Date(Date.parse(localToday) - (past - i) * 86_400_000).toISOString().slice(0, 10));
   const hours = dates.flatMap((d) => Array.from({ length: 24 }, (_, h) => ({ time: `${d}T${String(h).padStart(2, "0")}:00`, h })));
   const temp = (h: number) => 26 + 6 * Math.sin(((h - 9) / 24) * 2 * Math.PI);
   return {
@@ -436,8 +439,8 @@ createServer((req, res) => {
       if (name.length < 2 || /找不到/.test(name)) return send(200, {});
       return send(200, {
         results: [
-          { name: "模擬市", latitude: 25.03776, longitude: 121.56454, country: "模擬國", admin1: "模擬省" },
-          { name: "模擬市", latitude: 22.9997, longitude: 120.2270, country: "模擬國", admin1: "南方省" },
+          { name: "Mock City", latitude: 34.69374, longitude: 135.50218, country: "Mockland", admin1: "North" },
+          { name: "Mock City", latitude: 22.9997, longitude: 120.2270, country: "Mockland", admin1: "South" },
         ],
       });
     }

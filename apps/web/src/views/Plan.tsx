@@ -323,6 +323,17 @@ export function PlanView() {
                   </button>
                 </div>
               )}
+              {Boolean(race.cancelled) && (
+                <div className="row">
+                  <button
+                    onClick={() => {
+                      if (confirm(`確定要刪除「${race.name}」的紀錄嗎？刪除後無法復原。`)) void run(() => coach.db.deleteCancelledRace(race.id));
+                    }}
+                  >
+                    刪除紀錄
+                  </button>
+                </div>
+              )}
               {resultFor?.id === race.id && (
                 <form
                   className="row"
