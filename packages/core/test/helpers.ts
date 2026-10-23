@@ -10,6 +10,7 @@ import {
   type NextOptions,
   type ToolResult,
   type Turn,
+  type WeatherSource,
 } from "../src";
 
 export const NOW = new Date("2026-10-10T04:00:00Z"); // 台北時間 2026-10-10（星期六）12:00
@@ -92,7 +93,7 @@ export function activity(partial: Partial<Activity> = {}): Activity {
 
 export async function makeCoach(
   script: ConstructorParameters<typeof ScriptedProvider>[0] = [],
-  options: { activities?: Activity[]; settings?: Partial<CoachSettings>; now?: () => Date } = {},
+  options: { activities?: Activity[]; settings?: Partial<CoachSettings>; now?: () => Date; weather?: WeatherSource | null } = {},
 ) {
   const provider = new ScriptedProvider(script);
   const activities = new FakeActivities(options.activities);
@@ -106,6 +107,7 @@ export async function makeCoach(
       chatEffort: "medium",
     },
     activities,
+    weather: options.weather ?? null,
     settings: options.settings,
     now: options.now ?? (() => NOW),
     logger: {

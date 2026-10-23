@@ -12,4 +12,6 @@ interface ImportMetaEnv {
   readonly VITE_PREVIEW?: string;
   /** 開發用：把 Intervals.icu 指向本機的模擬服務 */
   readonly VITE_INTERVALS_BASE_URL?: string;
+  /** 開發用：把 Open-Meteo 指向本機的模擬服務（{base}/v1/forecast…） */
+  readonly VITE_WEATHER_BASE_URL?: string;
 }

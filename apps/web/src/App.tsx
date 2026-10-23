@@ -4,6 +4,8 @@ import {
   Coach,
   FakeActivitySource,
   IntervalsClient,
+  OpenMeteoWeather,
+  openMeteoUrlsAt,
   localDate,
   type CoachConfig,
   type LlmProvider,
@@ -100,6 +102,14 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           today,
           baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
         }),
+    weather: settings.weather
+      ? new OpenMeteoWeather({
+          place: settings.weather,
+          timeZone: settings.timeZone,
+          today,
+          urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
+        })
+      : null,
     settings: { timeZone: settings.timeZone, shell: "web" },
   };
 }

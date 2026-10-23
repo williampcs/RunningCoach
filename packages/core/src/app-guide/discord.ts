@@ -26,6 +26,12 @@ export const DISCORD_GUIDE: GuideSection[] = [
     body: `跟教練說“幫我記住…”，它會記下來，每次對話都會考慮；說“忘掉…”就會刪掉。Discord 版沒有查看清單的畫面，可以請教練列出它記得的事。`,
   },
   {
+    id: "weather",
+    title: "天氣",
+    keywords: ["天氣", "城市", "下雨", "濕熱", "WEATHER_LOCATION"],
+    body: `部署時在 .env 設定 WEATHER_LOCATION（“緯度,經度”，會四捨五入到約 10 公里），教練就會參考約略的天氣：今天的天氣、未來幾天的預報與跑步當下的溫度、露點。座標只用來向 Open-Meteo 查天氣，不存進資料庫、不給模型看。沒設定時教練不參考天氣。`,
+  },
+  {
     id: "web",
     title: "網頁版",
     keywords: ["網頁", "手機", "App", "多裝置"],

@@ -43,6 +43,7 @@ const ICONS: Record<FeedItem["kind"], string> = {
   volume: "📈",
   gap: "🌱",
   duplicate: "🔁",
+  weather: "🌦️",
 };
 
 const SCALES = [
@@ -288,6 +289,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
               <div className="feed-text">
                 <strong>{item.title}</strong>
                 {item.detail && <span className="small">{item.detail}</span>}
+                {item.credit && (
+                  <a className="small muted credit" href={item.credit.href} target="_blank" rel="noreferrer">
+                    {item.credit.label}
+                  </a>
+                )}
               </div>
               {item.actions.some((a) => a.type === "checkin") && checkinOpen ? (
                 <CheckinForm onDone={() => setCheckinOpen(false)} />

@@ -37,6 +37,19 @@ export {
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
 export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accumulation, type Region, type RunCard } from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
+export {
+  OPEN_METEO_URLS,
+  OpenMeteoWeather,
+  openMeteoUrlsAt,
+  roundPlace,
+  searchPlaces,
+  WEATHER_CREDIT,
+  type PlaceCandidate,
+  type WeatherForecast,
+  type WeatherHour,
+  type WeatherPlace,
+  type WeatherSource,
+} from "./weather";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {

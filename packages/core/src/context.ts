@@ -63,6 +63,26 @@ function targetLabel(race: Race): string {
   return race.target_time ? `｜目標 ${race.target_time}` : "｜目標完賽";
 }
 
+/** 每次對話才取得、不在資料庫裡的資料 */
+export interface ContextExtra {
+  weather?: string | null;
+}
+
+function weatherLines(weather: string | null | undefined, shell: CoachSettings["shell"]): string[] {
+  if (weather === undefined) {
+    return [
+      "沒有天氣資料（選手沒有設定天氣的城市）。選手問天氣時請他看天氣預報" +
+        (shell === "web" ? "，或到「設定」的「天氣」設定城市，之後你就看得到約略的天氣。" : "。"),
+    ];
+  }
+  return [
+    weather ? `今天的天氣（Open-Meteo 的預報，約略）：${weather}` : "今天的天氣：這次取不到（需要時用 get_weather 再試）。",
+    "【天氣】天氣只是約略的預報，給你評估用：濕熱（露點約 20°C 以上，或體感 32°C 以上）時配速放慢、以心率或體感為準、提醒補水，" +
+      "可以建議清晨或傍晚跑；大雨、強風或空氣品質差時考慮降低強度、改室內或換天；天氣普通時不必提。" +
+      "排未來幾天的課、或選手問某天適不適合跑時，用 get_weather 看預報。你不知道選手在哪個城市，也不要問或猜。",
+  ];
+}
+
 export class ContextManager {
   constructor(
     private readonly db: Db,
@@ -74,7 +94,11 @@ export class ContextManager {
   // 層1：System Prompt
   // ---------------------------------------------------------------------------
 
-  async buildSystemPrompt(): Promise<string> {
+  /**
+   * extra.weather：今天的約略天氣（todayWeatherLine）；null 是設定了天氣但這次取不到，undefined 是沒有設定.
+   * 這裡只拿到天氣的文字，不知道選手在哪裡
+   */
+  async buildSystemPrompt(extra: ContextExtra = {}): Promise<string> {
     const { timeZone } = this.settings;
     const now = this.now();
     const today = localDate(now, timeZone);
@@ -208,6 +232,8 @@ export class ContextManager {
       lines.push(`【身體狀況的判讀】${RECOVERY_RULES}需要更多天的資料時呼叫 get_recovery_status。`);
     }
 
+    lines.push("", ...weatherLines(extra.weather, this.settings.shell));
+
     lines.push(
       "",
       "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
@@ -286,8 +312,8 @@ export class ContextManager {
     );
   }
 
-  async getContextForApi(): Promise<ApiContext> {
-    const system = await this.buildSystemPrompt();
+  async getContextForApi(extra: ContextExtra = {}): Promise<ApiContext> {
+    const system = await this.buildSystemPrompt(extra);
     const messages: ChatMessage[] = [];
     const layerChars: LayerChars = { layer1: system.length, layer4: 0, layer5: 0 };
 

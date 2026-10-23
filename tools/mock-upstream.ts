@@ -8,6 +8,8 @@
  *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
  *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
+ *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
+ *   GET  /_mock/requests                      最近送到模擬服務的模型請求與天氣查詢（E2E 檢查送出了什麼）
  *
  * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
@@ -208,6 +210,11 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
+  // Anthropic 的工具是 { name }，OpenAI 相容的是 { function: { name } }
+  const toolNames = (body.tools ?? []).map((t) => (t as { name?: string; function?: { name?: string } }).name ?? (t as { function?: { name?: string } }).function?.name);
+  if (/天氣|下雨/.test(lastText) && toolNames.includes("get_weather")) {
+    return [toolUse("get_weather", { date: daysAgo(-1) })];
+  }
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];
   return [
@@ -367,6 +374,45 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   });
 }
 
+/** 模擬的 Open-Meteo：每天一樣，白天濕熱 */
+function mockWeather(url: URL) {
+  const past = Number(url.searchParams.get("past_days") ?? 0);
+  const days = Number(url.searchParams.get("forecast_days") ?? 7);
+  const dates = Array.from({ length: past + days }, (_, i) => daysAgo(past - i));
+  const hours = dates.flatMap((d) => Array.from({ length: 24 }, (_, h) => ({ time: `${d}T${String(h).padStart(2, "0")}:00`, h })));
+  const temp = (h: number) => 26 + 6 * Math.sin(((h - 9) / 24) * 2 * Math.PI);
+  return {
+    hourly: {
+      time: hours.map((x) => x.time),
+      temperature_2m: hours.map((x) => Math.round(temp(x.h) * 10) / 10),
+      apparent_temperature: hours.map((x) => Math.round((temp(x.h) + 4) * 10) / 10),
+      dew_point_2m: hours.map(() => 24),
+      relative_humidity_2m: hours.map((x) => (x.h < 12 ? 85 : 70)),
+      precipitation_probability: hours.map((x) => (x.h >= 14 && x.h <= 17 ? 70 : 10)),
+      precipitation: hours.map((x) => (x.h === 15 ? 3 : 0)),
+      weather_code: hours.map((x) => (x.h >= 14 && x.h <= 17 ? 80 : 2)),
+      wind_speed_10m: hours.map(() => 8),
+    },
+    daily: {
+      time: dates,
+      weather_code: dates.map(() => 80),
+      temperature_2m_max: dates.map(() => 32),
+      temperature_2m_min: dates.map(() => 20),
+      apparent_temperature_max: dates.map(() => 36),
+      precipitation_probability_max: dates.map(() => 70),
+      precipitation_sum: dates.map(() => 3),
+      wind_speed_10m_max: dates.map(() => 15),
+    },
+  };
+}
+
+/** E2E 用：最近的模型請求與天氣查詢 */
+const recent: { kind: "llm" | "weather"; body: unknown }[] = [];
+function record(kind: "llm" | "weather", body: unknown) {
+  recent.push({ kind, body });
+  if (recent.length > 50) recent.shift();
+}
+
 createServer((req, res) => {
   if (req.url?.startsWith("/sync/")) return proxySync(req, res, req.url.slice("/sync".length));
   const send = (status: number, payload: unknown) => {
@@ -377,6 +423,25 @@ createServer((req, res) => {
 
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
+  if (req.method === "GET" && path === "/_mock/requests") return send(200, recent);
+  if (req.method === "GET" && path.startsWith("/weather/v1/")) {
+    record("weather", { path, query: Object.fromEntries(url.searchParams) });
+    if (path === "/weather/v1/forecast") return send(200, mockWeather(url));
+    if (path === "/weather/v1/air-quality") {
+      const { hourly } = mockWeather(url);
+      return send(200, { hourly: { time: hourly.time, us_aqi: hourly.time.map(() => 72), pm2_5: hourly.time.map(() => 20) } });
+    }
+    if (path === "/weather/v1/search") {
+      const name = url.searchParams.get("name") ?? "";
+      if (name.length < 2 || /找不到/.test(name)) return send(200, {});
+      return send(200, {
+        results: [
+          { name: "模擬市", latitude: 25.03776, longitude: 121.56454, country: "模擬國", admin1: "模擬省" },
+          { name: "模擬市", latitude: 22.9997, longitude: 120.2270, country: "模擬國", admin1: "南方省" },
+        ],
+      });
+    }
+  }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/activities$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
     // 和 Intervals.icu 一樣只回傳 oldest～newest 之間的活動
@@ -426,6 +491,7 @@ createServer((req, res) => {
   }
   if (req.method === "POST" && path === "/v1/messages") {
     void readJson(req).then(async (body) => {
+      record("llm", body);
       const content = reply(body);
       const usage = estimateUsage(body, content);
       console.log(`${new Date().toISOString()} /v1/messages model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
@@ -446,6 +512,7 @@ createServer((req, res) => {
   }
   if (req.method === "POST" && path === "/v1/chat/completions") {
     void readJson(req).then(async (body) => {
+      record("llm", body);
       const content = reply(fromOpenAI(body));
       const usage = estimateUsage(body, content);
       console.log(`${new Date().toISOString()} /v1/chat/completions model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);

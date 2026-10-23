@@ -104,7 +104,7 @@ npm run build -w @running-coach/web    # 建置到 apps/web/dist
 
 - 建置結果是靜態檔案，不需要後端。瀏覽器的 OPFS 只在 HTTPS（或 localhost）下可用。
 - 作者的版本由 GitHub Actions 發布到 Cloudflare Pages（網址設在 repo 的 Variables：`WEB_URL`）。原本的 GitHub Pages 已經收掉（見 [KI-026](doc/known-issues.md)、規格 12.13）。
-- 可選的建置變數：`VITE_PROXY_URL`（設定頁預填的代理網址）、`VITE_INTERVALS_BASE_URL`（改連其他 Intervals.icu 端點，開發用）。
+- 可選的建置變數：`VITE_PROXY_URL`（設定頁預填的代理網址）、`VITE_INTERVALS_BASE_URL`（改連其他 Intervals.icu 端點，開發用）、`VITE_WEATHER_BASE_URL`（改連模擬的 Open-Meteo，例：`http://127.0.0.1:8788/weather`，開發用）。
 - 資料只存在這個瀏覽器。同時開第二個分頁時，第二個分頁只能用暫時性的記憶體資料庫（畫面上會有警告）。換裝置或清除網站資料前，請在設定頁匯出資料庫；匯入也接受 v1 的 `coach.db`。
 - 設定頁底部有原始碼連結（AGPL-3.0 第 13 條）。部署修改過的版本時，請把 `apps/web/src/views/Settings.tsx` 的 `SOURCE_URL` 改成你的版本。
 

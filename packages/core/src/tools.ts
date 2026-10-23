@@ -10,6 +10,7 @@ import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
 import { findGuide, guideTopics } from "./app-guide";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
+import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
 
 const RACE_ID_HINT =
   "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
@@ -25,8 +26,21 @@ const SEARCH_EXCERPT = 200;
 /** get_full_message 一次最多回傳的字數，避免貼上的超長內容撐爆單次請求 */
 const FULL_MESSAGE_MAX_CHARS = 20_000;
 
-export function buildTools(settings: CoachSettings): ToolDef[] {
-  return [
+const WEATHER_TOOL: ToolDef = {
+  name: "get_weather",
+  description:
+    "取得選手所在地今天起 7 天的約略天氣預報（溫度、體感、降雨、風）；給 date 時加上那天每 3 小時的溫度、露點與降雨機率。" +
+    "排未來幾天的課、選手問某天適不適合跑或要穿什麼、比賽前幾天時呼叫。今天的天氣已在系統提示，不必為了今天呼叫。",
+  input_schema: {
+    type: "object",
+    properties: { date: { type: "string", description: "要看逐時天氣的日期 YYYY-MM-DD（今天起 7 天內，選填）" } },
+    required: [],
+  },
+};
+
+/** weather：選手設定了天氣的城市時才提供 get_weather */
+export function buildTools(settings: CoachSettings, options: { weather?: boolean } = {}): ToolDef[] {
+  const tools: ToolDef[] = [
     {
       name: "add_race",
       description:
@@ -369,6 +383,8 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
       },
     },
   ];
+  if (options.weather) tools.push(WEATHER_TOOL);
+  return tools;
 }
 
 /** 產生摘要用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -382,6 +398,8 @@ export type WorkoutSummaryInput = Pick<
   recovery?: string | null;
   /** 這趟對應的課與程式的判斷（planNoteFor）；沒有結構化課表時不加 */
   plan?: string | null;
+  /** 跑步當下的約略天氣（runWeatherNote）；沒設定天氣或取不到時不加 */
+  weather?: string | null;
 };
 
 /** 生成 AI 跑步分析摘要 */
@@ -404,6 +422,7 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
     (workout.plan ? `課表：${workout.plan}\n` : "") +
+    (workout.weather ? `當時天氣（模型估計，約略）：${workout.weather}\n` : "") +
     // 網頁版以數字與圖顯示數據，摘要的第一行當結論顯示，其餘預設收起（規格 12.9）
     `\n格式：第一行是一句話的結論（例如「穩定的有氧跑，心率控制得很好」），不加標題、粗體，也不重複列出數據；` +
     `之後用 2–4 個條列說明。` +
@@ -414,6 +433,9 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
       : "") +
     (workout.plan
       ? "對照課表說明這趟和計畫的差異；跑了不一樣的課或沒做完時，用「這次偏難／不一樣，下次怎麼調整」的說法，不要寫失敗。"
+      : "") +
+    (workout.weather
+      ? "天氣只是約略的估計：濕熱（露點約 20°C 以上）、大風或下雨會讓心率偏高、配速變慢，解讀時考慮進去；天氣普通時不必提。"
       : "");
   return (await llm.complete("summary", prompt, 2000)).text;
 }
@@ -459,6 +481,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   get_full_message: () => "較早的對話",
   search_conversations: () => "較早的對話",
   get_app_help: () => "App 的使用說明",
+  get_weather: () => "天氣預報（Open-Meteo）",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -482,6 +505,7 @@ export interface ToolExecutorDeps {
   db: Db;
   llm: Llm;
   activities: ActivitySource;
+  weather?: WeatherSource | null;
   settings: CoachSettings;
   today: () => string;
   logger: Logger;
@@ -491,6 +515,7 @@ export type ToolExecutor = (name: string, input: Record<string, unknown>) => Pro
 
 export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
   const { db, llm, activities, settings, today, logger } = deps;
+  const weather = deps.weather ?? null;
 
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
@@ -537,6 +562,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           subjective_notes: subjectiveNotes,
           recovery: await recoveryNoteFor(db, activity.date),
           plan: await planNoteFor(db, today(), workoutId),
+          weather: await runWeatherNote(weather, activity),
         });
         await db.saveWorkoutSummary(workoutId, summary);
         activityCache = null;
@@ -635,6 +661,13 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             ? row.content.slice(0, FULL_MESSAGE_MAX_CHARS) + `…（超過 ${FULL_MESSAGE_MAX_CHARS} 字，以下省略）`
             : row.content;
         return `訊息 ${id}（${who}）的完整內容：\n\n${content}`;
+      }
+
+      case "get_weather": {
+        if (!weather) return "選手沒有設定天氣的城市，沒有天氣資料。";
+        const date = str(input.date).trim() || null;
+        if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`date 格式要是 YYYY-MM-DD：${date}`);
+        return weatherForTool(await weather.forecast(), today(), date);
       }
 
       case "get_app_help": {

@@ -4,10 +4,12 @@ import {
   DEFAULT_SETTINGS,
   OPENAI_COMPATIBLE_PRESETS,
   OpenAICompatibleProvider,
+  roundPlace,
   type CoachSettings,
   type Effort,
   type LlmProvider,
   type Purpose,
+  type WeatherPlace,
 } from "@running-coach/core";
 
 type Env = Record<string, string | undefined>;
@@ -22,6 +24,8 @@ export interface BotConfig {
   intervals: { apiKey: string; athleteId: string };
   llm: { provider: LlmProvider; models: Record<Purpose, string>; chatEffort: Effort };
   settings: CoachSettings;
+  /** 查天氣用的座標（WEATHER_LOCATION），已四捨五入；沒設定時為 null */
+  weather: WeatherPlace | null;
 }
 
 function required(env: Env, name: string): string {
@@ -76,6 +80,14 @@ function loadLlm(env: Env): BotConfig["llm"] {
   };
 }
 
+function weatherPlace(env: Env): WeatherPlace | null {
+  const raw = env.WEATHER_LOCATION?.trim();
+  if (!raw) return null;
+  const match = raw.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!match) throw new Error(`環境變數 WEATHER_LOCATION 要是「緯度,經度」，例：25.0,121.5`);
+  return roundPlace(Number(match[1]), Number(match[2]));
+}
+
 export function loadConfig(env: Env): BotConfig {
   return {
     discordToken: required(env, "DISCORD_BOT_TOKEN"),
@@ -86,6 +98,7 @@ export function loadConfig(env: Env): BotConfig {
       athleteId: env.INTERVALS_ATHLETE_ID?.trim() || "0",
     },
     llm: loadLlm(env),
+    weather: weatherPlace(env),
     settings: {
       timeZone: env.TIMEZONE?.trim() || DEFAULT_SETTINGS.timeZone,
       shell: "discord",
