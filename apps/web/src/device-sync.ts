@@ -23,6 +23,8 @@ export interface DeviceSyncState {
   lastAt: string | null;
   last: SyncResult | null;
   error: string | null;
+  /** 雲端的同步空間已經刪除（在另一台按了刪除）：這台不再連線，等使用者停止或重新開始 */
+  gone: boolean;
   /** 立即同步；沒有開啟時不做事 */
   run(): Promise<void>;
 }
@@ -45,6 +47,7 @@ export function useDeviceSync(coach: Coach | null, settings: AppSettings, testMo
   const [last, setLast] = useState<SyncResult | null>(null);
   const [lastAt, setLastAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
 
   useEffect(() => {
     if (!coach) return;
@@ -59,20 +62,24 @@ export function useDeviceSync(coach: Coach | null, settings: AppSettings, testMo
       setLast(result);
       setLastAt(result.at);
       setError(null);
+      setGone(false);
       // 收到別台的資料：各頁重新讀取（不會再觸發送出，因為內容和剛同步的一樣）
       if (result.received > 0) touch();
     } catch (e) {
-      setError(
-        e instanceof SyncApiError && e.status === 404
-          ? "雲端的同步資料已經刪除（可能是在另一台按了刪除）。請停止這台的同步，或重新開始同步。"
-          : e instanceof Error
-            ? e.message
-            : String(e),
-      );
+      const deleted = e instanceof SyncApiError && e.status === 404;
+      setGone(deleted);
+      setError(deleted ? null : e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }, [engine, touch]);
+
+  // 換了金鑰（停止、重新開始）：前一組的狀態不適用
+  useEffect(() => {
+    setGone(false);
+    setError(null);
+    setLast(null);
+  }, [engine]);
 
   // 打開 App、回到前景時同步
   useEffect(() => {
@@ -96,7 +103,7 @@ export function useDeviceSync(coach: Coach | null, settings: AppSettings, testMo
   }, [engine, revision, run]);
 
   return useMemo(
-    () => ({ available, enabled: engine !== null, api, engine, busy, lastAt, last, error, run }),
-    [available, engine, api, busy, lastAt, last, error, run],
+    () => ({ available, enabled: engine !== null, api, engine, busy, lastAt, last, error, gone, run }),
+    [available, engine, api, busy, lastAt, last, error, gone, run],
   );
 }

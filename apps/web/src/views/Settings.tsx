@@ -160,7 +160,7 @@ function KeyProtection({
 }
 
 export function SettingsView() {
-  const { coach, db, settings, llmProblem, updateSettings, revision, reload, activitiesReady, testMode } = useApp();
+  const { coach, db, settings, llmProblem, updateSettings, revision, reload, activitiesReady, testMode, deviceSync } = useApp();
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -204,18 +204,30 @@ export function SettingsView() {
     }
   }
 
-  async function reset(keepSettings: boolean) {
+  /**
+   * keep：保留設定與 API key 時，同步要停止（stop）還是重新從雲端取回（refetch）；
+   * 沒有開啟同步時兩者一樣。全部重置（keep 為 null）會連同步金鑰一起清掉
+   */
+  async function reset(keep: "stop" | "refetch" | null) {
+    const syncing = deviceSync.enabled && !testMode.enabled;
+    const cloudNote = syncing ? "\n雲端的同步資料與其他裝置不受影響；要刪雲端的資料，請先在「多裝置同步」按「刪除雲端的資料」。" : "";
     const what = testMode.enabled
       ? "這會刪除測試資料庫中的對話、訓練紀錄、賽事、計畫與選手資料；正式資料不受影響。"
-      : keepSettings
-        ? "這會刪除這台裝置上的對話、訓練紀錄、賽事、計畫與選手資料；設定與 API key 會保留。"
-        : "這會刪除這台裝置上的所有資料與設定（包括 API key），回到第一次使用的狀態。";
+      : keep === null
+        ? `這會刪除這台裝置上的所有資料與設定（包括 API key 與同步金鑰），回到第一次使用的狀態。${cloudNote}`
+        : !syncing
+          ? "這會刪除這台裝置上的對話、訓練紀錄、賽事、計畫與選手資料；設定與 API key 會保留。"
+          : keep === "stop"
+            ? `這會刪除這台裝置上的資料，並停止這台的同步（清掉的資料不會再從雲端回來）；設定與 API key 會保留。${cloudNote}`
+            : "這會刪除這台裝置上的資料，接著從雲端重新取回同步的資料（選手資料、賽事、課表、自評、對話、跑步的體感與分析）；跑步紀錄會從 Intervals.icu 重新抓。其他裝置不受影響。";
     if (!confirm(`${what}\n無法復原，確定要繼續嗎？`)) return;
     setMessage(null);
     try {
+      // 先停止同步，清除的過程中不會再送出或取回
+      if (syncing && keep === "stop") await updateSettings({ ...settings, sync: { ...settings.sync, key: "" } });
       await db.reset();
       resetGettingStarted();
-      if (!keepSettings) clearSettings();
+      if (keep === null) clearSettings();
       // 重新載入，讓 Coach 與各頁的狀態（進行中的對話壓縮、未送出的內容）一併回到初始
       location.reload();
     } catch (e) {
@@ -443,15 +455,27 @@ export function SettingsView() {
           <>
             <p className="muted small">測試模式中只會清除測試資料庫；正式資料與設定不受影響。</p>
             <div className="row">
-              <button onClick={() => void reset(true)}>清除測試資料</button>
+              <button onClick={() => void reset("stop")}>清除測試資料</button>
             </div>
           </>
         ) : (
           <>
             <p className="muted small">方便測試或重新開始。重置會讓新手引導重新出現，而且無法復原；需要的話先匯出資料庫。</p>
-            <div className="row">
-              <button onClick={() => void reset(true)}>清除資料，保留設定與 API key</button>
-              <button className="danger" onClick={() => void reset(false)}>
+            {deviceSync.enabled && (
+              <p className="muted small">
+                這台開啟了多裝置同步：重置只影響這台，雲端與其他裝置的資料不受影響。只清除資料時，可以選擇停止這台的同步，或從雲端重新取回。
+              </p>
+            )}
+            <div className="row wrap">
+              {deviceSync.enabled ? (
+                <>
+                  <button onClick={() => void reset("stop")}>清除這台並停止同步</button>
+                  <button onClick={() => void reset("refetch")}>清除這台，重新從雲端取回</button>
+                </>
+              ) : (
+                <button onClick={() => void reset("stop")}>清除資料，保留設定與 API key</button>
+              )}
+              <button className="danger" onClick={() => void reset(null)}>
                 全部重置
               </button>
             </div>
