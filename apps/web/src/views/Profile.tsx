@@ -2,6 +2,7 @@ import { PREFERENCE_OPTIONS } from "@running-coach/core";
 import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
+import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
 import { TrainingValuesCard } from "./TrainingValues";
 
@@ -137,6 +138,8 @@ export function ProfileView() {
           儲存選手資料
         </button>
       </form>
+      <MemoriesCard />
+      <ConversationSummaryCard />
     </>
   );
 }

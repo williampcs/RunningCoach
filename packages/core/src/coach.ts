@@ -28,6 +28,7 @@ import {
   type CoachSettings,
   type DailyCheckin,
   type Logger,
+  type ReplyRef,
   type SqlDriver,
   type Workout,
 } from "./types";
@@ -204,10 +205,11 @@ export class Coach {
   /**
    * 接收使用者訊息，回傳模型的文字回應與 token 用量統計。
    * 提供 onEvent 時以串流方式呼叫模型並回報進度；回覆仍在完成後才寫入對話紀錄。
+   * replyTo：選手回覆的那一則（教練會看到它的時間與前段文字）
    */
-  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void): Promise<ChatReply> {
+  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void, options: { replyTo?: ReplyRef | null } = {}): Promise<ChatReply> {
     const rt = this.runtime;
-    await this.db.appendConversation("user", userMessage);
+    await this.db.appendConversation("user", userMessage, [], options.replyTo ?? null);
     // 手錶早上才同步的靜息心率、HRV 與睡眠，對話前先取得，教練才不會拿昨天的資料當今天的
     await this.refreshWellness();
 

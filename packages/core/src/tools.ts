@@ -1,11 +1,11 @@
 /** 主對話可用的工具：定義（供模型呼叫）與執行器. */
 import { RECENT_WORKOUT_DAYS } from "./context";
-import { isoWeekLabel } from "./dates";
+import { addDays, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
 import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
-import type { Db, RaceUpdate } from "./db";
+import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
@@ -16,6 +16,10 @@ const RACE_ID_HINT =
 
 /** 恢復狀況的判讀要和前幾天比較，查詢時多取幾天的手錶資料 */
 const BASELINE_EXTRA_DAYS = 35;
+
+/** search_conversations 最多回傳幾則、每則帶入多少字 */
+const SEARCH_MAX = 20;
+const SEARCH_EXCERPT = 200;
 
 /** get_full_message 一次最多回傳的字數，避免貼上的超長內容撐爆單次請求 */
 const FULL_MESSAGE_MAX_CHARS = 20_000;
@@ -268,11 +272,52 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
       description:
         "讀取對話紀錄中一則訊息的完整內容。較早的長訊息在對話中只帶入前段，並標示 message_id；" +
         "需要後面的內容時才呼叫，例如使用者先前貼上的長文、你先前較長回覆中的某一點。" +
-        "已整理成對話摘要的訊息無法讀取。",
+        "已整理成對話摘要的訊息也讀得到（message_id 可以從 search_conversations 取得）。",
       input_schema: {
         type: "object",
         properties: { message_id: { type: "integer", description: "截斷標記中的 message_id" } },
         required: ["message_id"],
+      },
+    },
+    {
+      name: "search_conversations",
+      description:
+        "找較早的對話（包括已整理成對話摘要的原文）。選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時呼叫。" +
+        "至少給一個條件：from、to（當地日期，「昨天」「上週」先依今天的日期換算）或 keyword（內容包含的字）。" +
+        "回傳每則的 message_id、時間與前段文字；需要全文時用 get_full_message。",
+      input_schema: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "從哪一天（含），YYYY-MM-DD" },
+          to: { type: "string", description: "到哪一天（含），YYYY-MM-DD" },
+          keyword: { type: "string", description: "內容包含的字，例：小腿、間歇；一次一個詞" },
+          limit: { type: "integer", description: `最多幾則，預設 10，最多 ${SEARCH_MAX}` },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "remember",
+      description:
+        "記下一件要長期記住的事（每次對話都會帶給你，選手在「選手資料」頁看得到、改得了）。" +
+        "選手說「記住…」，或提到長期有效、選手資料欄位放不下的事時呼叫；記完要在回覆裡說「已記下：…」。" +
+        "給 replace_id 時改寫那一條。",
+      input_schema: {
+        type: "object",
+        properties: {
+          content: { type: "string", description: `一句話，${MEMORY_MAX_CHARS} 字以內，例：週三晚上要接小孩，不能練` },
+          replace_id: { type: "integer", description: "要改寫的那一條的 id（【記住的事】裡的 [id]）" },
+        },
+        required: ["content"],
+      },
+    },
+    {
+      name: "forget",
+      description: "刪掉一條已經過時或選手要你忘記的「記住的事」；刪完要在回覆裡說明。",
+      input_schema: {
+        type: "object",
+        properties: { memory_id: { type: "integer", description: "【記住的事】裡的 [id]" } },
+        required: ["memory_id"],
       },
     },
     {
@@ -400,6 +445,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   save_workout: () => "這次跑步的數據",
   get_upcoming_races: () => "賽事",
   get_full_message: () => "較早的對話",
+  search_conversations: () => "較早的對話",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -569,13 +615,59 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       case "get_full_message": {
         const id = toInt(input.message_id, "message_id");
         const row = await db.getConversation(id);
-        if (!row) return `找不到 message_id=${id} 的訊息，可能已整理成對話摘要。`;
+        if (!row) return `找不到 message_id=${id} 的訊息。`;
         const who = row.role === "user" ? "使用者" : "教練";
         const content =
           row.content.length > FULL_MESSAGE_MAX_CHARS
             ? row.content.slice(0, FULL_MESSAGE_MAX_CHARS) + `…（超過 ${FULL_MESSAGE_MAX_CHARS} 字，以下省略）`
             : row.content;
         return `訊息 ${id}（${who}）的完整內容：\n\n${content}`;
+      }
+
+      case "search_conversations": {
+        const date = (key: "from" | "to") => {
+          const value = str(input[key]).trim();
+          if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${key} 要是 YYYY-MM-DD`);
+          return value || null;
+        };
+        const [from, to] = [date("from"), date("to")];
+        const keyword = str(input.keyword).trim().slice(0, 50);
+        if (!from && !to && !keyword) throw new Error("至少要給 from、to 或 keyword");
+        const limit = Math.min(SEARCH_MAX, positiveInt(input.limit) ?? 10);
+        const tz = settings.timeZone;
+        const rows = await db.searchConversations({
+          fromUtc: from ? localDayStartUtc(from, tz) : undefined,
+          toUtc: to ? localDayStartUtc(addDays(to, 1), tz) : undefined,
+          keyword: keyword || undefined,
+          limit: limit + 1,
+        });
+        if (!rows.length) return "找不到符合的對話。";
+        const shown = rows.slice(-limit);
+        const lines = shown.map((r) => {
+          const at = r.timestamp ? new Date(Date.parse(r.timestamp)) : null;
+          const when = at ? `${localDate(at, tz)}（${weekdayName(localDate(at, tz))}）${localTime(at, tz)}` : "";
+          const text = r.content.length > SEARCH_EXCERPT ? `${r.content.slice(0, SEARCH_EXCERPT)}…` : r.content;
+          return `[message_id=${r.id}] ${when} ${r.role === "user" ? "選手" : "教練"}：${text.replace(/\s+/g, " ")}`;
+        });
+        const more = rows.length > limit ? `（符合的超過 ${limit} 則，只列最新的；可以縮小日期或換關鍵字）\n` : "";
+        return `找到的對話（舊的在前）：\n${more}${lines.join("\n")}`;
+      }
+
+      case "remember": {
+        const content = str(input.content);
+        if (input.replace_id !== undefined && input.replace_id !== null) {
+          const id = toInt(input.replace_id, "replace_id");
+          if (!(await db.updateMemory(id, content))) throw new Error(`找不到 id=${id} 的記住的事`);
+          return `已改寫（id=${id}）：${content.trim()}`;
+        }
+        const id = await db.addMemory(content, "coach");
+        return `已記下（id=${id}）：${content.trim()}`;
+      }
+
+      case "forget": {
+        const id = toInt(input.memory_id, "memory_id");
+        if (!(await db.deleteMemory(id))) throw new Error(`找不到 id=${id} 的記住的事`);
+        return `已刪掉記住的事 id=${id}`;
       }
 
       case "add_race": {

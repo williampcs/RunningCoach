@@ -199,6 +199,9 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
     }
     return [{ type: "text", text: `（模擬回覆）工具回傳了：\n\n${lastText}\n\n**建議**：明天安排 40 分鐘輕鬆跑，心率維持在 Z2。` }];
   }
+  const remember = lastText.match(/幫我記住[：:，, ]*(.+)/);
+  if (remember) return [toolUse("remember", { content: remember[1]!.trim() })];
+  if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];

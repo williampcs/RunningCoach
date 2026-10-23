@@ -13,6 +13,8 @@ import type {
   SqlDriver,
   SqlValue,
   SummaryRow,
+  Memory,
+  ReplyRef,
   TrainingPlan,
   WellnessDay,
   Workout,
@@ -26,8 +28,16 @@ import type {
  * 6：conversations.sources（教練回覆前讀過的資料，顯示為「參考了：…」）
  * 7：planned_sessions 與 training_plans 的 week_start、style、reason、outline、notes（結構化課表）
  * 8：other_activities（跑步以外的運動：騎車、游泳、肌力訓練等）
+ * 9：多裝置同步（sync_state、sync_pending、sync_meta；賽事與課表的 sync_id）
+ * 10：memories（記住的事）、conversations.archived（壓縮後保留原文）與 conversations.reply_to（回覆）
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
+
+/** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
+export const MEMORY_MAX_ITEMS = 30;
+export const MEMORY_MAX_CHARS = 300;
+/** 回覆時存下的被回覆訊息摘錄長度 */
+export const REPLY_EXCERPT_CHARS = 200;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
@@ -108,6 +118,15 @@ const SCHEMA = `
     role      TEXT NOT NULL,
     content   TEXT NOT NULL,
     timestamp TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS memories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_id     TEXT,
+    content     TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'user',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS summaries (
@@ -215,6 +234,39 @@ function parseJsonArray(json: string | null): unknown[] {
   } catch {
     return [];
   }
+}
+
+const CONVERSATION_COLS = "id, role, content, timestamp, sources, archived, reply_to";
+
+type StoredConversation = Omit<ConversationRow, "sources" | "archived" | "reply_to"> & {
+  sources: string | null;
+  archived: number;
+  reply_to: string | null;
+};
+
+function conversationOf(r: StoredConversation): ConversationRow {
+  return { ...r, sources: parseSources(r.sources), archived: Boolean(r.archived), reply_to: parseReply(r.reply_to) };
+}
+
+function parseReply(json: string | null): ReplyRef | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json) as Partial<ReplyRef>;
+    if ((v.role === "user" || v.role === "assistant") && typeof v.timestamp === "string" && typeof v.text === "string") {
+      return { role: v.role, timestamp: v.timestamp, text: v.text };
+    }
+  } catch {
+    // 壞掉的就當成沒有
+  }
+  return null;
+}
+
+/** 記住的事：去掉頭尾空白，空的或太長都不行 */
+function memoryText(content: string): string {
+  const text = content.trim();
+  if (!text) throw new Error("內容是空的");
+  if (text.length > MEMORY_MAX_CHARS) throw new Error(`一條最多 ${MEMORY_MAX_CHARS} 字，請精簡成一句話`);
+  return text;
 }
 
 function parseSources(json: string | null): string[] {
@@ -369,6 +421,12 @@ export class Db {
         if (!(await columns(table)).has("sync_id")) await d.exec(`ALTER TABLE ${table} ADD COLUMN sync_id TEXT`);
         await d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_sync_id ON ${table}(sync_id)`);
       }
+      // --- Migration: conversations.archived、reply_to（schema 10：壓縮後保留原文、回覆） ---
+      const conversationCols = await columns("conversations");
+      if (!conversationCols.has("archived")) await d.exec("ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+      if (!conversationCols.has("reply_to")) await d.exec("ALTER TABLE conversations ADD COLUMN reply_to TEXT");
+      await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_sync_id ON memories(sync_id)");
+
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
@@ -478,38 +536,114 @@ export class Db {
   // conversations
   // ---------------------------------------------------------------------------
 
-  /** sources：教練回覆前讀過的資料，沒有時不存 */
-  async appendConversation(role: "user" | "assistant", content: string, sources: string[] = []): Promise<number> {
-    const result = await this.run("INSERT INTO conversations (role, content, timestamp, sources) VALUES (?, ?, ?, ?)", [
+  /** sources：教練回覆前讀過的資料，沒有時不存；replyTo：選手回覆的那一則 */
+  async appendConversation(role: "user" | "assistant", content: string, sources: string[] = [], replyTo: ReplyRef | null = null): Promise<number> {
+    const result = await this.run("INSERT INTO conversations (role, content, timestamp, sources, reply_to) VALUES (?, ?, ?, ?, ?)", [
       role,
       content,
       this.stamp(),
       sources.length ? JSON.stringify(sources) : null,
+      replyTo ? JSON.stringify({ ...replyTo, text: replyTo.text.slice(0, REPLY_EXCERPT_CHARS) }) : null,
     ]);
     return result.lastInsertRowid;
   }
 
-  /** 最近的對話，舊的在前；附上教練回覆的依據（外殼顯示用） */
+  /** 最近、還沒整理進摘要的對話，舊的在前；附上教練回覆的依據 */
   async getRecentConversations(limit: number): Promise<ConversationRow[]> {
-    const rows = await this.all<Omit<ConversationRow, "sources"> & { sources: string | null }>(
-      "SELECT id, role, content, sources FROM conversations ORDER BY timestamp DESC, id DESC LIMIT ?",
+    const rows = await this.all<StoredConversation>(
+      `SELECT ${CONVERSATION_COLS} FROM conversations WHERE archived=0 ORDER BY timestamp DESC, id DESC LIMIT ?`,
       [limit],
     );
-    return rows.reverse().map((r) => ({ ...r, sources: parseSources(r.sources) }));
+    return rows.reverse().map(conversationOf);
   }
 
-  getConversation(id: number): Promise<ConversationRow | null> {
-    return this.get<ConversationRow>("SELECT id, role, content FROM conversations WHERE id=?", [id]);
+  /**
+   * 對話頁一次讀一段（含已整理進摘要的），舊的在前. before 是目前畫面上最舊的那一則，沒有時讀最新的
+   */
+  async getConversationPage(limit: number, before: { timestamp: string; id: number } | null = null): Promise<ConversationRow[]> {
+    const rows = await this.all<StoredConversation>(
+      before
+        ? `SELECT ${CONVERSATION_COLS} FROM conversations WHERE (timestamp, id) < (?, ?) ORDER BY timestamp DESC, id DESC LIMIT ?`
+        : `SELECT ${CONVERSATION_COLS} FROM conversations ORDER BY timestamp DESC, id DESC LIMIT ?`,
+      before ? [before.timestamp, before.id, limit] : [limit],
+    );
+    return rows.reverse().map(conversationOf);
   }
 
+  /** 一則訊息（含已整理進摘要的） */
+  async getConversation(id: number): Promise<ConversationRow | null> {
+    const row = await this.get<StoredConversation>(`SELECT ${CONVERSATION_COLS} FROM conversations WHERE id=?`, [id]);
+    return row ? conversationOf(row) : null;
+  }
+
+  /**
+   * 找較早的對話（含已整理進摘要的）：傳送時間介於 fromUtc 與 toUtc（不含）之間、內容包含 keyword.
+   * 符合的超過 limit 時取最新的 limit 則；舊的在前
+   */
+  async searchConversations(q: { fromUtc?: string; toUtc?: string; keyword?: string; limit: number }): Promise<ConversationRow[]> {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (q.fromUtc) {
+      where.push("timestamp >= ?");
+      params.push(q.fromUtc);
+    }
+    if (q.toUtc) {
+      where.push("timestamp < ?");
+      params.push(q.toUtc);
+    }
+    if (q.keyword) {
+      where.push("content LIKE ? ESCAPE '\\'");
+      params.push(`%${q.keyword.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    }
+    const rows = await this.all<StoredConversation>(
+      `SELECT ${CONVERSATION_COLS} FROM conversations${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY timestamp DESC, id DESC LIMIT ?`,
+      [...params, q.limit],
+    );
+    return rows.reverse().map(conversationOf);
+  }
+
+  /** 還沒整理進摘要的對話則數（超過上限時壓縮） */
   countConversations(): Promise<number> {
-    return this.count("SELECT COUNT(*) AS n FROM conversations");
+    return this.count("SELECT COUNT(*) AS n FROM conversations WHERE archived=0");
   }
 
+  /** 最舊的幾則還沒整理進摘要的對話（壓縮用） */
   getOldestConversations(n: number): Promise<ConversationRow[]> {
-    return this.all<ConversationRow>("SELECT id, role, content, timestamp FROM conversations ORDER BY timestamp, id LIMIT ?", [
-      n,
-    ]);
+    return this.all<ConversationRow>("SELECT id, role, content, timestamp FROM conversations WHERE archived=0 ORDER BY timestamp, id LIMIT ?", [n]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // memories（記住的事）
+  // ---------------------------------------------------------------------------
+
+  /** 記住的事，依建立時間 */
+  getMemories(): Promise<Memory[]> {
+    return this.all<Memory>("SELECT id, content, source, created_at, updated_at FROM memories ORDER BY created_at, id");
+  }
+
+  /** 新增一條；超過上限或太長時丟出錯誤（訊息給選手或教練看） */
+  async addMemory(content: string, source: Memory["source"]): Promise<number> {
+    const text = memoryText(content);
+    const d = this.driver;
+    return this.tx(async () => {
+      const n = Number((await d.all("SELECT COUNT(*) AS n FROM memories"))[0]?.n ?? 0);
+      if (n >= MEMORY_MAX_ITEMS) throw new Error(`記住的事已經有 ${MEMORY_MAX_ITEMS} 條（上限），請先刪掉或合併幾條`);
+      const stamp = this.stamp();
+      const { lastInsertRowid } = await d.run(
+        "INSERT INTO memories (sync_id, content, source, created_at, updated_at) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?)",
+        [text, source, stamp, stamp],
+      );
+      return lastInsertRowid;
+    });
+  }
+
+  async updateMemory(id: number, content: string): Promise<boolean> {
+    const result = await this.run("UPDATE memories SET content=?, updated_at=? WHERE id=?", [memoryText(content), this.stamp(), id]);
+    return result.changes > 0;
+  }
+
+  async deleteMemory(id: number): Promise<boolean> {
+    return (await this.run("DELETE FROM memories WHERE id=?", [id])).changes > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -529,18 +663,19 @@ export class Db {
     return this.serial(async () => {
       const summary = (await this.driver.all("SELECT * FROM summaries ORDER BY created_at DESC, id DESC LIMIT 1"))[0];
       const rows = await this.driver.all(
-        "SELECT id, role, content, timestamp FROM conversations ORDER BY timestamp DESC, id DESC LIMIT ?",
+        `SELECT ${CONVERSATION_COLS} FROM conversations WHERE archived=0 ORDER BY timestamp DESC, id DESC LIMIT ?`,
         [limit],
       );
       return {
         summary: (summary as SummaryRow | undefined) ?? null,
-        conversations: (rows as unknown as ConversationRow[]).reverse(),
+        conversations: (rows as unknown as StoredConversation[]).reverse().map(conversationOf),
       };
     });
   }
 
   /**
-   * 存入新摘要（只保留最新一筆），並刪除已被摘要涵蓋的對話：依時間排在 coversUpToId 那一則（含）之前的.
+   * 存入新摘要（只保留最新一筆），並把已被摘要涵蓋的對話標成已整理：依時間排在 coversUpToId 那一則（含）之前的.
+   * 原文保留，對話頁看得到、教練可以用 search_conversations 找；教練每次帶入的只有摘要與還沒整理的對話.
    * 對話的先後一律看時間，不看 id：多裝置同步時，別台較早的訊息可能較晚才寫進這台
    */
   applyCompression(summaryText: string, coversUpToId: number): Promise<void> {
@@ -553,7 +688,7 @@ export class Db {
       ]);
       await d.exec("DELETE FROM summaries WHERE id NOT IN (SELECT id FROM summaries ORDER BY created_at DESC, id DESC LIMIT 1)");
       await d.run(
-        "DELETE FROM conversations WHERE (timestamp, id) <= (SELECT timestamp, id FROM conversations WHERE id=?)",
+        "UPDATE conversations SET archived=1 WHERE archived=0 AND (timestamp, id) <= (SELECT timestamp, id FROM conversations WHERE id=?)",
         [coversUpToId],
       );
     });

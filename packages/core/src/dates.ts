@@ -26,6 +26,15 @@ export function localTime(now: Date, timeZone: string): string {
   return `${get("hour")}:${get("minute")}`;
 }
 
+/** 當地某一天 00:00 對應的 UTC 時間（ISO，與對話的 timestamp 同格式），例：2026-10-18 在台北是 2026-10-17T16:00:00Z */
+export function localDayStartUtc(isoDate: string, timeZone: string): string {
+  const midnight = Date.parse(`${isoDate}T00:00:00Z`);
+  // 當地時間比 UTC 快多少：先以 UTC 午夜那一刻的偏移估，再以估出的時刻校正一次（跨日光節約時間時兩者不同）
+  const offset = (t: number) => Date.parse(`${localDate(new Date(t), timeZone)}T${localTime(new Date(t), timeZone)}:00Z`) - Math.floor(t / 60_000) * 60_000;
+  const first = midnight - offset(midnight);
+  return nowIso(new Date(midnight - offset(first)));
+}
+
 /** 時區的 UTC 偏移標示，例：UTC+8、UTC-3:30 */
 export function utcOffsetLabel(now: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(now);

@@ -11,11 +11,11 @@ import { otherActivitiesText } from "./activity-labels";
 import { COACHING_METHOD } from "./coaching-method";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
-import type { Db } from "./db";
+import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import type { ChatMessage } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
-import type { CoachSettings, ConversationRow, Race, RunSettings } from "./types";
+import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings } from "./types";
 
 /** get_recent_workouts tool 的預設查詢天數 */
 export const RECENT_WORKOUT_DAYS = 14;
@@ -137,6 +137,26 @@ export class ContextManager {
     if (profile.pref_train_time) prefs.push(`偏好時段：${profile.pref_train_time}`);
     prefs.push(...preferenceText(profile));
     if (prefs.length) lines.push("訓練偏好：" + prefs.join("｜"));
+
+    // 記住的事：選手要教練記住、或教練記下的長期有效的事
+    const memories = await this.db.getMemories();
+    lines.push("", "【記住的事】（每則回覆都要考慮；[id] 給 remember 與 forget 用）");
+    if (memories.length) {
+      for (const m of memories) {
+        const date = localDate(new Date(Date.parse(m.updated_at) || 0), this.settings.timeZone);
+        lines.push(`- [${m.id}] ${m.content}（${date}，${m.source === "user" ? "選手記的" : "教練記的"}）`);
+      }
+    } else {
+      lines.push("（還沒有）");
+    }
+    lines.push(
+      `選手說「記住…」，或提到長期有效、而選手資料欄位放不下的事（固定的行程限制、裝備、身體的習慣反應、喜歡或不喜歡的課）時，用 remember 記成一句話，並在回覆裡說「已記下：…」。` +
+        "內容變了用 remember 帶 replace_id 改寫；過時的用 forget 刪掉並說明。" +
+        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、傷病、偏好用 update_athlete_profile）。" +
+        `最多 ${MEMORY_MAX_ITEMS} 條，滿了先和選手商量刪哪些。`,
+      "選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時，用 search_conversations 依日期或關鍵字找；「昨天」「上週」先依今天的日期換算成日期。",
+      "選手的訊息開頭有「（回覆…）」時，表示他在回覆那一則；需要更多前後文時，用 search_conversations 查那一天的對話。",
+    );
 
     // 動態注入近期賽事（距今 N 天內）
     const races = await this.db.getUpcomingRaces(this.settings.raceLookaheadDays);
@@ -285,12 +305,21 @@ export class ContextManager {
     for (const [i, row] of conversations.entries()) {
       const body = i >= fullFrom ? row.content : this.truncate(row);
       const sentAt = row.role === "user" ? this.messageTime(row, today) : null;
-      const content = sentAt ? `${sentAt}\n${body}` : body;
+      const quoted = row.role === "user" && row.reply_to ? this.replyText(row.reply_to, today) : null;
+      const content = [sentAt, quoted, body].filter(Boolean).join("\n");
       layerChars.layer5 += content.length;
       messages.push({ role: row.role, content });
     }
 
     return { system, messages, layerChars };
+  }
+
+  /** 回覆的那一則：例「（回覆 [2026-10-18（星期六）21:30，5 天前] 教練的訊息：「…」）」 */
+  replyText(reply: ReplyRef, today: string | null): string {
+    const when = this.messageTime({ id: 0, role: reply.role, content: "", timestamp: reply.timestamp }, today);
+    const who = reply.role === "user" ? "自己" : "教練";
+    const text = reply.text.length >= REPLY_EXCERPT_CHARS ? `${reply.text}…` : reply.text;
+    return `（回覆${when ? ` ${when}` : ""} ${who}的訊息：「${text}」）`;
   }
 
   // ---------------------------------------------------------------------------

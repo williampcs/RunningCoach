@@ -400,6 +400,117 @@ pre {
   border-bottom-left-radius: 4px;
 }
 
+/* 一則訊息：引用、氣泡、動作 */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 88%;
+}
+
+.msg.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.msg.assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.msg > .bubble {
+  max-width: 100%;
+}
+
+.msg-actions {
+  display: flex;
+  gap: 12px;
+  padding: 0 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.msg:hover .msg-actions,
+.msg:focus-within .msg-actions {
+  opacity: 1;
+}
+
+/* 觸控裝置沒有滑過的狀態：一直顯示，但淡一點 */
+@media (hover: none) {
+  .msg-actions {
+    opacity: 0.7;
+  }
+}
+
+.msg-actions .link {
+  color: var(--muted);
+  padding: 2px 0;
+}
+
+.quote {
+  display: block;
+  max-width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-left: 3px solid var(--border);
+  padding: 2px 8px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+span.quote {
+  cursor: default;
+}
+
+.quote-who {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.remember-edit {
+  width: min(420px, 80vw);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remember-edit textarea {
+  width: 100%;
+}
+
+.archived-divider {
+  align-self: stretch;
+  margin: 10px 0 4px;
+  color: var(--muted);
+  text-align: center;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.composer.replying {
+  flex-wrap: wrap;
+}
+
+.reply-bar {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reply-bar .quote {
+  flex: 1;
+  min-width: 0;
+}
+
 .footer {
   align-self: flex-start;
 }
@@ -1594,4 +1705,60 @@ pre {
 
 button.link.danger {
   color: var(--danger-text);
+}
+
+/* 記住的事 */
+.memory-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.memory-text {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
+.memory-actions {
+  display: flex;
+  gap: 12px;
+  justify-self: end;
+}
+
+.memory-edit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-edit textarea {
+  width: 100%;
+}
+
+.memory-add {
+  display: flex;
+  gap: 8px;
+}
+
+.memory-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-text {
+  overflow-wrap: anywhere;
+  margin: 8px 0;
 }
