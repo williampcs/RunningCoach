@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, regionOf, REGIONS, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 
@@ -256,8 +256,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** 紀錄頁頁首（規格 12.9、12.5）：只增不減的累積，數字與圖都從 0 長上來；這週沒跑就不出現這週 */
-/** 時區是台灣、還沒選所在地區：問一下要不要換成台灣的里程碑 */
+/** 還沒選里程碑、而時區對得到某個地區：問一次要不要依時區自動判斷 */
 const REGION_HINT_KEY = "running-coach.region-hint.dismissed";
 
 function RegionHint({ region }: { region: Accumulation["region"] }) {
@@ -269,7 +268,8 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
       return false;
     }
   });
-  if (region !== "" || dismissed || coach.settings.timeZone !== "Asia/Taipei") return null;
+  const byTimeZone = regionOf("auto", coach.settings.timeZone);
+  if (region !== "" || dismissed || byTimeZone === "") return null;
   const dismiss = () => {
     try {
       localStorage.setItem(REGION_HINT_KEY, "1");
@@ -280,25 +280,26 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
   };
   return (
     <p className="region-hint small muted">
-      要改成台灣的里程碑（台北到高雄、環島、台北 101）嗎？
+      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在「選手資料」改。
       <button
         className="link"
         onClick={() =>
-          void coach.db.setProfileKey("region", "TW").then(() => {
+          void coach.db.setProfileKey("region", "auto").then(() => {
             dismiss();
             touch();
           })
         }
       >
-        改成台灣的
+        依時區自動判斷
       </button>
       <button className="link" onClick={dismiss}>
-        不用
+        維持通用
       </button>
     </p>
   );
 }
 
+/** 紀錄頁頁首（規格 12.9、12.5）：只增不減的累積，數字與圖都從 0 長上來；這週沒跑就不出現這週 */
 export function AccumulationView({ totals, today, onImported }: { totals: Accumulation; today: string; onImported: () => void }) {
   const km = useCountUp(totals.km, 1200);
   const hours = totals.minutes / 60;

@@ -117,8 +117,18 @@ export async function runCards(db: Db, today: string, days: number): Promise<Run
  * 紀錄頁的里程碑（12.5）. 預設是不依賴所在地的一組；選手在「選手資料」選了所在地區時，換成那個地區的
  * （距離都從那個地區的大城市算）. 名稱本身要說得出距離（「台北到東京」而不是「東京」），畫面上再附上公里數
  */
-export const REGIONS = { "": "不指定", TW: "台灣" } as const;
-export type Region = keyof typeof REGIONS;
+export const REGIONS = { TW: "台灣" } as const;
+/** 空字串是通用（不依賴所在地） */
+export type Region = "" | keyof typeof REGIONS;
+
+/**
+ * 選手資料的 region 可以選的值：不填是通用；auto 依時區判斷（時區對不到任何地區時用通用）；
+ * 其他是手動選的地區
+ */
+export const REGION_CHOICES: Record<string, string> = { auto: "依時區自動判斷", ...REGIONS };
+
+/** 時區對應的地區（依時區自動判斷時用） */
+const TIME_ZONE_REGIONS: Record<string, Region> = { "Asia/Taipei": "TW" };
 
 interface Landmarks {
   places: [string, number][];
@@ -163,8 +173,11 @@ const LANDMARKS: Record<Region, Landmarks> = {
   },
 };
 
-/** 選手資料裡的所在地區；沒選或不認得的都當成不指定 */
-export const regionOf = (value: string | undefined): Region => (value && value in REGIONS ? (value as Region) : "");
+/** 選手資料的 region 對應的地區；沒填或不認得的是通用 */
+export function regionOf(value: string | undefined, timeZone: string): Region {
+  if (value === "auto") return TIME_ZONE_REGIONS[timeZone] ?? "";
+  return value && value in REGIONS ? (value as Region) : "";
+}
 
 const MARATHON_KM = 42.195;
 
@@ -185,7 +198,7 @@ export interface Accumulation {
   marathons: number;
   /** 累積爬升相當於幾座（依所在地區：聖母峰或台北 101） */
   climb: { name: string; meters: number; kind: "mountain" | "tower"; count: number };
-  /** 里程碑依哪個地區（選手資料的 region） */
+  /** 里程碑依哪個地區（選手資料的 region，依時區判斷時是判斷的結果） */
   region: Region;
   /** 已經超過的最遠一站與下一站 */
   passed: { name: string; km: number } | null;
@@ -237,7 +250,7 @@ export function accumulate(workouts: Workout[], today: string, region: Region = 
 }
 
 /** 資料庫裡所有的跑步（不含重複與已刪除的）的累積 */
-export async function accumulation(db: Db, today: string): Promise<Accumulation> {
-  const region = regionOf((await db.getProfile()).region);
+export async function accumulation(db: Db, today: string, timeZone: string): Promise<Accumulation> {
+  const region = regionOf((await db.getProfile()).region, timeZone);
   return accumulate(await db.getRecentWorkouts(365 * 100), today, region);
 }

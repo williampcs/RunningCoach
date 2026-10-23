@@ -88,10 +88,12 @@ describe("紀錄頁頁首的累積", () => {
     expect(anywhere.climb).toEqual({ name: "聖母峰", meters: 8849, kind: "mountain", count: 0.06 });
   });
 
-  it("所在地區：選手資料的值不認得時當成不指定", () => {
-    expect(regionOf("TW")).toBe("TW");
-    expect(regionOf("JP")).toBe("");
-    expect(regionOf(undefined)).toBe("");
+  it("里程碑的地區：沒填是通用；依時區自動判斷；手動選的；不認得的當成通用", () => {
+    expect(regionOf(undefined, "Asia/Taipei")).toBe("");
+    expect(regionOf("auto", "Asia/Taipei")).toBe("TW");
+    expect(regionOf("auto", "Europe/London")).toBe("");
+    expect(regionOf("TW", "Europe/London")).toBe("TW");
+    expect(regionOf("JP", "Asia/Tokyo")).toBe("");
   });
 
   it("這週沒跑不顯示 0；紀錄都在今年時不另外列今年；沒有紀錄", () => {

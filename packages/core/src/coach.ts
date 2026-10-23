@@ -487,7 +487,7 @@ export class Coach {
 
   /** 紀錄頁頁首的累積（只增不減） */
   accumulation(): Promise<Accumulation> {
-    return accumulation(this.db, this.today());
+    return accumulation(this.db, this.today(), this.settings.timeZone);
   }
 
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */

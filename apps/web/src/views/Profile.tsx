@@ -1,4 +1,4 @@
-import { PREFERENCE_OPTIONS, REGIONS } from "@running-coach/core";
+import { PREFERENCE_OPTIONS, REGION_CHOICES } from "@running-coach/core";
 import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
@@ -13,10 +13,9 @@ interface Field {
   wide?: boolean;
   /** 有選項時顯示成下拉選單 */
   options?: Record<string, string>;
+  /** 下拉選單沒選時的說法（預設「未填」） */
+  emptyLabel?: string;
 }
-
-/** 不指定（空字串）就是「未填」那一項 */
-const REGION_OPTIONS = Object.fromEntries(Object.entries(REGIONS).filter(([key]) => key !== ""));
 
 const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   {
@@ -25,7 +24,7 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
       { key: "goal_long_term", label: "長期目標", placeholder: "例如：全馬破四", wide: true },
       { key: "weekly_km_target", label: "每週目標里程（km）", placeholder: "40" },
       { key: "injuries", label: "傷病注意", placeholder: "例如：右膝舊傷", wide: true },
-      { key: "region", label: "所在地區（選填：紀錄頁用在地的里程碑）", options: REGION_OPTIONS, wide: true },
+      { key: "region", label: "紀錄頁的里程碑", options: REGION_CHOICES, emptyLabel: "通用（不依賴所在地）", wide: true },
     ],
   },
   {
@@ -118,7 +117,7 @@ export function ProfileView() {
                   {field.label}
                   {field.options ? (
                     <select value={form[field.key] ?? ""} onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}>
-                      <option value="">未填</option>
+                      <option value="">{field.emptyLabel ?? "未填"}</option>
                       {Object.entries(field.options).map(([value, text]) => (
                         <option key={value} value={value}>
                           {text}

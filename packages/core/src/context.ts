@@ -15,7 +15,6 @@ import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import type { ChatMessage } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
-import { regionOf, REGIONS } from "./history";
 import { guideTopics } from "./app-guide";
 import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings } from "./types";
 
@@ -100,8 +99,6 @@ export class ContextManager {
 
     if (profile.injuries) lines.push(`傷病注意：${profile.injuries}`);
     if (profile.weekly_km_target) lines.push(`每週目標里程：${profile.weekly_km_target}km`);
-    const region = regionOf(profile.region);
-    if (region) lines.push(`所在地區：${REGIONS[region]}`);
 
     // 生理資料
     const birthYear = toInt(profile.birth_year);

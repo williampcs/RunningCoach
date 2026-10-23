@@ -39,7 +39,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
           distance_km: { type: "number", description: "距離（公里），例：21.1" },
           target_time: { type: "string", description: "目標完賽時間，例：1:58:00。無具體目標時留空" },
           confirmed: { type: "integer", description: "1=已確認報名（預設），0=考慮中" },
-          notes: { type: "string", description: "其他備注，例：山路賽，需練習爬坡" },
+          notes: { type: "string", description: "其他備註，例：山路賽，需練習爬坡" },
         },
         required: ["name", "date", "distance_km"],
       },
@@ -59,13 +59,13 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
     },
     {
       name: "update_race_result",
-      description: "更新賽事實際完賽時間與備注。" + "賽後使用者回報成績時呼叫。" + RACE_ID_HINT,
+      description: "更新賽事實際完賽時間與備註。" + "賽後使用者回報成績時呼叫。" + RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: {
           race_id: { type: "integer", description: "races table 的 id" },
           result_time: { type: "string", description: "實際完賽時間，例：1:55:30" },
-          notes: { type: "string", description: "賽後備注，例：後半段配速不錯" },
+          notes: { type: "string", description: "賽後備註，例：後半段配速不錯" },
         },
         required: ["race_id", "result_time"],
       },
@@ -335,7 +335,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
     {
       name: "update_race",
       description:
-        "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備注）。" +
+        "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備註）。" +
         "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。" +
         RACE_ID_HINT +
         "只需傳入要更新的欄位。",
@@ -348,7 +348,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
           distance_km: { type: "number", description: "距離（公里）" },
           target_time: { type: "string", description: "目標完賽時間，例：1:55:00" },
           confirmed: { type: "integer", description: "1=已確認報名，0=考慮中" },
-          notes: { type: "string", description: "備注" },
+          notes: { type: "string", description: "備註" },
         },
         required: ["race_id"],
       },

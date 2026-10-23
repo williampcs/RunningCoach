@@ -269,7 +269,7 @@ export function PlanView() {
               已確認報名
             </label>
             <label className="wide">
-              備注
+              備註
               <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
             </label>
             <div className="row wide">
@@ -319,7 +319,7 @@ export function PlanView() {
                       if (confirm(`確定要把「${race.name}」標記為取消嗎？紀錄會保留。`)) void run(() => coach.db.cancelRace(race.id));
                     }}
                   >
-                    取消報名
+                    取消這場
                   </button>
                 </div>
               )}
