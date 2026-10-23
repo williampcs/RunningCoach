@@ -1858,3 +1858,15 @@ button.link.danger {
   overflow-wrap: anywhere;
   margin: 8px 0;
 }
+
+/* 舊網址的「已搬家」與預覽版的提醒 */
+.notice.moved {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.notice.moved a {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}

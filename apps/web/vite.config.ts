@@ -20,7 +20,8 @@ function buildInfo() {
 
 /**
  * 內容安全政策：只執行本站的腳本，圖片只從本站載入（擋下模型回覆裡用圖片網址把資料帶出去）.
- * GitHub Pages 不能設定回應標頭，所以用 <meta>；frame-ancestors 在 <meta> 中無效。
+ * 建置結果同時有 <meta>（GitHub Pages 不能設定回應標頭）與 Cloudflare Pages 的 _headers（真正的回應標頭，
+ * 另外加上 <meta> 做不到的 frame-ancestors 等，見 securityHeaders）.
  */
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -35,6 +36,21 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
 ].join("; ");
 
+/**
+ * Cloudflare Pages 的回應標頭（規格 12.13）：
+ * - CSP 加上 frame-ancestors：不讓別的網站把這頁嵌進去騙使用者點按鈕
+ * - 不讓瀏覽器猜檔案類型、不送出來源網址、關掉用不到的裝置權限（掃 QR code 用的是手機的相機 App）
+ * - 只走 HTTPS
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+  "Content-Security-Policy": `${CONTENT_SECURITY_POLICY}; frame-ancestors 'none'`,
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  "Strict-Transport-Security": "max-age=31536000",
+  "Cross-Origin-Opener-Policy": "same-origin",
+};
+
 /** 只加在建置結果：開發伺服器的熱更新需要行內腳本 */
 function contentSecurityPolicy(): Plugin {
   return {
@@ -47,6 +63,10 @@ function contentSecurityPolicy(): Plugin {
         injectTo: "head-prepend",
       },
     ],
+    generateBundle() {
+      const lines = Object.entries(SECURITY_HEADERS).map(([name, value]) => `  ${name}: ${value}`);
+      this.emitFile({ type: "asset", fileName: "_headers", source: `/*\n${lines.join("\n")}\n` });
+    },
   };
 }
 

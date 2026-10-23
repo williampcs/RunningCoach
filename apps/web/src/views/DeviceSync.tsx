@@ -506,7 +506,10 @@ export function DeviceSyncCard() {
         {deviceSync.error && <div className="notice error">同步失敗：{deviceSync.error}</div>}
         {!lockEnabled() && (
           <div className="notice warn">
-            建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡，和這個 App 放在同一個 github.io 網址下的其他網頁也讀得到。
+            建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡
+            {location.hostname.endsWith(".github.io")
+              ? "，和這個 App 放在同一個 github.io 網址下的其他網頁也讀得到。"
+              : "，能用這個瀏覽器的人就讀得到。"}
           </div>
         )}
         {mode === "add" ? (
