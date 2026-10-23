@@ -529,7 +529,7 @@ export function DeviceSyncCard() {
         ) : (
           <div className="row wrap">
             <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
-              {deviceSync.busy ? "同步中…" : "立即同步"}
+              {deviceSync.busy ? "同步中…" : "立即同步裝置"}
             </button>
             <button onClick={() => setMode("add")}>新增裝置</button>
             <button onClick={() => void showCode()}>顯示復原碼</button>

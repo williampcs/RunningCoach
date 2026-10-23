@@ -88,6 +88,7 @@ export function loadConfig(env: Env): BotConfig {
     llm: loadLlm(env),
     settings: {
       timeZone: env.TIMEZONE?.trim() || DEFAULT_SETTINGS.timeZone,
+      shell: "discord",
       conversationMax: int(env, "CONVERSATION_MAX", DEFAULT_SETTINGS.conversationMax),
       conversationKeep: int(env, "CONVERSATION_KEEP", DEFAULT_SETTINGS.conversationKeep),
       conversationMsgMaxChars: int(env, "CONVERSATION_MSG_MAX_CHARS", DEFAULT_SETTINGS.conversationMsgMaxChars),

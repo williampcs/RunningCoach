@@ -135,7 +135,7 @@ export function GettingStarted() {
               disabled={!llmReady || !intervalsReady || sync.busy}
               onClick={() => void sync.run()}
             >
-              {sync.busy ? "同步中…" : "立即同步"}
+              {sync.busy ? "同步中…" : "同步最近 14 天"}
             </button>
           </div>
           <SyncNotice message={sync.message} />

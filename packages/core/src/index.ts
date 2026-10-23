@@ -35,7 +35,7 @@ export {
   type FakeSpec,
 } from "./fake-activities";
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
-export { accumulate, splitSummary, type Accumulation, type RunCard } from "./history";
+export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accumulation, type Region, type RunCard } from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
@@ -129,3 +129,4 @@ export {
   type RecoverySignals,
 } from "./recovery";
 export * from "./device-sync";
+export { appGuide, findGuide, type GuideSection, type Shell } from "./app-guide";

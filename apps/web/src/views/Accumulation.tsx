@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, regionOf, REGIONS, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 
@@ -46,8 +46,8 @@ function useMounted(): boolean {
 }
 
 const number = (n: number, digits = 0) => n.toLocaleString("zh-TW", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-/** 「台北到高雄」→「高雄」 */
-const placeName = (name: string) => name.split("到").at(-1)!;
+/** 里程碑的名稱附上距離，例：「台北到東京（2,100 km）」；名稱本身不一定說得出距離 */
+const placeText = (place: { name: string; km: number }) => `${place.name}（${number(place.km)} km）`;
 
 function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: string; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
   const shown = useCountUp(value);
@@ -72,7 +72,11 @@ function Journey({ totals }: { totals: Accumulation }) {
   const from = totals.passed?.km ?? 0;
   const pct = Math.min(100, Math.max(2, ((totals.km - from) / (totals.next.km - from)) * 100));
   return (
-    <div className="journey" role="img" aria-label={`從${totals.passed ? placeName(totals.passed.name) : "起點"}往${placeName(totals.next.name)}，已經跑了這段的 ${Math.round(pct)}%`}>
+    <div
+      className="journey"
+      role="img"
+      aria-label={`從${totals.passed ? placeText(totals.passed) : "起點"}往${placeText(totals.next)}，已經跑了這段的 ${Math.round(pct)}%`}
+    >
       <div className="journey-track">
         <div className="journey-fill" style={{ width: mounted ? `${pct}%` : "0%" }}>
           <span className="journey-runner" aria-hidden="true">
@@ -81,8 +85,8 @@ function Journey({ totals }: { totals: Accumulation }) {
         </div>
       </div>
       <div className="journey-ends small">
-        <span>📍 {totals.passed ? placeName(totals.passed.name) : "起點"}</span>
-        <span>🏁 {placeName(totals.next.name)}</span>
+        <span>📍 {totals.passed ? placeText(totals.passed) : "起點"}</span>
+        <span>🏁 {placeText(totals.next)}</span>
       </div>
     </div>
   );
@@ -136,20 +140,39 @@ function Tower({ fill, index }: { fill: number; index: number }) {
   );
 }
 
-function Towers({ count, meters }: { count: number; meters: number }) {
+/** 山的剪影（聖母峰）：主峰與兩側的山 */
+function Mountain({ fill, index }: { fill: number; index: number }) {
+  const mounted = useMounted();
+  const shape = "M0 64 L16 30 L22 38 L32 6 L44 34 L50 26 L64 64 Z";
+  return (
+    <svg className="tower mountain" viewBox="0 0 64 64" style={{ "--i": index } as CSSProperties} aria-hidden="true">
+      <defs>
+        <clipPath id={`mountain-fill-${index}`}>
+          <rect x="0" width="64" y={64 - 64 * (mounted ? fill : 0)} height="64" className="tower-clip" />
+        </clipPath>
+      </defs>
+      <path className="tower-shape" d={shape} />
+      <path className="tower-shape filled" d={shape} clipPath={`url(#mountain-fill-${index})`} />
+    </svg>
+  );
+}
+
+function Climb({ climb, meters }: { climb: Accumulation["climb"]; meters: number }) {
   if (meters <= 0) return null;
+  const { count } = climb;
+  const Shape = climb.kind === "mountain" ? Mountain : Tower;
   const whole = Math.floor(count);
   const shown = Math.min(Math.ceil(count), MAX_TOWERS);
   return (
     <div className="showcase">
-      <div className="towers" role="img" aria-label={`累積爬升 ${number(meters)} 公尺，約 ${number(count, 1)} 座台北 101`}>
+      <div className="towers" role="img" aria-label={`累積爬升 ${number(meters)} 公尺，約 ${number(count, count < 1 ? 2 : 1)} 座${climb.name}`}>
         {Array.from({ length: Math.max(1, shown) }, (_, i) => (
-          <Tower key={i} index={i} fill={i < whole ? 1 : Math.max(0.05, count - whole)} />
+          <Shape key={i} index={i} fill={i < whole ? 1 : Math.max(0.05, count - whole)} />
         ))}
         {Math.ceil(count) > shown && <span className="more">+{number(Math.ceil(count) - shown)}</span>}
       </div>
       <span className="tile-sub">
-        累積爬升 {number(meters)} m，約 {number(count, 1)} 座台北 101
+        累積爬升 {number(meters)} m，約 {number(count, count < 1 ? 2 : 1)} 座{climb.name}（{number(climb.meters)} m）
       </span>
     </div>
   );
@@ -233,6 +256,49 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** 還沒選里程碑、而時區對得到某個地區：問一次要不要依時區自動判斷 */
+const REGION_HINT_KEY = "running-coach.region-hint.dismissed";
+
+function RegionHint({ region }: { region: Accumulation["region"] }) {
+  const { coach, touch } = useApp();
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(REGION_HINT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const byTimeZone = regionOf("auto", coach.settings.timeZone);
+  if (region !== "" || dismissed || byTimeZone === "") return null;
+  const dismiss = () => {
+    try {
+      localStorage.setItem(REGION_HINT_KEY, "1");
+    } catch {
+      // 記不住也沒關係，下次再問
+    }
+    setDismissed(true);
+  };
+  return (
+    <p className="region-hint small muted">
+      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在「選手資料」改。
+      <button
+        className="link"
+        onClick={() =>
+          void coach.db.setProfileKey("region", "auto").then(() => {
+            dismiss();
+            touch();
+          })
+        }
+      >
+        依時區自動判斷
+      </button>
+      <button className="link" onClick={dismiss}>
+        維持通用
+      </button>
+    </p>
+  );
+}
+
 /** 紀錄頁頁首（規格 12.9、12.5）：只增不減的累積，數字與圖都從 0 長上來；這週沒跑就不出現這週 */
 export function AccumulationView({ totals, today, onImported }: { totals: Accumulation; today: string; onImported: () => void }) {
   const km = useCountUp(totals.km, 1200);
@@ -250,8 +316,9 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
           {number(km, 1)}
           <small> km</small>
         </span>
-        {totals.passed && <span className="tile-sub">已經超過{totals.passed.name}（約 {number(totals.passed.km)} km）</span>}
+        {totals.passed && <span className="tile-sub">已經超過{placeText(totals.passed)}</span>}
         <Journey totals={totals} />
+        <RegionHint region={totals.region} />
       </div>
       <div className="tiles">
         {totals.thisWeek && (
@@ -264,7 +331,7 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
       </div>
       <div className="showcases">
         <Medals count={totals.marathons} />
-        <Towers count={totals.taipei101} meters={totals.elevationM} />
+        <Climb climb={totals.climb} meters={totals.elevationM} />
       </div>
       {/* 每一趟一格，只有跑過的才出現，沒有空白的日子（12.5） */}
       <div className="blocks" role="img" aria-label={`每一趟一格，共 ${totals.runs} 趟`}>

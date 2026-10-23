@@ -81,7 +81,7 @@ export function MemoriesCard() {
                   <button className="link small" onClick={() => setEditing({ id: m.id, text: m.content })}>
                     修改
                   </button>
-                  <button className="link small danger" onClick={() => void act(() => coach.db.deleteMemory(m.id))}>
+                  <button className="link small danger" onClick={() => confirm(`刪掉這一條？教練之後不會再看到：\n${m.content}`) && void act(() => coach.db.deleteMemory(m.id))}>
                     刪除
                   </button>
                 </span>

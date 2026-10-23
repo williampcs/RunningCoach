@@ -8,6 +8,7 @@ import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
+import { findGuide, guideTopics } from "./app-guide";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
 
 const RACE_ID_HINT =
@@ -38,7 +39,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
           distance_km: { type: "number", description: "距離（公里），例：21.1" },
           target_time: { type: "string", description: "目標完賽時間，例：1:58:00。無具體目標時留空" },
           confirmed: { type: "integer", description: "1=已確認報名（預設），0=考慮中" },
-          notes: { type: "string", description: "其他備注，例：山路賽，需練習爬坡" },
+          notes: { type: "string", description: "其他備註，例：山路賽，需練習爬坡" },
         },
         required: ["name", "date", "distance_km"],
       },
@@ -58,13 +59,13 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
     },
     {
       name: "update_race_result",
-      description: "更新賽事實際完賽時間與備注。" + "賽後使用者回報成績時呼叫。" + RACE_ID_HINT,
+      description: "更新賽事實際完賽時間與備註。" + "賽後使用者回報成績時呼叫。" + RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: {
           race_id: { type: "integer", description: "races table 的 id" },
           result_time: { type: "string", description: "實際完賽時間，例：1:55:30" },
-          notes: { type: "string", description: "賽後備注，例：後半段配速不錯" },
+          notes: { type: "string", description: "賽後備註，例：後半段配速不錯" },
         },
         required: ["race_id", "result_time"],
       },
@@ -280,6 +281,17 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
       },
     },
     {
+      name: "get_app_help",
+      description:
+        "查 App 的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
+        "topic 用系統提示【App 的使用方式】列的代號，或選手問的關鍵字。",
+      input_schema: {
+        type: "object",
+        properties: { topic: { type: "string", description: "主題代號（例：device-sync）或關鍵字（例：同步、密碼鎖）" } },
+        required: ["topic"],
+      },
+    },
+    {
       name: "search_conversations",
       description:
         "找較早的對話（包括已整理成對話摘要的原文）。選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時呼叫。" +
@@ -323,7 +335,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
     {
       name: "update_race",
       description:
-        "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備注）。" +
+        "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備註）。" +
         "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。" +
         RACE_ID_HINT +
         "只需傳入要更新的欄位。",
@@ -336,7 +348,7 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
           distance_km: { type: "number", description: "距離（公里）" },
           target_time: { type: "string", description: "目標完賽時間，例：1:55:00" },
           confirmed: { type: "integer", description: "1=已確認報名，0=考慮中" },
-          notes: { type: "string", description: "備注" },
+          notes: { type: "string", description: "備註" },
         },
         required: ["race_id"],
       },
@@ -446,6 +458,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   get_upcoming_races: () => "賽事",
   get_full_message: () => "較早的對話",
   search_conversations: () => "較早的對話",
+  get_app_help: () => "App 的使用說明",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -622,6 +635,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             ? row.content.slice(0, FULL_MESSAGE_MAX_CHARS) + `…（超過 ${FULL_MESSAGE_MAX_CHARS} 字，以下省略）`
             : row.content;
         return `訊息 ${id}（${who}）的完整內容：\n\n${content}`;
+      }
+
+      case "get_app_help": {
+        const topic = str(input.topic);
+        const found = findGuide(settings.shell, topic);
+        if (!found.length) return `找不到「${topic}」的說明。可查的主題：${guideTopics(settings.shell)}`;
+        return found
+          .map((g) => `## ${g.title}\n\n${g.body}${settings.shell === "web" ? `\n\n說明頁連結：[看完整說明](#help/${g.id})` : ""}`)
+          .join("\n\n");
       }
 
       case "search_conversations": {

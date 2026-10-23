@@ -73,6 +73,18 @@ body {
   margin: 0;
   font-size: 1.15rem;
   color: var(--accent);
+  white-space: nowrap;
+}
+
+/* 窄的手機：頁首放不下頁名，分頁列與按鈕本身已經標出在哪一頁 */
+@media (max-width: 420px) {
+  .topbar {
+    gap: 8px;
+  }
+
+  .topbar .page-label {
+    display: none;
+  }
 }
 
 /* 版本號：正式版之前標示 Beta */
@@ -1153,7 +1165,49 @@ span.quote {
   line-height: 1.4;
 }
 
-.settings-button.active {
+.settings-button.active,
+.help-button.active {
+  border-color: var(--accent);
+}
+
+/* 使用說明在設定的左邊；兩個一起靠右 */
+.help-button {
+  margin-left: auto;
+  align-self: center;
+  border: 1px solid transparent;
+  background: none;
+  padding: 2px 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--accent);
+}
+
+.help-button + .settings-button {
+  margin-left: 0;
+}
+
+/* 使用說明頁 */
+.help-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.help-toc button {
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.help-section {
+  scroll-margin-top: 72px;
+}
+
+.help-section.target {
   border-color: var(--accent);
 }
 

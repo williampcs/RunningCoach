@@ -237,6 +237,8 @@ export interface PendingSubjective {
 export interface CoachSettings {
   /** IANA 時區，例：Asia/Taipei */
   timeZone: string;
+  /** 教練在哪裡回覆：網頁版或 Discord bot（功能說明與操作方式不同） */
+  shell: "web" | "discord";
   conversationMax: number;
   conversationKeep: number;
   conversationMsgMaxChars: number;
@@ -252,6 +254,7 @@ export interface CoachSettings {
 
 export const DEFAULT_SETTINGS: CoachSettings = {
   timeZone: "Asia/Taipei",
+  shell: "discord",
   conversationMax: 20,
   conversationKeep: 10,
   conversationMsgMaxChars: 600,

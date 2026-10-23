@@ -232,7 +232,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
       case "plan":
         return "查看計畫";
       case "sync":
-        return sync.busy ? "同步中…" : "同步";
+        return sync.busy ? "同步中…" : "同步最近 14 天";
       case "ask":
         return action.label;
       case "merge":

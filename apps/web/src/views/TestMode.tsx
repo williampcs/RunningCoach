@@ -243,7 +243,7 @@ export function TestModeCard() {
           換一組亂數
         </button>
         <button disabled={sync.busy} onClick={() => void sync.run()}>
-          {sync.busy ? "同步中…" : "同步"}
+          {sync.busy ? "同步中…" : "同步最近 14 天"}
         </button>
       </div>
       {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}

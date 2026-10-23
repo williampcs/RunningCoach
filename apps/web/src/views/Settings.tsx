@@ -411,7 +411,7 @@ export function SettingsView() {
           <span>把最近兩週的跑步紀錄抓進來，教練才知道你的近況。每筆會產生一段 AI 分析。</span>
           {syncNext && (
             <button className="primary" disabled={sync.busy} onClick={() => void sync.run()}>
-              {sync.busy ? "同步中…" : "立即同步"}
+              {sync.busy ? "同步中…" : "同步最近 14 天"}
             </button>
           )}
           <SyncNotice message={sync.message} />
