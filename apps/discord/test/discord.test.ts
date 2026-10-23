@@ -55,6 +55,12 @@ describe("loadConfig", () => {
     expect(config.llm.models).toEqual({ chat: "main-model", summary: "main-model", compress: "small-model" });
   });
 
+  it("天氣的座標選填，四捨五入到 0.1°", () => {
+    expect(loadConfig(base).weather).toBeNull();
+    expect(loadConfig({ ...base, WEATHER_LOCATION: "25.0478, 121.5319" }).weather).toEqual({ lat: 25, lon: 121.5 });
+    expect(() => loadConfig({ ...base, WEATHER_LOCATION: "台北" })).toThrow("WEATHER_LOCATION");
+  });
+
   it("設定錯誤時在啟動階段就報錯", () => {
     expect(() => loadConfig({ ...base, DISCORD_BOT_TOKEN: "" })).toThrow("缺少環境變數 DISCORD_BOT_TOKEN");
     expect(() => loadConfig({ ...base, CONVERSATION_MAX: "abc" })).toThrow("CONVERSATION_MAX 必須是整數");

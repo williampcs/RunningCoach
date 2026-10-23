@@ -34,6 +34,11 @@ export interface AppSettings {
   /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
   sync: { url: string; key: string };
   timeZone: string;
+  /**
+   * 查天氣用的城市（規格 11 #26），座標已四捨五入到 0.1°. 只用來查天氣：只存在這個瀏覽器，
+   * 不進資料庫、不同步，也不給模型看（Coach 只拿到 WeatherSource）
+   */
+  weather: { label: string; lat: number; lon: number } | null;
   /** 使用者已確認過資料流向的組合，例：byok:anthropic */
   consents: string[];
 }
@@ -71,6 +76,7 @@ export function defaultSettings(): AppSettings {
     intervals: { apiKey: "", athleteId: "" },
     sync: { url: import.meta.env.VITE_SYNC_URL ?? "", key: "" },
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
+    weather: null,
     consents: [],
   };
 }

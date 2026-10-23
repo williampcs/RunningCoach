@@ -5,13 +5,17 @@ import type { Accumulation, RunCard, Workout } from "@running-coach/core";
 import { errorText, useApp } from "../app-context";
 import { analysisRequest } from "./Report";
 import { AccumulationView } from "./Accumulation";
+import { FirstSync } from "./FirstSync";
+import { SyncNotice } from "./PhoneGuide";
+import { useSync } from "../use-sync";
 import { dayText, IntensityBar, PlanBadge, RunCardView } from "./RunCard";
 
 const HISTORY_DAYS = 30;
 
 /** 紀錄頁（規格 12.9）：每一趟一列，點開看卡片；補填或修改體感 */
 export function HistoryView() {
-  const { coach, revision, touch, goTo } = useApp();
+  const { coach, revision, touch, goTo, activitiesReady } = useApp();
+  const sync = useSync();
   const today = coach.today();
   const [cards, setCards] = useState<RunCard[] | null>(null);
   const [totals, setTotals] = useState<Accumulation | null>(null);
@@ -151,7 +155,17 @@ export function HistoryView() {
         <p className="muted small">點一趟看數據、強度與教練的分析；也可以在這裡補填或修改體感。</p>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
-        {cards?.length === 0 && <p className="muted">還沒有跑步紀錄。同步後會出現在這裡。</p>}
+        {cards?.length === 0 &&
+          (totals?.runs === 0 ? (
+            <>
+              <p className="muted">還沒有跑步紀錄。</p>
+              {!activitiesReady && <p className="muted small">先到「設定」填好 Intervals.icu 才能抓紀錄。</p>}
+              <FirstSync sync={sync} disabled={!activitiesReady} />
+            </>
+          ) : (
+            <p className="muted">最近 {HISTORY_DAYS} 天沒有跑步。</p>
+          ))}
+        {sync.message && totals !== null && totals.runs > 0 && <SyncNotice message={sync.message} />}
         <ul className="runs">
           {cards?.map((card) => {
             const w = card.workout;

@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { Coach, IntervalsClient, localDate, type Logger } from "@running-coach/core";
+import { Coach, IntervalsClient, localDate, OpenMeteoWeather, type Logger } from "@running-coach/core";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createBot } from "./bot";
@@ -23,6 +23,9 @@ const coach = new Coach({
     ...config.intervals,
     today: () => localDate(new Date(), config.settings.timeZone),
   }),
+  weather: config.weather
+    ? new OpenMeteoWeather({ place: config.weather, timeZone: config.settings.timeZone, today: () => localDate(new Date(), config.settings.timeZone) })
+    : null,
   settings: config.settings,
   logger,
 });

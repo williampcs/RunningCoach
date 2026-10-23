@@ -11,6 +11,7 @@ import { QUALITY_KINDS } from "./plan";
 import { activePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
+import { WEATHER_CREDIT, weatherAlerts, type WeatherForecast } from "./weather";
 
 export type FeedAction =
   | { type: "checkin" }
@@ -27,11 +28,13 @@ export type FeedAction =
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate";
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
   actions: FeedAction[];
+  /** 資料來源的標示（天氣：Open-Meteo 的授權要求） */
+  credit?: { label: string; href: string };
 }
 
 /** 連續幾天沒跑才提醒 */
@@ -109,7 +112,8 @@ function todaysPlanLines(content: string, today: string): string[] {
     .slice(0, 2);
 }
 
-export async function buildFeed(db: Db, today: string, settings: CoachSettings): Promise<FeedItem[]> {
+/** weather：今天起的預報（設定了天氣且取得到時），用來提醒濕熱、下雨與空氣品質 */
+export async function buildFeed(db: Db, today: string, settings: CoachSettings, weather: WeatherForecast | null = null): Promise<FeedItem[]> {
   const [checkins, wellness, workouts, pending, races, pastRaces, plan, distinct] = await Promise.all([
     db.getCheckins(1),
     db.getWellness(36),
@@ -303,6 +307,21 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings):
         title: `已經 ${gap} 天沒跑了`,
         detail: "休息也是訓練的一部分。想恢復節奏的話，可以請教練安排。",
         actions: [ask("聊聊恢復節奏", `我已經 ${gap} 天沒跑了，想慢慢恢復，該怎麼開始？`), { type: "sync" }],
+      });
+    }
+  }
+
+  // 天氣：只在會影響訓練時提醒
+  if (weather) {
+    for (const alert of weatherAlerts(weather, today)) {
+      items.push({
+        id: `weather-${alert.kind}-${today}`,
+        kind: "weather",
+        tone: alert.tone,
+        title: alert.title,
+        detail: alert.detail,
+        actions: [ask("請教練調整今天的課", `${alert.title}，我今天的訓練要怎麼調整？`)],
+        credit: { ...WEATHER_CREDIT },
       });
     }
   }

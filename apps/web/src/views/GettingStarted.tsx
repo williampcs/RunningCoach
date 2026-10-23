@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useApp } from "../app-context";
 import { useSync } from "../use-sync";
+import { FirstSync } from "./FirstSync";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 
 const DISMISS_KEY = "running-coach.getting-started.dismissed";
@@ -126,19 +127,10 @@ export function GettingStarted() {
             </>
           )}
         </Step>
-        <Step n={3} done={synced} title="同步最近 14 天的訓練">
-          <p className="small muted">把最近兩週的跑步紀錄抓進來，教練才知道你的近況。每筆會產生一段 AI 分析。</p>
+        <Step n={3} done={synced} title="抓進你的跑步紀錄">
+          <p className="small muted">教練要看你的跑步紀錄才知道近況。</p>
           {!(llmReady && intervalsReady) && <p className="small muted">先完成上面兩步才能同步。</p>}
-          <div className="row">
-            <button
-              className="primary"
-              disabled={!llmReady || !intervalsReady || sync.busy}
-              onClick={() => void sync.run()}
-            >
-              {sync.busy ? "同步中…" : "同步最近 14 天"}
-            </button>
-          </div>
-          <SyncNotice message={sync.message} />
+          <FirstSync sync={sync} disabled={!llmReady || !intervalsReady} />
         </Step>
         <Step n={4} done={counts.profile > 0} title="填寫選手資料（建議）">
           <p className="small muted">

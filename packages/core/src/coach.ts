@@ -12,6 +12,7 @@ import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
 import { recoveryNoteFor } from "./recovery";
 import { runSync, SYNC_DAYS } from "./sync";
+import { runWeatherNote, todayWeatherLine, type WeatherForecast, type WeatherSource } from "./weather";
 import {
   buildTools,
   createToolExecutor,
@@ -113,13 +114,15 @@ export interface CoachOptions {
   driver: SqlDriver;
   llm: Omit<LlmConfig, "maxResponseTokens" | "toolCallMaxRounds">;
   activities: ActivitySource;
+  /** 天氣（選手設定了天氣的城市時）；地點只在 WeatherSource 裡，Coach 看不到 */
+  weather?: WeatherSource | null;
   settings?: Partial<CoachSettings>;
   now?: () => Date;
   logger?: Logger;
 }
 
 /** 可以在執行中更換的部分（見 Coach.configure） */
-export type CoachConfig = Pick<CoachOptions, "llm" | "activities" | "settings">;
+export type CoachConfig = Pick<CoachOptions, "llm" | "activities" | "weather" | "settings">;
 
 /** 由 CoachConfig 建出的元件；一輪對話從頭到尾使用同一份 */
 interface Runtime {
@@ -127,8 +130,12 @@ interface Runtime {
   llm: Llm;
   context: ContextManager;
   activities: ActivitySource;
+  weather: WeatherSource | null;
   executeTool: ToolExecutor;
 }
+
+/** 對話與教練動態等天氣最多等多久；取不到就不帶天氣 */
+const WEATHER_WAIT_MS = 4000;
 
 /** 恢復資料超過這麼久沒更新時，打開 App 或對話前自動重新取得 */
 export const WELLNESS_MAX_AGE_MS = 30 * 60_000;
@@ -177,10 +184,12 @@ export class Coach {
       llm,
       context: new ContextManager(this.db, settings, this.now),
       activities: config.activities,
+      weather: config.weather ?? null,
       executeTool: createToolExecutor({
         db: this.db,
         llm,
         activities: config.activities,
+        weather: config.weather ?? null,
         settings,
         today: () => localDate(this.now(), settings.timeZone),
         logger: this.logger,
@@ -195,6 +204,38 @@ export class Coach {
   /** 使用者時區的今天，YYYY-MM-DD */
   today(): string {
     return localDate(this.now(), this.settings.timeZone);
+  }
+
+  /** 有沒有設定天氣 */
+  get hasWeather(): boolean {
+    return this.runtime.weather !== null;
+  }
+
+  /** 今天起 7 天的預報；沒設定、逾時或取不到時為 null（只記錄，不丟錯） */
+  async weatherForecast(): Promise<WeatherForecast | null> {
+    const { weather } = this.runtime;
+    if (!weather) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        weather.forecast(),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), WEATHER_WAIT_MS);
+        }),
+      ]);
+    } catch (e) {
+      this.logger.warn(`Weather fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 系統提示的天氣：undefined 沒有設定；null 設定了但取不到 */
+  private async weatherLine(rt: Runtime): Promise<string | null | undefined> {
+    if (!rt.weather) return undefined;
+    const forecast = await this.weatherForecast();
+    return forecast ? todayWeatherLine(forecast, this.today()) : null;
   }
 
   /** 建立資料表並執行 migration；使用前呼叫一次 */
@@ -216,7 +257,7 @@ export class Coach {
     // 背景觸發壓縮（不阻塞主流程）
     if (await rt.context.shouldCompress()) this.compressInBackground(rt);
 
-    const context = await rt.context.getContextForApi();
+    const context = await rt.context.getContextForApi({ weather: await this.weatherLine(rt) });
     // 記下這次呼叫成功的工具，作為回覆的依據
     const calls: { name: string; input: Record<string, unknown> }[] = [];
     const executeTool: ToolExecutor = async (name, input) => {
@@ -226,7 +267,7 @@ export class Coach {
     };
     let result;
     try {
-      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings), executeTool, onEvent);
+      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings, { weather: rt.weather !== null }), executeTool, onEvent);
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
@@ -271,8 +312,8 @@ export class Coach {
 
   /** 從活動來源同步最近的跑步活動，並合併主觀暫存 */
   async sync(): Promise<string> {
-    const { llm, activities } = this.runtime;
-    const result = await runSync({ db: this.db, llm, activities, logger: this.logger });
+    const { llm, activities, weather } = this.runtime;
+    const result = await runSync({ db: this.db, llm, activities, weather, logger: this.logger });
     this.wellnessFetchedAt = this.now().getTime();
     return result;
   }
@@ -403,6 +444,7 @@ export class Coach {
         subjective_notes: subjectiveNotes,
         recovery: await recoveryNoteFor(this.db, latest.date),
         plan: await planNoteFor(this.db, this.today(), workoutId),
+        weather: await runWeatherNote(this.runtime.weather, latest),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -433,6 +475,7 @@ export class Coach {
         subjective_notes: notes,
         recovery: await recoveryNoteFor(this.db, existing.date),
         plan: await planNoteFor(this.db, this.today(), workoutId),
+        weather: await runWeatherNote(this.runtime.weather, existing),
       });
       await this.db.saveWorkoutSummary(workoutId, summary);
     } catch (e) {
@@ -471,8 +514,8 @@ export class Coach {
   }
 
   /** 教練動態：打開 App 時要提醒的事項 */
-  feed(): Promise<FeedItem[]> {
-    return buildFeed(this.db, this.today(), this.settings);
+  async feed(): Promise<FeedItem[]> {
+    return buildFeed(this.db, this.today(), this.settings, await this.weatherForecast());
   }
 
   /** 啟用中的課表，目標依現在的訓練數值換算（網頁版的計畫頁） */

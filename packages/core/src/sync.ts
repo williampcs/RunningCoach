@@ -20,6 +20,7 @@ import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
 import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
 import type { ActivitySource, Activity, Logger } from "./types";
+import { runWeatherNote, type WeatherSource } from "./weather";
 
 /** 同步時拉取的天數 */
 export const SYNC_DAYS = 14;
@@ -94,6 +95,7 @@ export async function runSync(deps: {
   db: Db;
   llm: Llm;
   activities: ActivitySource;
+  weather?: WeatherSource | null;
   logger: Logger;
 }): Promise<string> {
   const { db, llm, activities, logger } = deps;
@@ -198,6 +200,7 @@ export async function runSync(deps: {
           subjective_notes: workout?.subjective_notes ?? null,
           recovery: await recoveryNoteFor(db, activity.date),
           plan: await planNoteFor(db, db.today(), saved.id),
+          weather: await runWeatherNote(deps.weather, activity),
         });
         await db.saveWorkoutSummary(saved.id, summary);
       } catch (e) {

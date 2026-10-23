@@ -1707,6 +1707,45 @@ span.quote {
   padding-left: 1.2em;
 }
 
+/* 天氣的城市（WeatherSettings） */
+.weather-privacy {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+.weather-search {
+  align-items: flex-end;
+}
+
+.weather-search > label {
+  flex: 1;
+  min-width: 180px;
+}
+
+.weather-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+a.credit {
+  display: block;
+  margin-top: 2px;
+}
+
+/* 第一次抓紀錄的兩個選項（FirstSync） */
+.first-sync {
+  margin: 4px 0 8px;
+  padding-left: 1.2em;
+}
+
+.first-sync li + li {
+  margin-top: 4px;
+}
+
 .import-progress {
   display: flex;
   flex-direction: column;
