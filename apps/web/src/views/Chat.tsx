@@ -70,6 +70,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   const [hasSummary, setHasSummary] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState<string | null>(null);
+  // 送出中的那則回覆的是哪一則：存好之前也要顯示引用
+  const [sendingReply, setSendingReply] = useState<ReplyRef | null>(null);
   // 送出當下最後一則訊息的 id，用來判斷送出中的訊息是否已出現在讀回的對話裡
   const [baseId, setBaseId] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +175,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       // 從資料庫讀：其他分頁交辦的訊息在剛切到對話頁時就送出，這時對話可能還沒讀進來
       setBaseId((await coach.db.getRecentConversations(1)).at(-1)?.id ?? 0);
       setSending(content);
+      setSendingReply(reply);
       setError(null);
       setFooter("");
       try {
@@ -185,6 +188,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         busy.current = false;
         clearDraft();
         setSending(null);
+        setSendingReply(null);
         // 模型執行工具時可能改了賽事、計畫或選手資料
         touch();
       }
@@ -266,7 +270,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         )}
         {messages.map((m, i) => (
           <Fragment key={m.id}>
-            <div id={`msg-${m.id}`} className={`msg ${m.role}`}>
+            <div id={`msg-${m.id}`} className={`msg ${m.role}${m.archived ? " archived" : ""}`}>
               {m.reply_to && quote(m.reply_to, () => jumpTo(m.reply_to!))}
               <div className={`bubble ${m.role}`}>
                 {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
@@ -308,11 +312,23 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               )}
             </div>
             {i === lastArchived && i < messages.length - 1 && (
-              <div className="archived-divider small">以上已整理成摘要：教練記得重點，也能查回原文</div>
+              <div className="archived-divider" role="separator">
+                <span>
+                  <span>
+                    <span aria-hidden="true">🗂️</span> 以上已整理成摘要
+                  </span>
+                  <span className="archived-sub">教練記得重點，也能查回原文</span>
+                </span>
+              </div>
             )}
           </Fragment>
         ))}
-        {pendingShown && <div className="bubble user">{sending}</div>}
+        {pendingShown && (
+          <div className="msg user">
+            {sendingReply && quote(sendingReply)}
+            <div className="bubble user">{sending}</div>
+          </div>
+        )}
         {progressShown &&
           (draft ? (
             <div className="bubble assistant streaming">

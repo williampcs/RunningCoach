@@ -497,13 +497,55 @@ span.quote {
   width: 100%;
 }
 
+/* 已整理進摘要的訊息淡一點；滑過或點按時恢復，原文仍然看得清楚 */
+.msg.archived > .bubble,
+.msg.archived > .quote {
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.msg.archived:hover > .bubble,
+.msg.archived:focus-within > .bubble,
+.msg.archived:hover > .quote {
+  opacity: 1;
+}
+
+/* 分隔線：兩側的線加中間的標籤 */
 .archived-divider {
   align-self: stretch;
-  margin: 10px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
   color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.archived-divider::before,
+.archived-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.archived-divider > span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
   text-align: center;
-  border-top: 1px dashed var(--border);
-  padding-top: 6px;
+}
+
+.archived-sub {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .composer.replying {
