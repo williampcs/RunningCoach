@@ -354,12 +354,19 @@ export function DeviceSyncCard() {
     }
   }
 
-  async function stopHere() {
-    if (!confirm("停止這台的同步？這台的資料保留，雲端與其他裝置不受影響；之後可以用配對或復原碼再加入。")) return;
+  async function stopHere(ask = true) {
+    if (ask && !confirm("停止這台的同步？這台的資料保留，雲端與其他裝置不受影響；之後可以用配對或復原碼再加入。")) return;
     await deviceSync.engine?.forget();
     await saveKey(null);
     setMode("idle");
     setMessage({ kind: "ok", text: "這台已停止同步。" });
+  }
+
+  /** 雲端已經在別台刪除：用這台重新開始（新的金鑰與復原碼），這台的資料會送上去 */
+  async function restartHere() {
+    await deviceSync.engine?.forget();
+    await saveKey(null);
+    await begin();
   }
 
   async function deleteRemote() {
@@ -440,6 +447,25 @@ export function DeviceSyncCard() {
           <button onClick={() => setMode("idle")}>取消</button>
         </div>
       </div>
+    );
+  } else if (deviceSync.enabled && deviceSync.gone) {
+    body = (
+      <>
+        <div className="notice warn">
+          <span>
+            <strong>雲端的同步資料已經在另一台刪除。</strong>這台的資料都還在，只是不再同步；舊的復原碼也不能用了。
+          </span>
+        </div>
+        <p className="small">
+          要繼續同步的話，用這台重新開始：會產生新的同步金鑰與復原碼，這台的資料送上去之後，其他裝置再用配對加入（加入前先在那台停止同步）。
+        </p>
+        <div className="row wrap">
+          <button className="primary" disabled={busy} onClick={() => void restartHere()}>
+            用這台重新開始同步
+          </button>
+          <button onClick={() => void stopHere(false)}>停止這台的同步</button>
+        </div>
+      </>
     );
   } else if (!deviceSync.enabled) {
     body = (
