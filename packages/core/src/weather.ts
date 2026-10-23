@@ -237,7 +237,8 @@ export async function searchPlaces(
 ): Promise<PlaceCandidate[]> {
   const query = name.trim();
   if (query.length < 2) return [];
-  const params = new URLSearchParams({ name: query, count: "8", language: options.language ?? "zh", format: "json" });
+  // 結果一律用英文的名稱（地名的中文譯名各有立場，避開）
+  const params = new URLSearchParams({ name: query, count: "8", language: options.language ?? "en", format: "json" });
   const json = await getJson(options.fetch ?? ((i, init) => fetch(i, init)), `${options.url ?? OPEN_METEO_URLS.geocoding}?${params}`);
   const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
   const seen = new Set<string>();
@@ -253,6 +254,43 @@ export async function searchPlaces(
     out.push({ label, ...place });
   }
   return out;
+}
+
+/**
+ * 台灣的縣市（直接選，不用搜尋）：座標是縣市政府所在地，已四捨五入到 0.1°.
+ * 名稱由這裡決定，不用 geocoding 的譯名
+ */
+export const TAIWAN_CITIES: (PlaceCandidate & { en: string })[] = [
+  ["基隆市", "Keelung", 25.1, 121.7],
+  ["台北市", "Taipei", 25.0, 121.6],
+  ["新北市", "New Taipei", 25.0, 121.5],
+  ["桃園市", "Taoyuan", 25.0, 121.3],
+  ["新竹市", "Hsinchu City", 24.8, 121.0],
+  ["新竹縣", "Hsinchu County", 24.8, 121.0],
+  ["苗栗縣", "Miaoli", 24.6, 120.8],
+  ["台中市", "Taichung", 24.1, 120.7],
+  ["彰化縣", "Changhua", 24.1, 120.5],
+  ["南投縣", "Nantou", 23.9, 120.7],
+  ["雲林縣", "Yunlin", 23.7, 120.5],
+  ["嘉義市", "Chiayi City", 23.5, 120.4],
+  ["嘉義縣", "Chiayi County", 23.5, 120.3],
+  ["台南市", "Tainan", 23.0, 120.2],
+  ["高雄市", "Kaohsiung", 22.6, 120.3],
+  ["屏東縣", "Pingtung", 22.7, 120.5],
+  ["宜蘭縣", "Yilan", 24.8, 121.8],
+  ["花蓮縣", "Hualien", 24.0, 121.6],
+  ["台東縣", "Taitung", 22.8, 121.1],
+  ["澎湖縣", "Penghu", 23.6, 119.6],
+  ["金門縣", "Kinmen", 24.4, 118.3],
+  ["連江縣", "Lienchiang (Matsu)", 26.2, 119.9],
+].map(([label, en, lat, lon]) => ({ label: label as string, en: en as string, lat: lat as number, lon: lon as number }));
+
+/** 輸入的名稱對得到台灣的縣市時直接用（例：台北、臺北市、taipei），不必送出去搜尋 */
+export function matchTaiwanCities(name: string): PlaceCandidate[] {
+  const key = (s: string) => s.trim().toLowerCase().replace(/臺/g, "台").replace(/[市縣]$/, "").replace(/\s+(city|county)$/, "");
+  const q = key(name);
+  if (q.length < 2) return [];
+  return TAIWAN_CITIES.filter((c) => key(c.label) === q || key(c.en) === q || key(c.en).startsWith(q) || c.label.startsWith(q)).map(({ label, lat, lon }) => ({ label, lat, lon }));
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +441,7 @@ export async function runWeatherNote(
 export interface WeatherAlert {
   kind: "heat" | "rain" | "air";
   tone: "warn" | "info";
+  /** 接在「今天」後面，例：濕熱（體感最高 36°C、露點 24°C） */
   title: string;
   detail: string;
 }
@@ -423,7 +462,7 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
     alerts.push({
       kind: "heat",
       tone: apparent !== null && apparent >= 36 ? "warn" : "info",
-      title: `今天濕熱（${facts}）`,
+      title: `濕熱（${facts}）`,
       detail: "配速放慢、以心率或體感為準，跑前跑中補水；可以改在清晨或傍晚跑。",
     });
   }
@@ -431,7 +470,7 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
     alerts.push({
       kind: "rain",
       tone: "info",
-      title: `今天可能下雨（降雨機率 ${Math.round(day.precipProb)}%）`,
+      title: `可能下雨（降雨機率 ${Math.round(day.precipProb)}%）`,
       detail: "路面濕滑時放慢、注意轉彎；也可以把課換到別天或改在室內。",
     });
   }
@@ -440,9 +479,20 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
     alerts.push({
       kind: "air",
       tone: aqi > 150 ? "warn" : "info",
-      title: `今天空氣品質${aqiLabel(aqi)}（US AQI 最高 ${Math.round(aqi)}）`,
+      title: `空氣品質${aqiLabel(aqi)}（US AQI 最高 ${Math.round(aqi)}）`,
       detail: aqi > 150 ? "建議減少戶外的高強度訓練，改輕鬆跑、室內或休息。" : "呼吸道比較敏感的話，避開空氣最差的時段或降低強度。",
     });
   }
   return alerts;
+}
+
+/** 教練動態的天氣：幾種情況合成一則，例：今天濕熱（…），可能下雨（…） */
+export function weatherNotice(f: WeatherForecast, today: string): { tone: "warn" | "info"; title: string; detail: string } | null {
+  const alerts = weatherAlerts(f, today);
+  if (!alerts.length) return null;
+  return {
+    tone: alerts.some((a) => a.tone === "warn") ? "warn" : "info",
+    title: `今天${alerts.map((a) => a.title).join("，")}`,
+    detail: alerts.map((a) => a.detail).join(""),
+  };
 }

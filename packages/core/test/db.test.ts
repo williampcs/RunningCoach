@@ -88,6 +88,12 @@ describe("Db", () => {
     const races = await db.getUpcomingRaces(90);
     expect(races).toHaveLength(1);
     expect(races[0]).toMatchObject({ id: soon, target_time: "1:55:00", name: "半馬", notes: null });
+
+    // 只有取消的可以刪
+    expect(await db.deleteCancelledRace(soon)).toBe(false);
+    expect(await db.deleteCancelledRace(today)).toBe(true);
+    expect((await db.getAllRaces()).map((r) => r.id)).not.toContain(today);
+    expect((await db.getAllRaces()).map((r) => r.id)).toContain(soon);
   });
 
   it("saveWorkout：同一活動只存一筆，再次儲存時補上主觀感受但不覆蓋成空值", async () => {

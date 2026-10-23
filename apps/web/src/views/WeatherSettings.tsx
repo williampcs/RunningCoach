@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { openMeteoUrlsAt, searchPlaces, WEATHER_CREDIT, type PlaceCandidate } from "@running-coach/core";
+import { matchTaiwanCities, openMeteoUrlsAt, searchPlaces, TAIWAN_CITIES, WEATHER_CREDIT, type PlaceCandidate } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 
@@ -23,6 +23,12 @@ export function WeatherCard() {
     setResults(null);
     if (query.trim().length < 2) {
       setError("至少輸入兩個字。");
+      return;
+    }
+    // 台灣的縣市在本機對照，不送出去
+    const local = matchTaiwanCities(query);
+    if (local.length) {
+      setResults(local);
       return;
     }
     setBusy(true);
@@ -51,7 +57,7 @@ export function WeatherCard() {
         <strong>這個城市只用來查天氣</strong>
         <ul className="small weather-privacy">
           <li>只存在這個瀏覽器的設定裡：不會存進訓練資料、不會同步到其他裝置，也不會給 AI 模型看，教練只看得到天氣的數字。</li>
-          <li>查天氣時，瀏覽器把約略的座標（四捨五入到約 10 公里）直接送到 Open-Meteo；搜尋城市時送出你輸入的名稱。Open-Meteo 也會看到你的 IP。</li>
+          <li>查天氣時，瀏覽器把約略的座標（四捨五入到約 10 公里）直接送到 Open-Meteo，Open-Meteo 也會看到你的 IP。選台灣的縣市不會送出名稱；搜尋其他地方時會送出你輸入的名稱。</li>
           <li>和「選手資料」的「紀錄頁的里程碑」是分開的設定，互不影響。</li>
         </ul>
       </div>
@@ -67,6 +73,23 @@ export function WeatherCard() {
       ) : (
         <p className="muted small">還沒設定：教練不會參考天氣。</p>
       )}
+      <label>
+        台灣的縣市
+        <select
+          value={TAIWAN_CITIES.findIndex((c) => current?.label === c.label && current.lat === c.lat && current.lon === c.lon)}
+          onChange={(e) => {
+            const city = TAIWAN_CITIES[Number(e.target.value)];
+            if (city) void choose(city);
+          }}
+        >
+          <option value={-1}>{current ? "（不是台灣的縣市）" : "選擇縣市…"}</option>
+          {TAIWAN_CITIES.map((c, i) => (
+            <option key={c.label} value={i}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <form
         className="row weather-search"
         onSubmit={(e) => {
@@ -75,8 +98,8 @@ export function WeatherCard() {
         }}
       >
         <label>
-          {current ? "換一個城市" : "城市"}
-          <input value={query} placeholder="例：台北、Taichung、Osaka" onChange={(e) => setQuery(e.target.value)} />
+          其他地方（用英文搜尋）
+          <input value={query} placeholder="例：Osaka、Singapore" onChange={(e) => setQuery(e.target.value)} />
         </label>
         <button type="submit" disabled={busy}>
           {busy ? "搜尋中…" : "搜尋城市"}

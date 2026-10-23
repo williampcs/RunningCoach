@@ -11,7 +11,7 @@ import { QUALITY_KINDS } from "./plan";
 import { activePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
-import { WEATHER_CREDIT, weatherAlerts, type WeatherForecast } from "./weather";
+import { WEATHER_CREDIT, weatherNotice, type WeatherForecast } from "./weather";
 
 export type FeedAction =
   | { type: "checkin" }
@@ -311,19 +311,18 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
     }
   }
 
-  // 天氣：只在會影響訓練時提醒
-  if (weather) {
-    for (const alert of weatherAlerts(weather, today)) {
-      items.push({
-        id: `weather-${alert.kind}-${today}`,
-        kind: "weather",
-        tone: alert.tone,
-        title: alert.title,
-        detail: alert.detail,
-        actions: [ask("請教練調整今天的課", `${alert.title}，我今天的訓練要怎麼調整？`)],
-        credit: { ...WEATHER_CREDIT },
-      });
-    }
+  // 天氣：只在會影響訓練時提醒；濕熱、下雨、空氣差合成一則
+  const notice = weather ? weatherNotice(weather, today) : null;
+  if (notice) {
+    items.push({
+      id: `weather-${today}`,
+      kind: "weather",
+      tone: notice.tone,
+      title: notice.title,
+      detail: notice.detail,
+      actions: [ask("請教練調整今天的課", `${notice.title}，我今天的訓練要怎麼調整？`)],
+      credit: { ...WEATHER_CREDIT },
+    });
   }
 
   // 需要注意的排前面

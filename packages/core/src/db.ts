@@ -524,6 +524,11 @@ export class Db {
     ]);
   }
 
+  /** 刪除已取消的賽事（選手不想留著的）；還沒取消的不刪，回傳是否刪了 */
+  async deleteCancelledRace(raceId: number): Promise<boolean> {
+    return (await this.run("DELETE FROM races WHERE id=? AND cancelled=1", [raceId])).changes > 0;
+  }
+
   async updateRaceResult(raceId: number, resultTime: string, notes = ""): Promise<void> {
     await this.run("UPDATE races SET result_time=?, notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?", [
       resultTime,

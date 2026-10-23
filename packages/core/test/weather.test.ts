@@ -9,7 +9,7 @@ import {
   type WeatherHour,
   type WeatherSource,
 } from "../src";
-import { runWeatherText, todayWeatherLine, weatherAlerts, weatherForTool } from "../src/weather";
+import { matchTaiwanCities, runWeatherText, TAIWAN_CITIES, todayWeatherLine, weatherAlerts, weatherForTool, weatherNotice } from "../src/weather";
 import { activity, makeCoach, toolTurn, turn } from "./helpers";
 
 const TODAY = "2026-10-10";
@@ -153,6 +153,8 @@ describe("searchPlaces", () => {
       { label: "Taipei, Taiwan", lat: 25, lon: 121.6 },
     ]);
     expect(fetch.urls[0]!.searchParams.get("name")).toBe("台北");
+    // 結果用英文的名稱
+    expect(fetch.urls[0]!.searchParams.get("language")).toBe("en");
     expect(await searchPlaces("台", { fetch: fetch.fn })).toEqual([]);
     expect(fetch.urls).toHaveLength(1);
   });
@@ -195,7 +197,38 @@ describe("weather text", () => {
       ["rain", "info"],
       ["air", "warn"],
     ]);
-    expect(alerts[0]!.title).toBe("今天濕熱（體感最高 37°C、露點 25°C）");
+    expect(alerts[0]!.title).toBe("濕熱（體感最高 37°C、露點 25°C）");
+  });
+
+  it("combines the alerts into one notice", () => {
+    expect(weatherNotice(forecast(), TODAY)).toBeNull();
+    expect(weatherNotice(forecast({ rain: true }), TODAY)).toEqual({
+      tone: "info",
+      title: "今天可能下雨（降雨機率 80%）",
+      detail: "路面濕滑時放慢、注意轉彎；也可以把課換到別天或改在室內。",
+    });
+    const both = weatherNotice(forecast({ hot: true, rain: true }), TODAY)!;
+    expect(both.tone).toBe("warn");
+    expect(both.title).toBe("今天濕熱（體感最高 37°C、露點 25°C），可能下雨（降雨機率 80%）");
+  });
+});
+
+describe("Taiwan cities", () => {
+  it("are already rounded and unique", () => {
+    expect(new Set(TAIWAN_CITIES.map((c) => c.label)).size).toBe(22);
+    for (const c of TAIWAN_CITIES) expect(roundPlace(c.lat, c.lon)).toEqual({ lat: c.lat, lon: c.lon });
+  });
+
+  it("match common ways of writing the name", () => {
+    const labels = (q: string) => matchTaiwanCities(q).map((c) => c.label);
+    expect(labels("台北")).toEqual(["台北市"]);
+    expect(labels("臺北市")).toEqual(["台北市"]);
+    expect(labels("Taipei")).toEqual(["台北市"]);
+    expect(labels("新北")).toEqual(["新北市"]);
+    expect(labels("新竹")).toEqual(["新竹市", "新竹縣"]);
+    expect(labels("台東")).toEqual(["台東縣"]);
+    expect(labels("Osaka")).toEqual([]);
+    expect(labels("台")).toEqual([]);
   });
 });
 
@@ -264,8 +297,10 @@ describe("Coach with weather", () => {
 
   it("shows weather alerts in the feed with the credit", async () => {
     const { coach } = await makeCoach([], { weather: new FixedWeather(forecast({ hot: true })) });
-    const item = (await coach.feed()).find((i) => i.kind === "weather")!;
-    expect(item).toMatchObject({ id: `weather-heat-${TODAY}`, tone: "warn", credit: { label: "Weather data by Open-Meteo.com", href: "https://open-meteo.com/" } });
+    const items = (await coach.feed()).filter((i) => i.kind === "weather");
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item).toMatchObject({ id: `weather-${TODAY}`, tone: "warn", credit: { label: "Weather data by Open-Meteo.com", href: "https://open-meteo.com/" } });
     const plain = await buildFeed(coach.db, TODAY, coach.settings);
     expect(plain.some((i) => i.kind === "weather")).toBe(false);
   });
