@@ -1,4 +1,4 @@
-import { PREFERENCE_OPTIONS } from "@running-coach/core";
+import { PREFERENCE_OPTIONS, REGIONS } from "@running-coach/core";
 import { useEffect, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
@@ -15,6 +15,9 @@ interface Field {
   options?: Record<string, string>;
 }
 
+/** 不指定（空字串）就是「未填」那一項 */
+const REGION_OPTIONS = Object.fromEntries(Object.entries(REGIONS).filter(([key]) => key !== ""));
+
 const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   {
     title: "目標與狀況",
@@ -22,6 +25,7 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
       { key: "goal_long_term", label: "長期目標", placeholder: "例如：全馬破四", wide: true },
       { key: "weekly_km_target", label: "每週目標里程（km）", placeholder: "40" },
       { key: "injuries", label: "傷病注意", placeholder: "例如：右膝舊傷", wide: true },
+      { key: "region", label: "所在地區（選填：紀錄頁用在地的里程碑）", options: REGION_OPTIONS, wide: true },
     ],
   },
   {

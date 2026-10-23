@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { accumulate, splitSummary } from "../src/history";
+import { accumulate, regionOf, splitSummary } from "../src/history";
 import type { Workout } from "../src/types";
 import { activity, makeCoach, toolTurn, turn } from "./helpers";
 
@@ -70,17 +70,32 @@ describe("紀錄頁頁首的累積", () => {
     ({ id: id++, date, distance_km: km, duration_min: minutes, elevation_m: elevation }) as Workout;
 
   it("總量、週數、最長的一趟、里程碑與每一趟的格子", () => {
-    const a = accumulate([w("2025-12-30", 21.1, 120, 300), w("2026-10-06", 8, 48, 50), w("2026-10-08", 12, 70, 200), w("2026-10-01", 4, 25)], "2026-10-10");
-    expect(a).toMatchObject({ runs: 4, km: 45.1, minutes: 263, elevationM: 550, weeks: 3, since: "2025-12-30", thisYearKm: 24, marathons: 1.1, taipei101: 1.1 });
+    const runs = [w("2025-12-30", 21.1, 120, 300), w("2026-10-06", 8, 48, 50), w("2026-10-08", 12, 70, 200), w("2026-10-01", 4, 25)];
+    const a = accumulate(runs, "2026-10-10", "TW");
+    expect(a).toMatchObject({ runs: 4, km: 45.1, minutes: 263, elevationM: 550, weeks: 3, since: "2025-12-30", thisYearKm: 24, marathons: 1.1, region: "TW" });
+    expect(a.climb).toEqual({ name: "台北 101", meters: 508, kind: "tower", count: 1.08 });
     expect(a.thisWeek).toEqual({ runs: 2, km: 20, minutes: 118 });
     expect(a.longest).toEqual({ km: 21.1, date: "2025-12-30" });
     expect(a.passed).toEqual({ name: "台北到桃園", km: 40 });
     expect(a.next).toEqual({ name: "台北到新竹", km: 70 });
     expect(a.blocks.map((b) => b.size)).toEqual([3, 0, 1, 2]);
+
+    // 沒選所在地區：不依賴所在地的里程碑，爬升和聖母峰比
+    const anywhere = accumulate(runs, "2026-10-10");
+    expect(anywhere.region).toBe("");
+    expect(anywhere.passed).toEqual({ name: "一場全馬", km: 42.195 });
+    expect(anywhere.next).toEqual({ name: "康瑞德超馬（南非）", km: 90 });
+    expect(anywhere.climb).toEqual({ name: "聖母峰", meters: 8849, kind: "mountain", count: 0.06 });
+  });
+
+  it("所在地區：選手資料的值不認得時當成不指定", () => {
+    expect(regionOf("TW")).toBe("TW");
+    expect(regionOf("JP")).toBe("");
+    expect(regionOf(undefined)).toBe("");
   });
 
   it("這週沒跑不顯示 0；紀錄都在今年時不另外列今年；沒有紀錄", () => {
-    const a = accumulate([w("2026-09-28", 5, 30)], "2026-10-10");
+    const a = accumulate([w("2026-09-28", 5, 30)], "2026-10-10", "TW");
     expect(a.thisWeek).toBeNull();
     expect(a.thisYearKm).toBeNull();
     expect(a.passed).toBeNull();

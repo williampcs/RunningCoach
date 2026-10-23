@@ -113,23 +113,60 @@ export async function runCards(db: Db, today: string, days: number): Promise<Run
 }
 
 /** 累積的里程碑（距離都是約略值；國外的是直線距離）：只說到過哪裡與下一站（規格 12.5：休息不會失去任何東西） */
-const PLACES: [string, number][] = [
-  ["台北到桃園", 40],
-  ["台北到新竹", 70],
-  ["台北到台中", 160],
-  ["台北到台南", 310],
-  ["台北到高雄", 350],
-  ["環島一圈", 1000],
-  ["台北到東京", 2100],
-  ["台北到新加坡", 3200],
-  ["台北到雪梨", 7300],
-  ["台北到倫敦", 9800],
-  ["台北到紐約", 12500],
-  ["地球半圈", 20000],
-  ["地球一圈", 40075],
-];
+/**
+ * 紀錄頁的里程碑（12.5）. 預設是不依賴所在地的一組；選手在「選手資料」選了所在地區時，換成那個地區的
+ * （距離都從那個地區的大城市算）. 名稱本身要說得出距離（「台北到東京」而不是「東京」），畫面上再附上公里數
+ */
+export const REGIONS = { "": "不指定", TW: "台灣" } as const;
+export type Region = keyof typeof REGIONS;
+
+interface Landmarks {
+  places: [string, number][];
+  /** 爬升的比較對象 */
+  climb: { name: string; meters: number; kind: "mountain" | "tower" };
+}
+
+const LANDMARKS: Record<Region, Landmarks> = {
+  "": {
+    places: [
+      ["一場全馬", 42.195],
+      ["康瑞德超馬（南非）", 90],
+      ["斯巴達松（雅典到斯巴達）", 246],
+      ["聖雅各朝聖之路（法國之路）", 800],
+      ["英國縱走（最南到最北）", 1400],
+      ["阿帕拉契山徑（美國）", 3500],
+      ["尼羅河全長", 6650],
+      ["萬里長城（明長城）", 8850],
+      ["地球半圈", 20038],
+      ["地球一圈", 40075],
+      ["地球到月球", 384400],
+    ],
+    climb: { name: "聖母峰", meters: 8849, kind: "mountain" },
+  },
+  TW: {
+    places: [
+      ["台北到桃園", 40],
+      ["台北到新竹", 70],
+      ["台北到台中", 160],
+      ["台北到台南", 310],
+      ["台北到高雄", 350],
+      ["環島一圈", 1000],
+      ["台北到東京", 2100],
+      ["台北到新加坡", 3200],
+      ["台北到雪梨", 7300],
+      ["台北到倫敦", 9800],
+      ["台北到紐約", 12500],
+      ["地球半圈", 20000],
+      ["地球一圈", 40075],
+    ],
+    climb: { name: "台北 101", meters: 508, kind: "tower" },
+  },
+};
+
+/** 選手資料裡的所在地區；沒選或不認得的都當成不指定 */
+export const regionOf = (value: string | undefined): Region => (value && value in REGIONS ? (value as Region) : "");
+
 const MARATHON_KM = 42.195;
-const TAIPEI_101_M = 508;
 
 /** 紀錄頁頁首的累積（只增不減）；這週、今年沒有跑步時是 null，不顯示 0 */
 export interface Accumulation {
@@ -146,7 +183,10 @@ export interface Accumulation {
   thisYearKm: number | null;
   longest: { km: number; date: string } | null;
   marathons: number;
-  taipei101: number;
+  /** 累積爬升相當於幾座（依所在地區：聖母峰或台北 101） */
+  climb: { name: string; meters: number; kind: "mountain" | "tower"; count: number };
+  /** 里程碑依哪個地區（選手資料的 region） */
+  region: Region;
   /** 已經超過的最遠一站與下一站 */
   passed: { name: string; km: number } | null;
   next: { name: string; km: number } | null;
@@ -156,7 +196,8 @@ export interface Accumulation {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-export function accumulate(workouts: Workout[], today: string): Accumulation {
+export function accumulate(workouts: Workout[], today: string, region: Region = ""): Accumulation {
+  const { places, climb } = LANDMARKS[region];
   const runs = [...workouts].sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
   const km = runs.reduce((sum, w) => sum + (w.distance_km ?? 0), 0);
   const weekStart = addDays(today, -weekdayIndex(today));
@@ -164,13 +205,14 @@ export function accumulate(workouts: Workout[], today: string): Accumulation {
   const year = runs.filter((w) => w.date.slice(0, 4) === today.slice(0, 4));
   const yearKm = year.reduce((sum, w) => sum + (w.distance_km ?? 0), 0);
   const longest = runs.reduce<Workout | null>((best, w) => ((w.distance_km ?? 0) > (best?.distance_km ?? 0) ? w : best), null);
-  const passedIndex = PLACES.filter(([, d]) => km >= d).length - 1;
-  const place = (i: number) => (PLACES[i] ? { name: PLACES[i]![0], km: PLACES[i]![1] } : null);
+  const passedIndex = places.filter(([, d]) => km >= d).length - 1;
+  const place = (i: number) => (places[i] ? { name: places[i]![0], km: places[i]![1] } : null);
+  const elevation = runs.reduce((sum, w) => sum + (w.elevation_m ?? 0), 0);
   return {
     runs: runs.length,
     km: round1(km),
     minutes: Math.round(runs.reduce((sum, w) => sum + (w.duration_min ?? 0), 0)),
-    elevationM: Math.round(runs.reduce((sum, w) => sum + (w.elevation_m ?? 0), 0)),
+    elevationM: Math.round(elevation),
     weeks: new Set(runs.map((w) => addDays(w.date, -weekdayIndex(w.date)))).size,
     since: runs[0]?.date ?? null,
     thisWeek: week.length
@@ -183,7 +225,8 @@ export function accumulate(workouts: Workout[], today: string): Accumulation {
     thisYearKm: year.length && year.length < runs.length ? round1(yearKm) : null,
     longest: longest?.distance_km ? { km: longest.distance_km, date: longest.date } : null,
     marathons: round1(km / MARATHON_KM),
-    taipei101: round1(runs.reduce((sum, w) => sum + (w.elevation_m ?? 0), 0) / TAIPEI_101_M),
+    climb: { ...climb, count: Math.round((elevation / climb.meters) * 100) / 100 },
+    region,
     passed: place(passedIndex),
     next: place(passedIndex + 1),
     blocks: runs.map((w) => {
@@ -195,5 +238,6 @@ export function accumulate(workouts: Workout[], today: string): Accumulation {
 
 /** 資料庫裡所有的跑步（不含重複與已刪除的）的累積 */
 export async function accumulation(db: Db, today: string): Promise<Accumulation> {
-  return accumulate(await db.getRecentWorkouts(365 * 100), today);
+  const region = regionOf((await db.getProfile()).region);
+  return accumulate(await db.getRecentWorkouts(365 * 100), today, region);
 }
