@@ -6,7 +6,7 @@
 #   repo 的 Variables：SYNC_D1_DATABASE_ID（D1 資料庫的 id）
 # 還沒設定 SYNC_D1_DATABASE_ID 時只跑測試，不部署。
 # 部署完成後，把 Workers 的網址設成 repo 的 Variables：SYNC_URL，再手動執行一次「Deploy web app」。
-# 網頁版搬到 Cloudflare Pages 之後，Variables 的 WEB_URL（新網址）改了要再手動執行一次這裡。
+# Variables 的 WEB_URL（網頁版的網址）改了要再手動執行一次這裡。
 name: Deploy sync service
 
 on:
@@ -46,13 +46,12 @@ jobs:
         working-directory: apps/sync
         env:
           DATABASE_ID: ${{ vars.SYNC_D1_DATABASE_ID }}
-          OWNER: ${{ github.repository_owner }}
           WEB_URL: ${{ vars.WEB_URL }}
         run: |
-          # 網頁版的來源：舊網址 https://<owner>.github.io（全小寫）與新網址（Variables 的 WEB_URL，規格 12.13）；
-          # 搬家期間兩個都允許，使用者才能從舊網址配對新網址。預覽版的網址不在裡面（預覽版不連同步）
-          origin="https://$(echo "$OWNER" | tr '[:upper:]' '[:lower:]').github.io"
-          if [ -n "$WEB_URL" ]; then origin="$origin,$(echo "$WEB_URL" | sed -E 's#^(https://[^/]+).*#\1#')"; fi
+          # 網頁版的來源：Variables 的 WEB_URL（Cloudflare Pages 的網址，規格 12.13）。
+          # 原本的 GitHub Pages 已經收掉，不再允許；預覽版的網址也不在裡面（預覽版不連同步）
+          if [ -z "$WEB_URL" ]; then echo "還沒設定 WEB_URL：沒有任何網頁可以連線同步服務"; fi
+          origin="$(echo "$WEB_URL" | sed -E 's#^(https://[^/]+).*#\1#')"
           echo "允許的網頁來源：$origin"
           sed -i "s|^database_id = \"\"|database_id = \"$DATABASE_ID\"|; s|^ALLOWED_ORIGINS = \"\"|ALLOWED_ORIGINS = \"$origin\"|" wrangler.toml
       - name: Deploy

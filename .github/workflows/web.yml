@@ -1,12 +1,10 @@
-# 部署網頁版：push 到 main 且網頁版或核心有改動時執行，也可以手動執行（規格 12.13、KI-026）。
+# 部署網頁版到 Cloudflare Pages：push 到 main 且網頁版或核心有改動時執行，也可以手動執行（規格 12.13、KI-026）。
 #
 # 網頁版建置出來是靜態檔案；對話、訓練紀錄與金鑰都留在使用者的瀏覽器，不經過這裡。
-# 部署到兩個地方：
-#   - Cloudflare Pages（正式的網址）：repo 的 Variables 有 WEB_PAGES_PROJECT（Pages 專案名稱）時才部署；
-#     用的是同步服務那組 Secrets：CLOUDFLARE_API_TOKEN（要有 Cloudflare Pages 的編輯權限）、CLOUDFLARE_ACCOUNT_ID。
-#   - GitHub Pages（舊網址）：Variables 有 WEB_URL（新網址）時建置成「已搬家」的版本，讓使用者把資料帶走後清除；
-#     沒有時照舊是一般的網頁版。
-# 改了 Variables（SYNC_URL、WEB_URL）之後，要手動執行一次。
+# repo 的 Variables 有 WEB_PAGES_PROJECT（Pages 專案名稱）時才部署；用的是同步服務那組 Secrets：
+# CLOUDFLARE_API_TOKEN（要有 Cloudflare Pages 的編輯權限）、CLOUDFLARE_ACCOUNT_ID。
+# 原本的 GitHub Pages 已經收掉（2026-10-23，規格 12.13）。
+# 改了 Variables 的 SYNC_URL 之後，要手動執行一次。
 name: Deploy web app
 
 on:
@@ -67,39 +65,3 @@ jobs:
         run: |
           npx --yes wrangler@4.148.0 pages project create "$PROJECT" --production-branch main || echo "專案已經存在，直接部署"
           npx --yes wrangler@4.148.0 pages deploy apps/web/dist --project-name "$PROJECT" --branch main --commit-dirty=true
-
-  github-pages:
-    name: Build for GitHub Pages
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # 網站在 https://<owner>.github.io/<repo>/ 底下
-      - run: npm run build -w @running-coach/web -- --base "/${GITHUB_REPOSITORY#*/}/"
-        env:
-          # 多裝置同步服務的網址；搬家期間舊網址也要能同步，使用者才能從這裡配對新網址
-          VITE_SYNC_URL: ${{ vars.SYNC_URL }}
-          # 新網址：有的話這裡建置成「已搬家」的版本
-          VITE_MOVED_TO: ${{ vars.WEB_URL }}
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: apps/web/dist
-
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: github-pages
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
