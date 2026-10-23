@@ -8,6 +8,7 @@ import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
+import { findGuide, guideTopics } from "./app-guide";
 import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
 
 const RACE_ID_HINT =
@@ -280,6 +281,17 @@ export function buildTools(settings: CoachSettings): ToolDef[] {
       },
     },
     {
+      name: "get_app_help",
+      description:
+        "查 App 的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
+        "topic 用系統提示【App 的使用方式】列的代號，或選手問的關鍵字。",
+      input_schema: {
+        type: "object",
+        properties: { topic: { type: "string", description: "主題代號（例：device-sync）或關鍵字（例：同步、密碼鎖）" } },
+        required: ["topic"],
+      },
+    },
+    {
       name: "search_conversations",
       description:
         "找較早的對話（包括已整理成對話摘要的原文）。選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時呼叫。" +
@@ -446,6 +458,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   get_upcoming_races: () => "賽事",
   get_full_message: () => "較早的對話",
   search_conversations: () => "較早的對話",
+  get_app_help: () => "App 的使用說明",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -622,6 +635,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             ? row.content.slice(0, FULL_MESSAGE_MAX_CHARS) + `…（超過 ${FULL_MESSAGE_MAX_CHARS} 字，以下省略）`
             : row.content;
         return `訊息 ${id}（${who}）的完整內容：\n\n${content}`;
+      }
+
+      case "get_app_help": {
+        const topic = str(input.topic);
+        const found = findGuide(settings.shell, topic);
+        if (!found.length) return `找不到「${topic}」的說明。可查的主題：${guideTopics(settings.shell)}`;
+        return found
+          .map((g) => `## ${g.title}\n\n${g.body}${settings.shell === "web" ? `\n\n說明頁連結：[看完整說明](#help/${g.id})` : ""}`)
+          .join("\n\n");
       }
 
       case "search_conversations": {

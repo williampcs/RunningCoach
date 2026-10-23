@@ -28,6 +28,7 @@ const TOOL_STATUS: Record<string, string> = {
   update_race_result: "記錄比賽成績",
   update_athlete_profile: "更新選手資料",
   search_conversations: "查較早的對話",
+  get_app_help: "查使用說明",
   remember: "記下要記住的事",
   forget: "刪掉記住的事",
 };

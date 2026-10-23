@@ -199,6 +199,8 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
     }
     return [{ type: "text", text: `（模擬回覆）工具回傳了：\n\n${lastText}\n\n**建議**：明天安排 40 分鐘輕鬆跑，心率維持在 Z2。` }];
   }
+  const howTo = lastText.match(/([^\s\]？?]+?)(?:怎麼用|在哪裡)/);
+  if (howTo) return [toolUse("get_app_help", { topic: howTo[1]! })];
   const remember = lastText.match(/幫我記住[：:，, ]*(.+)/);
   if (remember) return [toolUse("remember", { content: remember[1]!.trim() })];
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];

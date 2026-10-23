@@ -11,6 +11,7 @@ import {
 } from "@running-coach/core";
 
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
+import { HelpView } from "./views/Help";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
@@ -40,7 +41,11 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "plan", label: "計畫與賽事", icon: "📅" },
   { id: "profile", label: "選手資料", icon: "👤" },
 ];
-const PAGE_LABELS: Record<Tab, string> = { ...Object.fromEntries(TABS.map((t) => [t.id, t.label])), settings: "設定" } as Record<Tab, string>;
+const PAGE_LABELS: Record<Tab, string> = {
+  ...Object.fromEntries(TABS.map((t) => [t.id, t.label])),
+  settings: "設定",
+  help: "使用說明",
+} as Record<Tab, string>;
 
 /** LLM 尚未設定時的替身：資料頁照常可用，需要模型的動作會得到明確的錯誤 */
 function unconfiguredProvider(problem: string): LlmProvider {
@@ -52,6 +57,14 @@ function unconfiguredProvider(problem: string): LlmProvider {
       },
     }),
   };
+}
+
+/** 網址的 #help 或 #help/主題（教練回覆裡的「看完整說明」）；讀到後從網址清掉，同一個連結再點一次也有反應 */
+function readHelpLink(): string | null {
+  const match = location.hash.match(/^#help(?:\/([a-z0-9-]+))?$/);
+  if (!match) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  return match[1] ?? "";
 }
 
 /** 網址的 #pair=配對碼.指紋（掃了另一台的 QR code）；讀到後從網址清掉 */
@@ -86,7 +99,7 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           today,
           baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
         }),
-    settings: { timeZone: settings.timeZone },
+    settings: { timeZone: settings.timeZone, shell: "web" },
   };
 }
 
@@ -97,7 +110,12 @@ export function App() {
   const [fatal, setFatal] = useState<string | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const [testMode, setTestMode] = useState(loadTestMode);
-  const [tab, setTab] = useState<Tab>("chat");
+  // 從說明的連結打開：直接到使用說明頁的那一段
+  const [helpTopic, setHelpTopic] = useState<{ id: string } | null>(() => {
+    const id = readHelpLink();
+    return id === null ? null : { id };
+  });
+  const [tab, setTab] = useState<Tab>(helpTopic ? "help" : "chat");
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
   const [reportPreselect, setReportPreselect] = useState<number | null>(null);
@@ -108,6 +126,11 @@ export function App() {
     const onHash = () => {
       const code = readPairLink();
       if (code) setPairFromLink(code);
+      const help = readHelpLink();
+      if (help !== null) {
+        setHelpTopic({ id: help });
+        setTab("help");
+      }
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -232,6 +255,18 @@ export function App() {
           </span>
           <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
           <button
+            className={tab === "help" ? "help-button active" : "help-button"}
+            aria-label="使用說明"
+            aria-current={tab === "help"}
+            title="使用說明"
+            onClick={() => {
+              setHelpTopic(null);
+              setTab("help");
+            }}
+          >
+            <span aria-hidden="true">?</span>
+          </button>
+          <button
             className={tab === "settings" ? "settings-button active" : "settings-button"}
             aria-label="設定"
             aria-current={tab === "settings"}
@@ -268,6 +303,7 @@ export function App() {
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
           {tab === "settings" && <SettingsView />}
+          {tab === "help" && <HelpView topic={helpTopic} />}
         </main>
         <nav className="tabbar" aria-label="主要分頁">
           {TABS.map((t) => (

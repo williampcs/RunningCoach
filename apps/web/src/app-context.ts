@@ -35,7 +35,7 @@ export interface AppState {
   clearPairFromLink(): void;
 }
 
-export type Tab = "chat" | "report" | "history" | "plan" | "profile" | "settings";
+export type Tab = "chat" | "report" | "history" | "plan" | "profile" | "settings" | "help";
 
 export const AppContext = createContext<AppState | null>(null);
 

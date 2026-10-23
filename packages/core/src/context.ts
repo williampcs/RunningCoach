@@ -16,6 +16,7 @@ import type { ChatMessage } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { regionOf, REGIONS } from "./history";
+import { guideTopics } from "./app-guide";
 import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings } from "./types";
 
 /** get_recent_workouts tool 的預設查詢天數 */
@@ -248,7 +249,14 @@ export class ContextManager {
       "取得 Intervals.icu 資料後：",
       "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
       "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
-        "並告知使用者手錶同步後輸入 /sync 完成合併",
+        (this.settings.shell === "web"
+          ? "並告知使用者等手錶上傳到 Intervals.icu 後，到「跑後回報」按「同步最近 14 天」完成合併"
+          : "並告知使用者手錶同步後輸入 /sync 完成合併"),
+      "",
+      "【App 的使用方式】",
+      `選手問 App 怎麼用（某個分頁、按鈕、設定、同步或資料存在哪裡）時，先用 get_app_help 查，不要憑印象回答；只回答選手問的部分，${
+        this.settings.shell === "web" ? "最後附上工具給的說明頁連結。" : "需要時說明網頁版的做法不同。"
+      }可查的主題：${guideTopics(this.settings.shell)}`,
     );
     return lines.join("\n");
   }
