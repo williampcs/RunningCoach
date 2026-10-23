@@ -1,12 +1,12 @@
 /**
  * 同步哪些資料、每一筆在各裝置上叫什麼名字（規格 12.10）.
  *
- * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、對話與對話摘要，以及跑步上的體感、
+ * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、對話與對話摘要，以及跑步上的體感、
  * 教練的分析與「不是同一趟」. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
  * API key 與設定不在資料庫裡，不同步.
  *
- * 名稱：選手資料用欄位名、自評用日期、賽事與課表用 sync_id（同步時補上的隨機 id）、
- * 對話與摘要用內容的雜湊（寫入後不再修改）、跑步上的資料用 Intervals.icu 的活動 id.
+ * 名稱：選手資料用欄位名、自評用日期、賽事、課表與記住的事用 sync_id（同步時補上的隨機 id）、
+ * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id.
  */
 import type { SqlDriver, SqlValue } from "../types";
 
@@ -17,7 +17,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|w|ws|wd):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -51,6 +51,7 @@ const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "r
 const PLAN_COLS = ["week_label", "content", "created_at", "is_active", "week_start", "style", "reason", "outline", "notes"] as const;
 const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "success", "fallback", "status", "note", "updated_at"] as const;
 const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as const;
+const MEMORY_COLS = ["content", "source", "created_at", "updated_at"] as const;
 
 const pick = (row: Record<string, SqlValue>, cols: readonly string[]): EntityData => Object.fromEntries(cols.map((c) => [c, row[c] ?? null]));
 
@@ -89,6 +90,8 @@ async function mergeDuplicates(sql: Sql): Promise<void> {
     await sql.run("DELETE FROM training_plans WHERE id=?", [dup]);
   }
 
+  await sql.run("DELETE FROM memories AS t WHERE EXISTS (SELECT 1 FROM memories o WHERE o.sync_id < t.sync_id AND o.content IS t.content)");
+
   const sessionKey = ["plan_id", "position", "date", "kind", "title"].map((c) => `o.${c} IS t.${c}`).join(" AND ");
   await sql.run(
     `DELETE FROM planned_sessions AS t WHERE EXISTS (SELECT 1 FROM planned_sessions o WHERE ${sessionKey}` +
@@ -98,7 +101,7 @@ async function mergeDuplicates(sql: Sql): Promise<void> {
 
 /** 這台目前的資料；先替還沒有 sync_id 的賽事與課表補上，合併重複的 */
 export async function snapshot(sql: Sql): Promise<Snapshot> {
-  for (const table of ["races", "training_plans", "planned_sessions"]) {
+  for (const table of ["races", "training_plans", "planned_sessions", "memories"]) {
     await sql.run(`UPDATE ${table} SET sync_id = lower(hex(randomblob(16))) WHERE sync_id IS NULL`);
   }
   await mergeDuplicates(sql);
@@ -114,8 +117,12 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
     data.set(`ps:${r.sync_id}`, { plan: r.plan ?? null, ...pick(r, SESSION_COLS) });
   }
   for (const r of await sql.all("SELECT * FROM daily_checkins")) data.set(`ck:${r.date}`, pick(r, CHECKIN_COLS));
-  for (const r of await sql.all("SELECT id, role, content, timestamp, sources FROM conversations")) {
-    const entity = { role: r.role ?? null, content: r.content ?? null, timestamp: r.timestamp ?? null, sources: r.sources ?? null };
+  for (const r of await sql.all("SELECT * FROM memories")) data.set(`m:${r.sync_id}`, pick(r, MEMORY_COLS));
+  for (const r of await sql.all("SELECT id, role, content, timestamp, sources, archived, reply_to FROM conversations")) {
+    const entity: EntityData = { role: r.role ?? null, content: r.content ?? null, timestamp: r.timestamp ?? null, sources: r.sources ?? null };
+    // 只在有值時才放：之前版本同步過的對話內容不變，不必全部重送
+    if (r.archived) entity.archived = 1;
+    if (r.reply_to) entity.reply_to = r.reply_to;
     const name = `c:${await sha256(canonical({ role: entity.role, content: entity.content, timestamp: entity.timestamp }))}`;
     data.set(name, entity);
     local.set(name, Number(r.id));
@@ -215,16 +222,27 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
         const local = snap.local.get(name);
         if (local !== undefined) await sql.run("DELETE FROM conversations WHERE id=?", [local]);
       } else if (snap.data.has(name)) {
-        // 同一則訊息：只有「依據」可能不同，以傳來的為準，兩台才會一致
-        await sql.run("UPDATE conversations SET sources=? WHERE id=?", [data.sources ?? null, snap.local.get(name) ?? -1]);
+        // 同一則訊息：「依據」與回覆以傳來的為準；已整理進摘要只會從沒有變成有（任一台整理過就算）
+        await sql.run("UPDATE conversations SET sources=?, reply_to=COALESCE(?, reply_to), archived=MAX(archived, ?) WHERE id=?", [
+          data.sources ?? null,
+          data.reply_to ?? null,
+          data.archived ? 1 : 0,
+          snap.local.get(name) ?? -1,
+        ]);
       } else {
-        await sql.run("INSERT INTO conversations (role, content, timestamp, sources) VALUES (?, ?, ?, ?)", [
+        await sql.run("INSERT INTO conversations (role, content, timestamp, sources, archived, reply_to) VALUES (?, ?, ?, ?, ?, ?)", [
           data.role ?? "user",
           data.content ?? "",
           data.timestamp ?? "",
           data.sources ?? null,
+          data.archived ? 1 : 0,
+          data.reply_to ?? null,
         ]);
       }
+      return "applied";
+    case "m":
+      if (!data) await sql.run("DELETE FROM memories WHERE sync_id=?", [id]);
+      else await upsert(sql, "memories", id, pick(data, MEMORY_COLS));
       return "applied";
     case "cs":
       if (!data) {

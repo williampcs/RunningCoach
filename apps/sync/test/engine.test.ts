@@ -143,7 +143,7 @@ describe("兩台裝置同步", () => {
     expect(await engineB.sync()).toMatchObject({ received: 0, sent: 0 });
   });
 
-  it("對話壓縮後，舊的對話在另一台也刪掉、摘要帶過去", async () => {
+  it("對話壓縮後，舊的對話在另一台也標成已整理（原文保留）、摘要帶過去", async () => {
     const root = newRootKey();
     const a = await device();
     const b = await device();
@@ -159,7 +159,53 @@ describe("兩台裝置同步", () => {
     await engineA.sync();
     await engineB.sync();
     expect((await b.db.getRecentConversations(10)).map((c) => c.content)).toEqual(["第 2 則", "第 3 則"]);
+    expect((await b.db.getConversationPage(10)).map((c) => [c.content, c.archived])).toEqual([
+      ["第 0 則", true],
+      ["第 1 則", true],
+      ["第 2 則", false],
+      ["第 3 則", false],
+    ]);
     expect((await b.db.getLatestSummary())?.content).toBe("選手狀態摘要");
+    // 已整理只會從沒有變成有：B 沒改過，再同步也不會被改回去
+    expect(await engineB.sync()).toMatchObject({ received: 0, sent: 0 });
+    expect(await engineA.sync()).toMatchObject({ received: 0, sent: 0 });
+  });
+
+  it("記住的事與回覆帶到另一台；修改、刪除也是；兩台各記了同一句只留一條", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const b = await device();
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    const shoes = await a.db.addMemory("鞋子跑到 600 公里要換", "coach");
+    await a.db.addMemory("週三晚上不能練", "user");
+    await b.db.addMemory("週三晚上不能練", "user");
+    const asked = await a.db.appendConversation("assistant", "週四的節奏跑");
+    const row = (await a.db.getConversation(asked))!;
+    await a.db.appendConversation("user", "可以換天嗎", [], { role: "assistant", timestamp: row.timestamp!, text: row.content });
+    for (let i = 0; i < 2; i++) {
+      await engineA.sync();
+      await engineB.sync();
+    }
+    // 兩台同一時間記的：留下哪一份由 sync_id 決定，順序不一定
+    for (const d of [a, b]) {
+      expect((await d.db.getMemories()).map((m) => [m.content, m.source]).sort()).toEqual([
+        ["週三晚上不能練", "user"],
+        ["鞋子跑到 600 公里要換", "coach"],
+      ].sort());
+    }
+    expect((await b.db.getRecentConversations(10)).at(-1)?.reply_to).toEqual({ role: "assistant", timestamp: row.timestamp, text: "週四的節奏跑" });
+
+    clock = new Date(clock.getTime() + 60_000);
+    await a.db.updateMemory(shoes, "鞋子跑到 700 公里要換");
+    const onB = (await b.db.getMemories()).find((m) => m.content === "週三晚上不能練")!;
+    await b.db.deleteMemory(onB.id);
+    for (let i = 0; i < 2; i++) {
+      await engineA.sync();
+      await engineB.sync();
+    }
+    for (const d of [a, b]) expect((await d.db.getMemories()).map((m) => m.content)).toEqual(["鞋子跑到 700 公里要換"]);
   });
 
   it("伺服器只存加密後的資料；調換紀錄會被發現；別的金鑰進不來", async () => {

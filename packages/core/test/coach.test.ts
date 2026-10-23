@@ -42,7 +42,7 @@ describe("Coach.chat", () => {
     await coach.chat("我第一則訊息的後半段是什麼？");
     expect(provider.calls[0]!.request.messages[0]!.content).toContain("以 get_full_message 讀取，message_id=1）");
     expect(provider.calls[1]!.toolResults![0]!.content).toBe(`訊息 1（使用者）的完整內容：\n\n${"長".repeat(800)}`);
-    expect(provider.calls[2]!.toolResults![0]!.content).toBe("找不到 message_id=999 的訊息，可能已整理成對話摘要。");
+    expect(provider.calls[2]!.toolResults![0]!.content).toBe("找不到 message_id=999 的訊息。");
   });
 
   it("跑後回報：拉取活動 → 合併主觀感受存檔並生成摘要 → 最終回覆", async () => {

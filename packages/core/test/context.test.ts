@@ -32,7 +32,8 @@ describe("ContextManager", () => {
     const past = await coach.db.addRace({ name: "上週 10K", date: "2026-10-04", distance_km: 10 });
 
     const prompt = await context.buildSystemPrompt();
-    const head = prompt.split("\n請根據選手資料")[0];
+    // 記住的事另外測（見下面）
+    const head = prompt.split("\n請根據選手資料")[0]!.replace(/\n\n【記住的事】[\s\S]*?(?=\n\n近期目標賽事)/, "");
     expect(head).toBe(
       [
         "今天日期：2026-10-10（星期六）｜時區：Asia/Taipei（UTC+8）｜以星期一為一週的第一天",

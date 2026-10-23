@@ -194,6 +194,29 @@ export interface ConversationRow {
   timestamp?: string;
   /** 教練回覆前讀過的資料（getRecentConversations 才有） */
   sources?: string[];
+  /** 已整理進對話摘要：畫面上還看得到，教練不再直接帶入 */
+  archived?: boolean;
+  /** 選手回覆的是哪一則 */
+  reply_to?: ReplyRef | null;
+}
+
+/** 回覆的訊息：存下當時的摘錄，跨裝置也對得上（各台的 id 不同） */
+export interface ReplyRef {
+  role: "user" | "assistant";
+  /** 被回覆那則的傳送時間 */
+  timestamp: string;
+  /** 被回覆那則的前段文字 */
+  text: string;
+}
+
+/** 記住的事：每次對話都帶給教練，選手看得到、改得了 */
+export interface Memory {
+  id: number;
+  content: string;
+  /** 誰記的 */
+  source: "user" | "coach";
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SummaryRow {
