@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { DeviceSyncCard } from "./DeviceSync";
+import { MovedCard } from "./Moved";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
@@ -249,6 +250,7 @@ export function SettingsView() {
 
   return (
     <>
+      <MovedCard />
       <section className="card">
         <h2>AI 模型</h2>
         <div className="row">

@@ -12,6 +12,7 @@ import {
 
 import { AppContext, errorText, type AppState, type Tab } from "./app-context";
 import { HelpView } from "./views/Help";
+import { IS_PREVIEW, MOVED_TO, MovedBanner, PreviewBanner } from "./views/Moved";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
@@ -276,8 +277,10 @@ export function App() {
             <span aria-hidden="true">⚙️</span>
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled) && (
+        {(!state.db.persistent || testMode.enabled || MOVED_TO || IS_PREVIEW) && (
           <div className="notices">
+            <MovedBanner />
+            <PreviewBanner />
             {!state.db.persistent && (
               <div className="notice warn">
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。
