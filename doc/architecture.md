@@ -152,6 +152,8 @@ sequenceDiagram
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 
+App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
+
 ## 資料庫的 schema（目前是第 11 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
@@ -222,6 +224,8 @@ erDiagram
 | 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像（不部署） |
 | 合併到 `main` | 網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`） |
 | 手動 | `web-preview.yml`：把某個分支部署成預覽網址 |
+
+網頁版的建置另外輸出 `version.json`（這次建置的 commit 與日期，`_headers` 設成不快取）。網頁打開時、回到前景時、前景中每 30 分鐘讀一次，和自己的 commit 不同就在上方提示「有新版本，點這裡更新」，點了才重新載入；讀不到時不提示（規格 12.18）。
 
 開發一律在 `v2`，合併到 `main` 就是上線，所以只在使用者說「合併部署」時合併（`CLAUDE.md`）。
 

@@ -34,7 +34,8 @@ import { PlanView } from "./views/Plan";
 import { ProfileView } from "./views/Profile";
 import { ReportView } from "./views/Report";
 import { SettingsView } from "./views/Settings";
-import { BUILD_DETAIL, VERSION_LABEL } from "./version";
+import { requestPersistentStorage, useNewVersion } from "./update-check";
+import { BUILD, BUILD_DETAIL, VERSION_LABEL } from "./version";
 
 // 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -218,10 +219,13 @@ export function App() {
       await created.init();
       setDb(opened);
       setCoach(created);
+      // 資料庫開在瀏覽器的儲存空間；要求瀏覽器不要自動清掉（規格 12.18），設定頁顯示結果
+      if (opened.persistent) void requestPersistentStorage();
     })().catch((e) => setFatal(errorText(e)));
   }, []);
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
+  const newVersion = useNewVersion(BUILD.commit);
   const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch);
 
   const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
@@ -352,8 +356,19 @@ export function App() {
             <span aria-hidden="true">⚙️</span>
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_PREVIEW) && (
+        {(!state.db.persistent || testMode.enabled || IS_PREVIEW || newVersion.commit) && (
           <div className="notices">
+            {newVersion.commit && (
+              // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
+              <div className="notice info update-banner" role="status">
+                <button className="link" onClick={() => location.reload()}>
+                  有新版本，點這裡更新
+                </button>
+                <button className="update-dismiss" aria-label="先不要更新" title="先不要更新" onClick={newVersion.dismiss}>
+                  <span aria-hidden="true">✕</span>
+                </button>
+              </div>
+            )}
             <PreviewBanner />
             {!state.db.persistent && (
               <div className="notice warn">

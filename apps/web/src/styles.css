@@ -2187,3 +2187,24 @@ button.link.danger {
   overflow-wrap: anywhere;
   margin: 8px 0;
 }
+
+/* 有新版本的提示（規格 12.18）：整條的文字都可以點，右邊的 ✕ 關掉 */
+.notice.update-banner {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.notice.update-banner .link {
+  flex: 1;
+  text-align: left;
+  font-weight: 600;
+  padding: 0;
+  white-space: normal;
+}
+
+.update-dismiss {
+  background: none;
+  border: 0;
+  padding: 2px 6px;
+}

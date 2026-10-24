@@ -52,6 +52,12 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 /** 只加在建置結果：開發伺服器的熱更新需要行內腳本 */
+/**
+ * 版本檔（規格 12.18）：網頁讀它判斷伺服器上有沒有更新的版本；不能被快取，否則永遠看到舊的.
+ * Cloudflare Pages 的 _headers 裡同一個路徑符合多條規則時會合併
+ */
+const VERSION_FILE_HEADERS = "/version.json\n  Cache-Control: no-store\n";
+
 function contentSecurityPolicy(): Plugin {
   return {
     name: "content-security-policy",
@@ -65,14 +71,27 @@ function contentSecurityPolicy(): Plugin {
     ],
     generateBundle() {
       const lines = Object.entries(SECURITY_HEADERS).map(([name, value]) => `  ${name}: ${value}`);
-      this.emitFile({ type: "asset", fileName: "_headers", source: `/*\n${lines.join("\n")}\n` });
+      this.emitFile({ type: "asset", fileName: "_headers", source: `/*\n${lines.join("\n")}\n${VERSION_FILE_HEADERS}` });
     },
   };
 }
 
+/** 輸出 version.json：和 __APP_BUILD__ 同一份建置資訊 */
+function versionFile(build: ReturnType<typeof buildInfo>): Plugin {
+  return {
+    name: "version-file",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: `${JSON.stringify({ commit: build.commit, date: build.date })}\n` });
+    },
+  };
+}
+
+const BUILD = buildInfo();
+
 export default defineConfig({
-  plugins: [react(), contentSecurityPolicy()],
-  define: { __APP_BUILD__: JSON.stringify(buildInfo()) },
+  plugins: [react(), contentSecurityPolicy(), versionFile(BUILD)],
+  define: { __APP_BUILD__: JSON.stringify(BUILD) },
   server: { port: 5173, strictPort: true },
   worker: { format: "es" },
   // sqlite-wasm 以相對路徑載入 .wasm，預先打包會讓路徑失效
