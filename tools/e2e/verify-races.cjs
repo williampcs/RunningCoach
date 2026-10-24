@@ -6,7 +6,7 @@ const OUT = E2E.OUT;
 const URL = E2E.URL;
 
 async function setup(page, { intervals }) {
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   await page.getByLabel("供應商").selectOption("openai-compatible");
   await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
   await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
@@ -36,13 +36,13 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   const check = {};
   const page = await newPage(browser, problems);
   // 時區設成和模擬服務一樣，「今天」才對得上
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   await page.getByLabel("時區").fill("Asia/Taipei");
   await setup(page, { intervals: true });
-  await page.getByRole("button", { name: "同步最近 14 天" }).click();
+  await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
 
-  await page.getByRole("button", { name: "計畫與賽事", exact: true }).click();
+  await E2E.go(page, "計畫與賽事");
   const card = page.locator("#races");
   const addRace = async (name, date, km) => {
     await card.getByRole("button", { name: "新增賽事" }).click();
@@ -123,7 +123,7 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   await page.screenshot({ path: `${OUT}/races-4-list.png`, fullPage: true });
 
   // 5. 教練看得到賽事頁上的所有賽事（含沒有出賽、沒有完賽的）
-  await page.getByRole("button", { name: "對話", exact: true }).click();
+  await E2E.go(page, "對話");
   await page.getByPlaceholder("輸入訊息…").fill("我有哪些比賽");
   await page.getByRole("button", { name: "送出" }).click();
   const reply = page.locator(".msg.assistant").last();

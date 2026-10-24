@@ -25,8 +25,8 @@ export function HelpView({ topic }: { topic: { id: string } | null }) {
 
   return (
     <div className="stack">
+      {/* 標題在面板的標題列 */}
       <section className="card">
-        <h2>使用說明</h2>
         <p className="small muted">每個分頁與按鈕的用途。也可以直接問教練，例如“多裝置同步怎麼用？”。</p>
         <input type="search" value={query} placeholder="搜尋，例如：同步、密碼鎖、課表" aria-label="搜尋使用說明" onChange={(e) => setQuery(e.target.value)} />
         <ul className="help-toc">

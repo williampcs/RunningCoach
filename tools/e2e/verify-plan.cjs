@@ -24,7 +24,7 @@ let failPage = null;
   page.on("pageerror", (e) => problems.push(`[${step}] pageerror: ${e.message}`));
   page.on("dialog", (d) => void d.accept());
   const check = {};
-  const tab = (name) => page.getByRole("button", { name, exact: true }).click();
+  const tab = (name) => E2E.go(page, name);
   // 調整後課表是非同步重新讀取的：等條件成立（最多 5 秒）
   const until = async (fn) => {
     for (let i = 0; i < 25; i++) {

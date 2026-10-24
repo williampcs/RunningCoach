@@ -6,7 +6,7 @@ const OUT = E2E.OUT;
 const URL = E2E.URL;
 
 async function setup(page, { intervals }) {
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   await page.getByLabel("供應商").selectOption("openai-compatible");
   await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
   await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
@@ -76,11 +76,11 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
 
   // 其他設定存檔不會蓋掉天氣
   await page.getByRole("button", { name: "下一步：抓進你的跑步紀錄" }).count();
-  await page.getByRole("button", { name: "同步最近 14 天" }).click();
+  await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
 
   // 教練動態：濕熱的提醒與來源標示
-  await page.getByRole("button", { name: "對話", exact: true }).click();
+  await E2E.go(page, "對話");
   const heat = page.locator(".feed-item").filter({ hasText: "今天濕熱" });
   await heat.waitFor({ timeout: 10000 });
   // 濕熱與下雨合成一則
@@ -107,7 +107,7 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   check.toolResultHasForecast = llm.some((t) => t.includes("天氣預報（Open-Meteo 的模型預報，約略"));
 
   // 改時區後存檔：天氣的城市還在
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   await page.getByLabel("時區").fill("Asia/Tokyo");
   await page.getByRole("button", { name: "儲存設定" }).click();
   await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
@@ -117,7 +117,7 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   await page.locator("#weather").getByRole("button", { name: "清除天氣的城市" }).click();
   await page.locator("#weather").getByText("還沒設定：教練不會參考天氣。").waitFor();
   check.cleared = (await page.evaluate(() => JSON.parse(localStorage.getItem("running-coach.settings.v1")).weather)) === null;
-  await page.getByRole("button", { name: "對話", exact: true }).click();
+  await E2E.go(page, "對話");
   await page.waitForTimeout(800);
   check.feedGoneAfterClear = (await page.locator(".feed-item").filter({ hasText: "今天濕熱" }).count()) === 0;
   await page.context().close();
