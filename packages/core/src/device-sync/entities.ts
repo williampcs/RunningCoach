@@ -47,7 +47,7 @@ export function modifiedOf(data: EntityData | null): string | null {
   return null;
 }
 
-const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "result_time", "notes", "cancelled", "created_at"] as const;
+const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "result_time", "notes", "cancelled", "outcome", "outcome_reason", "gun_time", "result_source", "result_activity", "created_at"] as const;
 const PLAN_COLS = ["week_label", "content", "created_at", "is_active", "week_start", "style", "reason", "outline", "notes"] as const;
 const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "success", "fallback", "status", "note", "updated_at"] as const;
 const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as const;

@@ -10,6 +10,7 @@
 import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
+import { raceOutcome } from "./races";
 import type { TrainingValues } from "./training-values";
 import type { OtherActivity, Race, Workout } from "./types";
 
@@ -433,7 +434,8 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   // 8. 三週內有比賽：減量
   const weekEnd = addDays(ctx.weekStart, 6);
   const race = ctx.races
-    .filter((r) => !r.cancelled && !r.result_time && r.date >= ctx.weekStart && r.date <= addDays(weekEnd, 14))
+    // 考慮中的比賽不要求減量（規格 12.15）：排課時另外提醒
+    .filter((r) => r.confirmed && raceOutcome(r) === null && r.date >= ctx.weekStart && r.date <= addDays(weekEnd, 14))
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   if (race && peak > 0) {
     const raceWeek = race.date <= weekEnd;

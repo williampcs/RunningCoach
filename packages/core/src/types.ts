@@ -135,7 +135,18 @@ export interface Race {
   confirmed: number;
   result_time: string | null;
   notes: string | null;
+  /** 沒有出賽時為 1（舊版的「已取消」）；新的程式看 outcome */
   cancelled: number;
+  /** 完賽、沒有完賽、沒有出賽；還沒有結局時為 null（schema 11 之前的資料也是 null，見 raceOutcome） */
+  outcome?: string | null;
+  /** 沒有出賽的原因代號（DNS_REASONS），或沒有完賽的說明 */
+  outcome_reason?: string | null;
+  /** 大會成績（槍聲起算，選填）；result_time 是個人成績（淨時間） */
+  gun_time?: string | null;
+  /** 成績從哪裡來（RESULT_SOURCES） */
+  result_source?: string | null;
+  /** 比賽當天那趟跑步的 intervals_id */
+  result_activity?: string | null;
   created_at: string;
 }
 

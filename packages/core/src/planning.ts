@@ -23,6 +23,7 @@ import {
 } from "./plan";
 import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
 import { analyzeRecovery } from "./recovery";
+import { raceOutcome } from "./races";
 import { computeTrainingValues } from "./training-values";
 import type { TrainingPlan } from "./types";
 
@@ -118,7 +119,12 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
   const content = planMarkdown(meta, sessions, ctx);
   const planId = await db.saveStructuredPlan({ ...meta, content }, sessions);
   const saved = await db.getPlannedSessions(planId);
-  return `課表已儲存（${meta.weekLabel}）。\n\n${sessionsText(saved, ctx)}`;
+  // 考慮中的比賽不要求減量，只提醒（規格 12.15）
+  const maybe = ctx.races.filter((r) => !r.confirmed && raceOutcome(r) === null && r.date >= weekStart && r.date <= addDays(weekStart, 20));
+  const maybeNote = maybe.length
+    ? `\n\n提醒：考慮中的比賽 ${maybe.map((r) => `「${r.name}」（${r.date}）`).join("、")} 在三週內；確定報名的話要開始減量，請和選手確認。`
+    : "";
+  return `課表已儲存（${meta.weekLabel}）。\n\n${sessionsText(saved, ctx)}${maybeNote}`;
 }
 
 /** 結果的一行，例：「→ 部分達成：強度課的時間比計畫少｜實際：8.1 km、50 分鐘、心率 158、體感 8｜體感偏難」 */
@@ -164,10 +170,19 @@ export interface ActivePlan {
   extras: string[];
 }
 
-/** 啟用中的課表，目標依現在的訓練數值換算 */
+/** 目前的課表（今天所在那週的優先），目標依現在的訓練數值換算 */
 export async function activePlan(db: Db, today: string): Promise<ActivePlan | null> {
   const plan = await db.getActiveTrainingPlan();
-  if (!plan) return null;
+  return plan ? planView(db, today, plan) : null;
+}
+
+/** 已經排好的下一週課表（週日先排好下週時）；和目前的是同一份時為 null */
+export async function nextPlan(db: Db, today: string): Promise<ActivePlan | null> {
+  const [current, next] = await Promise.all([db.getActiveTrainingPlan(), db.getNextTrainingPlan()]);
+  return next && next.id !== current?.id ? planView(db, today, next) : null;
+}
+
+async function planView(db: Db, today: string, plan: TrainingPlan): Promise<ActivePlan> {
   if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, extras: [] };
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
@@ -180,14 +195,20 @@ export async function activePlan(db: Db, today: string): Promise<ActivePlan | nu
 
 /** get_training_plan 的內容 */
 export async function planTextForTool(db: Db, today: string): Promise<string> {
-  const plan = await db.getActiveTrainingPlan();
+  const [plan, next] = await Promise.all([db.getActiveTrainingPlan(), db.getNextTrainingPlan()]);
   if (!plan) return "目前沒有啟用中的訓練計畫。";
-  if (!plan.week_start) return `當前訓練計畫（${plan.week_label}，文字版）：\n\n${plan.content}`;
+  const text = await planText(db, today, plan, "當前訓練計畫");
+  if (!next || next.id === plan.id) return text;
+  return `${text}\n\n---\n\n${await planText(db, today, next, "已經排好的下週課表")}`;
+}
+
+async function planText(db: Db, today: string, plan: TrainingPlan, heading: string): Promise<string> {
+  if (!plan.week_start) return `${heading}（${plan.week_label}，文字版）：\n\n${plan.content}`;
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
   const sessions = await db.getPlannedSessions(plan.id);
   const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start, today, ctx);
-  const lines = [`當前訓練計畫（${plan.week_label}，${plan.week_start} 起，${STYLE_LABELS[style]}）`];
+  const lines = [`${heading}（${plan.week_label}，${plan.week_start} 起，${STYLE_LABELS[style]}）`];
   if (plan.reason) lines.push(`排課的原因：${plan.reason}`);
   if (plan.notes) lines.push(`檢查器的提醒與理由：${plan.notes}`);
   lines.push("", sessionsText(sessions, ctx, match));
@@ -211,8 +232,9 @@ export async function changeSession(
 ): Promise<string> {
   const session = await db.getPlannedSession(id);
   if (!session) throw new Error(`找不到 session_id=${id} 的課`);
-  const plan = await db.getActiveTrainingPlan();
-  if (!plan || plan.id !== session.plan_id || !plan.week_start) throw new Error("這堂課不在目前啟用的課表裡");
+  // 目前這週的，或已經排好的下週的
+  const plan = await db.getTrainingPlan(session.plan_id);
+  if (!plan?.is_active || !plan.week_start) throw new Error("這堂課不在目前啟用的課表裡");
   const style = (plan.style ?? "fixed") as PlanStyle;
   const reason = options.reason?.trim() || null;
 
@@ -221,7 +243,7 @@ export async function changeSession(
       const date = options.date ?? null;
       const weekEnd = addDays(plan.week_start, 6);
       if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < plan.week_start || date > weekEnd)) {
-        throw new Error(`只能移到這週（${plan.week_start}～${weekEnd}）`);
+        throw new Error(`只能移到同一週（${plan.week_start}～${weekEnd}）`);
       }
       if (!date && style === "fixed") throw new Error("固定的課表要指定日期");
       await db.updatePlannedSession(id, { date, note: reason });
