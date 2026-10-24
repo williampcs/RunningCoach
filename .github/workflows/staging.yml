@@ -1,0 +1,115 @@
+# staging（規格 12.19）：push 到 v2 時自動部署，使用者在 staging 試過沒問題，再說「合併部署」到正式環境。
+#
+# staging 和正式環境完全分開：網頁版是另一個 Cloudflare Pages 專案（正式分支是 v2），同步服務是另一個
+# Worker（running-coach-sync-staging）與 D1，測試的資料不碰正式的。網頁版標示「Staging」。
+# 帳號相關的值都在 repo 的 Variables，不寫進 repo；Secrets 和正式環境同一組（CLOUDFLARE_API_TOKEN、CLOUDFLARE_ACCOUNT_ID）：
+#   STAGING_PAGES_PROJECT        staging 的 Pages 專案名稱（第一次部署時建立）
+#   STAGING_WEB_URL              staging 的網址（https://staging.zone2mate.com），同步服務只允許它
+#   STAGING_SYNC_D1_DATABASE_ID  staging 的 D1 資料庫的 id
+#   STAGING_SYNC_URL             staging 同步服務的網址（https://running-coach-sync-staging.<子網域>.workers.dev）
+# 沒設定的部分跳過、不失敗：沒有 STAGING_PAGES_PROJECT 不部署網頁版；沒有 D1 的 id 或 STAGING_WEB_URL 不部署同步服務。
+# 設定步驟見規格 12.19。改了 Variables 之後手動執行一次。
+name: Deploy staging
+
+on:
+  push:
+    branches: [v2]
+    paths:
+      - apps/web/**
+      - apps/sync/**
+      - packages/core/**
+      - package.json
+      - package-lock.json
+      - tsconfig.base.json
+      - tools/sync-config.ts
+      - .github/workflows/staging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Typecheck and test
+    # 手動執行時也只部署 v2：staging 就是 v2 的樣子
+    if: ${{ github.ref_name == 'v2' && (vars.STAGING_PAGES_PROJECT != '' || vars.STAGING_SYNC_D1_DATABASE_ID != '') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  sync:
+    name: Deploy staging sync service
+    needs: test
+    if: ${{ vars.STAGING_SYNC_D1_DATABASE_ID != '' && vars.STAGING_WEB_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Fill in account values
+        env:
+          WORKER_NAME: running-coach-sync-staging
+          DATABASE_NAME: running-coach-sync-staging
+          DATABASE_ID: ${{ vars.STAGING_SYNC_D1_DATABASE_ID }}
+          # 只允許 staging 的網址；正式的網址連的是正式的同步服務
+          WEB_URLS: ${{ vars.STAGING_WEB_URL }}
+        run: npx tsx tools/sync-config.ts
+      - name: Deploy
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # 釘住確切版本：這一步拿著 Cloudflare 的 API token
+        run: npx --yes wrangler@4.148.0 deploy
+
+  web:
+    name: Deploy staging web app
+    # 同步服務先部署（沒設定時跳過），網頁版接著部署；同步服務失敗時網頁版也不部署
+    needs: [test, sync]
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.sync.result != 'failure' && vars.STAGING_PAGES_PROJECT != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check the sync address
+        env:
+          STAGING_SYNC_URL: ${{ vars.STAGING_SYNC_URL }}
+          SYNC_URL: ${{ vars.SYNC_URL }}
+        # staging 不能連到正式的同步服務（測試的資料不碰正式的）
+        run: |
+          if [ -n "$STAGING_SYNC_URL" ] && [ "${STAGING_SYNC_URL%/}" = "${SYNC_URL%/}" ]; then
+            echo "::error::STAGING_SYNC_URL 和正式的 SYNC_URL 相同，請改成 staging 的同步服務的網址"
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run build -w @running-coach/web -- --base /
+        env:
+          VITE_STAGING: "1"
+          # 沒設定 STAGING_SYNC_URL 時，staging 的設定頁顯示同步服務「還沒設定」，不會連到正式的同步服務
+          VITE_SYNC_URL: ${{ vars.STAGING_SYNC_URL }}
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.STAGING_PAGES_PROJECT }}
+        # 釘住確切版本：這一步拿著 Cloudflare 的 API token。第一次執行時建立專案（正式分支是 v2）
+        run: |
+          npx --yes wrangler@4.148.0 pages project create "$PROJECT" --production-branch v2 || echo "專案已經存在，直接部署"
+          npx --yes wrangler@4.148.0 pages deploy apps/web/dist --project-name "$PROJECT" --branch v2 --commit-dirty=true

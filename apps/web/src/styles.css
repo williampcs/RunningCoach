@@ -106,6 +106,12 @@ body {
   align-self: center;
 }
 
+/* staging 的標示用提示色，一眼和正式版分得出來（規格 12.19） */
+.version.staging {
+  color: var(--warn-strong);
+  border-color: var(--warn-strong);
+}
+
 .page {
   flex: 1;
   overflow-y: auto;
@@ -2207,4 +2213,16 @@ button.link.danger {
   background: none;
   border: 0;
   padding: 2px 6px;
+}
+
+/* 舊網址的搬家提示（規格 12.19） */
+.notice.moved {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.notice.moved a {
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }

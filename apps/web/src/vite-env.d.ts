@@ -8,8 +8,10 @@ interface ImportMetaEnv {
   readonly VITE_PROXY_URL?: string;
   /** 多裝置同步服務的網址（規格 12.10）；沒有時設定頁顯示「還沒設定」 */
   readonly VITE_SYNC_URL?: string;
-  /** 預覽版的建置才有：顯示「預覽版」，不連同步服務 */
-  readonly VITE_PREVIEW?: string;
+  /** staging 的建置才有（規格 12.19）：標示「Staging」 */
+  readonly VITE_STAGING?: string;
+  /** 正式的網址（Variables 的 WEB_URL）；從其他網址打開時顯示搬家的提示（規格 12.19） */
+  readonly VITE_WEB_URL?: string;
   /** 開發用：把 Intervals.icu 指向本機的模擬服務 */
   readonly VITE_INTERVALS_BASE_URL?: string;
   /** 開發用：把 Open-Meteo 指向本機的模擬服務（{base}/v1/forecast…） */

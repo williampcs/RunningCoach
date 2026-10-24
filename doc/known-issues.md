@@ -721,6 +721,8 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 **驗證**：actionlint 通過；以 workflow 中相同的指令建置，在子路徑下以瀏覽器實測：持久儲存、串流對話、重新整理後資料仍在、
 原始碼連結、manifest 的起始頁與圖示。實際發布到 Pages 要等合併後。
 
+**之後的變化**：2026-10-23 搬到 Cloudflare Pages（規格 12.13）；2026-10-24 分成 staging（推 `v2` 自動部署，`staging.zone2mate.com`）與正式環境（`app.zone2mate.com`），見規格 12.19。
+
 ---
 
 ## [KI-027] 網頁版的 API key 保護

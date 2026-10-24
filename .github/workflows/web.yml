@@ -4,7 +4,9 @@
 # repo 的 Variables 有 WEB_PAGES_PROJECT（Pages 專案名稱）時才部署；用的是同步服務那組 Secrets：
 # CLOUDFLARE_API_TOKEN（要有 Cloudflare Pages 的編輯權限）、CLOUDFLARE_ACCOUNT_ID。
 # 原本的 GitHub Pages 已經收掉（2026-10-23，規格 12.13）。
-# 改了 Variables 的 SYNC_URL 之後，要手動執行一次。
+# 改了 Variables 的 SYNC_URL 或 WEB_URL 之後，要手動執行一次。
+# WEB_URL 是正式的網址（app.zone2mate.com）：從其他網址（舊的 pages.dev）打開時顯示搬家的提示（規格 12.19）。
+# staging 由 staging.yml 在 push 到 v2 時部署到另一個 Pages 專案。
 name: Deploy web app
 
 on:
@@ -56,6 +58,7 @@ jobs:
       - run: npm run build -w @running-coach/web -- --base /
         env:
           VITE_SYNC_URL: ${{ vars.SYNC_URL }}
+          VITE_WEB_URL: ${{ vars.WEB_URL }}
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

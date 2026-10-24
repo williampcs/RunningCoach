@@ -24,8 +24,8 @@ flowchart LR
     db2[("SQLite（better-sqlite3）<br/>data/coach.db")]
     bot --> core2 --> db2
   end
-  subgraph cf["Cloudflare"]
-    pages["Pages：網頁版的檔案"]
+  subgraph cf["Cloudflare（正式環境）"]
+    pages["Pages：網頁版的檔案<br/>app.zone2mate.com"]
     sync["Workers：同步服務 apps/sync"]
     d1[("D1：加密後的同步資料")]
     sync --> d1
@@ -49,6 +49,7 @@ flowchart LR
 - 多裝置同步服務只存加密後的內容，伺服器看不到明文（12.10）。
 - Discord bot 是另一份獨立的資料，和網頁版不同步。
 - `apps/proxy`（訂閱模式的代理，替使用者付 AI 的費用）已經寫好，還沒有上線。
+- 另外有一套 staging（`staging.zone2mate.com`）：另一個 Pages 專案、另一個 Worker 與 D1，和正式環境的網頁、同步資料完全分開，`v2` 推上去就自動更新（見下面的「部署與 CI」）。
 
 ## Repo 的組成
 
@@ -221,15 +222,21 @@ erDiagram
 
 | 觸發 | 做什麼 |
 |---|---|
-| 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像（不部署） |
-| 合併到 `main` | 網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`） |
-| 手動 | `web-preview.yml`：把某個分支部署成預覽網址 |
+| 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像。網頁版、同步服務或核心有改時另外部署 **staging**（`staging.yml`）：staging 的同步服務（Worker `running-coach-sync-staging` 與它的 D1）與網頁版（另一個 Pages 專案，正式分支是 `v2`，`staging.zone2mate.com`） |
+| 合併到 `main` | **正式環境**：網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`，`app.zone2mate.com`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`）；依版號打標籤（`tag-release.yml`） |
+
+流程：開發 session 推 `v2` → staging 自動更新 → 使用者在 staging 實際試 → 說「合併部署」→ 正式環境。Discord bot 沒有 staging（只有使用者自己用）。
+
+兩個環境怎麼分（規格 12.19）：
+- 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
+- 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
+- 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。
 
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
 
 網頁版的建置另外輸出 `version.json`（這次建置的 commit 與日期，`_headers` 設成不快取）。網頁打開時、回到前景時、前景中每 30 分鐘讀一次，和自己的 commit 不同就在上方提示「有新版本，點這裡更新」，點了才重新載入；讀不到時不提示（規格 12.18）。
 
-開發一律在 `v2`，合併到 `main` 就是上線，所以只在使用者說「合併部署」時合併（`CLAUDE.md`）。
+開發一律在 `v2`（推上去只更新 staging），合併到 `main` 就是上線，所以只在使用者說「合併部署」時合併（`CLAUDE.md`）。
 
 ## 測試
 
