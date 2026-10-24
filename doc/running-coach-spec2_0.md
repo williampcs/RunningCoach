@@ -610,13 +610,13 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - **有新版本時提示更新，加上要求瀏覽器不要自動清掉資料**（12.18）：狀態：已部署（2026-10-24，協調 session 檢查後依使用者事先的授權合併部署）。
 
 - **版號與 Beta 標示**（12.19 的工作單 A）：狀態：已推上 v2（2026-10-24）；等合併部署時發 0.1.0、打 `v0.1.0` 標籤（協調 session）。
-- **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：等使用者買網域，買好後再開開發 session。
+- **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：開發中（開發 session「staging 與正式環境（12.19 B）」）。使用者 2026-10-24 買了 `zone2mate.com` 與 `zonetwomate.com`。
 
 *討論中*（協調 session 和使用者討論，還沒有決定）
 - 課表的其他部分（12.15）：看過去幾週的課表與達成狀況、選手能不能自己改課的內容、文字與結構化課表互斥。使用者還沒用過課表，等實際用過再談。
 - 賽後分析：用賽事連到的那趟跑步（`result_activity`）算前後半的配速變化、分段；分段成績現在不做（12.15）。
 - 比賽地點的天氣預報（12.14 沒做的）。
-- 自己的網域（11 #25）：已決定要買（12.19），等使用者在 Cloudflare 買好。
+- 自己的網域（11 #25）：已買 `zone2mate.com`（12.19），工作單 B 開發中。
 - 教練上網搜尋（11 #13、6.6）：使用者在評估 Tavily 的費用。
 - 教練主動發話：之後若做，系統提示裡教練的訊息也要帶上時間（12.16）。
 - 面板的小缺口（12.17 沒做的）：打開時焦點不會移進面板、底下的頁面沒有設成 inert（鍵盤 Tab 可能先走到底下）、關閉沒有滑出的動畫；iPhone 上的返回手勢與鍵盤待使用者實機確認。
@@ -2182,7 +2182,23 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - Discord bot 的 esbuild 建置成功，打包結果含版號。Docker 映像在雲端環境建不了（沒有 Docker daemon），由 `v2-ci` 的 docker build 驗證。
 - 網頁實測：`verify-update.cjs` 加上檢查：標題列只顯示「Beta」、標題列的提示與設定頁最下面是 `v{根目錄的版號} Beta（commit，`。全部腳本 ALL OK；`verify-devicesync.cjs` 第一次跑有一項失敗，之後連跑四次（含重開模擬上游）都通過，沒有重現，和這次的改動無關。
 
-**工作單 B：staging 與正式環境、自己的網域**（等使用者買好網域）
-- 要做：`v2` 推上去自動部署 staging 的網頁版（Cloudflare Pages，`staging.網域`）與 staging 的同步服務（另一個 Worker 與 D1，網頁版的建置指向它）；正式環境改用 `app.網域`；同步服務允許的來源（`ALLOWED_ORIGINS`）改成新的網址；手動預覽（`web-preview.yml`）由 staging 取代；舊的 `running-coach-bgb.pages.dev` 怎麼處理（導向新網域或提示搬家）；使用說明與文件裡的網址；`CLAUDE.md` 與規格寫明新的流程。
-- 使用者要做的：在 Cloudflare 買網域；建 staging 需要的 repo Variables；在 Pages 綁自訂網域（或由 workflow 用 API 綁）；在新網址用復原碼還原、重填 API key、重新加入主畫面。
-- 驗收：staging 與正式各自部署成功、各自的同步只接受自己的網址、staging 的資料不出現在正式的同步；網頁實測照跑。
+**網域的選擇**（2026-10-24）
+- 使用者顧慮：跑步加教練的名字，之後兼容其他運動會受限；runningcoach 也早有人用。協調 session 的看法：網域等於品牌、之後很難換（資料跟著網址），App 裡的名稱與 repo 之後隨時能改；擴展最自然的邊界是耐力運動（跑步、自行車、游泳、三鐵），心率區間、訓練負荷、恢復與賽事減量都共通。
+- 使用者選了 `zone2mate.com`：Zone 2 是耐力運動共通的概念，也對應教練的 80/20 與「穩定、長久練下去」、不想讓人挫折的調性；mate 比 coach 親切。顧慮：數字 2 唸出來容易打錯（所以也買了 `zonetwomate.com`，導向主網域）、字面偏輕鬆跑（用標語補足）、App Store 上已有好幾個「Zone2 …」的 App（沒有叫 Zone2Mate 的）。
+- App 內的名稱暫時不改（仍是 Running Coach），之後另外討論。
+
+**工作單 B：staging 與正式環境、自己的網域**（使用者已買 `zone2mate.com`、`zonetwomate.com`，都在同一個 Cloudflare 帳號）
+- 網址規劃：
+  - 正式：`app.zone2mate.com`（網頁版）。根網域 `zone2mate.com` 留給之後的介紹頁，現在先導向 `app.zone2mate.com`；`www.zone2mate.com`、`zonetwomate.com`、`www.zonetwomate.com` 也都導向 `app.zone2mate.com`（Cloudflare 的轉址規則，使用者在後台設，步驟寫進文件）。
+  - staging：`staging.zone2mate.com`。建議另開一個 Pages 專案（正式分支就是 `v2`），自訂網域與環境變數都和正式的分開；或同一個專案用 `v2` 的分支網址加 CNAME，開發 session 評估後選一個並寫明理由。
+  - 同步服務：正式的照舊（workers.dev 的網址不變，雲端的資料不動）；staging 另開一個 Worker 與 D1，網址用 workers.dev 或 `sync-staging.zone2mate.com` 皆可。
+- 要做：
+  - `v2` 推上去自動部署 staging 的網頁版與 staging 的同步服務；staging 的網頁版建置指向 staging 的同步服務；畫面上標示「Staging」，和正式版分得出來（取代現在手動的預覽，`web-preview.yml` 移除或改成這個）。
+  - 正式環境改用 `app.zone2mate.com`：正式同步服務允許的來源（`ALLOWED_ORIGINS`）改成新網址；搬家期間舊的 `running-coach-bgb.pages.dev` 也允許。
+  - 舊網址 `running-coach-bgb.pages.dev`：pages.dev 不能設轉址，在舊網址打開時顯示搬家的提示（新網址、用復原碼或配對還原、重填 API key、重新加入主畫面），等使用者搬好再拿掉。
+  - 使用說明、README、規格裡的網址；`CLAUDE.md` 與規格寫明新的流程（推 `v2` → staging 自動更新 → 使用者在 staging 試 → 合併部署 → 正式）。
+  - `doc/architecture.md` 的全貌圖與部署一節更新。
+- 不做：App 名稱與品牌（另外討論）、介紹頁、通行密鑰。
+- 使用者要做的（開發 session 寫成一步一步的清單）：Cloudflare 上建 staging 的 D1（或由 workflow 建）、在 Pages 綁自訂網域、設轉址規則、在 GitHub 設新的 Variables（例如 staging 的 Pages 專案名稱、D1 的 id、各網址）、確認 API token 的權限夠；部署後在 `app.zone2mate.com` 用復原碼還原、重填 API key、重新加入主畫面，確認後再拿掉舊網址的允許來源與提示。
+- 驗收：workflow 用 actionlint 檢查；`npm test`、`npm run typecheck`；網頁實測照跑（staging 的「Staging」標示與舊網址的搬家提示要有測試）；實際部署要等使用者設好 Variables 後在 GitHub 上看，回報時寫清楚哪些還沒驗證。
+- 注意：同步服務的允許來源設錯，正式的同步會斷，改動要小心；所有網址從 Variables 讀，不寫死在程式。
