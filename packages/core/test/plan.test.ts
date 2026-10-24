@@ -11,6 +11,7 @@ import {
   type CheckContext,
   type SessionDraft,
 } from "../src/plan";
+import { planTextForTool, savePlanFromTool } from "../src/planning";
 import { makeCoach, toolTurn, turn } from "./helpers";
 
 const WEEK = "2026-10-12"; // 星期一
@@ -233,7 +234,7 @@ describe("教練存課表與調整", () => {
     expect(results[4]).toContain("排課的原因：照目前的跑量排第一週");
     expect(results[5]).toBe("已改用替代的課（session_id=5）。");
     expect(results[6]).toMatch(/^已移動（session_id=4）。/);
-    expect(results[7]).toBe("執行失敗：只能移到這週（2026-10-12～2026-10-18）");
+    expect(results[7]).toBe("執行失敗：只能移到同一週（2026-10-12～2026-10-18）");
 
     const plan = (await coach.db.getActiveTrainingPlan())!;
     expect(plan.reason).toBe("照目前的跑量排第一週");
@@ -307,5 +308,38 @@ describe("其他運動", () => {
     list = [ride("2026-10-09")];
     await coach.sync();
     expect((await coach.db.getOtherActivities(7)).map((a) => a.intervals_id)).toEqual(["r1"]);
+  });
+});
+
+describe("先排好的下週課表", () => {
+  it("不會蓋掉這週的課表；到了下週才換", async () => {
+    let now = new Date("2026-10-18T04:00:00Z"); // 台北 2026-10-18（星期日）
+    const { coach, driver } = await makeCoach([], { now: () => now });
+    const save = (weekStart: string, sessions: SessionDraft[]) =>
+      savePlanFromTool(coach.db, coach.today(), { week_start: weekStart, style: "fixed", reason: "測試", sessions, accept_warnings: true, warning_notes: "測試" });
+    await save("2026-10-12", [easy("2026-10-13"), long("2026-10-18")]);
+    await save("2026-10-19", [easy("2026-10-20"), long("2026-10-25")]);
+
+    expect((await coach.activePlan())!.plan.week_start).toBe("2026-10-12");
+    const next = (await coach.nextPlan())!;
+    expect(next.plan.week_start).toBe("2026-10-19");
+    expect(next.sessions.map((s) => s.date)).toEqual(["2026-10-20", "2026-10-25"]);
+    // 這週最後一天：下週已經排好，不再提醒排課
+    expect((await coach.feed()).some((i) => i.id.startsWith("plan-next"))).toBe(false);
+    const text = await planTextForTool(coach.db, coach.today());
+    expect(text).toMatch(/^當前訓練計畫（2026-W42/);
+    expect(text).toContain("已經排好的下週課表（2026-W43，2026-10-19 起");
+    // 下週的課也可以調整；重排這週不影響下週
+    expect(await coach.changeSession(next.sessions[0]!.id!, "skip")).toMatch(/^已跳過/);
+    await save("2026-10-12", [easy("2026-10-14"), long("2026-10-18")]);
+    expect((await coach.nextPlan())?.plan.week_start).toBe("2026-10-19");
+
+    now = new Date("2026-10-20T04:00:00Z");
+    expect((await coach.activePlan())!.plan.week_start).toBe("2026-10-19");
+    expect(await coach.nextPlan()).toBeNull();
+    // 再排下下週時，過完的週停用
+    await save("2026-10-26", [easy("2026-10-27")]);
+    const active = await driver.all("SELECT week_start FROM training_plans WHERE is_active=1 ORDER BY week_start");
+    expect(active.map((r) => r.week_start)).toEqual(["2026-10-19", "2026-10-26"]);
   });
 });

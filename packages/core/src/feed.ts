@@ -85,9 +85,9 @@ async function planItems(db: Db, today: string): Promise<FeedItem[]> {
       });
     }
   }
-  // 這週的最後一天，或課表已經過了：提醒排下週
+  // 這週的最後一天，或課表已經過了：提醒排下週（已經排好的不提醒）
   const weekEnd = addDays(active.plan.week_start, 6);
-  if (today >= weekEnd) {
+  if (today >= weekEnd && !(await db.getNextTrainingPlan())) {
     items.push({
       id: `plan-next-${weekEnd}`,
       kind: "plan",

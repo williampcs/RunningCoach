@@ -731,9 +731,29 @@ export class Db {
   // training_plans
   // ---------------------------------------------------------------------------
 
+  /**
+   * 目前的課表：啟用中、而且這週就是今天所在那週的優先（先排好的下週課表不會蓋掉這週的）；
+   * 沒有的話用最新的一份。依建立時間：多裝置同步時，別台較早的課表可能較晚才寫進這台
+   */
   getActiveTrainingPlan(): Promise<TrainingPlan | null> {
-    // 依建立時間：多裝置同步時，別台較早的課表可能較晚才寫進這台
-    return this.get<TrainingPlan>("SELECT * FROM training_plans WHERE is_active=1 ORDER BY created_at DESC, id DESC LIMIT 1");
+    const today = this.clock.today();
+    return this.get<TrainingPlan>(
+      "SELECT * FROM training_plans WHERE is_active=1" +
+        " ORDER BY (week_start IS NOT NULL AND week_start <= ? AND week_start >= ?) DESC, created_at DESC, id DESC LIMIT 1",
+      [today, addDays(today, -6)],
+    );
+  }
+
+  /** 已經排好、還沒開始的下一週課表（啟用中、週一在今天之後） */
+  getNextTrainingPlan(): Promise<TrainingPlan | null> {
+    return this.get<TrainingPlan>(
+      "SELECT * FROM training_plans WHERE is_active=1 AND week_start > ? ORDER BY week_start, created_at DESC, id DESC LIMIT 1",
+      [this.clock.today()],
+    );
+  }
+
+  getTrainingPlan(id: number): Promise<TrainingPlan | null> {
+    return this.get<TrainingPlan>("SELECT * FROM training_plans WHERE id=?", [id]);
   }
 
   /** 儲存新計畫並停用舊計畫 */
@@ -749,14 +769,20 @@ export class Db {
     });
   }
 
-  /** 儲存結構化的課表並停用舊計畫，回傳新計畫的 id */
+  /**
+   * 儲存結構化的課表，回傳新計畫的 id. 停用同一週的舊版本、文字課表與已經過完的週；
+   * 排的是下週時，這週的課表繼續啟用（週日排下週，這週剩下的課不會消失）
+   */
   saveStructuredPlan(
     plan: { weekLabel: string; weekStart: string; style: PlanStyle; reason: string; outline: string | null; notes: string | null; content: string },
     sessions: SessionDraft[],
   ): Promise<number> {
     const d = this.driver;
     return this.tx(async () => {
-      await d.exec("UPDATE training_plans SET is_active=0");
+      await d.run("UPDATE training_plans SET is_active=0 WHERE week_start IS NULL OR week_start = ? OR week_start < ?", [
+        plan.weekStart,
+        addDays(this.clock.today(), -6),
+      ]);
       const { lastInsertRowid: planId } = await d.run(
         "INSERT INTO training_plans (week_label, content, created_at, is_active, week_start, style, reason, outline, notes)" +
           " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)",

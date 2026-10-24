@@ -4,7 +4,7 @@ import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
 import { accumulation, runCards, type Accumulation, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
-import { activePlan, changeSession, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
+import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
@@ -524,6 +524,11 @@ export class Coach {
   /** 啟用中的課表，目標依現在的訓練數值換算（網頁版的計畫頁） */
   activePlan(): Promise<ActivePlan | null> {
     return activePlan(this.db, this.today());
+  }
+
+  /** 已經排好、還沒開始的下週課表 */
+  nextPlan(): Promise<ActivePlan | null> {
+    return nextPlan(this.db, this.today());
   }
 
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */

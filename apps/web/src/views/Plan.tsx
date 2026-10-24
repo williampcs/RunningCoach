@@ -101,8 +101,12 @@ export function PlanView() {
   const plan = current?.plan ?? null;
   const structured = current !== null && current.plan.week_start != null;
 
+  // 週日先排好的下週課表：這週的還在用，下週的另外列在下面
+  const [next, setNext] = useState<ActivePlan | null>(null);
+
   useEffect(() => {
     void coach.activePlan().then(setCurrent);
+    void coach.nextPlan().then(setNext);
   }, [coach, revision]);
 
   async function run(action: () => Promise<unknown>) {
@@ -184,6 +188,33 @@ export function PlanView() {
           </>
         )}
       </section>
+
+      {next?.plan.week_start && (
+        <section className="card">
+          <h2>
+            下週的課表（{next.plan.week_label}，{next.plan.week_start.slice(5)} 起）
+          </h2>
+          <p className="small muted">
+            {next.styleLabel}｜約 {next.totalKm} km。已經排好，下週一開始用。
+          </p>
+          {next.plan.reason && <p className="small">排課的原因：{next.plan.reason}</p>}
+          <ul className="sessions">
+            {next.sessions.map((s) => (
+              <SessionCard
+                key={s.id ?? s.title}
+                s={s}
+                weekStart={next.plan.week_start!}
+                fixed={next.plan.style !== "flexible"}
+                onChange={(action, date) =>
+                  void run(async () => {
+                    setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
+                  })
+                }
+              />
+            ))}
+          </ul>
+        </section>
+      )}
 
       <RacesCard />
     </>
