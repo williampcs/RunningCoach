@@ -39,6 +39,9 @@ export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accum
 export { type ImportProgress, type ImportResult } from "./history-import";
 export {
   DNS_REASONS,
+  RESULT_SOURCES,
+  resultDetail,
+  type ResultSource,
   duplicateGroups,
   isAfterRace,
   raceOutcome,

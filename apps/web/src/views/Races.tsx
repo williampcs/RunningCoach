@@ -6,6 +6,9 @@ import {
   isAfterRace,
   raceOutcome,
   raceStatusText,
+  RESULT_SOURCES,
+  resultDetail,
+  type ResultSource,
   similarRaces,
   type DnsReason,
   type Race,
@@ -39,7 +42,11 @@ const EMPTY_RACE: RaceForm = {
 interface ResultForm {
   id: number;
   outcome: "finished" | "dnf";
+  /** 個人成績（淨時間） */
   time: string;
+  /** 大會成績（槍聲起算，選填） */
+  gunTime: string;
+  source: ResultSource;
   note: string;
   /** 比賽當天的手錶紀錄 */
   watch: { time: string; distanceKm: number | null } | null | undefined;
@@ -117,6 +124,8 @@ export function RacesCard() {
       id: race.id,
       outcome: outcome === "dnf" ? "dnf" : "finished",
       time: race.result_time ?? "",
+      gunTime: race.gun_time ?? "",
+      source: (race.result_source as ResultSource | null) ?? "chip",
       note: outcome === "dnf" ? (race.outcome_reason ?? "") : "",
       watch: undefined,
     };
@@ -129,7 +138,9 @@ export function RacesCard() {
     void run(async () => {
       await coach.recordRaceResult(
         f.id,
-        f.outcome === "finished" ? { outcome: "finished", time: f.time.trim() } : { outcome: "dnf", note: f.note },
+        f.outcome === "finished"
+          ? { outcome: "finished", time: f.time.trim(), gunTime: f.gunTime.trim() || null, source: f.source }
+          : { outcome: "dnf", note: f.note },
       );
       setResultFor(null);
     });
@@ -233,6 +244,7 @@ export function RacesCard() {
         </div>
         <div className="muted small">
           {race.date}｜{race.distance_km}km｜目標 {race.target_time || "完賽"}
+          {outcome === "finished" && resultDetail(race).map((d) => `｜${d}`)}
           {race.notes && `｜${race.notes}`}
         </div>
         <div className="row">
@@ -335,7 +347,7 @@ export function RacesCard() {
             {resultFor.outcome === "finished" ? (
               <>
                 <label>
-                  完賽成績
+                  個人成績（淨時間）
                   <input
                     autoFocus
                     value={resultFor.time}
@@ -343,25 +355,28 @@ export function RacesCard() {
                     onChange={(e) => setResultFor({ ...resultFor, time: e.target.value })}
                   />
                 </label>
-                {resultFor.watch === undefined && <p className="small muted">找比賽當天的手錶紀錄…</p>}
+                <label>
+                  大會成績（槍聲起算，選填）
+                  <input value={resultFor.gunTime} placeholder="例：1:57:02" onChange={(e) => setResultFor({ ...resultFor, gunTime: e.target.value })} />
+                </label>
+                <label>
+                  成績來源
+                  <select value={resultFor.source} onChange={(e) => setResultFor({ ...resultFor, source: e.target.value as ResultSource })}>
+                    {Object.entries(RESULT_SOURCES).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="small muted">有晶片計時的話用大會給的個人成績，最準；推算訓練配速用這個。</p>
                 {resultFor.watch === null && <p className="small muted">比賽當天沒有距離接近的手錶紀錄（可能還沒同步）。</p>}
                 {resultFor.watch && (
                   <p className="small">
-                    手錶紀錄：{resultFor.watch.distanceKm} km，
-                    {resultFor.watch.time}{" "}
-                    <button
-                      type="button"
-                      className="link"
-                      onClick={() =>
-                        setResultFor({
-                          ...resultFor,
-                          time: resultFor.watch!.time,
-                        })
-                      }
-                    >
+                    沒有正式成績的話，可以參考手錶紀錄：{resultFor.watch.distanceKm} km，{resultFor.watch.time}{" "}
+                    <button type="button" className="link" onClick={() => setResultFor({ ...resultFor, time: resultFor.watch!.time, source: "watch" })}>
                       用這個時間
                     </button>
-                    <span className="muted">（晶片成績可能差幾秒到幾十秒，以大會的為準）</span>
                   </p>
                 )}
               </>

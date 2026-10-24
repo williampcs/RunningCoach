@@ -31,7 +31,7 @@ import type {
  * 8：other_activities（跑步以外的運動：騎車、游泳、肌力訓練等）
  * 9：多裝置同步（sync_state、sync_pending、sync_meta；賽事與課表的 sync_id）
  * 10：memories（記住的事）、conversations.archived（壓縮後保留原文）與 conversations.reply_to（回覆）
- * 11：races.outcome 與 outcome_reason（完賽、沒有完賽、沒有出賽）
+ * 11：races 的 outcome、outcome_reason（完賽、沒有完賽、沒有出賽）、gun_time、result_source、result_activity
  */
 export const SCHEMA_VERSION = 11;
 
@@ -441,6 +441,11 @@ export class Db {
         await d.exec("UPDATE races SET outcome='dns', outcome_reason='other' WHERE cancelled=1");
         await d.exec("UPDATE races SET outcome='finished' WHERE outcome IS NULL AND result_time IS NOT NULL AND result_time != ''");
       }
+      // result_time 是個人成績（淨時間）；gun_time 是大會成績（槍聲，選填）；result_source 成績從哪裡來；
+      // result_activity 比賽當天那趟跑步的 intervals_id（跨裝置不變），之後的賽後分析用
+      for (const col of ["gun_time", "result_source", "result_activity"]) {
+        if (!raceCols.has(col)) await d.exec(`ALTER TABLE races ADD COLUMN ${col} TEXT`);
+      }
 
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
@@ -538,14 +543,25 @@ export class Db {
    * 賽事的結局（規則見 races.ts）：完賽寫成績，沒有完賽與沒有出賽清掉成績.
    * 沒有出賽同時設 cancelled=1，v1 與舊的查詢照樣把它當成取消
    */
-  async setRaceOutcome(raceId: number, outcome: RaceOutcome, fields: { resultTime?: string | null; reason?: string | null } = {}): Promise<void> {
-    await this.run("UPDATE races SET outcome=?, outcome_reason=?, result_time=?, cancelled=? WHERE id=?", [
-      outcome,
-      fields.reason || null,
-      outcome === "finished" ? (fields.resultTime ?? null) : null,
-      outcome === "dns" ? 1 : 0,
-      raceId,
-    ]);
+  async setRaceOutcome(
+    raceId: number,
+    outcome: RaceOutcome,
+    fields: { resultTime?: string | null; gunTime?: string | null; source?: string | null; activity?: string | null; reason?: string | null } = {},
+  ): Promise<void> {
+    const finished = outcome === "finished";
+    await this.run(
+      "UPDATE races SET outcome=?, outcome_reason=?, result_time=?, gun_time=?, result_source=?, result_activity=?, cancelled=? WHERE id=?",
+      [
+        outcome,
+        fields.reason || null,
+        finished ? (fields.resultTime ?? null) : null,
+        finished ? (fields.gunTime ?? null) : null,
+        finished ? (fields.source ?? null) : null,
+        outcome === "dns" ? null : (fields.activity ?? null),
+        outcome === "dns" ? 1 : 0,
+        raceId,
+      ],
+    );
   }
 
   /** 刪除一場賽事（只有選手能刪，見 races.ts） */

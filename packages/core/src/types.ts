@@ -141,6 +141,12 @@ export interface Race {
   outcome?: string | null;
   /** 沒有出賽的原因代號（DNS_REASONS），或沒有完賽的說明 */
   outcome_reason?: string | null;
+  /** 大會成績（槍聲起算，選填）；result_time 是個人成績（淨時間） */
+  gun_time?: string | null;
+  /** 成績從哪裡來（RESULT_SOURCES） */
+  result_source?: string | null;
+  /** 比賽當天那趟跑步的 intervals_id */
+  result_activity?: string | null;
   created_at: string;
 }
 

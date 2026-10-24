@@ -19,6 +19,7 @@ import {
   raceLineForCoach,
   raceOutcome,
   recordRaceResult,
+  resultDetail,
   similarRaces,
 } from "./races";
 import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
@@ -90,7 +91,8 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     },
     {
       name: "get_race_activity",
-      description: "查比賽當天的手錶紀錄（距離最接近的一趟）與總時間。記錄或修改成績前先呼叫，把時間給選手確認。" + RACE_ID_HINT,
+      description:
+        "查比賽當天的手錶紀錄（距離最接近的一趟）與總時間。選手手上沒有大會給的成績時才用，把時間給選手確認。" + RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: { race_id: { type: "integer", description: "賽事的 id" } },
@@ -101,15 +103,18 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       name: "record_race_result",
       description:
         "記錄或修改比賽成績（比賽當天以後）：完賽寫 result_time，沒有完賽寫 outcome=dnf 與說明。" +
-        "手錶的時間優先，但一定要先用 get_race_activity 查、把時間給選手確認（晶片成績常和手錶差幾秒到幾十秒），" +
-        "選手確認或給了正確的成績後，才以 athlete_confirmed=true 呼叫。成績會用來推算訓練配速。" +
+        "先問選手大會給的成績：result_time 寫個人成績（淨時間，有晶片時是晶片的），gun_time 寫大會成績（槍聲起算，有的話）。" +
+        "選手手上沒有正式成績時，才用 get_race_activity 查手錶的時間給選手參考（source=watch）。" +
+        "選手給了或確認了成績後，才以 athlete_confirmed=true 呼叫。個人成績會用來推算訓練配速。" +
         RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: {
           race_id: { type: "integer", description: "賽事的 id" },
           outcome: { type: "string", enum: ["finished", "dnf"], description: "finished 完賽、dnf 沒有完賽" },
-          result_time: { type: "string", description: "完賽成績，例：1:55:30（finished 必填）" },
+          result_time: { type: "string", description: "個人成績（淨時間），例：1:55:30（finished 必填）" },
+          gun_time: { type: "string", description: "大會成績（槍聲起算，選填）" },
+          source: { type: "string", enum: ["chip", "watch", "other"], description: "chip 晶片計時、watch 手錶或手機、other 不確定" },
           note: { type: "string", description: "沒有完賽時的說明，例：25K 抽筋退賽" },
           athlete_confirmed: { type: "boolean", description: "選手已確認這個成績（或已確認沒有完賽）" },
         },
@@ -808,21 +813,27 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         }
         return (
           `${race.date}「${race.name}」當天的手錶紀錄：${found.distanceKm} km，總時間 ${found.time}。` +
-          "這是手錶的時間（含停下來的時間），和大會的晶片成績可能差幾秒到幾十秒；請選手確認或提供正式成績後再記錄。"
+          "這是手錶的時間（含停下來的時間），和大會的晶片成績可能差幾秒到幾十秒；請選手確認後再記錄（source=watch），有正式成績的話以正式的為準。"
         );
       }
 
       case "record_race_result": {
         const raceId = toInt(input.race_id, "race_id");
         if (input.athlete_confirmed !== true) {
-          return "尚未記錄：先用 get_race_activity 查手錶紀錄，把成績給選手確認，確認後再以 athlete_confirmed=true 呼叫。";
+          return "尚未記錄：先問選手大會給的成績（沒有的話用 get_race_activity 查手錶的時間給選手參考），選手給了或確認後再以 athlete_confirmed=true 呼叫。";
         }
         const outcome = str(input.outcome);
         if (outcome === "finished") {
           const resultTime = str(input.result_time);
           if (!resultTime) throw new Error("完賽要有 result_time");
-          const race = await recordRaceResult(db, today(), raceId, { outcome: "finished", time: resultTime });
-          return `已記錄「${race.name}」完賽成績：${race.result_time}。`;
+          const race = await recordRaceResult(db, today(), raceId, {
+            outcome: "finished",
+            time: resultTime,
+            gunTime: str(input.gun_time) || null,
+            source: str(input.source) || null,
+          });
+          const detail = resultDetail(race);
+          return `已記錄「${race.name}」完賽成績：${race.result_time}${detail.length ? `（${detail.join("，")}）` : ""}。`;
         }
         if (outcome === "dnf") {
           const race = await recordRaceResult(db, today(), raceId, { outcome: "dnf", note: str(input.note) });

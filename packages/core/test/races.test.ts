@@ -120,7 +120,14 @@ describe("Coach race actions", () => {
     await coach.db.saveWorkout(
       activity({ intervals_id: "race", date: "2026-10-04", distance_km: 21.3, duration_min: 113, raw_json: JSON.stringify({ elapsed_time: 6942, moving_time: 6780 }) }),
     );
-    expect(await coach.raceActivity(id)).toEqual({ time: "1:55:42", distanceKm: 21.3, workoutId: expect.any(Number) });
+    expect(await coach.raceActivity(id)).toEqual({ time: "1:55:42", distanceKm: 21.3, workoutId: expect.any(Number), intervalsId: "race" });
+    // 記錄成績時連到那趟跑步；大會成績與來源另外存
+    const saved = await coach.recordRaceResult(id, { outcome: "finished", time: "1:55:30", gunTime: "1:57:02", source: "chip" });
+    expect(saved).toMatchObject({ result_time: "1:55:30", gun_time: "1:57:02", result_source: "chip", result_activity: "race" });
+    await expect(coach.recordRaceResult(id, { outcome: "finished", time: "1:55:30", source: "gps" })).rejects.toThrow("成績來源只能是");
+    // 沒有出賽時清掉成績與連結
+    const dnf = await coach.recordRaceResult(id, { outcome: "dnf" });
+    expect(dnf).toMatchObject({ result_time: null, gun_time: null, result_source: null, result_activity: "race" });
   });
 });
 
@@ -161,7 +168,7 @@ describe("race tools", () => {
     const { coach, provider } = await makeCoach([
       toolTurn("record_race_result", { race_id: 1, outcome: "finished", result_time: "1:55:42" }),
       toolTurn("get_race_activity", { race_id: 1 }),
-      toolTurn("record_race_result", { race_id: 1, outcome: "finished", result_time: "1:55:30", athlete_confirmed: true }),
+      toolTurn("record_race_result", { race_id: 1, outcome: "finished", result_time: "1:55:30", gun_time: "1:56:40", source: "chip", athlete_confirmed: true }),
       toolTurn("update_race", { race_id: 1, date: "2026-10-05" }),
       toolTurn("mark_race_not_started", { race_id: 1, reason: "other" }),
       turn({ text: "好" }),
@@ -170,9 +177,9 @@ describe("race tools", () => {
     await coach.db.saveWorkout(activity({ intervals_id: "race", date: "2026-10-04", distance_km: 21.3, raw_json: JSON.stringify({ elapsed_time: 6942 }) }));
     await coach.chat("半馬跑完了");
     const results = provider.calls.flatMap((c) => c.toolResults ?? []).map((r) => r.content);
-    expect(results[0]).toContain("尚未記錄：先用 get_race_activity 查手錶紀錄");
+    expect(results[0]).toContain("尚未記錄：先問選手大會給的成績");
     expect(results[1]).toContain("當天的手錶紀錄：21.3 km，總時間 1:55:42");
-    expect(results[2]).toBe("已記錄「半馬」完賽成績：1:55:30。");
+    expect(results[2]).toBe("已記錄「半馬」完賽成績：1:55:30（大會成績 1:56:40，晶片計時）。");
     expect(results[3]).toContain("執行失敗：「半馬」已經是賽後，只能改名稱與備註");
     expect(results[4]).toContain("執行失敗：「半馬」已經記錄完賽成績");
   });

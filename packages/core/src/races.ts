@@ -3,7 +3,10 @@
  *
  * - 結局只有三種：完賽（有成績）、沒有完賽（DNF）、沒有出賽（DNS，賽前「不參加了」或賽後「沒有出賽」）.
  * - 賽前可以改所有欄位；賽後（比賽日已過，或已經有結局）只能改名稱與備註.
- * - 成績只能在比賽當天以後記錄；教練記錄或修改前要先查手錶紀錄、請選手確認.
+ * - 成績只能在比賽當天以後記錄. 主成績是個人成績（淨時間，有晶片時用晶片的），推算訓練配速用它；
+ *   大會成績（槍聲起算）選填；記下成績的來源. 選手手動登記為主，沒有正式成績時才拿手錶紀錄當參考.
+ *   教練要先問選手的成績，選手確認後才記錄.
+ * - 記錄成績時連到比賽當天距離最接近的那趟跑步（之後的賽後分析用，不另外存一份時間）.
  * - 只有選手能刪除；教練可以列出所有賽事，看到可能重複的會告訴選手.
  */
 import { daysBetween } from "./dates";
@@ -21,6 +24,14 @@ export const DNS_REASONS = {
   other: "其他",
 } as const;
 export type DnsReason = keyof typeof DNS_REASONS;
+
+/** 成績的來源 */
+export const RESULT_SOURCES = {
+  chip: "晶片計時",
+  watch: "手錶或手機",
+  other: "不確定",
+} as const;
+export type ResultSource = keyof typeof RESULT_SOURCES;
 
 /** 賽後還能改的欄位 */
 const AFTER_RACE_FIELDS = new Set(["name", "notes"]);
@@ -114,14 +125,24 @@ export async function recordRaceResult(
   db: Db,
   today: string,
   id: number,
-  result: { outcome: "finished"; time: string } | { outcome: "dnf"; note?: string | null },
+  result:
+    | { outcome: "finished"; time: string; gunTime?: string | null; source?: string | null }
+    | { outcome: "dnf"; note?: string | null },
 ): Promise<Race> {
   const race = await requireRace(db, id);
   if (race.date > today) throw new Error(`「${race.name}」還沒到比賽日（${race.date}），比賽當天以後才能記錄成績`);
+  const activity = (await raceActivity(db, race))?.intervalsId ?? null;
   if (result.outcome === "finished") {
-    await db.setRaceOutcome(id, "finished", { resultTime: normalizeRaceTime(result.time) });
+    const source = result.source || "other";
+    if (!(source in RESULT_SOURCES)) throw new Error(`成績來源只能是：${Object.keys(RESULT_SOURCES).join("、")}`);
+    await db.setRaceOutcome(id, "finished", {
+      resultTime: normalizeRaceTime(result.time),
+      gunTime: result.gunTime?.trim() ? normalizeRaceTime(result.gunTime) : null,
+      source,
+      activity,
+    });
   } else {
-    await db.setRaceOutcome(id, "dnf", { reason: result.note?.trim() || null });
+    await db.setRaceOutcome(id, "dnf", { reason: result.note?.trim() || null, activity });
   }
   return (await db.getRace(id))!;
 }
@@ -138,7 +159,10 @@ export async function markRaceNotStarted(db: Db, id: number, reason: string, not
 }
 
 /** 比賽當天的手錶紀錄：距離最接近的一趟（差 25% 以內）；用總時間（含停下來的），比較接近大會成績 */
-export async function raceActivity(db: Db, race: Race): Promise<{ time: string; distanceKm: number | null; workoutId: number } | null> {
+export async function raceActivity(
+  db: Db,
+  race: Race,
+): Promise<{ time: string; distanceKm: number | null; workoutId: number; intervalsId: string | null } | null> {
   const runs = (await db.getWorkoutsOn(race.date)).filter((w) => w.distance_km != null);
   const best = runs
     .filter((w) => Math.abs(w.distance_km! - race.distance_km) <= race.distance_km * 0.25)
@@ -153,13 +177,22 @@ export async function raceActivity(db: Db, race: Race): Promise<{ time: string; 
   }
   secs ??= best.duration_min != null ? best.duration_min * 60 : null;
   if (!secs) return null;
-  return { time: formatRaceTime(secs), distanceKm: best.distance_km, workoutId: best.id };
+  return { time: formatRaceTime(secs), distanceKm: best.distance_km, workoutId: best.id, intervalsId: best.intervals_id };
+}
+
+/** 成績的補充：大會成績與來源，例：["大會成績 1:56:10", "晶片計時"] */
+export function resultDetail(r: Race): string[] {
+  const out: string[] = [];
+  if (r.gun_time) out.push(`大會成績 ${r.gun_time}`);
+  if (r.result_source && r.result_source in RESULT_SOURCES) out.push(RESULT_SOURCES[r.result_source as ResultSource]);
+  return out;
 }
 
 /** 教練看到的一行，例：[3] 2026-11-01 半馬 21.1km｜目標 1:58:00｜還有 8 天 */
 export function raceLineForCoach(r: Race, today: string): string {
   return (
     `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km｜目標 ${r.target_time || "完賽"}｜${raceStatusText(r, today)}` +
+    (raceOutcome(r) === "finished" ? resultDetail(r).map((d) => `｜${d}`).join("") : "") +
     (r.notes ? `｜備註：${r.notes}` : "")
   );
 }
