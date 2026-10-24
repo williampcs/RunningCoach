@@ -1707,6 +1707,28 @@ span.quote {
   padding-left: 1.2em;
 }
 
+/* 賽事的成績與「不參加了」（Races） */
+.race-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.races-other {
+  margin-top: 8px;
+}
+
+.races-other > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 6px 0;
+}
+
 /* 天氣的城市（WeatherSettings） */
 .weather-privacy {
   margin: 4px 0 0;

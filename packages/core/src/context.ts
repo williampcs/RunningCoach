@@ -206,6 +206,11 @@ export class ContextManager {
         );
       }
     }
+    lines.push(
+      "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看上面的清單就說沒有。" +
+        "賽後只能改名稱與備註。記錄或修改成績前先用 get_race_activity 查手錶紀錄，給選手確認後才記錄。" +
+        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
+    );
 
     // 最近兩天的其他運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞
     const recentOthers = await this.db.getOtherActivities(1);

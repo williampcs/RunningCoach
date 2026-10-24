@@ -135,7 +135,12 @@ export interface Race {
   confirmed: number;
   result_time: string | null;
   notes: string | null;
+  /** 沒有出賽時為 1（舊版的「已取消」）；新的程式看 outcome */
   cancelled: number;
+  /** 完賽、沒有完賽、沒有出賽；還沒有結局時為 null（schema 11 之前的資料也是 null，見 raceOutcome） */
+  outcome?: string | null;
+  /** 沒有出賽的原因代號（DNS_REASONS），或沒有完賽的說明 */
+  outcome_reason?: string | null;
   created_at: string;
 }
 

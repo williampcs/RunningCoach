@@ -2,6 +2,7 @@
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
 import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
+import type { RaceOutcome } from "./races";
 import type {
   Activity,
   ConversationRow,
@@ -30,8 +31,9 @@ import type {
  * 8：other_activities（跑步以外的運動：騎車、游泳、肌力訓練等）
  * 9：多裝置同步（sync_state、sync_pending、sync_meta；賽事與課表的 sync_id）
  * 10：memories（記住的事）、conversations.archived（壓縮後保留原文）與 conversations.reply_to（回覆）
+ * 11：races.outcome 與 outcome_reason（完賽、沒有完賽、沒有出賽）
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -41,6 +43,9 @@ export const REPLY_EXCERPT_CHARS = 200;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
+
+/** 還沒有結局的賽事；舊版或同步過來、沒有 outcome 的，用 cancelled 與成績判斷 */
+const NO_OUTCOME = "COALESCE(outcome, '') = '' AND cancelled=0 AND COALESCE(result_time, '') = ''";
 
 /** 存一筆訓練的結果；id 是保留的那筆 */
 export interface SaveResult {
@@ -427,6 +432,16 @@ export class Db {
       if (!conversationCols.has("reply_to")) await d.exec("ALTER TABLE conversations ADD COLUMN reply_to TEXT");
       await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_sync_id ON memories(sync_id)");
 
+      // --- Migration: races.outcome、outcome_reason（schema 11：完賽、沒有完賽、沒有出賽，規格 12.15） ---
+      const raceCols = await columns("races");
+      if (!raceCols.has("outcome")) {
+        await d.exec("ALTER TABLE races ADD COLUMN outcome TEXT");
+        await d.exec("ALTER TABLE races ADD COLUMN outcome_reason TEXT");
+        // 舊的「已取消」是沒有出賽（原因不明）；有成績的是完賽
+        await d.exec("UPDATE races SET outcome='dns', outcome_reason='other' WHERE cancelled=1");
+        await d.exec("UPDATE races SET outcome='finished' WHERE outcome IS NULL AND result_time IS NOT NULL AND result_time != ''");
+      }
+
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
@@ -463,7 +478,7 @@ export class Db {
 
   getUpcomingRaces(days: number): Promise<Race[]> {
     const today = this.clock.today();
-    return this.all<Race>("SELECT * FROM races WHERE date >= ? AND date <= ? AND cancelled=0 ORDER BY date", [
+    return this.all<Race>(`SELECT * FROM races WHERE date >= ? AND date <= ? AND ${NO_OUTCOME} ORDER BY date`, [
       today,
       addDays(today, days),
     ]);
@@ -473,15 +488,18 @@ export class Db {
   getPastRacesWithoutResult(days: number): Promise<Race[]> {
     const today = this.clock.today();
     return this.all<Race>(
-      "SELECT * FROM races WHERE date < ? AND date >= ? AND cancelled=0" +
-        " AND (result_time IS NULL OR result_time = '') ORDER BY date DESC",
+      `SELECT * FROM races WHERE date < ? AND date >= ? AND ${NO_OUTCOME} ORDER BY date DESC`,
       [today, addDays(today, -days)],
     );
   }
 
-  /** 全部賽事（含已結束、已取消），供介面列表使用 */
+  /** 全部賽事（含已結束、沒有出賽），供介面列表與 list_races 使用 */
   getAllRaces(): Promise<Race[]> {
-    return this.all<Race>("SELECT * FROM races ORDER BY date DESC");
+    return this.all<Race>("SELECT * FROM races ORDER BY date DESC, id DESC");
+  }
+
+  getRace(id: number): Promise<Race | null> {
+    return this.get<Race>("SELECT * FROM races WHERE id=?", [id]);
   }
 
   async addRace(race: {
@@ -516,25 +534,23 @@ export class Db {
     await this.run(`UPDATE races SET ${setClause} WHERE id=?`, [...updates.map((k) => fields[k]!), raceId]);
   }
 
-  /** 標記為已取消（不刪除，保留歷史紀錄） */
-  async cancelRace(raceId: number, notes = ""): Promise<void> {
-    await this.run("UPDATE races SET cancelled=1, notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?", [
-      notes || null,
+  /**
+   * 賽事的結局（規則見 races.ts）：完賽寫成績，沒有完賽與沒有出賽清掉成績.
+   * 沒有出賽同時設 cancelled=1，v1 與舊的查詢照樣把它當成取消
+   */
+  async setRaceOutcome(raceId: number, outcome: RaceOutcome, fields: { resultTime?: string | null; reason?: string | null } = {}): Promise<void> {
+    await this.run("UPDATE races SET outcome=?, outcome_reason=?, result_time=?, cancelled=? WHERE id=?", [
+      outcome,
+      fields.reason || null,
+      outcome === "finished" ? (fields.resultTime ?? null) : null,
+      outcome === "dns" ? 1 : 0,
       raceId,
     ]);
   }
 
-  /** 刪除已取消的賽事（選手不想留著的）；還沒取消的不刪，回傳是否刪了 */
-  async deleteCancelledRace(raceId: number): Promise<boolean> {
-    return (await this.run("DELETE FROM races WHERE id=? AND cancelled=1", [raceId])).changes > 0;
-  }
-
-  async updateRaceResult(raceId: number, resultTime: string, notes = ""): Promise<void> {
-    await this.run("UPDATE races SET result_time=?, notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?", [
-      resultTime,
-      notes || null,
-      raceId,
-    ]);
+  /** 刪除一場賽事（只有選手能刪，見 races.ts） */
+  async deleteRace(raceId: number): Promise<boolean> {
+    return (await this.run("DELETE FROM races WHERE id=?", [raceId])).changes > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -914,6 +930,11 @@ export class Db {
    * 最近 N 天的跑步紀錄，各附上最新一筆 AI 摘要。
    * 同一筆訓練重新回報時會再生成一次摘要；只取最新的，避免同一筆訓練重複出現。
    */
+  /** 某一天的跑步（不含重複與已移除的），比賽當天的手錶紀錄用 */
+  getWorkoutsOn(date: string): Promise<Workout[]> {
+    return this.all<Workout>(`SELECT * FROM workouts w WHERE date = ? AND ${ACTIVE} ORDER BY id`, [date]);
+  }
+
   getRecentWorkouts(days: number): Promise<Workout[]> {
     return this.all<Workout>(
       `SELECT w.*, ws.summary,

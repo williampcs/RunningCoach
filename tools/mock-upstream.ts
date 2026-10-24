@@ -207,7 +207,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (remember) return [toolUse("remember", { content: remember[1]!.trim() })];
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
-  if (/比賽|賽事/.test(lastText)) return [toolUse("get_upcoming_races")];
+  if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   // Anthropic 的工具是 { name }，OpenAI 相容的是 { function: { name } }

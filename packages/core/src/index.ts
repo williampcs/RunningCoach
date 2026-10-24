@@ -38,6 +38,16 @@ export { buildFeed, type FeedAction, type FeedItem } from "./feed";
 export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accumulation, type Region, type RunCard } from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
 export {
+  DNS_REASONS,
+  duplicateGroups,
+  isAfterRace,
+  raceOutcome,
+  raceStatusText,
+  similarRaces,
+  type DnsReason,
+  type RaceOutcome,
+} from "./races";
+export {
   OPEN_METEO_URLS,
   OpenMeteoWeather,
   openMeteoUrlsAt,

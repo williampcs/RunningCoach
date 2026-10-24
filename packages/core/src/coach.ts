@@ -12,6 +12,8 @@ import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
 import { recoveryNoteFor } from "./recovery";
 import { runSync, SYNC_DAYS } from "./sync";
+import { editRace, markRaceNotStarted, raceActivity, recordRaceResult } from "./races";
+import type { RaceUpdate } from "./db";
 import { runWeatherNote, todayWeatherLine, type WeatherForecast, type WeatherSource } from "./weather";
 import {
   buildTools,
@@ -28,6 +30,7 @@ import {
   type ActivitySource,
   type CoachSettings,
   type DailyCheckin,
+  type Race,
   type Logger,
   type ReplyRef,
   type SqlDriver,
@@ -536,6 +539,36 @@ export class Coach {
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
     return changeSession(this.db, this.today(), id, action, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 賽事（規則見 races.ts，和教練的工具一樣）
+  // ---------------------------------------------------------------------------
+
+  /** 修改賽事；賽後只能改名稱與備註 */
+  editRace(id: number, fields: RaceUpdate): Promise<Race> {
+    return editRace(this.db, this.today(), id, fields);
+  }
+
+  /** 記錄或修改成績：完賽或沒有完賽 */
+  recordRaceResult(id: number, result: Parameters<typeof recordRaceResult>[3]): Promise<Race> {
+    return recordRaceResult(this.db, this.today(), id, result);
+  }
+
+  /** 不參加了／沒有出賽 */
+  markRaceNotStarted(id: number, reason: string, note?: string): Promise<Race> {
+    return markRaceNotStarted(this.db, id, reason, note);
+  }
+
+  /** 比賽當天的手錶紀錄（記錄成績時的提示） */
+  async raceActivity(id: number): Promise<{ time: string; distanceKm: number | null } | null> {
+    const race = await this.db.getRace(id);
+    return race ? raceActivity(this.db, race) : null;
+  }
+
+  /** 只有選手能刪除賽事（網頁版的按鈕）；教練的工具沒有刪除 */
+  deleteRace(id: number): Promise<boolean> {
+    return this.db.deleteRace(id);
   }
 
   /** 以本週的 ISO 週標籤儲存訓練計畫（/plan） */

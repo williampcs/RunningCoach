@@ -9,12 +9,23 @@ import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
 import { findGuide, guideTopics } from "./app-guide";
-import type { Activity, ActivitySource, CoachSettings, Logger, Race } from "./types";
+import type { Activity, ActivitySource, CoachSettings, Logger } from "./types";
+import {
+  DNS_REASONS,
+  duplicateGroups,
+  editRace,
+  markRaceNotStarted,
+  raceActivity,
+  raceLineForCoach,
+  raceOutcome,
+  recordRaceResult,
+  similarRaces,
+} from "./races";
 import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
 
 const RACE_ID_HINT =
-  "race_id 為 system prompt 賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
-  "清單中沒有該賽事時，再用 get_upcoming_races（可加大 days）查詢。";
+  "race_id 為系統提示賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
+  "清單中沒有時，用 list_races 查（選手在賽事頁看得到的全部賽事都查得到）。";
 
 /** 恢復狀況的判讀要和前幾天比較，查詢時多取幾天的手錶資料 */
 const BASELINE_EXTRA_DAYS = 35;
@@ -44,7 +55,8 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "add_race",
       description:
-        "新增目標賽事至 races table。" + "使用者說「我報名了 OOO 比賽」或「幫我記下 OOO 賽事」時呼叫。",
+        "新增目標賽事。使用者說「我報名了 OOO 比賽」或「幫我記下 OOO 賽事」時呼叫。" +
+        "同一天已有距離相近的賽事時不會新增，會列出那場；先問選手是不是同一場，不是才以 confirm_duplicate=true 再呼叫。",
       input_schema: {
         type: "object",
         properties: {
@@ -54,34 +66,54 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           target_time: { type: "string", description: "目標完賽時間，例：1:58:00。無具體目標時留空" },
           confirmed: { type: "integer", description: "1=已確認報名（預設），0=考慮中" },
           notes: { type: "string", description: "其他備註，例：山路賽，需練習爬坡" },
+          confirm_duplicate: { type: "boolean", description: "同一天已有距離相近的賽事、選手確認不是重複時才設 true" },
         },
         required: ["name", "date", "distance_km"],
       },
     },
     {
-      name: "get_upcoming_races",
+      name: "list_races",
       description:
-        "查詢距今 N 天內的賽事清單，並附上最近已結束、尚未記錄成績的賽事。" +
-        "使用者詢問「我最近有什麼比賽」或需要列出賽事時呼叫。",
+        "列出選手在賽事頁看得到的所有賽事（接下來的、待記錄成績的、完賽、沒有完賽、沒有出賽，不限多久以前），" +
+        "附上 race_id 與狀態，並標出看起來重複的。選手問到賽事、或系統提示的清單裡找不到某場時呼叫。",
       input_schema: {
         type: "object",
         properties: {
-          days: { type: "integer", description: `查詢範圍天數，預設 ${settings.raceLookaheadDays}` },
+          status: {
+            type: "string",
+            enum: ["all", "upcoming", "awaiting_result", "finished", "dnf", "dns"],
+            description: "只列某種狀態，預設 all",
+          },
         },
         required: [],
       },
     },
     {
-      name: "update_race_result",
-      description: "更新賽事實際完賽時間與備註。" + "賽後使用者回報成績時呼叫。" + RACE_ID_HINT,
+      name: "get_race_activity",
+      description: "查比賽當天的手錶紀錄（距離最接近的一趟）與總時間。記錄或修改成績前先呼叫，把時間給選手確認。" + RACE_ID_HINT,
+      input_schema: {
+        type: "object",
+        properties: { race_id: { type: "integer", description: "賽事的 id" } },
+        required: ["race_id"],
+      },
+    },
+    {
+      name: "record_race_result",
+      description:
+        "記錄或修改比賽成績（比賽當天以後）：完賽寫 result_time，沒有完賽寫 outcome=dnf 與說明。" +
+        "手錶的時間優先，但一定要先用 get_race_activity 查、把時間給選手確認（晶片成績常和手錶差幾秒到幾十秒），" +
+        "選手確認或給了正確的成績後，才以 athlete_confirmed=true 呼叫。成績會用來推算訓練配速。" +
+        RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: {
-          race_id: { type: "integer", description: "races table 的 id" },
-          result_time: { type: "string", description: "實際完賽時間，例：1:55:30" },
-          notes: { type: "string", description: "賽後備註，例：後半段配速不錯" },
+          race_id: { type: "integer", description: "賽事的 id" },
+          outcome: { type: "string", enum: ["finished", "dnf"], description: "finished 完賽、dnf 沒有完賽" },
+          result_time: { type: "string", description: "完賽成績，例：1:55:30（finished 必填）" },
+          note: { type: "string", description: "沒有完賽時的說明，例：25K 抽筋退賽" },
+          athlete_confirmed: { type: "boolean", description: "選手已確認這個成績（或已確認沒有完賽）" },
         },
-        required: ["race_id", "result_time"],
+        required: ["race_id", "outcome", "athlete_confirmed"],
       },
     },
     {
@@ -349,8 +381,8 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "update_race",
       description:
-        "修改已存在賽事的內容（名稱、日期、距離、目標時間、報名狀態、備註）。" +
-        "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。" +
+        "修改賽事的內容（名稱、日期、距離、目標時間、報名狀態、備註）。" +
+        "使用者說「把 OOO 目標改成 XXX」或「OOO 改期了」時呼叫。賽後（比賽日已過或已有結局）只能改名稱與備註；成績用 record_race_result。" +
         RACE_ID_HINT +
         "只需傳入要更新的欄位。",
       input_schema: {
@@ -368,18 +400,23 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       },
     },
     {
-      name: "cancel_race",
+      name: "mark_race_not_started",
       description:
-        "將賽事標記為已取消（設定 cancelled=1，保留歷史紀錄，不刪除）。" +
-        "使用者說「我退出 OOO」或「取消報名 OOO」時呼叫。" +
+        "記下選手不參加這場（賽前說不去了）或沒有出賽（賽後）。紀錄保留，教練之後可以參考原因；沒辦法恢復，選手要刪除只能自己在賽事頁刪。" +
+        "原因不清楚時先問。" +
         RACE_ID_HINT,
       input_schema: {
         type: "object",
         properties: {
-          race_id: { type: "integer", description: "races table 的 id" },
-          notes: { type: "string", description: "取消原因（選填），例：傷病、時間衝突" },
+          race_id: { type: "integer", description: "賽事的 id" },
+          reason: {
+            type: "string",
+            enum: Object.keys(DNS_REASONS),
+            description: Object.entries(DNS_REASONS).map(([k, v]) => `${k} ${v}`).join("、"),
+          },
+          note: { type: "string", description: "補充，例：右膝不適" },
         },
-        required: ["race_id"],
+        required: ["race_id", "reason"],
       },
     },
   ];
@@ -461,12 +498,6 @@ function toInt(value: unknown, label: string): number {
   return Math.trunc(toNumber(value, label));
 }
 
-function raceLine(r: Race): string {
-  const target = r.target_time || "完賽即可";
-  const result = r.result_time ? `｜實際成績：${r.result_time}` : "";
-  return `- [id=${r.id}] ${r.date} ${r.name} ${r.distance_km}km 目標：${target}${result}`;
-}
-
 /** 回覆的依據：讀取資料的工具各對應一種說法；存檔、改賽事這類工具不算 */
 const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> = {
   get_training_values: () => "訓練數值",
@@ -477,7 +508,8 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   fetch_latest_activity: () => "最新一筆跑步",
   fetch_latest_strava_activity: () => "最新一筆跑步",
   save_workout: () => "這次跑步的數據",
-  get_upcoming_races: () => "賽事",
+  list_races: () => "賽事",
+  get_race_activity: () => "比賽當天的手錶紀錄",
   get_full_message: () => "較早的對話",
   search_conversations: () => "較早的對話",
   get_app_help: () => "App 的使用說明",
@@ -729,10 +761,19 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const raceName = str(input.name);
         const date = str(input.date);
         if (!raceName || !date) throw new Error("缺少 name 或 date");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`date 格式要是 YYYY-MM-DD：${date}`);
+        const distanceKm = toNumber(input.distance_km, "distance_km");
+        const same = similarRaces(await db.getAllRaces(), { date, distance_km: distanceKm });
+        if (same.length && input.confirm_duplicate !== true) {
+          return (
+            `尚未新增：同一天已有距離相近的賽事，可能是同一場：\n${same.map((r) => raceLineForCoach(r, today())).join("\n")}\n` +
+            "先問選手是不是同一場；不是的話再以 confirm_duplicate=true 呼叫。"
+          );
+        }
         const raceId = await db.addRace({
           name: raceName,
           date,
-          distance_km: toNumber(input.distance_km, "distance_km"),
+          distance_km: distanceKm,
           target_time: str(input.target_time),
           confirmed: toInt(input.confirmed ?? 1, "confirmed"),
           notes: str(input.notes),
@@ -740,31 +781,54 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         return `賽事已新增（id=${raceId}）：${date} ${raceName}`;
       }
 
-      case "get_upcoming_races": {
-        const days = toInt(input.days ?? settings.raceLookaheadDays, "days");
-        const races = await db.getUpcomingRaces(days);
-        const pastRaces = await db.getPastRacesWithoutResult(settings.raceLookbackDays);
-        const lines: string[] = [];
-        if (races.length) {
-          lines.push(`未來 ${days} 天內的賽事（共 ${races.length} 筆）：`, ...races.map(raceLine));
-        } else {
-          lines.push(`未來 ${days} 天內無已記錄賽事。`);
-        }
-        if (pastRaces.length) {
+      case "list_races": {
+        const status = str(input.status) || "all";
+        const all = await db.getAllRaces();
+        const stateOf = (r: (typeof all)[number]) => raceOutcome(r) ?? (r.date < today() ? "awaiting_result" : "upcoming");
+        const races = status === "all" ? all : all.filter((r) => stateOf(r) === status);
+        if (!races.length) return status === "all" ? "賽事頁上沒有任何賽事。" : `沒有狀態是 ${status} 的賽事。`;
+        const lines = [`賽事頁上的賽事（${races.length} 場，新的在前）：`, ...races.map((r) => raceLineForCoach(r, today()))];
+        const dups = duplicateGroups(all);
+        if (dups.length) {
           lines.push(
-            `\n最近 ${settings.raceLookbackDays} 天已結束、尚未記錄成績的賽事（共 ${pastRaces.length} 筆）：`,
-            ...pastRaces.map(raceLine),
+            "",
+            "看起來重複的（同一天、距離相近）：" + dups.map((g) => g.map((r) => `[${r.id}]`).join("、")).join("；"),
+            "你不能刪除賽事；請選手在「計畫與賽事」頁的賽事上按「刪除」刪掉多的那筆。",
           );
         }
         return lines.join("\n");
       }
 
-      case "update_race_result": {
+      case "get_race_activity": {
+        const race = await db.getRace(toInt(input.race_id, "race_id"));
+        if (!race) return "找不到這場賽事，可能已經刪除。";
+        const found = await raceActivity(db, race);
+        if (!found) {
+          return `${race.date} 沒有距離接近 ${race.distance_km} km 的跑步紀錄（可能還沒同步）。請選手直接提供成績，或先同步再查。`;
+        }
+        return (
+          `${race.date}「${race.name}」當天的手錶紀錄：${found.distanceKm} km，總時間 ${found.time}。` +
+          "這是手錶的時間（含停下來的時間），和大會的晶片成績可能差幾秒到幾十秒；請選手確認或提供正式成績後再記錄。"
+        );
+      }
+
+      case "record_race_result": {
         const raceId = toInt(input.race_id, "race_id");
-        const resultTime = str(input.result_time);
-        if (!resultTime) throw new Error("缺少 result_time");
-        await db.updateRaceResult(raceId, resultTime, str(input.notes));
-        return `賽事 id=${raceId} 成績已更新：${resultTime}`;
+        if (input.athlete_confirmed !== true) {
+          return "尚未記錄：先用 get_race_activity 查手錶紀錄，把成績給選手確認，確認後再以 athlete_confirmed=true 呼叫。";
+        }
+        const outcome = str(input.outcome);
+        if (outcome === "finished") {
+          const resultTime = str(input.result_time);
+          if (!resultTime) throw new Error("完賽要有 result_time");
+          const race = await recordRaceResult(db, today(), raceId, { outcome: "finished", time: resultTime });
+          return `已記錄「${race.name}」完賽成績：${race.result_time}。`;
+        }
+        if (outcome === "dnf") {
+          const race = await recordRaceResult(db, today(), raceId, { outcome: "dnf", note: str(input.note) });
+          return `已記錄「${race.name}」沒有完賽${race.outcome_reason ? `（${race.outcome_reason}）` : ""}。`;
+        }
+        throw new Error("outcome 只能是 finished 或 dnf");
       }
 
       case "update_athlete_profile": {
@@ -793,17 +857,16 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           const value = input[key];
           if (typeof value === "string" || typeof value === "number") fields[key] = value;
         }
-        await db.updateRace(raceId, fields);
+        const race = await editRace(db, today(), raceId, fields);
         const changed = Object.entries(fields)
           .map(([k, v]) => `${k}=${v}`)
           .join("、");
-        return `賽事 id=${raceId} 已更新：${changed}`;
+        return `賽事「${race.name}」（id=${raceId}）已更新：${changed}`;
       }
 
-      case "cancel_race": {
-        const raceId = toInt(input.race_id, "race_id");
-        await db.cancelRace(raceId, str(input.notes));
-        return `賽事 id=${raceId} 已標記為取消，紀錄保留於 DB。`;
+      case "mark_race_not_started": {
+        const race = await markRaceNotStarted(db, toInt(input.race_id, "race_id"), str(input.reason), str(input.note));
+        return `已記下「${race.name}」沒有出賽（${DNS_REASONS[race.outcome_reason as keyof typeof DNS_REASONS] ?? race.outcome_reason}），紀錄保留。`;
       }
 
       default:

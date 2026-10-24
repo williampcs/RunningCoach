@@ -11,6 +11,7 @@ import { typicalPaceSec } from "./plan";
 import { recentAdjustment } from "./plan-match";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
+import { raceOutcome } from "./races";
 import { formatPace } from "./fake-activities";
 import type { OtherActivity, PaceCurveSummary, Race, RunSettings, Workout } from "./types";
 
@@ -121,7 +122,7 @@ export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, toda
   const candidates: VdotEstimate[] = [];
   for (const r of races) {
     const secs = parseDuration(r.result_time);
-    if (r.cancelled || secs === null || r.date < since || r.date > today) continue;
+    if (raceOutcome(r) !== "finished" || secs === null || r.date < since || r.date > today) continue;
     const value = vdotOf(r.distance_km * 1000, secs);
     if (value !== null) candidates.push({ value, kind: "race", distanceM: r.distance_km * 1000, secs, date: r.date, name: r.name });
   }

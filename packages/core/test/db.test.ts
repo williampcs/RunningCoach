@@ -18,7 +18,7 @@ describe("Db", () => {
     const { db, driver } = await freshDb();
     await db.init();
     const [row] = await driver.all("PRAGMA user_version");
-    expect(row?.user_version).toBe(10);
+    expect(row?.user_version).toBe(11);
   });
 
   it("schema 2 → 3：恢復資料補上 Apple 的 HRV（SDNN）欄位，保留原有資料", async () => {
@@ -80,18 +80,18 @@ describe("Db", () => {
     expect((await db.getUpcomingRaces(90)).map((r) => r.id)).toEqual([today, soon]);
     expect((await db.getPastRacesWithoutResult(14)).map((r) => r.id)).toEqual([past]);
 
-    await db.updateRaceResult(past, "48:30", "");
+    await db.setRaceOutcome(past, "finished", { resultTime: "48:30" });
     expect(await db.getPastRacesWithoutResult(14)).toEqual([]);
 
     await db.updateRace(soon, { target_time: "1:55:00", notes: null });
-    await db.cancelRace(today, "感冒");
+    await db.setRaceOutcome(today, "dns", { reason: "injury" });
+    expect(await db.getRace(today)).toMatchObject({ outcome: "dns", outcome_reason: "injury", cancelled: 1, result_time: null });
     const races = await db.getUpcomingRaces(90);
     expect(races).toHaveLength(1);
     expect(races[0]).toMatchObject({ id: soon, target_time: "1:55:00", name: "半馬", notes: null });
 
-    // 只有取消的可以刪
-    expect(await db.deleteCancelledRace(soon)).toBe(false);
-    expect(await db.deleteCancelledRace(today)).toBe(true);
+    expect(await db.deleteRace(today)).toBe(true);
+    expect(await db.deleteRace(today)).toBe(false);
     expect((await db.getAllRaces()).map((r) => r.id)).not.toContain(today);
     expect((await db.getAllRaces()).map((r) => r.id)).toContain(soon);
   });

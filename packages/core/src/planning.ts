@@ -23,6 +23,7 @@ import {
 } from "./plan";
 import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
 import { analyzeRecovery } from "./recovery";
+import { raceOutcome } from "./races";
 import { computeTrainingValues } from "./training-values";
 import type { TrainingPlan } from "./types";
 
@@ -118,7 +119,12 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
   const content = planMarkdown(meta, sessions, ctx);
   const planId = await db.saveStructuredPlan({ ...meta, content }, sessions);
   const saved = await db.getPlannedSessions(planId);
-  return `課表已儲存（${meta.weekLabel}）。\n\n${sessionsText(saved, ctx)}`;
+  // 考慮中的比賽不要求減量，只提醒（規格 12.15）
+  const maybe = ctx.races.filter((r) => !r.confirmed && raceOutcome(r) === null && r.date >= weekStart && r.date <= addDays(weekStart, 20));
+  const maybeNote = maybe.length
+    ? `\n\n提醒：考慮中的比賽 ${maybe.map((r) => `「${r.name}」（${r.date}）`).join("、")} 在三週內；確定報名的話要開始減量，請和選手確認。`
+    : "";
+  return `課表已儲存（${meta.weekLabel}）。\n\n${sessionsText(saved, ctx)}${maybeNote}`;
 }
 
 /** 結果的一行，例：「→ 部分達成：強度課的時間比計畫少｜實際：8.1 km、50 分鐘、心率 158、體感 8｜體感偏難」 */

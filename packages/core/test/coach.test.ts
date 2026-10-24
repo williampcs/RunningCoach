@@ -129,12 +129,12 @@ describe("Coach.chat", () => {
     const { coach, provider } = await makeCoach([
       toolTurn("add_race", { name: "萬金石", date: "2026-11-01", distance_km: 21.1, target_time: "1:50:00" }),
       toolTurn("update_race", { race_id: 1, target_time: "1:48:00", confirmed: 0 }),
-      toolTurn("get_upcoming_races", {}),
+      toolTurn("list_races", {}),
       toolTurn("update_athlete_profile", { key: "max_hr", value: "185" }),
       turn({ text: "好了" }),
       toolTurn("get_training_plan"),
-      toolTurn("cancel_race", { race_id: 1, notes: "受傷" }),
-      toolTurn("get_upcoming_races", { days: 30 }),
+      toolTurn("mark_race_not_started", { race_id: 1, reason: "injury", note: "右膝" }),
+      toolTurn("list_races", { status: "upcoming" }),
       turn({ text: "好了" }),
     ]);
     await coach.chat("一");
@@ -145,12 +145,12 @@ describe("Coach.chat", () => {
     const results = provider.calls.flatMap((c) => c.toolResults ?? []).map((r) => r.content);
     expect(results).toEqual([
       "賽事已新增（id=1）：2026-11-01 萬金石",
-      "賽事 id=1 已更新：target_time=1:48:00、confirmed=0",
-      "未來 90 天內的賽事（共 1 筆）：\n- [id=1] 2026-11-01 萬金石 21.1km 目標：1:48:00",
+      "賽事「萬金石」（id=1）已更新：target_time=1:48:00、confirmed=0",
+      "賽事頁上的賽事（1 場，新的在前）：\n- [1] 2026-11-01 萬金石 21.1km｜目標 1:48:00｜還有 22 天（考慮中）",
       "選手資料已更新：max_hr = 185",
       "當前訓練計畫（2026-W41，文字版）：\n\n週二間歇、週日長跑",
-      "賽事 id=1 已標記為取消，紀錄保留於 DB。",
-      "未來 30 天內無已記錄賽事。",
+      "已記下「萬金石」沒有出賽（受傷或生病），紀錄保留。",
+      "沒有狀態是 upcoming 的賽事。",
     ]);
     // 第二則訊息的 system prompt 已反映第一則訊息中更新的資料
     expect(provider.calls[5]!.request.system).toContain("最大心率：185bpm（實測）");

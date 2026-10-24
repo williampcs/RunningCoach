@@ -156,8 +156,11 @@ describe("檢查器", () => {
   });
 
   it("三週內有比賽：檢查減量", () => {
-    const race = { id: 1, name: "半馬", date: "2026-10-25", distance_km: 21.1, cancelled: 0, result_time: null } as Race;
+    const race = { id: 1, name: "半馬", date: "2026-10-25", distance_km: 21.1, confirmed: 1, cancelled: 0, result_time: null } as Race;
     expect(rules(goodWeek(), { races: [race] })).toContain("taper");
+    // 考慮中的比賽不要求減量；沒有出賽的也不算
+    expect(rules(goodWeek(), { races: [{ ...race, confirmed: 0 }] })).not.toContain("taper");
+    expect(rules(goodWeek(), { races: [{ ...race, outcome: "dns", cancelled: 1 }] })).not.toContain("taper");
     expect(rules([easy("2026-10-13", 5), tempo("2026-10-15", 3), long("2026-10-18", 7)], { races: [race] })).not.toContain("taper");
   });
 
@@ -200,7 +203,7 @@ describe("教練存課表與調整", () => {
   /** 最近的 10 km 比賽 45:00，才有配速的依據 */
   const withRace = async (coach: Awaited<ReturnType<typeof makeCoach>>["coach"]) => {
     const id = await coach.db.addRace({ name: "城市路跑", date: "2026-09-20", distance_km: 10, target_time: "", confirmed: 1, notes: "" });
-    await coach.db.updateRaceResult(id, "45:00");
+    await coach.recordRaceResult(id, { outcome: "finished", time: "45:00" });
   };
 
   it("沒有問題就存；有問題先退回，寫了理由才存；可以列出、跳過、改用替代與移動", async () => {
