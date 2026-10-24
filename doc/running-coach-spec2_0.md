@@ -2251,7 +2251,9 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
    - `STAGING_WEB_URL`：`https://staging.zone2mate.com`
    - `STAGING_SYNC_D1_DATABASE_ID`：第 1 步的 Database ID
    - `STAGING_SYNC_URL`：第 2 步的網址
-4. GitHub → Actions → Deploy staging → Run workflow（分支選 `v2`）。會建立 Pages 專案、部署 staging 的同步服務與網頁版。失敗時看紀錄或把紀錄的錯誤貼給協調 session。
+4. 請協調 session 執行「Deploy staging」（分支 `v2`）。會建立 Pages 專案、部署 staging 的同步服務與網頁版。失敗時看紀錄或把紀錄的錯誤貼給協調 session。
+   - GitHub 的網頁只在 workflow 檔已經在預設分支（`main`）上時才有「Run workflow」按鈕；`staging.yml` 合併部署之前只在 `v2`，所以網頁上沒有按鈕，由協調 session 用 API 執行，或在之前那次被跳過的執行點「Re-run all jobs」（會用現在的 Variables）。合併部署之後網頁上就有按鈕。
+   - 改了 Variables 之後同樣要再執行一次。
 5. Cloudflare 後台 → Workers & Pages → `running-coach-staging` → Custom domains → Set up a custom domain → `staging.zone2mate.com` → 確認（DNS 由 Cloudflare 自動加）→ 等狀態變成 Active（通常幾分鐘）。
 6. 打開 `https://staging.zone2mate.com`：標題列是「Staging」、上方有 Staging 的提醒。staging 的資料和正式版分開：要試就重新填 API key（會用你的額度），可以用測試模式；要試多裝置同步就在 staging 另外開一個同步空間（和正式的同步資料無關）。
 7. （可選）Cloudflare 的正式專案 `running-coach` → Deployments 裡以前手動部署的預覽（`v2` 分支）可以刪掉；`v2.running-coach-bgb.pages.dev` 不再更新。
