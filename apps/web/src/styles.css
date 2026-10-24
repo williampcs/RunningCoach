@@ -94,7 +94,7 @@ body {
   }
 }
 
-/* 版本號：正式版之前標示 Beta */
+/* 標題列的階段標籤：正式版之前標示 Beta（完整版號在設定頁最下面） */
 .version {
   font-size: 0.7rem;
   font-weight: 600;

@@ -49,10 +49,22 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 
 只有使用者說「合併部署」時才做；授權只限那一次，之後的改動仍要等使用者再說。
 
-1. 建 PR：`v2` → `main`，說明改了什麼與怎麼驗證的。
-2. 在背景輪詢那個 commit 的 check runs，等 CI 全部成功。
-3. 合併：merge method 用 `merge`（不要 squash），帶完整 40 字元的 head SHA（`git rev-parse HEAD`）。
-4. 在背景輪詢合併後 commit 的 workflow runs（Deploy web app、Deploy sync service、Deploy Discord bot），失敗時看 job log，回報結果與使用者要確認的事。
+每次合併部署就是發一版（規格 12.19）。版號只有一個來源：repo 根目錄 `package.json` 的 `version`，網頁版（標題列的 Beta、設定頁最下面的完整版號）與 Discord bot（`/status`）都讀它。
+
+1. 發版（在 `v2` 上，建 PR 之前）：
+   - 決定版號：看上一個標籤之後的改動（`git log v上一版..origin/v2 --oneline` 與版本異動表）。
+     - 有新功能（使用者看得到的新東西：新的畫面、設定、指令、教練會做的新事）→ 加**中間那碼**：`npm run version:bump -- minor`（0.1.0 → 0.2.0）。
+     - 只有修錯誤、文字或版面微調、文件、內部整理 → 加**最後一碼**：`npm run version:bump -- patch`（0.2.0 → 0.2.1）。
+     - 兩種都有就加中間那碼。第一碼（1.0.0）只在使用者說要正式給大家用時才加。
+     - 第一次發版（還沒有任何標籤）版號已經是 0.1.0，不用改。
+   - 指令會一起改根目錄、各套件的 `package.json` 與 `package-lock.json`；不要手改。
+   - 規格開頭的版本異動表加一行：「發版 vX.Y.Z：這一版的內容（使用者看得懂的幾點）」。
+   - `npm test`、`npm run typecheck`，commit（`release: vX.Y.Z`）並推到 `v2`。
+2. 建 PR：`v2` → `main`，標題帶版號，說明改了什麼與怎麼驗證的。
+3. 在背景輪詢那個 commit 的 check runs，等 CI 全部成功。
+4. 合併：merge method 用 `merge`（不要 squash），帶完整 40 字元的 head SHA（`git rev-parse HEAD`）。
+5. 打標籤：在合併產生的 commit（`main` 上）打 `vX.Y.Z`：`git fetch origin main && git tag vX.Y.Z <合併的 commit> && git push origin vX.Y.Z`。標籤不觸發部署；部署失敗要重來時不改標籤，修好後發下一個 patch 版。
+6. 在背景輪詢合併後 commit 的 workflow runs（Deploy web app、Deploy sync service、Deploy Discord bot），失敗時看 job log，回報結果（含這一版的版號）與使用者要確認的事。
 
 ## 文件入口
 

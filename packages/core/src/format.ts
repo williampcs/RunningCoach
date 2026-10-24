@@ -55,14 +55,19 @@ export function formatTokenFooter(stats: UsageStats): string {
   return `📊 輸入 ${fmt(u.firstInputTokens)}（${details.join("  ")}） | 輸出 ${fmt(u.outputTokens)}${extra}`;
 }
 
-/** 系統狀態（模型設定與五層記憶），Markdown 格式 */
-export function formatStatus(s: StatusSummary, models: Record<Purpose, string>, settings: CoachSettings): string {
+/** 系統狀態（版本、模型設定與五層記憶），Markdown 格式；version 例如「v0.1.0 Beta」 */
+export function formatStatus(
+  s: StatusSummary,
+  models: Record<Purpose, string>,
+  settings: CoachSettings,
+  version?: string,
+): string {
   const convBar = s.conversationCount >= s.conversationMax * 0.8 ? "🟡" : "🟢";
   const plan = s.trainingPlanLabel ? `有（${s.trainingPlanLabel}）` : "尚未設定";
   const summary = s.convSummaryChars ? `有（${s.convSummaryChars} 字）` : "無（尚未觸發壓縮）";
 
   return [
-    "**📊 系統狀態**",
+    version ? `**📊 系統狀態**（${version}）` : "**📊 系統狀態**",
     "",
     "**模型**",
     `　主對話：${models.chat}`,

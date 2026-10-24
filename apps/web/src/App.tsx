@@ -35,7 +35,7 @@ import { ProfileView } from "./views/Profile";
 import { ReportView } from "./views/Report";
 import { SettingsView } from "./views/Settings";
 import { requestPersistentStorage, useNewVersion } from "./update-check";
-import { BUILD, BUILD_DETAIL, VERSION_LABEL } from "./version";
+import { BUILD, BUILD_DETAIL, STAGE_LABEL } from "./version";
 
 // 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -332,7 +332,7 @@ export function App() {
         <header className="topbar" ref={topbar}>
           <h1>Running Coach</h1>
           <span className="version" title={BUILD_DETAIL}>
-            {VERSION_LABEL}
+            {STAGE_LABEL}
           </span>
           <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
           <button

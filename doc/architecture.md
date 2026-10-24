@@ -225,6 +225,8 @@ erDiagram
 | 合併到 `main` | 網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`） |
 | 手動 | `web-preview.yml`：把某個分支部署成預覽網址 |
 
+版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
+
 網頁版的建置另外輸出 `version.json`（這次建置的 commit 與日期，`_headers` 設成不快取）。網頁打開時、回到前景時、前景中每 30 分鐘讀一次，和自己的 commit 不同就在上方提示「有新版本，點這裡更新」，點了才重新載入；讀不到時不提示（規格 12.18）。
 
 開發一律在 `v2`，合併到 `main` 就是上線，所以只在使用者說「合併部署」時合併（`CLAUDE.md`）。

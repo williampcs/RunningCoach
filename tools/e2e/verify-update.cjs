@@ -1,8 +1,11 @@
 // 驗證有新版本的提示與資料保護（規格 12.18）：
 // 版本相同不提示；伺服器的 version.json 換成別的 commit 後，回到前景時出現提示、不自動重新載入（打到一半的字還在）、
 // 關掉後同一個版本不再出現（重新整理後也是）、更新的版本又出現、點了才重新載入；讀不到（離線、404、回傳網頁）時不提示也不報錯；
-// 設定頁「資料」顯示資料保護的三種狀態；手機與電腦、淺色與深色的截圖
+// 設定頁「資料」顯示資料保護的三種狀態；標題列只顯示 Beta、設定頁最下面是完整的版號（規格 12.19）；
+// 手機與電腦、淺色與深色的截圖
 const path = require("path");
+
+const { version } = require("../../package.json");
 
 const E2E = require("./env.cjs");
 const { chromium } = E2E;
@@ -39,7 +42,12 @@ const bannerShown = async (page, expected) => {
     await page.locator("nav.tabbar button").first().waitFor();
     await E2E.go(page, "設定");
     // 網頁本身的版本（設定的最下面）和 version.json 是同一次建置
-    check.versionMatchesBuild = (await page.locator("#side-panel").innerText()).includes(`（${actual.commit}，`);
+    const settingsText = await page.locator("#side-panel").innerText();
+    check.versionMatchesBuild = settingsText.includes(`（${actual.commit}，`);
+    // 版號只有一個來源：repo 根目錄的 package.json
+    check.settingsShowsFullVersion = settingsText.includes(`v${version} Beta（${actual.commit}，`);
+    check.topbarShowsOnlyBeta = (await page.locator(".topbar .version").innerText()).trim() === "Beta";
+    check.topbarTitleHasFullVersion = ((await page.locator(".topbar .version").getAttribute("title")) ?? "").startsWith(`v${version} Beta（`);
     await context.close();
   }
 

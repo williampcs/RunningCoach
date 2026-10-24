@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
-/** 對外的版本號與建置資訊：版本來自 package.json；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
+/** 對外的版本號與建置資訊：版本來自 repo 根目錄的 package.json（唯一的來源，規格 12.19）；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
 function buildInfo() {
-  const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+  const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
   let commit = process.env.GITHUB_SHA?.slice(0, 7) ?? "";
   if (!commit) {
     try {
