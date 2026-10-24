@@ -42,6 +42,7 @@ for f in tools/e2e/verify-*.cjs; do echo "$f: $(node $f 2>&1 | tail -1)"; done  
 | `verify-help.cjs` | 使用說明與教練的說明連結（12.12） |
 | `verify-weather.cjs` | 天氣的城市、送出的座標、模型看不到地點、提醒（12.14） |
 | `verify-devicesync.cjs` | 多裝置同步：配對、復原碼、還原後存設定（12.10、KI-042） |
+| `verify-ui-round1.cjs` | 介面調整第一輪：教練動態的看板（展開即全部、看板內捲動）、輸入框一行高與自動長高、各欄位的 Enter、訊息的時間戳；手機與電腦、淺色與深色的截圖（12.16） |
 
 注意：
 

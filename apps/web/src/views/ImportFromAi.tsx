@@ -3,6 +3,7 @@ import { useState } from "react";
 import { IMPORT_PROMPT, PROFILE_FIELDS, type ImportedRace, type ImportSuggestion } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 
 interface ProfileChoice {
@@ -156,7 +157,7 @@ export function ImportFromAi() {
                 />
                 <label>
                   {p.label}
-                  <input value={p.value} onChange={(e) => setProfile(i, { value: e.target.value, selected: true })} />
+                  <AutoGrowTextarea enter="submit" value={p.value} onChange={(e) => setProfile(i, { value: e.target.value, selected: true })} />
                   {p.current !== undefined && <span className="small">目前：{p.current}</span>}
                 </label>
               </div>

@@ -15,6 +15,7 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 
 interface RaceForm {
   id: number | null;
@@ -178,7 +179,7 @@ export function RacesCard() {
         >
           <label className="wide">
             賽事名稱
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <AutoGrowTextarea enter="submit" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </label>
           {form.after ? (
             <p className="small muted wide">賽後只能改名稱與備註；成績用「修改成績」。</p>
@@ -209,7 +210,7 @@ export function RacesCard() {
           )}
           <label className="wide">
             備註
-            <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            <AutoGrowTextarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </label>
           <div className="row wide">
             <button type="submit" className="primary">
@@ -309,7 +310,7 @@ export function RacesCard() {
             </label>
             <label>
               補充（選填）
-              <input value={dnsFor.note} placeholder="例：右膝不適" onChange={(e) => setDnsFor({ ...dnsFor, note: e.target.value })} />
+              <AutoGrowTextarea value={dnsFor.note} placeholder="例：右膝不適" onChange={(e) => setDnsFor({ ...dnsFor, note: e.target.value })} />
             </label>
             <p className="small muted">記下後不能恢復；紀錄會保留，教練之後會參考原因。</p>
             <div className="row">
@@ -383,7 +384,7 @@ export function RacesCard() {
             ) : (
               <label>
                 說明（選填）
-                <input
+                <AutoGrowTextarea
                   value={resultFor.note}
                   placeholder="例：25K 抽筋退賽"
                   onChange={(e) => setResultFor({ ...resultFor, note: e.target.value })}

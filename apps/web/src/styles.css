@@ -14,6 +14,10 @@
   --error: #fee2e2;
   --info: #e0f2fe;
   --danger-text: #b91c1c;
+  /* 教練動態的看板：和對話背景、泡泡都不同的淡底色 */
+  --board: #e9eff6;
+  --board-line: #d5deea;
+  --board-text: #475569;
   font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
   line-height: 1.6;
 }
@@ -34,6 +38,9 @@
     --error: #5b1d1d;
     --info: #0c3a55;
     --danger-text: #fca5a5;
+    --board: #16223a;
+    --board-line: #263552;
+    --board-text: #a5b4cc;
   }
 }
 
@@ -212,6 +219,11 @@ input[type="range"] {
 textarea {
   resize: vertical;
   width: 100%;
+}
+
+/* 自動長高的輸入框（AutoGrowTextarea）：高度由程式算，不給拖拉 */
+textarea.autogrow {
+  resize: none;
 }
 
 button,
@@ -434,10 +446,29 @@ pre {
   max-width: 100%;
 }
 
+/* 氣泡下方一行：時間（一直顯示）與動作（滑過時才顯示） */
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 6px;
+  min-height: 1.5rem;
+}
+
+.msg.user > .msg-meta {
+  flex-direction: row-reverse;
+}
+
+.msg-time {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .msg-actions {
   display: flex;
   gap: 12px;
-  padding: 0 6px;
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -577,7 +608,11 @@ span.quote {
 
 .composer textarea {
   flex: 1;
-  resize: none;
+}
+
+/* 「送出」和一行高的輸入框一樣高（輸入框長高時按鈕留在底部） */
+.composer button[type="submit"] {
+  min-height: calc(1.6rem + 18px);
 }
 
 .markdown > :first-child {
@@ -823,34 +858,51 @@ span.quote {
   border-color: var(--warn);
 }
 
-/* 教練動態：固定在對話上方。項目之間用細線分隔，不再一格一格的框 */
+/*
+ * 教練動態：「今天的重點」看板（12.16 的 A 版），固定在對話上方。
+ * 看起來是介面而不是訊息：滿版的一條、淡的底色，每則一列，不用卡片或泡泡的框與陰影。
+ */
 .feed {
   flex: none;
   display: flex;
   flex-direction: column;
-  padding: 2px 14px 6px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-}
-
-/* 只有按了「顯示其餘」才可能超過高度，這時才在框內捲動 */
-.feed.all {
-  max-height: 45%;
+  /* 手機：貼齊畫面兩側 */
+  margin: -8px -16px 0;
+  padding: 0 16px 4px;
+  background: var(--board);
+  border-bottom: 1px solid var(--board-line);
+  /* 展開就全部顯示；太多時在看板內捲動，最高約半個畫面 */
+  max-height: 50vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
+/* 捲動時日期那一行留在上面 */
 .feed-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 0 2px;
+  gap: 10px;
+  padding: 8px 0 4px;
+  background: var(--board);
 }
 
-.feed-head strong {
+.feed-date {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--board-text);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.feed-head > :last-child {
+  margin-left: auto;
+}
+
+.feed-head .link {
+  font-size: 0.8rem;
 }
 
 .feed-list {
@@ -860,26 +912,33 @@ span.quote {
 }
 
 .feed-list > li + li {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--board-line);
 }
 
+/* 一則一列：圖示、一句話、動作 */
 .feed-item {
   display: flex;
-  gap: 10px;
-  padding: 10px 0;
+  gap: 8px;
+  padding: 6px 0;
 }
 
-/* 需要留意的項目：左側一條提示色，不整塊上色 */
-.feed-item.warn {
-  margin-left: -14px;
-  padding-left: 11px;
-  border-left: 3px solid var(--warn-strong);
+/* 需要留意的項目：圖示前一個提示色的小點，不整塊上色 */
+.feed-item.warn .feed-icon::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 0.55em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--warn-strong);
 }
 
 .feed-icon {
+  position: relative;
   flex: none;
-  font-size: 1.05rem;
-  line-height: 1.4;
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 /* 文字在左、按鈕在右；寬度不夠時按鈕換到下一行 */
@@ -889,42 +948,141 @@ span.quote {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  gap: 2px 12px;
 }
 
 .feed-text {
   flex: 1 1 240px;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .feed-text strong {
-  font-size: 0.95rem;
+  font-weight: 600;
 }
 
-.feed-text span {
+/* 說明接在那一句後面，淡色小字 */
+.feed-text span,
+.feed-text a {
+  margin-left: 6px;
   color: var(--muted);
+}
+
+/* 資料來源的標示放在自己一行 */
+.feed-text .credit {
+  display: block;
+  width: fit-content;
+  margin-left: 0;
 }
 
 .feed-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px 6px;
 }
 
 .feed-actions button {
-  font-size: 0.8rem;
-  padding: 4px 10px;
+  font-size: 0.78rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: transparent;
+  border-color: var(--board-line);
+}
+
+.feed-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .feed-actions button.link {
   padding: 0 4px;
+  border: 0;
 }
 
 .feed-body > .checkin {
+  flex-basis: 100%;
+}
+
+.feed-more {
+  align-self: flex-start;
+  margin: 2px 0 4px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 599px) {
+  .feed-text {
+    font-size: 0.85rem;
+  }
+
+  .feed-text span,
+  .feed-text a {
+    font-size: 0.78rem;
+  }
+}
+
+/* 桌面：看板佔滿內容欄，四角稍微圓一點 */
+@media (min-width: 900px) {
+  .feed {
+    margin: 0 0 4px;
+    padding: 0 16px 4px;
+    border: 0;
+    border-radius: 8px;
+  }
+}
+
+/* 收起：一行，項目輪流出現 */
+.feed.collapsed {
+  padding: 0;
+  overflow: hidden;
+}
+
+.feed-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  padding: 7px 16px;
+  overflow: hidden;
+  font-size: 0.88rem;
+}
+
+.feed-ticker {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed-ticker.animate {
+  animation: feed-ticker-in 0.35s ease-out;
+}
+
+@keyframes feed-ticker-in {
+  from {
+    opacity: 0;
+    transform: translateY(60%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.feed-summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.checkin {
   flex-basis: 100%;
 }
 
@@ -1908,11 +2066,16 @@ button.link.danger {
 .memory-add {
   display: flex;
   gap: 8px;
+  align-items: flex-end;
 }
 
-.memory-add input {
+.memory-add textarea {
   flex: 1;
   min-width: 0;
+}
+
+.memory-add button {
+  min-height: calc(1.6rem + 18px);
 }
 
 .summary-text {

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { DailyCheckin, FeedAction, FeedItem } from "@running-coach/core";
+import { shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
 
@@ -93,7 +94,7 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
       ))}
       <label>
         備註
-        <input value={values.notes} placeholder="例如：右小腿有點緊" onChange={(e) => setValues({ ...values, notes: e.target.value })} />
+        <AutoGrowTextarea value={values.notes} placeholder="例如：右小腿有點緊" onChange={(e) => setValues({ ...values, notes: e.target.value })} />
       </label>
       {error && <div className="notice error">{error}</div>}
       <div className="row">
@@ -111,14 +112,6 @@ function dismissible(item: FeedItem): boolean {
   return !item.actions.some((a) => a.type === "checkin");
 }
 
-/** 展開時先顯示幾則（手機的寬度放不下三則）；其餘按「顯示其餘」 */
-function shownAtFirst(): number {
-  try {
-    return window.matchMedia("(max-width: 599px)").matches ? 2 : 3;
-  } catch {
-    return 3;
-  }
-}
 /** 收起時輪播的間隔 */
 const ROTATE_MS = 4500;
 
@@ -132,6 +125,8 @@ function prefersReducedMotion(): boolean {
 
 /**
  * 教練動態：打開 App 時教練主動提醒的事項，固定在對話上方。
+ * 呈現成「今天的重點」看板（12.16 的 A 版）：滿版的一條、淡的底色、每則一列，看起來是介面而不是訊息。
+ * 展開就全部顯示，太多時在看板內捲動（最高約半個畫面）。
  * collapseSignal 每次送出訊息時遞增：開始對話後收成一行，讓對話有空間。
  */
 export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
@@ -141,22 +136,20 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [state, setState] = useState(() => loadState(today));
   const [checkinOpen, setCheckinOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   // 收起時輪播到第幾則；滑鼠移上去或鍵盤聚焦時暫停
   const [tick, setTick] = useState(0);
   const [paused, setPaused] = useState(false);
   const [reducedMotion] = useState(prefersReducedMotion);
-  const [firstCount] = useState(shownAtFirst);
   const sectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     void coach.feed().then(setItems);
   }, [coach, revision]);
 
-  // 內容更新（例如存了自評、項目重新排序）或切換顯示全部後回到最上面，不停在原本捲動的位置
+  // 內容更新（例如存了自評、項目重新排序）後回到最上面，不停在原本捲動的位置
   useEffect(() => {
     if (sectionRef.current) sectionRef.current.scrollTop = 0;
-  }, [items, showAll]);
+  }, [items]);
 
   // 模擬日期改變或跨日時重置當天的狀態
   useEffect(() => {
@@ -188,12 +181,17 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
     return () => clearInterval(timer);
   }, [rotating]);
 
+  const dateLabel = `今天 ${shortDateLabel(today)}`;
+
   if (visible.length === 0) {
     return hidden ? (
       <section className="feed" aria-label="教練動態">
-        <button className="link feed-more" onClick={restore}>
-          顯示略過的 {hidden} 則教練動態
-        </button>
+        <div className="feed-head">
+          <strong className="feed-date">{dateLabel}</strong>
+          <button className="link feed-more" onClick={restore}>
+            顯示略過的 {hidden} 則
+          </button>
+        </div>
       </section>
     ) : null;
   }
@@ -257,6 +255,9 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
           onFocus={() => setPaused(true)}
           onBlur={() => setPaused(false)}
         >
+          <span className="feed-date" aria-hidden="true">
+            {dateLabel}
+          </span>
           <span key={current.id} className={reducedMotion ? "feed-ticker" : "feed-ticker animate"}>
             <span aria-hidden="true">{ICONS[current.kind]}</span>
             <span className="feed-summary-text">{current.title}</span>
@@ -269,18 +270,16 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
     );
   }
 
-  const shown = showAll ? visible : visible.slice(0, firstCount);
-  const more = visible.length - shown.length;
   return (
-    <section className={showAll ? "feed all" : "feed"} aria-label="教練動態" ref={sectionRef}>
+    <section className="feed" aria-label="教練動態" ref={sectionRef}>
       <div className="feed-head">
-        <strong>教練動態</strong>
+        <strong className="feed-date">{dateLabel}</strong>
         <button className="link" onClick={() => update({ ...state, collapsed: true })}>
           收起
         </button>
       </div>
       <ul className="feed-list">
-        {shown.map((item) => (
+        {visible.map((item) => (
           <li key={item.id} className={`feed-item ${item.tone}`}>
             <span className="feed-icon" aria-hidden="true">
               {ICONS[item.kind]}
@@ -320,16 +319,6 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
           </li>
         ))}
       </ul>
-      {more > 0 && (
-        <button className="link feed-more" onClick={() => setShowAll(true)}>
-          顯示其餘 {more} 則
-        </button>
-      )}
-      {showAll && visible.length > firstCount && (
-        <button className="link feed-more" onClick={() => setShowAll(false)}>
-          只顯示前 {firstCount} 則
-        </button>
-      )}
       {hidden > 0 && (
         <button className="link feed-more" onClick={restore}>
           顯示略過的 {hidden} 則

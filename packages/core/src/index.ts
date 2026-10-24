@@ -19,7 +19,7 @@ export {
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
-export { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, weekdayName } from "./dates";
+export { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
   FAKE_DEVICES,
   FAKE_SCENARIOS,

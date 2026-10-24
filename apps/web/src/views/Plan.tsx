@@ -13,6 +13,7 @@ import {
 type SessionRow = ActivePlan["sessions"][number];
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { RacesCard } from "./Races";
 
@@ -169,7 +170,7 @@ export function PlanView() {
           )
         ) : (
           <>
-            <textarea rows={10} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
+            <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
             <div className="row">
               <button
                 className="primary"

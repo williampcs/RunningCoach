@@ -79,3 +79,28 @@ export function isoWeekLabel(isoDate: string): string {
 export function nowIso(now: Date): string {
   return now.toISOString().slice(0, 19) + "Z";
 }
+
+const WEEKDAY_SHORT = ["一", "二", "三", "四", "五", "六", "日"];
+
+/** 月／日加上星期，例：10/24（六） */
+export function shortDateLabel(isoDate: string): string {
+  const [, m, d] = isoDate.split("-").map(Number);
+  return `${m}/${d}（${WEEKDAY_SHORT[weekdayIndex(isoDate)]}）`;
+}
+
+/**
+ * 訊息旁的時間（12.16）：今天「14:32」、昨天「昨天 14:32」、今年更早「10/21 14:32」、不同年「2025/10/21 14:32」。
+ * 沒有時間或無法解析（v1 帶過來的舊訊息）時回傳 null，不顯示。
+ */
+export function messageTimeLabel(timestamp: string | null | undefined, now: Date, timeZone: string): string | null {
+  if (!timestamp) return null;
+  const at = new Date(timestamp);
+  if (Number.isNaN(at.getTime())) return null;
+  const date = localDate(at, timeZone);
+  const today = localDate(now, timeZone);
+  const time = localTime(at, timeZone);
+  if (date === today) return time;
+  if (date === addDays(today, -1)) return `昨天 ${time}`;
+  const [y, m, d] = date.split("-").map(Number);
+  return date.slice(0, 4) === today.slice(0, 4) ? `${m}/${d} ${time}` : `${y}/${m}/${d} ${time}`;
+}
