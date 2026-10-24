@@ -29,7 +29,7 @@ let step = "start";
     });
     page.on("pageerror", (e) => problems.push(`[${name} ${step}] pageerror: ${e.message}`));
     page.on("dialog", (d) => void d.accept());
-    const tab = (label) => page.getByRole("button", { name: label, exact: true }).click();
+    const tab = (label) => E2E.go(page, label);
     const card = page.locator("section.card", { has: page.getByRole("heading", { name: "多裝置同步" }) });
     return { page, tab, card, context };
   };

@@ -6,7 +6,7 @@ const OUT = E2E.OUT;
 const URL = E2E.URL;
 
 async function setup(page, { intervals }) {
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   await page.getByLabel("供應商").selectOption("openai-compatible");
   await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
   await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
@@ -50,16 +50,16 @@ async function newPage(browser, problems) {
   await next.waitFor();
   check.nextStepAfterSave = await next.isVisible();
   await page.screenshot({ path: `${OUT}/onb-2-settings-next.png`, fullPage: true });
-  await page.getByRole("button", { name: "同步最近 14 天" }).click();
+  await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 20000 });
   check.syncFromSettings = true;
   // 回到對話頁：必要步驟都完成，卡片消失
-  await page.getByRole("button", { name: "對話", exact: true }).click();
+  await E2E.go(page, "對話");
   await page.getByText("跟教練說說你的目標").waitFor();
   check.cardGoneAfterSetup = (await page.locator(".getting-started").count()) === 0;
 
   // 紀錄頁：AI 摘要的第一句是結論，其餘收起；以 Markdown 渲染（條列），不露出 ** 符號
-  await page.getByRole("button", { name: "紀錄", exact: true }).click();
+  await E2E.go(page, "紀錄");
   const item = page.locator("ul.runs > li").first();
   await item.locator(".run-row").click();
   await item.locator(".run-summary").waitFor();
@@ -73,7 +73,7 @@ async function newPage(browser, problems) {
   // B. 只完成設定、沒同步：卡片裡的「立即同步」可直接用，完成後顯示結果與下一步
   page = await newPage(browser, problems);
   await setup(page, { intervals: true });
-  await page.getByRole("button", { name: "對話", exact: true }).click();
+  await E2E.go(page, "對話");
   const card2 = page.locator(".getting-started");
   await card2.waitFor();
   check.stepsDoneMarked = (await card2.locator(".step.done").count()) === 2;

@@ -12,7 +12,7 @@ const shift = (iso, days) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86
 let step = "start";
 
 async function setup(page) {
-  const tab = (label) => page.getByRole("button", { name: label, exact: true }).click();
+  const tab = (label) => E2E.go(page, label);
   await page.goto(URL);
   await page.locator("nav.tabbar button").first().waitFor();
   await tab("設定");
@@ -30,7 +30,7 @@ async function setup(page) {
   const weather = page.locator("#weather");
   await weather.getByLabel("台灣的縣市").selectOption({ label: "台北市" });
   await weather.getByText("目前：台北市").waitFor();
-  await page.getByRole("button", { name: "同步最近 14 天" }).first().click();
+  await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
   await tab("對話");
   await page.locator(".feed-item").first().waitFor();
@@ -62,7 +62,7 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
       page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${tag} ${step}] ${m.text()}`));
       page.on("pageerror", (e) => problems.push(`[${tag} ${step}] pageerror: ${e.message}`));
       page.on("dialog", (d) => void d.accept());
-      const tab = (label) => page.getByRole("button", { name: label, exact: true }).click();
+      const tab = (label) => E2E.go(page, label);
       const c = {};
       // 完整的功能檢查只在手機淺色跑一次，其他組合看版面
       const full = mobile && scheme === "light";

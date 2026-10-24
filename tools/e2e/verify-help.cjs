@@ -12,7 +12,7 @@ let step = "start";
     const page = await context.newPage();
     page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${tag} ${step}] ${m.text()}`));
     page.on("pageerror", (e) => problems.push(`[${tag} ${step}] ${e.message}`));
-    const tab = (label) => page.getByRole("button", { name: label, exact: true }).click();
+    const tab = (label) => E2E.go(page, label);
     try {
       step = "頁首的使用說明";
       await page.goto(E2E.URL);

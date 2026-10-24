@@ -1,0 +1,231 @@
+# 架構說明（v2，2026-10-24）
+
+給想了解程式怎麼組成的人看：有哪些部分、跑在哪裡、資料存在哪裡、彼此怎麼關聯。設計的理由在規格（`running-coach-spec2_0.md`）與 KI 紀錄；這份只講「現在長什麼樣子」。程式有大改時請一起更新這份。
+
+## 一句話
+
+所有教練的邏輯都在一個 TypeScript 核心套件（`packages/core`）裡；網頁版和 Discord bot 只是兩個不同的「外殼」，各自提供資料庫與介面，呼叫同一個核心。資料留在使用者自己的裝置上，只有要問 AI 時才把需要的內容送給使用者選的 AI 服務。
+
+## 全貌
+
+```mermaid
+flowchart LR
+  subgraph phone["使用者的手機或電腦（瀏覽器）"]
+    web["網頁版 apps/web<br/>React + Vite"]
+    core1["核心 packages/core"]
+    db1[("SQLite（sqlite-wasm）<br/>存在瀏覽器的 OPFS")]
+    ls[("localStorage<br/>設定、API key、天氣城市")]
+    web --> core1 --> db1
+    web --> ls
+  end
+  subgraph vm["VM（Docker）"]
+    bot["Discord bot apps/discord"]
+    core2["核心 packages/core"]
+    db2[("SQLite（better-sqlite3）<br/>data/coach.db")]
+    bot --> core2 --> db2
+  end
+  subgraph cf["Cloudflare"]
+    pages["Pages：網頁版的檔案"]
+    sync["Workers：同步服務 apps/sync"]
+    d1[("D1：加密後的同步資料")]
+    sync --> d1
+  end
+  llm["AI 服務<br/>Anthropic、OpenAI、Gemini 或相容服務"]
+  icu["Intervals.icu<br/>跑步與恢復資料"]
+  meteo["Open-Meteo<br/>天氣"]
+  discord["Discord"]
+  pages -. 下載網頁 .-> web
+  core1 --> llm
+  core1 --> icu
+  core1 --> meteo
+  core1 -- 加密後才送出 --> sync
+  core2 --> llm
+  core2 --> icu
+  core2 --> meteo
+  bot <--> discord
+```
+
+- 網頁版是純前端：從 Cloudflare Pages 下載後，直接在瀏覽器裡跑核心與資料庫，瀏覽器自己去連 AI 服務、Intervals.icu、Open-Meteo。我們沒有一台「存使用者資料的伺服器」。
+- 多裝置同步服務只存加密後的內容，伺服器看不到明文（12.10）。
+- Discord bot 是另一份獨立的資料，和網頁版不同步。
+- `apps/proxy`（訂閱模式的代理，替使用者付 AI 的費用）已經寫好，還沒有上線。
+
+## Repo 的組成
+
+| 目錄 | 內容 | 程式行數（約） |
+|---|---|---|
+| `packages/core` | 核心：教練、對話與工具、資料庫、同步、課表、賽事、天氣……所有規則 | 10,500 |
+| `packages/sqlite-node` | 給 Node 用的資料庫驅動（better-sqlite3），Discord bot、測試、模擬服務用 | 30 |
+| `apps/web` | 網頁版：React 介面、瀏覽器的資料庫驅動（sqlite-wasm 跑在 Web Worker） | 6,200 |
+| `apps/discord` | Discord bot：讀 `.env`、把 Discord 的訊息與指令接到核心 | 300 |
+| `apps/sync` | 多裝置同步服務：Cloudflare Worker + D1（本機開發用 Node 版） | 500 |
+| `apps/proxy` | 訂閱模式的代理（未上線） | 750 |
+| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具 | |
+| `doc/` | 規格、KI 紀錄、這份架構說明 | |
+| `src/` | v1 的 Python 版，觀察期結束後移除 | |
+
+## 用到的技術
+
+| 用途 | 技術 |
+|---|---|
+| 語言 | TypeScript（全部），npm workspaces 管多個套件 |
+| 網頁介面 | React 19、Vite（建置）、react-markdown（顯示教練的 Markdown） |
+| 資料庫 | SQLite：瀏覽器用官方的 sqlite-wasm（存在 OPFS），Node 用 better-sqlite3；兩邊共用同一份 SQL 與 schema |
+| AI | 自己寫的轉接層（`packages/core/src/llm`）：Anthropic 用官方 SDK，其他走 OpenAI 相容的 Chat Completions |
+| Discord | discord.js |
+| 同步服務 | Cloudflare Workers + D1（SQLite） |
+| 部署 | GitHub Actions：網頁版 → Cloudflare Pages；同步服務 → Cloudflare Workers；Discord bot → 建 Docker 映像放到 GHCR，再到 VM 上更新 |
+| 測試 | Vitest（單元測試）、Playwright（網頁實測，接模擬上游） |
+
+## 核心（packages/core）怎麼分
+
+```mermaid
+flowchart TB
+  coach["coach.ts<br/>Coach：外殼唯一要用的入口"]
+  subgraph talk["對話"]
+    context["context.ts<br/>組系統提示與對話（五層）"]
+    tools["tools.ts<br/>教練能用的工具與執行"]
+    llm["llm/<br/>各家 AI 的轉接、價格"]
+    summarizer["summarizer.ts<br/>舊對話整理成摘要"]
+    guide["app-guide/<br/>使用說明"]
+  end
+  subgraph domain["訓練的規則"]
+    tv["training-values.ts<br/>配速、心率區間、VDOT"]
+    plan["plan.ts / planning.ts / plan-match.ts<br/>課表、檢查器、和實際紀錄對照"]
+    races["races.ts<br/>賽事的規則"]
+    recovery["recovery.ts<br/>恢復狀況的判讀"]
+    feed["feed.ts<br/>教練動態"]
+    history["history.ts<br/>紀錄頁與累積"]
+    weather["weather.ts<br/>天氣"]
+  end
+  subgraph data["資料"]
+    db["db.ts<br/>schema、migration、所有 SQL"]
+    sync["sync.ts / history-import.ts / dedupe.ts<br/>從 Intervals.icu 同步、匯入、去重"]
+    ds["device-sync/<br/>多裝置同步：加密、配對、合併"]
+    icu["intervals.ts<br/>Intervals.icu 的 API"]
+  end
+  coach --> talk
+  coach --> domain
+  coach --> data
+  tools --> domain
+  tools --> db
+  domain --> db
+```
+
+- **Coach** 是外殼唯一要用的入口：`chat()`、`sync()`、`reportRun()`、`feed()`、`activePlan()`、賽事的操作等。網頁版與 Discord 不直接碰規則。
+- **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼，都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
+- **教練能做的事都是「工具」**（`tools.ts`）：例如查最近的訓練、存課表、記錄比賽成績。教練說要做某件事，就是呼叫工具；工具裡再套用和網頁按鈕一樣的規則，所以選手和教練能做的事一致。
+
+### 一則對話怎麼跑
+
+```mermaid
+sequenceDiagram
+  participant U as 選手
+  participant W as 網頁版
+  participant C as Coach
+  participant DB as 資料庫
+  participant AI as AI 服務
+  U->>W: 送出訊息
+  W->>C: chat(訊息)
+  C->>DB: 存下這則訊息
+  C->>C: 需要時更新恢復資料、天氣
+  C->>DB: 讀選手資料、賽事、記住的事、摘要、最近的對話
+  C->>AI: 系統提示 + 對話 + 工具清單
+  loop 教練要用工具時（最多幾輪）
+    AI-->>C: 呼叫工具（例：查最近 14 天的訓練）
+    C->>DB: 執行工具
+    C->>AI: 工具的結果
+  end
+  AI-->>C: 回覆（串流）
+  C->>DB: 存下回覆與依據
+  C-->>W: 回覆、用量、參考了哪些資料
+  C->>C: 對話太長時在背景整理成摘要
+```
+
+## 資料：存在哪裡
+
+| 資料 | 存在哪裡 | 會同步到其他裝置嗎 |
+|---|---|---|
+| 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
+| API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
+| 教練動態「知道了」、收起等小狀態 | localStorage | 不會 |
+| 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
+| 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
+
+## 資料庫的 schema（目前是第 11 版）
+
+所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
+
+```mermaid
+erDiagram
+  workouts ||--o{ workout_summaries : "AI 分析（取最新一筆）"
+  workouts ||--o{ workouts : "duplicate_of：重複的那筆指向保留的"
+  workouts ||--o{ workout_distinct : "a、b：選手說不是同一趟"
+  training_plans ||--o{ planned_sessions : "plan_id：一週的每一堂課"
+  races }o--o| workouts : "result_activity = intervals_id：比賽當天那趟"
+  conversations ||--o| summaries : "covers_up_to_id：摘要整理到哪一則"
+  conversations ||--o| conversations : "reply_to：回覆哪一則（存摘錄）"
+  pending_subjective }o--o| workouts : "同步時依日期配對"
+  daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
+```
+
+（`planned_sessions` 和實際跑步的對應不存在資料庫裡，每次依日期與內容重新比對算出來。）
+
+**選手與目標**
+- `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）。
+- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容。
+- `memories`：記住的事（選手記的或教練記的）。
+
+**訓練紀錄**
+- `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。
+- `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
+- `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
+- `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
+- `other_activities`：跑步以外的運動（騎車、游泳、肌力），只算疲勞，不算跑量。
+- `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
+- `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
+- `source_snapshots`：同步時存的 Intervals.icu 設定（閾值心率、區間）與最佳配速曲線，算訓練數值用。
+
+**課表**
+- `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）。
+
+**對話**
+- `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。
+- `summaries`：舊對話整理成的摘要，教練每次對話時帶入最新的一份。
+
+**多裝置同步的記帳**（不同步本身）
+- `sync_state`：上次同步時每一筆的雜湊、伺服器序號與版本號，用來判斷哪些要送出、拒絕被倒回的舊版本。
+- `sync_pending`：別台傳來、但這台還沒有對應紀錄的（例如那趟跑步還沒從 Intervals.icu 抓到）。
+- `sync_meta`：同步空間的 id 等設定。
+
+## 多裝置同步的資料
+
+只同步「只存在 App 裡的資料」；從 Intervals.icu 來的每台自己抓。每一筆在各裝置上要有共通的名字（`packages/core/src/device-sync/entities.ts`）：
+
+| 名字 | 內容 |
+|---|---|
+| `p:欄位名` | 選手資料的一個欄位 |
+| `r:sync_id` | 一場賽事 |
+| `pl:sync_id`、`ps:sync_id` | 一份課表、一堂課 |
+| `ck:日期` | 一天的自評 |
+| `m:sync_id` | 一則記住的事 |
+| `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
+| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
+
+每一筆用同步金鑰加密後才送出（AES-GCM），伺服器的 D1 只有三張表：`spaces`（同步空間與存取憑證的雜湊）、`records`（加密後的每一筆與序號）、`pair_slots`（配對新裝置時的暫存，幾分鐘後過期）。
+
+## 部署與 CI
+
+| 觸發 | 做什麼 |
+|---|---|
+| 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像（不部署） |
+| 合併到 `main` | 網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`） |
+| 手動 | `web-preview.yml`：把某個分支部署成預覽網址 |
+
+開發一律在 `v2`，合併到 `main` 就是上線，所以只在使用者說「合併部署」時合併（`CLAUDE.md`）。
+
+## 測試
+
+- 單元測試：`npm test`（Vitest），主要在 `packages/core/test`，用記憶體裡的 SQLite 與假的 AI 回應（照腳本回覆、可以呼叫工具）。
+- 網頁實測：`tools/e2e/`，用 Playwright 照使用者的操作點一遍，接模擬上游（假的 AI、Intervals.icu、同步服務、Open-Meteo），不需要任何金鑰。做法見 `tools/e2e/README.md`。

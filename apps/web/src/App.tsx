@@ -12,7 +12,7 @@ import {
   type Logger,
 } from "@running-coach/core";
 
-import { AppContext, errorText, type AppState, type Tab } from "./app-context";
+import { AppContext, errorText, type AppState, type Panel, type Tab } from "./app-context";
 import { HelpView } from "./views/Help";
 import { IS_PREVIEW, PreviewBanner } from "./views/Preview";
 import { useDeviceSync } from "./device-sync";
@@ -44,11 +44,14 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "plan", label: "計畫與賽事", icon: "📅" },
   { id: "profile", label: "選手資料", icon: "👤" },
 ];
-const PAGE_LABELS: Record<Tab, string> = {
-  ...Object.fromEntries(TABS.map((t) => [t.id, t.label])),
-  settings: "設定",
-  help: "使用說明",
-} as Record<Tab, string>;
+const PAGE_LABELS = Object.fromEntries(TABS.map((t) => [t.id, t.label])) as Record<Tab, string>;
+const PANEL_LABELS: Record<Panel, string> = { help: "使用說明", settings: "設定" };
+
+/** 面板記在瀏覽器的歷史紀錄裡，手機的返回（上一頁）就是關閉面板 */
+function panelInHistory(): Panel | null {
+  const panel = (history.state as { panel?: unknown } | null)?.panel;
+  return panel === "help" || panel === "settings" ? panel : null;
+}
 
 /** LLM 尚未設定時的替身：資料頁照常可用，需要模型的動作會得到明確的錯誤 */
 function unconfiguredProvider(problem: string): LlmProvider {
@@ -126,7 +129,58 @@ export function App() {
     const id = readHelpLink();
     return id === null ? null : { id };
   });
-  const [tab, setTab] = useState<Tab>(helpTopic ? "help" : "chat");
+  const [tab, setTab] = useState<Tab>("chat");
+  // 說明與設定是蓋在目前分頁上的面板（規格 12.17）：底下的分頁一直掛載，關閉後捲動位置與打到一半的字都還在
+  // 重新載入（例如在設定裡切換測試模式）時，歷史紀錄裡還記著面板：照樣打開，和返回的行為一致
+  const [panel, setPanel] = useState<Panel | null>(panelInHistory);
+  // 打開時在歷史紀錄加一筆，返回就關閉；已經開著另一個面板時直接換掉那一筆。
+  // here：目前這一筆就是剛點的連結（#help/…），換成面板，返回時回到點連結之前
+  const openPanel = useCallback((next: Panel, here = false) => {
+    if (here || panelInHistory()) history.replaceState({ panel: next }, "");
+    else history.pushState({ panel: next }, "");
+    setPanel(next);
+  }, []);
+  const closePanel = useCallback(() => {
+    // 返回會觸發 popstate，在那裡關閉
+    if (panelInHistory()) history.back();
+    else setPanel(null);
+  }, []);
+  const showTab = useCallback(
+    (next: Tab) => {
+      closePanel();
+      setTab(next);
+    },
+    [closePanel],
+  );
+  useEffect(() => {
+    const onPop = () => setPanel(panelInHistory());
+    window.addEventListener("popstate", onPop);
+    // 從說明的連結打開頁面：加一筆，返回時回到底下的對話，而不是離開網站
+    if (helpTopic) openPanel("help");
+    return () => window.removeEventListener("popstate", onPop);
+    // 只在第一次執行；helpTopic 之後的變化由 hashchange 處理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPanel]);
+  // 面板從標題列下方開始，標題列的 ❓ 與 ⚙️ 一直按得到（再點一次就關閉）
+  const topbar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = topbar.current;
+    if (!panel || !el) return;
+    const measure = () => document.documentElement.style.setProperty("--topbar-bottom", `${el.getBoundingClientRect().bottom}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+    // 標題列在資料庫開好後才出現
+  }, [panel, coach]);
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.isComposing) closePanel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel, closePanel]);
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
   const [reportPreselect, setReportPreselect] = useState<number | null>(null);
@@ -140,12 +194,12 @@ export function App() {
       const help = readHelpLink();
       if (help !== null) {
         setHelpTopic({ id: help });
-        setTab("help");
+        openPanel("help", true);
       }
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+  }, [openPanel]);
   const opening = useRef(false);
 
   const problem = llmProblem(settings);
@@ -230,22 +284,34 @@ export function App() {
       },
       goTo(next, draft) {
         if (draft) setOutbox(draft);
-        setTab(next);
+        if (next === "help" || next === "settings") {
+          if (next === "help") setHelpTopic(null);
+          openPanel(next);
+        } else showTab(next);
       },
       openReport(workoutId) {
         setReportPreselect(workoutId ?? null);
-        setTab("report");
+        showTab("report");
       },
       deviceSync,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab]);
 
-  // 從配對連結打開：直接到設定頁的同步區塊
+  // 從配對連結打開：直接打開設定，到同步區塊
   useEffect(() => {
-    if (pairFromLink) setTab("settings");
-  }, [pairFromLink]);
+    if (pairFromLink) openPanel("settings");
+  }, [pairFromLink, openPanel]);
+
+  // 同一個按鈕再點一次就關閉；開著另一個面板時直接換過去
+  const togglePanel = (next: Panel) => {
+    if (panel === next) closePanel();
+    else {
+      if (next === "help") setHelpTopic(null);
+      openPanel(next);
+    }
+  };
 
   if (fatal) {
     return (
@@ -259,30 +325,29 @@ export function App() {
   return (
     <AppContext.Provider value={state}>
       <div className="shell">
-        <header className="topbar">
+        <header className="topbar" ref={topbar}>
           <h1>Running Coach</h1>
           <span className="version" title={BUILD_DETAIL}>
             {VERSION_LABEL}
           </span>
           <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
           <button
-            className={tab === "help" ? "help-button active" : "help-button"}
+            className={panel === "help" ? "help-button active" : "help-button"}
             aria-label="使用說明"
-            aria-current={tab === "help"}
+            aria-expanded={panel === "help"}
+            aria-controls="side-panel"
             title="使用說明"
-            onClick={() => {
-              setHelpTopic(null);
-              setTab("help");
-            }}
+            onClick={() => togglePanel("help")}
           >
             <span aria-hidden="true">?</span>
           </button>
           <button
-            className={tab === "settings" ? "settings-button active" : "settings-button"}
+            className={panel === "settings" ? "settings-button active" : "settings-button"}
             aria-label="設定"
-            aria-current={tab === "settings"}
+            aria-expanded={panel === "settings"}
+            aria-controls="side-panel"
             title="設定"
-            onClick={() => setTab("settings")}
+            onClick={() => togglePanel("settings")}
           >
             <span aria-hidden="true">⚙️</span>
           </button>
@@ -301,7 +366,7 @@ export function App() {
                   🧪 測試模式：使用假資料與另一個資料庫，正式資料不受影響。
                   {testMode.today ? `模擬日期 ${testMode.today}。` : ""}
                 </span>
-                <button className="link" onClick={() => setTab("settings")}>
+                <button className="link" onClick={() => openPanel("settings")}>
                   測試設定
                 </button>
               </div>
@@ -314,17 +379,30 @@ export function App() {
           {tab === "history" && <HistoryView />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
-          {tab === "settings" && <SettingsView />}
-          {tab === "help" && <HelpView topic={helpTopic} />}
         </main>
         <nav className="tabbar" aria-label="主要分頁">
           {TABS.map((t) => (
-            <button key={t.id} className={t.id === tab ? "active" : ""} aria-current={t.id === tab} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={t.id === tab ? "active" : ""} aria-current={t.id === tab} onClick={() => showTab(t.id)}>
               <span aria-hidden="true">{t.icon}</span>
               {t.label}
             </button>
           ))}
         </nav>
+        {panel && (
+          <>
+            {/* 電腦上底下的頁面看得到（變暗），點暗的地方也關閉；側邊的分頁在暗幕之上，點了直接切過去 */}
+            <div className="panel-backdrop" onClick={closePanel} />
+            <aside id="side-panel" className="side-panel" role="dialog" aria-label={PANEL_LABELS[panel]}>
+              <div className="side-panel-head">
+                <h2>{PANEL_LABELS[panel]}</h2>
+                <button className="side-panel-close" aria-label={`關閉${PANEL_LABELS[panel]}`} title="關閉" onClick={closePanel}>
+                  <span aria-hidden="true">✕</span>
+                </button>
+              </div>
+              <div className="side-panel-body">{panel === "settings" ? <SettingsView /> : <HelpView topic={helpTopic} />}</div>
+            </aside>
+          </>
+        )}
       </div>
     </AppContext.Provider>
   );

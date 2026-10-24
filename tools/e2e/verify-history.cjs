@@ -14,14 +14,14 @@ let failPage = null;
   const problems = [];
   page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${step}] ${m.text()}`));
   page.on("pageerror", (e) => problems.push(`[${step}] pageerror: ${e.message}`));
-  const tab = (name) => page.getByRole("button", { name, exact: true }).click();
+  const tab = (name) => E2E.go(page, name);
   const check = {};
 
   step = "分頁";
   await page.goto(E2E.URL);
   await page.locator("nav.tabbar button").first().waitFor({ timeout: 15000 });
   check.fiveTabs = (await page.locator("nav.tabbar button").allInnerTexts()).map((t) => t.replace(/\s+/g, "")).join(",") === "💬對話,🏃跑後回報,📖紀錄,📅計畫與賽事,👤選手資料";
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await E2E.go(page, "設定");
   check.gearOpensSettings = (await page.getByRole("heading", { name: "LLM 服務" }).count()) > 0 || (await page.getByLabel("供應商").count()) === 1;
 
   step = "設定";

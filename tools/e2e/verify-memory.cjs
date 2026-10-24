@@ -19,7 +19,7 @@ let step = "start";
     page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${tag} ${step}] ${m.text()}`));
     page.on("pageerror", (e) => problems.push(`[${tag} ${step}] pageerror: ${e.message}`));
     page.on("dialog", (d) => void d.accept());
-    const tab = (label) => page.getByRole("button", { name: label, exact: true }).click();
+    const tab = (label) => E2E.go(page, label);
     const c = {};
     try {
       step = "設定";

@@ -25,7 +25,8 @@ export interface AppState {
   touch(): void;
   /** 匯入資料庫後重新初始化 */
   reload(): Promise<void>;
-  goTo(tab: Tab, draft?: string): void;
+  /** 切到分頁（關閉面板），或打開說明、設定的面板（底下的分頁不變） */
+  goTo(target: Tab | Panel, draft?: string): void;
   /** 前往跑後回報；指定 workoutId 時預先選好那一筆 */
   openReport(workoutId?: number): void;
   /** 多裝置同步（規格 12.10） */
@@ -35,7 +36,9 @@ export interface AppState {
   clearPairFromLink(): void;
 }
 
-export type Tab = "chat" | "report" | "history" | "plan" | "profile" | "settings" | "help";
+export type Tab = "chat" | "report" | "history" | "plan" | "profile";
+/** 蓋在目前畫面上的面板（規格 12.17）：關閉後回到打開前的樣子 */
+export type Panel = "help" | "settings";
 
 export const AppContext = createContext<AppState | null>(null);
 
