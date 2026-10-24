@@ -4,6 +4,8 @@ import { AnthropicProvider, OpenAICompatibleProvider, Usage, type UsageStats } f
 
 import { loadConfig } from "../src/config";
 import { replyParts, splitMessage } from "../src/messages";
+import { VERSION, VERSION_LABEL } from "../src/version";
+import rootPackage from "../../../package.json" with { type: "json" };
 
 const base = { DISCORD_BOT_TOKEN: "t", DISCORD_ALLOWED_CHANNEL_ID: "1234567890123456789", ANTHROPIC_API_KEY: "k" };
 
@@ -94,5 +96,12 @@ describe("訊息分段", () => {
   it("回覆的依據放在頁尾之前，同樣是小字", () => {
     expect(replyParts("好", null, ["訓練數值", "最近 14 天的訓練"])).toEqual(["好\n-# 參考了：訓練數值、最近 14 天的訓練"]);
     expect(replyParts("好", null, [])).toEqual(["好"]);
+  });
+});
+
+describe("版號", () => {
+  it("讀 repo 根目錄的 package.json，和網頁版同一個來源", () => {
+    expect(VERSION).toBe(rootPackage.version);
+    expect(VERSION_LABEL).toBe(`v${rootPackage.version} Beta`);
   });
 });

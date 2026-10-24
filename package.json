@@ -1,5 +1,6 @@
 {
   "name": "running-coach",
+  "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -10,7 +11,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "dev:mock": "tsx tools/mock-upstream.ts"
+    "dev:mock": "tsx tools/mock-upstream.ts",
+    "version:bump": "tsx tools/version-bump.ts"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

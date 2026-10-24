@@ -81,6 +81,7 @@
 | 2.0-draft | 2026-10-24 | 有新版本時提示更新（決定與工作單）；主畫面 App 怎麼拿到新版（12.18） |
 | 2.0-draft | 2026-10-24 | 架構說明 `doc/architecture.md`：組成、技術、核心的分層、資料存在哪裡、schema 與關聯、同步、部署（使用者想了解程式的架構） |
 | 2.0-draft | 2026-10-24 | 版號從 0.1.0 重新開始、每次合併部署發一版、標題列只顯示 Beta；決定先買網域再分 staging 與正式環境（12.19） |
+| 2.0-draft | 2026-10-24 | 工作單 A 實作：版號只有一個來源（根目錄 `package.json`，0.1.0）、`npm run version:bump`、標題列只顯示 Beta、Discord `/status` 顯示版號、`CLAUDE.md` 的發版步驟（12.19、9.4） |
 | 2.0-draft | 2026-10-21 | 第三步的補充：課表要達得到、可以回饋與修改；依目標、強度偏好與生活節奏個人化（12.8，提案） |
 | 2.0-draft | 2026-10-21 | 教練動態：身體狀況那則不能略過；略過的項目可以找回（6.7） |
 | 2.0-draft | 2026-10-21 | 修正：網頁版回到前景或跨日時重新讀取、恢復資料自動更新並標明昨天的資料（6.7、KI-034）；Intervals.icu 沒有跑步設定時訓練數值出錯 |
@@ -607,7 +608,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 - **有新版本時提示更新，加上要求瀏覽器不要自動清掉資料**（12.18）：狀態：已部署（2026-10-24，協調 session 檢查後依使用者事先的授權合併部署）。
 
-- **版號與 Beta 標示**（12.19 的工作單 A）：狀態：開發中（開發 session「版號與 Beta 標示（12.19）」）。
+- **版號與 Beta 標示**（12.19 的工作單 A）：狀態：已推上 v2（2026-10-24）；等合併部署時發 0.1.0、打 `v0.1.0` 標籤（協調 session）。
 - **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：等使用者買網域，買好後再開開發 session。
 
 *討論中*（協調 session 和使用者討論，還沒有決定）
@@ -2164,6 +2165,20 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - 不做：staging、網域（工作單 B）。
 - 驗收：`npm test`、`npm run typecheck`；改版號的指令有測試或實際跑一次再還原；網頁實測受影響的腳本（標題列的版號）照跑。
 - 注意：第一次發 0.1.0 時由協調 session 打 `v0.1.0` 標籤。
+
+工作單 A 的實作（2026-10-24，已推上 v2）
+- 版號只有一個來源：repo 根目錄 `package.json` 的 `version`（0.1.0）。各套件的 `package.json` 與 `package-lock.json` 也改成 0.1.0，數字一致，但程式只讀根目錄的。
+- 改版號的指令：`npm run version:bump -- minor|patch|major|X.Y.Z`（`tools/version-bump.ts`），一次改根目錄、各套件與 lockfile，寫出來的 lockfile 和 `npm install` 寫的一樣；只改檔案，不 commit、不打標籤。
+- 網頁版：`vite.config.ts` 改讀根目錄的 `package.json`；標題列的標籤只顯示「Beta」（滑鼠移上去看得到完整版號）；設定頁最下面照舊是「v0.1.0 Beta（commit，日期 建置）」。
+- Discord bot：原本 `/status` 沒有版號，這次加上，標題變成「📊 系統狀態（v0.1.0 Beta）」；版號在建置時由 esbuild 從根目錄的 `package.json` 打包進去（`apps/discord/src/version.ts`）。
+- `CLAUDE.md` 的「合併部署」加上發版的步驟：何時加中間那碼、何時加最後一碼、版本異動表寫這一版的內容、合併後在 `main` 的合併 commit 打 `vX.Y.Z` 標籤。
+- 根目錄的 `package.json` 本來就在三個部署 workflow 的觸發路徑裡，所以改版號的那次合併會重新部署網頁版、同步服務與 bot，三者的版號一起更新。
+
+驗證
+- `npm test`（含新的 `tools/test/version-bump.test.ts`：加碼的規則、一次改好所有檔案且不動相依套件、repo 裡各套件與 lockfile 的版號和根目錄一致；`apps/discord/test` 檢查 bot 讀到的版號）、`npm run typecheck`。
+- 實際跑一次 `npm run version:bump -- minor`（全部變 0.2.0）、`patch`（0.2.1），再設回 0.1.0，和改之前沒有差異。
+- Discord bot 的 esbuild 建置成功，打包結果含版號。Docker 映像在雲端環境建不了（沒有 Docker daemon），由 `v2-ci` 的 docker build 驗證。
+- 網頁實測：`verify-update.cjs` 加上檢查：標題列只顯示「Beta」、標題列的提示與設定頁最下面是 `v{根目錄的版號} Beta（commit，`。全部腳本 ALL OK；`verify-devicesync.cjs` 第一次跑有一項失敗，之後連跑四次（含重開模擬上游）都通過，沒有重現，和這次的改動無關。
 
 **工作單 B：staging 與正式環境、自己的網域**（等使用者買好網域）
 - 要做：`v2` 推上去自動部署 staging 的網頁版（Cloudflare Pages，`staging.網域`）與 staging 的同步服務（另一個 Worker 與 D1，網頁版的建置指向它）；正式環境改用 `app.網域`；同步服務允許的來源（`ALLOWED_ORIGINS`）改成新的網址；手動預覽（`web-preview.yml`）由 staging 取代；舊的 `running-coach-bgb.pages.dev` 怎麼處理（導向新網域或提示搬家）；使用說明與文件裡的網址；`CLAUDE.md` 與規格寫明新的流程。
