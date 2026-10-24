@@ -9,6 +9,7 @@ import { DeviceSyncCard } from "./DeviceSync";
 import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { TestModeCard } from "./TestMode";
@@ -158,6 +159,30 @@ function KeyProtection({
       )}
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
     </section>
+  );
+}
+
+const PROTECTION_TEXT: Record<StorageProtection, string> = {
+  persisted: "已受保護。瀏覽器答應不會自動清掉這個網站的資料；自己清除網站資料、或刪掉主畫面的圖示時，資料仍會一起刪掉。",
+  "not-persisted":
+    "瀏覽器沒有答應。空間不足或很久沒打開時，資料可能被瀏覽器自動清掉；建議開啟多裝置同步，或定期匯出資料庫。iPhone 建議加到主畫面，從主畫面的圖示打開。",
+  unsupported: "這個瀏覽器不支援。資料可能被瀏覽器自動清掉；建議開啟多裝置同步，或定期匯出資料庫。",
+};
+
+/** 瀏覽器有沒有答應不自動清掉資料（App 開啟時已經要求過，規格 12.18） */
+function StorageProtectionNote() {
+  const [state, setState] = useState<StorageProtection | null>(null);
+  useEffect(() => {
+    void storageProtection().then(setState);
+  }, []);
+  if (!state) return null;
+  return (
+    <p className={state === "persisted" ? "muted small storage-protection" : "notice warn storage-protection"} data-state={state}>
+      <span>
+        <strong>資料保護：</strong>
+        {PROTECTION_TEXT[state]}
+      </span>
+    </p>
   );
 }
 
@@ -430,6 +455,7 @@ export function SettingsView() {
           {db.persistent ? "的本機儲存空間" : "分頁的記憶體（未持久化）"}
           ，不會自動備份。清除網站資料或換裝置前請先匯出。匯出的檔案是標準的 SQLite 資料庫，也可以匯入 v1（Discord 版）的 coach.db。
         </p>
+        {db.persistent && <StorageProtectionNote />}
         <div className="row">
           <button onClick={() => void exportDb()}>匯出資料庫</button>
           <label className="button">
