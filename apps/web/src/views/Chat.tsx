@@ -1,8 +1,17 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { formatTokenFooter, MEMORY_MAX_CHARS, REPLY_EXCERPT_CHARS, type ChatEvent, type ConversationRow, type ReplyRef } from "@running-coach/core";
+import {
+  formatTokenFooter,
+  MEMORY_MAX_CHARS,
+  messageTimeLabel,
+  REPLY_EXCERPT_CHARS,
+  type ChatEvent,
+  type ConversationRow,
+  type ReplyRef,
+} from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
@@ -249,6 +258,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     );
   };
 
+  // 訊息下方的時間：依設定的時區；沒有時間的舊訊息不顯示
+  const clock = coach.currentTime();
+  const timeOf = (m: ConversationRow) => messageTimeLabel(m.timestamp, clock, coach.settings.timeZone);
+
   // 已整理進摘要的最後一則：在它後面畫分隔線
   const lastArchived = messages.reduce((at, m, i) => (m.archived ? i : at), -1);
 
@@ -278,39 +291,55 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
                 {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
                 {m.sources?.length ? <p className="sources">參考了：{m.sources.join("、")}</p> : null}
               </div>
-              {remembering?.id === m.id ? (
-                <div className="remember-edit">
+              <div className="msg-meta">
+                {timeOf(m) && (
+                  <time className="msg-time" dateTime={m.timestamp ?? undefined}>
+                    {timeOf(m)}
+                  </time>
+                )}
+                {remembering?.id !== m.id && (
+                  <span className="msg-actions">
+                    <button className="link small" onClick={() => startReply(m)} disabled={sending !== null}>
+                      回覆
+                    </button>
+                    <button
+                      className="link small"
+                      onClick={() => {
+                        setNotice(null);
+                        setRemembering({ id: m.id, text: plainText(m.content).slice(0, MEMORY_MAX_CHARS) });
+                      }}
+                    >
+                      記住
+                    </button>
+                  </span>
+                )}
+              </div>
+              {remembering?.id === m.id && (
+                <form
+                  className="remember-edit"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (remembering.text.trim()) void saveMemory();
+                  }}
+                >
                   <label className="small">
                     要記住的事（改成一句話，{MEMORY_MAX_CHARS} 字以內）
-                    <textarea
-                      rows={2}
+                    <AutoGrowTextarea
+                      enter="submit"
                       value={remembering.text}
                       maxLength={MEMORY_MAX_CHARS}
                       onChange={(e) => setRemembering({ id: m.id, text: e.target.value })}
                     />
                   </label>
                   <div className="row">
-                    <button className="primary" disabled={!remembering.text.trim()} onClick={() => void saveMemory()}>
+                    <button type="submit" className="primary" disabled={!remembering.text.trim()}>
                       記住
                     </button>
-                    <button onClick={() => setRemembering(null)}>取消</button>
+                    <button type="button" onClick={() => setRemembering(null)}>
+                      取消
+                    </button>
                   </div>
-                </div>
-              ) : (
-                <div className="msg-actions">
-                  <button className="link small" onClick={() => startReply(m)} disabled={sending !== null}>
-                    回覆
-                  </button>
-                  <button
-                    className="link small"
-                    onClick={() => {
-                      setNotice(null);
-                      setRemembering({ id: m.id, text: plainText(m.content).slice(0, MEMORY_MAX_CHARS) });
-                    }}
-                  >
-                    記住
-                  </button>
-                </div>
+                </form>
               )}
             </div>
             {i === lastArchived && i < messages.length - 1 && (
@@ -371,20 +400,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               </button>
             </div>
           )}
-          <textarea
-            value={input}
-            rows={2}
-            placeholder="輸入訊息…"
-            aria-label="訊息"
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              // 輸入法選字時的 Enter 不送出
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                e.currentTarget.form?.requestSubmit();
-              }
-            }}
-          />
+          {/* Enter 送出、Shift+Enter 換行，輸入法選字時不送出；平常一行高，打字時長高到 6 行 */}
+          <AutoGrowTextarea enter="send" value={input} placeholder="輸入訊息…" aria-label="訊息" onChange={(e) => setInput(e.target.value)} />
           <button type="submit" className="primary" disabled={sending !== null || !input.trim()}>
             送出
           </button>

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Accumulation, RunCard, Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { analysisRequest } from "./Report";
 import { AccumulationView } from "./Accumulation";
 import { FirstSync } from "./FirstSync";
@@ -76,8 +77,7 @@ export function HistoryView() {
           </label>
           <label>
             主觀感受
-            <textarea
-              rows={2}
+            <AutoGrowTextarea
               value={editing.notes}
               placeholder="例如：最後兩公里很喘，腿還好"
               onChange={(e) => setEditing({ ...editing, notes: e.target.value })}

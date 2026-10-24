@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, type Memory } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 
 function dateText(iso: string): string {
@@ -55,8 +56,8 @@ export function MemoriesCard() {
                   void act(() => coach.db.updateMemory(m.id, editing.text)).then((ok) => ok && setEditing(null));
                 }}
               >
-                <textarea
-                  rows={2}
+                <AutoGrowTextarea
+                  enter="submit"
                   value={editing.text}
                   maxLength={MEMORY_MAX_CHARS}
                   aria-label="修改記住的事"
@@ -97,7 +98,8 @@ export function MemoriesCard() {
           void act(() => coach.db.addMemory(draft, "user")).then((ok) => ok && setDraft(""));
         }}
       >
-        <input
+        <AutoGrowTextarea
+          enter="submit"
           value={draft}
           maxLength={MEMORY_MAX_CHARS}
           placeholder={full ? `已經有 ${MEMORY_MAX_ITEMS} 條，先刪掉或合併幾條` : "新增一條，例如：右腳踝扭過，下坡要小心"}

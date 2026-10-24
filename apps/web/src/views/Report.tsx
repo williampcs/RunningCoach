@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { addDays, heartRateText, type Activity, type ReportCandidate, type ReportTarget, type RunCard, type RunReport } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { SyncNotice } from "./PhoneGuide";
 import { RunCardView } from "./RunCard";
 import { useSync } from "../use-sync";
@@ -192,8 +193,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
         </label>
         <label>
           主觀感受
-          <textarea
-            rows={2}
+          <AutoGrowTextarea
             value={notes}
             placeholder="例如：腿有點重，呼吸順，右膝無異狀"
             onChange={(e) => setNotes(e.target.value)}

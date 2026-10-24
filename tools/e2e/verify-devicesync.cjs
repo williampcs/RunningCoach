@@ -237,7 +237,7 @@ let step = "start";
     await A.tab("設定");
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
     await A.tab("選手資料");
-    check.eChangeReachesA = await A.page.waitForFunction(() => [...document.querySelectorAll("input")].some((i) => i.value === "E 改的目標"), null, { timeout: 15000 }).then(() => true, () => false);
+    check.eChangeReachesA = await A.page.waitForFunction(() => [...document.querySelectorAll("input, textarea")].some((i) => i.value === "E 改的目標"), null, { timeout: 15000 }).then(() => true, () => false);
 
     step = "停止與刪除";
     await D.tab("設定");

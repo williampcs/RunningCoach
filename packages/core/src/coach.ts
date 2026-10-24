@@ -204,6 +204,11 @@ export class Coach {
     return this.runtime.settings;
   }
 
+  /** 現在的時間（測試模式模擬的日期也算進去） */
+  currentTime(): Date {
+    return this.now();
+  }
+
   /** 使用者時區的今天，YYYY-MM-DD */
   today(): string {
     return localDate(this.now(), this.settings.timeZone);

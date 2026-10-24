@@ -2,6 +2,7 @@ import { PREFERENCE_OPTIONS, REGION_CHOICES } from "@running-coach/core";
 import { useEffect, useRef, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
+import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
 import { TrainingValuesCard } from "./TrainingValues";
@@ -15,15 +16,17 @@ interface Field {
   options?: Record<string, string>;
   /** 下拉選單沒選時的說法（預設「未填」） */
   emptyLabel?: string;
+  /** 會打長文字：自動長高（Enter 照舊儲存，不換行） */
+  long?: boolean;
 }
 
 const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   {
     title: "目標與狀況",
     fields: [
-      { key: "goal_long_term", label: "長期目標", placeholder: "例如：全馬破四", wide: true },
+      { key: "goal_long_term", label: "長期目標", placeholder: "例如：全馬破四", wide: true, long: true },
       { key: "weekly_km_target", label: "每週目標里程（km）", placeholder: "40" },
-      { key: "injuries", label: "傷病注意", placeholder: "例如：右膝舊傷", wide: true },
+      { key: "injuries", label: "傷病注意", placeholder: "例如：右膝舊傷", wide: true, long: true },
       { key: "region", label: "紀錄頁的里程碑", options: REGION_CHOICES, emptyLabel: "通用（不依賴所在地）", wide: true },
     ],
   },
@@ -57,7 +60,7 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
       { key: "pref_schedule", label: "節奏", options: PREFERENCE_OPTIONS.pref_schedule, wide: true },
       { key: "pref_runs_per_week", label: "每週最多幾次", placeholder: "4" },
       { key: "pref_max_minutes", label: "每次最多幾分鐘", placeholder: "60" },
-      { key: "pref_other", label: "其他會做的運動", placeholder: "騎車、重訓", wide: true },
+      { key: "pref_other", label: "其他會做的運動", placeholder: "騎車、重訓", wide: true, long: true },
       { key: "pref_long_run_day", label: "長跑日", placeholder: "週日" },
       { key: "pref_rest_days", label: "休息日", placeholder: "週一、週五" },
       { key: "pref_train_time", label: "偏好時段", placeholder: "清晨" },
@@ -129,6 +132,13 @@ export function ProfileView() {
                         </option>
                       ))}
                     </select>
+                  ) : field.long ? (
+                    <AutoGrowTextarea
+                      enter="submit"
+                      value={form[field.key] ?? ""}
+                      placeholder={field.placeholder}
+                      onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}
+                    />
                   ) : (
                     <input
                       value={form[field.key] ?? ""}
