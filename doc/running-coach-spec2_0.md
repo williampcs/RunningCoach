@@ -2129,7 +2129,7 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - `npm test`（277 項，新增 `apps/web/test/update-check.test.ts`：commit 不同、相同、要求不用快取、404／離線／回傳網頁／格式不對都不提示）、`npm run typecheck`。
 - 建置結果：`dist/version.json` 的 commit 和網頁的 `BUILD` 相同，`dist/_headers` 有 `/version.json` 的 `no-store`。
 - 網頁實測：新增 `tools/e2e/verify-update.cjs`（75 項），手機（390）與電腦（1280）、淺色與深色各跑一次，用路由攔截 `version.json`：版本相同時不提示、打開時就讀了一次；換成別的 commit 後觸發回到前景就出現提示；在對話的輸入框打字、再回到前景，頁面沒有重新載入、字還在；按 ✕ 後消失，回到前景、重新整理都不再出現；換成更新的 commit 又出現；點提示才重新載入，載入後版本相同就不再提示；離線、404、回傳網頁時重新整理與回到前景都不提示、沒有錯誤訊息；已經出現的提示在離線時保留；沒有橫向捲動、沒有主控台錯誤（瀏覽器自己印的「Failed to load resource」除外）。設定頁的資料保護以 `addInitScript` 改寫 `navigator.storage` 測三種狀態，手機與電腦都顯示對的文字，瀏覽器沒有答應時確認 App 打開時要求過。截圖：`update-banner-{390,1280}-{light,dark}.png`、`update-protection-{persisted,not-persisted,unsupported}-{390,1280}.png`。
-- 其他腳本：（全部重跑中，結果另外補上）
+- 其他腳本：`tools/e2e/` 的 12 個腳本（含新的）全部 `ALL OK`。
 
 **沒做、沒驗證到的**
 - 只在 Chromium 驗證；iPhone 主畫面的 App 回到前景時會不會觸發 `visibilitychange`、`navigator.storage.persist()` 在 iPhone 上答不答應，待使用者實機確認。
