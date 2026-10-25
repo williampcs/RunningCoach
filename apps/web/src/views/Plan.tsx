@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import {
   addDays,
   DIFFICULTY_LABELS,
+  monthDay,
   OUTCOME_LABELS,
   planTimeline,
   QUALITY_KINDS,
@@ -82,7 +83,9 @@ function Steps({ rows }: { rows: StepRow[] }) {
 
 /** 一堂課：今天（或下一堂）放大；其他天是小卡片，點了展開成同樣的內容 */
 function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolean; onChange: SessionChange }) {
-  const [open, setOpen] = useState(false);
+  // 放大的那張預設展開，點了也可以收合；放大的換成別堂時（例如跳過後）跟著換
+  const [open, setOpen] = useState(focus);
+  useEffect(() => setOpen(focus), [focus]);
   const [details, setDetails] = useState(false);
   const [moving, setMoving] = useState(false);
   const status = statusOf(s);
@@ -99,12 +102,18 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
     );
   }
 
-  const expanded = focus || open;
+  const expanded = open;
+  // 點卡片的任何地方都展開或收合；卡片裡的按鈕、連結照原本的行為；選取文字時不觸發
+  const onCardClick = (e: MouseEvent<HTMLElement>) => {
+    if ((e.target as HTMLElement).closest("button, a, input, select, textarea, summary")) return;
+    if (window.getSelection()?.toString()) return;
+    setOpen(!open);
+  };
   const title = (
     <>
       <span className={`bar ${KIND_INTENSITY[s.kind]}`} aria-hidden="true" />
       <span className="plan-session-title">
-        {focus ? <h3>{s.title}</h3> : <strong>{s.title}</strong>}
+        <strong className={focus ? "plan-session-name big" : "plan-session-name"}>{s.title}</strong>
         {s.kindHint && <span className="muted small"> {s.kindHint}</span>}
       </span>
       {status && <span className={`badge ${status.cls}`}>{status.label}</span>}
@@ -124,14 +133,10 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   const hasDetails = !!(s.purpose || s.success || s.fallback);
 
   return (
-    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind}>
-      {focus ? (
-        <div className="plan-session-head">{title}</div>
-      ) : (
-        <button type="button" className="plan-session-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {title}
-        </button>
-      )}
+    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind} onClick={onCardClick}>
+      <button type="button" className="plan-session-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {title}
+      </button>
       {!expanded && chips(s.brief)}
       {expanded && (
         <>
@@ -198,7 +203,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                       onChange(s, "move", d);
                     }}
                   >
-                    {d.slice(5)}（{weekdayOf(d)}）
+                    {monthDay(d)}（{weekdayOf(d)}）
                   </button>
                 ))}
             </div>
@@ -232,11 +237,19 @@ function RaceItem({ race, today }: { race: Race; today: string }) {
   );
 }
 
-function DateLabel({ label, weekday, today, race }: { label: string; weekday: string; today?: boolean; race?: boolean }) {
+/** 日期欄：手機上日期與星期分兩行（「二」），電腦上夠寬時一行（「10/27 星期二」） */
+function DateLabel({ label, weekday, today, race }: { label: string; weekday?: string; today?: boolean; race?: boolean }) {
   return (
     <div className={`tl-date ${today ? "today" : ""} ${race ? "race" : ""}`}>
-      <span className="tl-label">{label}</span>
-      <span className="tl-weekday">{weekday}</span>
+      <span className="tl-when">
+        <span className="tl-label">{label}</span>
+        {weekday && (
+          <span className="tl-weekday">
+            <span className="wide-only">星期</span>
+            {weekday}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -248,7 +261,7 @@ function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onCh
     <ol className="timeline">
       {t.undated.length > 0 && (
         <li className="tl-day">
-          <DateLabel label="任一天" weekday="這週" />
+          <DateLabel label="這週任一天" />
           <div className="tl-items">{t.undated.map(item)}</div>
         </li>
       )}
@@ -277,7 +290,7 @@ function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onCh
           {t.laterRaces.map((r) => (
             <li key={r.id} className="tl-day" data-date={r.date}>
               <div className="tl-row">
-                <DateLabel label={r.date.slice(5)} weekday={weekdayOf(r.date)} race />
+                <DateLabel label={monthDay(r.date)} weekday={weekdayOf(r.date)} race />
                 <div className="tl-items">
                   <RaceItem race={r} today={today} />
                 </div>
@@ -308,7 +321,7 @@ function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; o
         {t.earlier.map((s) => (
           <div key={s.id ?? s.title} className="plan-earlier-item">
             <span className="tl-label muted">
-              {s.date!.slice(5)}（{weekdayOf(s.date!)}）
+              {monthDay(s.date!)}（{weekdayOf(s.date!)}）
             </span>
             <SessionItem s={s} focus={false} onChange={onChange} />
           </div>

@@ -41,11 +41,11 @@ const week = () =>
 describe("課表頁的時間軸（12.22）", () => {
   it("從今天排到課表的最後一天；今天以前的收進「這週稍早」；空的日子是休息", () => {
     const tl = planTimeline(week(), null, [], TODAY)!;
-    expect(tl.week.range).toBe("10-26 – 11-01");
+    expect(tl.week.range).toBe("10/26 – 11/1");
     expect(tl.thisWeek).toBe(true);
     expect(tl.earlier.map((s) => s.date)).toEqual(["2026-10-26"]);
     expect(tl.days.map((d) => d.date)).toEqual(["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01"]);
-    expect(tl.days.map((d) => d.label)).toEqual(["今天", "明天", "10-29", "10-30", "10-31", "11-01"]);
+    expect(tl.days.map((d) => d.label)).toEqual(["今天", "明天", "10/29", "10/30", "10/31", "11/1"]);
     expect(tl.days[0]!.weekday).toBe("二");
     // 同一天兩堂課放在同一個日期下
     expect(tl.days[0]!.sessions.map((s) => s.title)).toEqual(["輕鬆跑 + 加速跑", "肌力"]);
@@ -63,7 +63,7 @@ describe("課表頁的時間軸（12.22）", () => {
     const tl = planTimeline(week(), next, [], TODAY)!;
     expect(tl.days.at(-1)!.date).toBe("2026-11-08");
     const first = tl.days.find((d) => d.date === "2026-11-02")!;
-    expect(first.nextWeek).toEqual({ range: "11-02 – 11-08", km: 20, runs: 1 });
+    expect(first.nextWeek).toEqual({ range: "11/2 – 11/8", km: 20, runs: 1 });
     expect(tl.days.find((d) => d.date === "2026-11-03")!.sessions[0]!.weekStart).toBe("2026-11-02");
   });
 
