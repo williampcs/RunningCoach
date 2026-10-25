@@ -18,6 +18,9 @@
   --board: #e9eff6;
   --board-line: #d5deea;
   --board-text: #475569;
+  /* 課表頁：不算強度的課（肌力、交叉訓練、休息）與賽事 */
+  --other: #7c3aed;
+  --race: #db2777;
   font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
   line-height: 1.6;
 }
@@ -41,6 +44,8 @@
     --board: #16223a;
     --board-line: #263552;
     --board-text: #a5b4cc;
+    --other: #a78bfa;
+    --race: #f9a8d4;
   }
 }
 
@@ -1281,8 +1286,84 @@ span.quote {
   font-size: 0.8rem;
 }
 
-/* 結構化課表 */
-.sessions {
+/* 結構化課表（12.22 的 B 版）：未來幾天的時間軸 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.plan-card > :not(.sr-only) {
+  width: 100%;
+  max-width: 640px;
+}
+
+.plan-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+}
+
+.plan-range {
+  margin-top: -8px;
+}
+
+button.link-button {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  color: var(--accent);
+  align-self: flex-start;
+}
+
+button.link-button.muted {
+  color: var(--muted);
+}
+
+.plan-why {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.plan-why h3 {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+}
+
+.plan-earlier > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.plan-earlier-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.plan-earlier-item {
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.plan-earlier-item .tl-label {
+  font-size: 0.8rem;
+  padding-top: 10px;
+}
+
+.timeline {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1290,38 +1371,259 @@ span.quote {
   flex-direction: column;
 }
 
-.session {
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
+.tl-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+}
+
+/* 左邊的日期用一條直線串起來 */
+.tl-date {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  padding-top: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
-.session:first-child {
-  border-top: none;
+.tl-date::after {
+  content: "";
+  flex: 1;
+  width: 2px;
+  min-height: 12px;
+  margin-top: 6px;
+  background: var(--border);
 }
 
-.session-head {
+.tl-date .tl-label {
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.tl-date.today {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.tl-date.today::after {
+  background: var(--accent);
+}
+
+.tl-date.race .tl-label {
+  color: var(--race);
+  font-weight: 700;
+}
+
+.tl-day:last-child .tl-date::after {
+  visibility: hidden;
+}
+
+.tl-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  min-width: 0;
+}
+
+.tl-week {
+  margin: 4px 0 8px 56px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.tl-gap {
+  margin-left: 21px;
+  padding: 0 0 14px 25px;
+  border-left: 2px dashed var(--border);
+}
+
+.plan-rest {
+  padding: 3px 2px 6px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.bar {
+  flex: none;
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.bar.low {
+  background: var(--accent);
+}
+
+.bar.moderate {
+  background: var(--warn-strong);
+}
+
+.bar.high {
+  background: var(--danger-text);
+}
+
+.bar.other {
+  background: var(--other);
+}
+
+.plan-session {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+}
+
+.plan-session.focus {
+  padding: 14px;
+  gap: 10px;
+  border-color: var(--accent);
+}
+
+.plan-session-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+button.plan-session-head {
+  border: 0;
+  padding: 0;
+  background: none;
+  white-space: normal;
+  font-size: 1rem;
+}
+
+.plan-session-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-session h3 {
+  display: inline;
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.3;
+}
+
+.plan-session.skipped .plan-session-title {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.chips {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
+  gap: 6px;
 }
 
-.session-when {
+.chip {
+  font-size: 0.82rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-step-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-step-length {
+  white-space: nowrap;
+}
+
+.plan-repeat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-repeat-head {
+  font-weight: 600;
+}
+
+.plan-repeat > .plan-steps {
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.plan-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+}
+
+.plan-details dt {
   color: var(--muted);
+}
+
+.plan-details dd {
+  margin: 0;
+}
+
+button.plan-race {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  text-align: left;
+  white-space: normal;
+  border: 1px solid var(--race);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 1rem;
+}
+
+.plan-race-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-race-head strong {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-race-flag,
+.plan-race-days {
+  color: var(--race);
+  display: inline-flex;
+}
+
+.plan-race-days {
   font-size: 0.85rem;
-  min-width: 6.5em;
-}
-
-.session.skipped .session-head strong,
-.session.skipped p {
-  opacity: 0.6;
-}
-
-.session.skipped .session-head strong {
-  text-decoration: line-through;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .badge {

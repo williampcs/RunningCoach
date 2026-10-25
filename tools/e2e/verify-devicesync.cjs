@@ -118,7 +118,7 @@ let step = "start";
 
     step = "B 的資料";
     await B.tab("計畫與賽事");
-    check.bPlan = await B.page.getByText("排課的原因：（模擬）依最近的跑量排下週").waitFor({ timeout: 10000 }).then(() => true, () => false);
+    check.bPlan = await B.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
     await B.tab("選手資料");
     await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
     check.bProfile = await (async () => {
@@ -192,7 +192,7 @@ let step = "start";
     await C.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
     await A.card.getByRole("button", { name: "完成" }).click();
     await C.tab("計畫與賽事");
-    check.cPlan = await C.page.getByText("排課的原因：（模擬）依最近的跑量排下週").waitFor({ timeout: 10000 }).then(() => true, () => false);
+    check.cPlan = await C.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
 
     // --- D：用復原碼還原；打錯的碼被拒絕 ---
     step = "D 用復原碼還原";

@@ -114,7 +114,7 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
   if (warnings.length && !notesInput) throw new Error("accept_warnings=true 時要在 warning_notes 寫出保留的理由");
 
   const outline = typeof input.outline === "string" && input.outline.trim() ? input.outline.trim() : null;
-  const notes = warnings.length ? `${warnings.map((w) => w.message).join(" ")} 教練的理由：${notesInput}` : null;
+  const notes = warnings.length ? `${warnings.map((w) => w.message).join(" ")} ${COACH_NOTE_MARK}${notesInput}` : null;
   const meta = { weekLabel: isoWeekLabel(weekStart), weekStart, style, reason, outline, notes };
   const content = planMarkdown(meta, sessions, ctx);
   const planId = await db.saveStructuredPlan({ ...meta, content }, sessions);
@@ -152,7 +152,7 @@ function sessionsText(sessions: PlannedSession[], ctx: TargetContext, match?: We
         .join("；");
       return (
         `[session_id=${v.id}] ${v.when}｜${v.kindLabel}：${v.title}${status ? `（${status}${v.note ? `：${v.note}` : ""}）` : ""}\n` +
-        (v.steps ? `  ${v.steps}（約 ${v.km} km、${v.minutes} 分鐘）\n` : "") +
+        (v.steps ? `  ${v.steps}（${v.isRun ? `約 ${v.km} km、` : ""}${v.minutes} 分鐘）\n` : "") +
         (detail ? `  ${detail}\n` : "") +
         (result ? `  ${result}` : "")
       ).trimEnd();
@@ -166,6 +166,10 @@ export interface ActivePlan {
   sessions: (SessionView & { result: SessionResult | null })[];
   styleLabel: string | null;
   totalKm: number;
+  /** 這週的跑步次數（不含跳過的、不是跑步的課） */
+  runCount: number;
+  /** 教練蓋過檢查器的警告時寫的理由（給選手看）；檢查器的警告本身只給教練看 */
+  coachNote: string | null;
   /** 這週沒有配到課的跑步（排課前已跑、課表外多跑的） */
   extras: string[];
 }
@@ -183,14 +187,25 @@ export async function nextPlan(db: Db, today: string): Promise<ActivePlan | null
 }
 
 async function planView(db: Db, today: string, plan: TrainingPlan): Promise<ActivePlan> {
-  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, extras: [] };
+  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, runCount: 0, coachNote: null, extras: [] };
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
   const planned = await db.getPlannedSessions(plan.id);
   const match = matchWeek(planned, ctx.workouts, ctx.others, plan.week_start, today, ctx);
   const sessions = sortSessions(planned).map((s) => ({ ...sessionView(s, ctx), result: match.results.get(s.id) ?? null }));
   const totalKm = Math.round(sessions.filter((s) => s.status !== "skipped").reduce((sum, s) => sum + s.km, 0) * 10) / 10;
-  return { plan, sessions, styleLabel: STYLE_LABELS[style], totalKm, extras: extrasText(match) };
+  const runCount = sessions.filter((s) => s.isRun && s.status !== "skipped").length;
+  return { plan, sessions, styleLabel: STYLE_LABELS[style], totalKm, runCount, coachNote: coachNoteOf(plan.notes), extras: extrasText(match) };
+}
+
+const COACH_NOTE_MARK = "教練的理由：";
+
+/** plan.notes 是「檢查器的警告 … 教練的理由：…」：只取教練的理由給選手看（舊的課表也是這個格式） */
+export function coachNoteOf(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const at = notes.lastIndexOf(COACH_NOTE_MARK);
+  const note = at >= 0 ? notes.slice(at + COACH_NOTE_MARK.length).trim() : "";
+  return note || null;
 }
 
 /** get_training_plan 的內容 */

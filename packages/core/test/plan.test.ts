@@ -4,14 +4,16 @@ import { danielsPaces, heartRateInfo, type Race, type TrainingValues, type Worko
 import {
   checkPlan,
   estimateSession,
+  minutesText,
   parseSessions,
   parseWeekdays,
   planMarkdown,
+  sessionView,
   targetText,
   type CheckContext,
   type SessionDraft,
 } from "../src/plan";
-import { planTextForTool, savePlanFromTool } from "../src/planning";
+import { coachNoteOf, planTextForTool, savePlanFromTool } from "../src/planning";
 import { makeCoach, toolTurn, turn } from "./helpers";
 
 const WEEK = "2026-10-12"; // 星期一
@@ -125,6 +127,61 @@ describe("目標的換算與估算", () => {
     expect(md).toContain("4 ×（1 km 4:15–4:21/km（T） ＋ 1 分鐘 心率 ≤153）");
     expect(md).toContain("狀況不好時：改成 40 分鐘輕鬆跑");
     expect(md).toContain("**之後幾週**\n下週加一趟");
+  });
+});
+
+describe("課表頁的顯示（12.22）", () => {
+  const t = { values: values(), challenge: false, fallbackPaceSec: 360 };
+  const strides: SessionDraft = {
+    ...easy("2026-10-13"),
+    title: "輕鬆跑 + 4 趟加速跑",
+    steps: [{ duration_min: 30, target: { hr: "easy" } }, { repeat: 4, steps: [{ duration_min: 1 / 3, note: "加速", target: { rpe: [8, 9] } }, { duration_min: 1 }] }],
+  };
+  const strength: SessionDraft = { date: "2026-10-13", kind: "strength", title: "肌力", steps: [{ duration_min: 20, note: "深蹲、臀橋" }], purpose: "", success: "", fallback: null };
+  const rest: SessionDraft = { date: "2026-10-14", kind: "rest", title: "休息", steps: [], purpose: "", success: "", fallback: null };
+
+  it("不到一分鐘寫秒，十分鐘內的零頭寫分與秒", () => {
+    expect(minutesText(1 / 3)).toBe("20 秒");
+    expect(minutesText(1.5)).toBe("1 分 30 秒");
+    expect(minutesText(40)).toBe("40 分鐘");
+    expect(minutesText(32.4)).toBe("32 分鐘");
+  });
+
+  it("步驟直列：名稱、目標、長度、強度；重複組是一列標題加上內層", () => {
+    const v = sessionView(strides, t);
+    expect(v.rows[0]).toEqual({ type: "step", name: "輕鬆", target: "心率 ≤153", length: "30 分鐘", intensity: "low" });
+    expect(v.rows[1]).toMatchObject({ type: "repeat", times: 4, steps: [{ name: "加速", length: "20 秒", intensity: "high" }, { name: "恢復", length: "1 分鐘" }] });
+    expect(sessionView(tempo("2026-10-15"), t).rows[1]).toMatchObject({ steps: [{ name: "T 配速", target: "4:15–4:21/km", length: "1 km", intensity: "moderate" }, {}] });
+  });
+
+  it("小標籤：時間、距離（有以距離寫的步驟）、主要目標、重複組；強度課的小卡片是距離與配速", () => {
+    const v = sessionView(strides, t);
+    expect(v.chips).toEqual(["35 分鐘", "心率 ≤153", "4 × 20 秒"]);
+    expect(v.brief).toEqual(["35 分鐘"]);
+    const q = sessionView(tempo("2026-10-15"), t);
+    expect(q.chips).toContain("4:15–4:21/km");
+    expect(q.brief).toEqual([`${q.km} km`, "4:15–4:21/km"]);
+    expect(sessionView(long("2026-10-18"), t).brief).toEqual(["14 km"]);
+  });
+
+  it("非跑步不寫公里；種類與課名相同時只寫一次", () => {
+    const s = sessionView(strength, t);
+    expect(s.isRun).toBe(false);
+    expect(s.chips).toEqual(["20 分鐘"]);
+    expect(s.rows[0]).toMatchObject({ name: "深蹲、臀橋", intensity: "other" });
+    expect(s.kindHint).toBeNull();
+    expect(sessionView(rest, t).chips).toEqual([]);
+    expect(sessionView(strides, t).kindHint).toBeNull();
+    expect(sessionView({ ...strength, kind: "cross", title: "騎車" }, t).kindHint).toBe("交叉訓練");
+    const md = planMarkdown({ weekLabel: "2026-W42", weekStart: WEEK, style: "fixed", reason: "", outline: null, notes: null }, [strength, rest], t);
+    expect(md).toContain("（20 分鐘）");
+    expect(md).not.toContain("約 0 km、");
+  });
+
+  it("檢查器的警告不給選手看，只取教練的理由（舊的課表也是同樣的格式）", () => {
+    expect(coachNoteOf("這週約 40 km，比最近四週最高的一週多。 教練的理由：上個月本來就跑比較多")).toBe("上個月本來就跑比較多");
+    expect(coachNoteOf("只有警告")).toBeNull();
+    expect(coachNoteOf(null)).toBeNull();
   });
 });
 

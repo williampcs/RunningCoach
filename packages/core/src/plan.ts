@@ -268,9 +268,17 @@ export function estimateSession(session: SessionDraft, ctx: TargetContext): Sess
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/** 時間的文字：不到一分鐘寫秒（20 秒），十分鐘內有零頭寫「1 分 30 秒」，其他寫分鐘 */
+export function minutesText(minutes: number): string {
+  const sec = Math.round(minutes * 60);
+  if (sec < 60) return `${sec} 秒`;
+  if (sec % 60 && minutes < 10) return `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`;
+  return `${Math.round(minutes)} 分鐘`;
+}
+
 function lengthText(step: Step): string {
   if (step.distance_km !== undefined) return `${round1(step.distance_km)} km`;
-  return `${round1(step.duration_min ?? 0)} 分鐘`;
+  return minutesText(step.duration_min ?? 0);
 }
 
 function stepText(step: Step, ctx: TargetContext): string {
@@ -504,6 +512,90 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
 export const STYLE_LABELS: Record<PlanStyle, string> = { fixed: "固定", flexible: "彈性（這週的菜單，哪天跑都可以）" };
 export const STATUS_LABELS: Record<SessionStatus, string> = { planned: "", skipped: "已跳過", fallback: "改用替代" };
 
+/** 步驟的強度：顏色和紀錄頁的強度橫條同一套；other 是不算強度的（肌力、交叉訓練沒有目標時） */
+export type StepIntensity = "low" | "moderate" | "high" | "other";
+
+/** 直列的一步；重複組是一列標題加上內層的幾步 */
+export type StepRow =
+  | { type: "step"; name: string; target: string; length: string; intensity: StepIntensity }
+  | { type: "repeat"; times: number; steps: { name: string; target: string; length: string; intensity: StepIntensity }[] };
+
+const PACE_INTENSITY: Record<PaceCode, StepIntensity> = { E: "low", M: "moderate", T: "moderate", I: "high", R: "high" };
+const PACE_NAMES: Record<PaceCode, string> = { E: "輕鬆", M: "M 配速", T: "T 配速", I: "I 配速", R: "R 配速" };
+
+function intensityOf(target: Target | undefined, kind: SessionKind): StepIntensity {
+  if (!target) return NON_RUN_KINDS.has(kind) ? "other" : "low";
+  if ("pace" in target) return PACE_INTENSITY[target.pace];
+  if ("hr" in target) return "low";
+  if ("zone" in target) {
+    const n = Number(target.zone.slice(1, 2));
+    return n <= 2 ? "low" : n <= 4 ? "moderate" : "high";
+  }
+  return target.rpe[1] <= 4 ? "low" : target.rpe[1] <= 7 ? "moderate" : "high";
+}
+
+/** 給選手看的目標：配速不附代號（代號已經在名稱裡） */
+function targetShort(target: Target | undefined, ctx: TargetContext): string {
+  if (target && "pace" in target) {
+    const range = paceRange(target.pace, ctx);
+    if (range) return rangeText(range);
+  }
+  return targetText(target, ctx);
+}
+
+/** recovery：重複組裡第二段以後沒有目標的，是恢復（慢跑或走） */
+function stepRow(step: Step, kind: SessionKind, ctx: TargetContext, recovery = false) {
+  const intensity = intensityOf(step.target, kind);
+  const name =
+    step.note ??
+    (step.target && "pace" in step.target
+      ? PACE_NAMES[step.target.pace]
+      : step.target
+        ? { low: "輕鬆", moderate: "中等強度", high: "高強度", other: "" }[intensity]
+        : NON_RUN_KINDS.has(kind)
+          ? SESSION_KINDS[kind]
+          : recovery
+            ? "恢復"
+            : "跑");
+  return { name, target: targetShort(step.target, ctx), length: lengthText(step), intensity };
+}
+
+export function stepRows(session: SessionDraft, ctx: TargetContext): StepRow[] {
+  return session.steps.map((step) =>
+    isRepeat(step)
+      ? { type: "repeat" as const, times: step.repeat, steps: step.steps.map((s, i) => stepRow(s, session.kind, ctx, i > 0)) }
+      : { type: "step" as const, ...stepRow(step, session.kind, ctx) },
+  );
+}
+
+/**
+ * 關鍵目標的小標籤（課表頁）：時間（有以時間寫的步驟時）、距離（跑步、有以距離寫的步驟時）、
+ * 主要的目標（強度課是強度配速，其他是第一個目標）、第一個重複組的摘要（例：4 × 20 秒）。
+ * brief 是小卡片用的一兩個：強度課是距離或時間加配速，長跑是距離，其他是時間。
+ */
+function sessionChips(session: SessionDraft, e: SessionEstimate, ctx: TargetContext): { chips: string[]; brief: string[] } {
+  const flat = session.steps.flatMap((s) => (isRepeat(s) ? s.steps : [s]));
+  if (!flat.length) return { chips: [], brief: [] };
+  const run = !NON_RUN_KINDS.has(session.kind);
+  const time = flat.some((s) => s.distance_km === undefined) || !run ? minutesText(e.minutes) : null;
+  const km = run && flat.some((s) => s.distance_km !== undefined) ? `${round1(e.km)} km` : null;
+  const quality = flat.find((s) => s.target && "pace" in s.target && s.target.pace !== "E");
+  const main = QUALITY_KINDS.has(session.kind) && quality ? quality : flat.find((s) => s.target);
+  const target = run && main ? targetShort(main.target, ctx) : null;
+  const block = session.steps.find(isRepeat);
+  const repeat = block ? `${block.repeat} × ${lengthText(block.steps[0]!)}` : null;
+  const chips = [time, km, target, repeat].filter((x): x is string => !!x);
+  const brief = QUALITY_KINDS.has(session.kind) ? [km ?? time, target] : session.kind === "long" ? [km ?? time] : [time ?? km];
+  return { chips, brief: brief.filter((x): x is string => !!x) };
+}
+
+/** 種類與課名相同（或課名已經包含種類）時只寫課名；不同時另外附種類 */
+function kindHint(kind: SessionKind, title: string): string | null {
+  const label = SESSION_KINDS[kind];
+  const word = label.replace(/^[A-Z] /, "").replace(/訓練$/, "");
+  return title === label || title.includes(word) ? null : label;
+}
+
 export interface SessionView {
   id: number | null;
   date: string | null;
@@ -520,6 +612,13 @@ export interface SessionView {
   fallback: string | null;
   status: SessionStatus;
   note: string | null;
+  /** 跑步的課（算跑量）；休息、肌力、交叉訓練不是 */
+  isRun: boolean;
+  /** 和課名不同時才有的種類，例：課名「週末慢跑」→「長跑」 */
+  kindHint: string | null;
+  rows: StepRow[];
+  chips: string[];
+  brief: string[];
 }
 
 export function sessionView(session: SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note">>, ctx: TargetContext): SessionView {
@@ -539,6 +638,10 @@ export function sessionView(session: SessionDraft & Partial<Pick<PlannedSession,
     fallback: session.fallback,
     status: session.status ?? "planned",
     note: session.note ?? null,
+    isRun: !NON_RUN_KINDS.has(session.kind),
+    kindHint: kindHint(session.kind, session.title),
+    rows: stepRows(session, ctx),
+    ...sessionChips(session, e, ctx),
   };
 }
 
@@ -564,7 +667,7 @@ export function planMarkdown(
   for (const v of views) {
     const status = STATUS_LABELS[v.status];
     lines.push(`- ${v.when}｜${v.kindLabel}：${v.title}${status ? `（${status}）` : ""}`);
-    if (v.steps) lines.push(`  - ${v.steps}（約 ${v.km} km、${v.minutes} 分鐘）`);
+    if (v.steps) lines.push(`  - ${v.steps}（${v.isRun ? `約 ${v.km} km、` : ""}${v.minutes} 分鐘）`);
     const detail = [v.purpose && `目的：${v.purpose}`, v.success && `完成的標準：${v.success}`, v.fallback && `狀況不好時：${v.fallback}`].filter(Boolean);
     if (detail.length) lines.push(`  - ${detail.join("；")}`);
   }

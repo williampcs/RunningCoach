@@ -92,7 +92,7 @@ flowchart TB
   end
   subgraph domain["訓練的規則"]
     tv["training-values.ts<br/>配速、心率區間、VDOT"]
-    plan["plan.ts / planning.ts / plan-match.ts<br/>課表、檢查器、和實際紀錄對照"]
+    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸"]
     races["races.ts<br/>賽事的規則"]
     recovery["recovery.ts<br/>恢復狀況的判讀"]
     feed["feed.ts<br/>教練動態"]
