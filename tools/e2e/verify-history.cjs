@@ -85,7 +85,8 @@ let failPage = null;
   await older.locator(".run-row").click();
   await older.locator(".run-card").waitFor({ timeout: 5000 });
   check.expands = (await older.locator(".run-row").getAttribute("aria-expanded")) === "true";
-  check.noDuplicateInRow = !(await older.locator(".run-row").innerText()).includes("km") && (await older.locator(".run-row .split-bar").count()) === 0;
+  // 列上只留課名；課名本身可能有 km（例如「4×1 km 閾值」），所以檢查的是單獨一行的距離
+  check.noDuplicateInRow = !/^[\d.?]+ km$/m.test(await older.locator(".run-row").innerText()) && (await older.locator(".run-row .split-bar").count()) === 0;
   check.noDuplicateHead = (await older.locator(".run-card-head").count()) === 0;
   check.noEffortYet = (await older.innerText()).includes("還沒填體感");
   await older.getByRole("button", { name: "補填體感" }).click();
