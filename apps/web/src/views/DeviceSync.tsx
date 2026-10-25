@@ -22,6 +22,7 @@ import {
 
 import { errorText, useApp } from "../app-context";
 import { lockEnabled } from "../settings";
+import { PrivacyLink } from "./PrivacyLink";
 
 interface Slot {
   newPub: string;
@@ -477,7 +478,8 @@ export function DeviceSyncCard() {
           在電腦、手機之間同步你的選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓；API key 不同步，每台各自填。
         </p>
         <p className="muted small">
-          資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。
+          資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。同步服務存了什麼見
+          <PrivacyLink />。
         </p>
         <div className="row">
           <button className="primary" disabled={busy} onClick={() => void begin()}>

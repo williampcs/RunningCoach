@@ -2,7 +2,8 @@
 import { addDays } from "./dates";
 import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
 
-const BASE_URL = "https://intervals.icu/api/v1";
+/** 預設的 API 網址（隱私說明頁列出網頁版會連的網址，測試會對照） */
+export const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
 
 /** Intervals.icu 回傳的活動（只列出用到的欄位） */
 type RawActivity = Record<string, unknown>;
@@ -190,7 +191,7 @@ export class IntervalsClient implements ActivitySource {
 
   private async getJson(path: string, timeoutMs = 15_000): Promise<unknown> {
     const athleteId = this.options.athleteId || "0";
-    const base = (this.options.baseUrl ?? BASE_URL).replace(/\/+$/, "");
+    const base = (this.options.baseUrl ?? INTERVALS_BASE_URL).replace(/\/+$/, "");
     const response = await this.fetchImpl(`${base}/athlete/${encodeURIComponent(athleteId)}${path}`, {
       headers: { authorization: this.authHeader(), accept: "application/json" },
       signal: AbortSignal.timeout(timeoutMs),

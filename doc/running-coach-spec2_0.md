@@ -99,6 +99,7 @@
 | 2.0-draft | 2026-10-25 | 隱私說明頁：決定（聯絡 `privacy@zone2mate.com`、署名 Zone2Mate）與工作單（12.20、9.4） |
 | 0.2.1 | 2026-10-25 | **發版 v0.2.1**：設定裡的卡片恢復間距；設定與說明關閉時往右滑出；打開時焦點移進面板、關閉後回到原本的按鈕，鍵盤不會跑到底下的頁面（12.17） |
 | 2.0-draft | 2026-10-25 | 面板的修正：設定面板裡的卡片恢復 12px 的間距；關閉時往右滑出、暗幕淡出（減少動態效果時直接關閉），滑出途中再點 ❓／⚙️ 會打開；打開時焦點移到面板的標題、關閉後回到打開它的按鈕；面板打開時底下的頁面 inert（電腦上側邊的分頁除外）（12.17、9.4） |
+| 2.0-draft | 2026-10-25 | 隱私說明頁 `/privacy`：不用 JavaScript 的靜態頁（建置時由 `apps/web/privacy/` 產生，staging 有標示），內容依 12.20 的八項並逐項對照程式；設定（資料流向、Intervals.icu、多裝置同步、最下面）、新手引導、使用說明加連結，教練的說明加「隱私說明」一節；回覆與說明裡 `#help` 以外的連結改在新分頁打開；測試檢查網頁版預設會連的外部網址都寫在頁面上（12.20、9.4） |
 | 2.0-draft | 2026-10-21 | 第三步的補充：課表要達得到、可以回饋與修改；依目標、強度偏好與生活節奏個人化（12.8，提案） |
 | 2.0-draft | 2026-10-21 | 教練動態：身體狀況那則不能略過；略過的項目可以找回（6.7） |
 | 2.0-draft | 2026-10-21 | 修正：網頁版回到前景或跨日時重新讀取、恢復資料自動更新並標明昨天的資料（6.7、KI-034）；Intervals.icu 沒有跑步設定時訓練數值出錯 |
@@ -640,7 +641,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：英文版；訂閱代理、手機 App、健康 App、Discord bot 的說明；同意畫面的改動（設定頁已經有依供應商的資料流向與勾選）；Cloudflare 的 Email Routing（使用者自己設）。
   - 驗收：`npm test`、`npm run typecheck`；新的 `verify-privacy.cjs`：關掉 JavaScript 也看得到內容、App 裡的連結都打得開、手機與電腦、淺色與深色截圖；其他腳本照跑。協調 session 會逐項對照程式檢查內容。
   - 注意：這一頁是使用者第一次給別人用前的承諾，寧可少寫也不要寫錯；不要寫「符合某某法規」或「可驗證」。版號：有新的頁面，合併部署時是 minor。
-  - 狀態：開發中（開發 session「隱私說明頁」，2026-10-25 建立）。
+  - 狀態：已推上 v2（2026-10-25，開發 session「隱私說明頁」）；實作與驗證見 12.20。
 
 - **面板的修正：卡片間距、滑出的動畫、焦點**（12.17 的後續；2026-10-25 使用者在正式站發現）
   - 使用者的話：「設定裡的每張卡片都黏在一起了」「設定跟使用說明滑入時有動畫，但滑出時沒有」。
@@ -723,7 +724,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 10. 教練上網搜尋（6.6，提案）。
 11. 從其他 AI 帶入的第二階段：讀官方匯出檔（6.5）。
 12. 部署的保護：容器的記憶體上限；部署後檢查失敗時自動回退（現在只會讓 workflow 失敗，要手動回退，KI-025）。
-13. 隱私說明頁，公開推廣前要補（4.2、KI-026）。2026-10-25 開始討論（12.20）。
+13. 隱私說明頁，公開推廣前要補（4.2、KI-026）。2026-10-25 開始討論（12.20），同日推上 v2。
 14. 教練動態的「門鈴」：網頁版的 Web Push、Discord 的主動訊息（12.3）。內容沿用教練動態（6.7）。
 15. 養成遊戲的進度事件（12.5，提案）。
 16. ~~跑後回報改為先選紀錄、再填體感~~：2026-10-19 完成（6.1）。原本的問題（使用者回報）：現在的表單只寫「回報今天這一趟」，送出後才知道配對到哪一筆：今天的活動已同步時配到今天最新的一筆（一天跑兩次時，較早的那筆要到下方補填）；還沒同步時暫存為今天的回報，即使使用者想回報的是昨天那趟。改法：表單上方列出最近 3 天還沒回報的跑步（今天／昨天、開始時間、距離、時長），預設選最新的一筆，另有「這一趟還沒同步」的選項（暫存，同步後配對）；按鈕寫明對象，例如「存到今天 07:12 的 10.2 km」。教練動態的「昨天的 10 km 還沒回報感受」直接帶到選好那一筆的表單。
@@ -2361,7 +2362,7 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 - 只從正式站複製到 staging，**不要反過來**：staging 的版本較新，資料庫的格式可能已升級，舊版讀不懂。
 - 復原碼不能把資料帶到 staging（兩邊是不同的同步服務）；staging 的 API key 另外填，一樣用自己的額度。
 
-### 12.20 隱私說明頁（2026-10-25，已決定，工作單開發中）
+### 12.20 隱私說明頁（2026-10-25，已決定，已推上 v2）
 
 使用者：「先做隱私說明頁」。原本記在 9.4（2026-10-15 盤點第 13 項）、4.2、KI-026：公開推廣、給別人用之前要補；申請 Intervals.icu OAuth 也要附隱私政策的網址（12.3）。
 
@@ -2386,3 +2387,43 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 - 要不要也出英文版（建議之後再說）。
 
 **決定**（2026-10-25，使用者：「照建議」）：照上面的提案做；聯絡方式 `privacy@zone2mate.com`（Cloudflare Email Routing 轉寄到使用者自己的信箱，由使用者設定）；署名「Zone2Mate（個人開發的專案）」；先只有繁體中文。工作單見 9.4。
+
+**實作**（2026-10-25，開發 session「隱私說明頁」）
+- 頁面：範本 `apps/web/privacy/page.html` 與樣式 `page.css`；`apps/web/privacy/render.ts` 在建置時填入這次建置的差異（staging 的標示與 `noindex`、同步服務的主機名稱，取自 `VITE_STAGING`、`VITE_SYNC_URL`），由 `vite.config.ts` 的 `privacyPage()` 輸出 `privacy.html` 與 `privacy.css`（Cloudflare Pages 提供在 `/privacy`）。頁面沒有任何腳本與行內樣式，`_headers` 的 `/*` 規則（CSP 等安全標頭）一樣套用。淺色與深色跟著系統。
+- 改了資料流向時：改 `page.html`，最下面的異動紀錄加一行。
+- App 裡的連結（`apps/web/src/views/PrivacyLink.tsx`，在新分頁打開）：新手引導第 1 步；設定的「資料會送到哪裡」、Intervals.icu 卡片、多裝置同步（還沒開啟時的說明）、最下面的版號旁；使用說明的開頭。使用說明與教練的 `get_app_help` 加「隱私說明」一節（`packages/core/src/app-guide/web.ts`，`privacy`），被問到時回答重點並給連結。
+- `Markdown.tsx`：連結除了 App 裡的 `#help/…`，其他都在新分頁打開（原本教練回覆裡的外部連結會讓整個 App 換頁）。
+- 測試 `apps/web/test/privacy-page.test.ts`：網頁版預設會連的網址（Anthropic SDK 的預設網址、OpenAI 與 Gemini 的預設網址、`INTERVALS_BASE_URL`、Open-Meteo 的三個網址、建置時的同步服務）的主機都要在頁面上；另外掃 `apps/web/src` 與 `packages/core/src` 裡出現的網址，沒寫在頁面上、也不在「只是連結」清單（`LINKS_ONLY`）的就失敗，之後新增外部服務時會提醒更新這一頁。
+
+**頁面的說法與對應的程式**
+| 說法 | 程式 |
+|---|---|
+| 資料庫存在瀏覽器（OPFS 的 SQLite），沒有時退回記憶體 | `apps/web/src/db/worker.ts` 的 `open()` |
+| 資料庫裡的內容（對話、摘要、選手資料、記住的事、賽事、課表、自評、跑步與分析、恢復資料、其他運動） | `packages/core/src/db.ts` 的 `SCHEMA` |
+| localStorage 的設定（AI 服務、模型、API key、Intervals.icu 的 key 與 Athlete ID、時區、天氣城市、同步金鑰、同意紀錄）與小狀態 | `apps/web/src/settings.ts` 的 `AppSettings`、`GettingStarted.tsx` 的 `DISMISS_KEY`、`CoachFeed.tsx` 的 `STATE_KEY` |
+| 密碼鎖加密 API key、Intervals.icu 的 key、同步金鑰；對話不加密 | `apps/web/src/key-lock.ts` 的 `Secrets`、`settings.ts` 的 `enableLock()` |
+| 匯出的資料庫不含 API key | key 只在 localStorage（`settings.ts`），匯出的是資料庫檔（`Settings.tsx` 的 `exportDb()`） |
+| AI 服務：送出的內容（訊息、最近對話、摘要、選手資料、記住的事、近期賽事、日期與時區；工具查的紀錄等） | `packages/core/src/context.ts`（五層）、`tools.ts`；天氣不含地點見 `weather.ts` 開頭的說明 |
+| AI 服務：什麼時候（對話、跑步分析、摘要、從其他 AI 帶入） | `coach.ts`、`summarizer.ts`、`ImportFromAi.tsx` 的 `coach.extractImport()` |
+| AI 服務的網址、瀏覽器直連 | `settings.ts` 的 `buildProvider()`；`llm/anthropic.ts`（SDK 預設 `api.anthropic.com`）、`llm/openai-compatible.ts` 的 `OPENAI_COMPATIBLE_PRESETS` |
+| Intervals.icu：送 API key 與 Athlete ID；只讀不寫；讀哪些資料 | `packages/core/src/intervals.ts`：只有 `getJson()`（GET）；`fetchActivities`、`fetchWellness`、`fetchRunSettings`、`fetchPaceCurve`、`fetchOtherActivities` |
+| Open-Meteo：0.1 度的座標與時區；搜尋送城市名稱，台灣縣市不送 | `weather.ts` 的 `roundPlace()`、`OpenMeteoWeather.#query()`、`searchPlaces()`、`TAIWAN_CITIES` |
+| 天氣城市不進資料庫、不同步、AI 看不到 | `settings.ts` 的 `weather`（只在 localStorage）、`weather.ts` 開頭的說明 |
+| Cloudflare：網頁的檔案、定期讀版本檔 | `apps/web/src/update-check.ts`、`.github/workflows/web.yml` |
+| 同步：同步的內容；跑步紀錄與 API key 不同步 | `packages/core/src/device-sync/entities.ts` |
+| 同步：在裝置上 AES-GCM 加密，紀錄的代號是 HMAC | `device-sync/crypto.ts` 的 `seal()`、`recordId()` |
+| 同步服務存的欄位、配對十分鐘後失效 | `apps/sync/src/store.ts` 的 `SCHEMA`；`handler.ts` 的 `PAIR_TTL_MS` |
+| 憑證只存雜湊 | `apps/sync/src/handler.ts` 的 `sha256Hex()` |
+| 同步服務的程式不記錄 IP、沒開 Workers 的請求紀錄 | `handler.ts` 只讀 `content-length`、`origin`、`authorization`；`apps/sync/wrangler.toml` 的 `[observability] enabled = false` |
+| 只執行本站的程式（CSP） | `apps/web/vite.config.ts` 的 `CONTENT_SECURITY_POLICY`；`index.html` 沒有外部腳本 |
+| App 的程式不使用 cookie | `apps/web/src`、`packages/core/src` 沒有 `document.cookie` |
+| 全部重置刪除資料庫與設定（含 API key、同步金鑰） | `Settings.tsx` 的 `reset(null)`、`settings.ts` 的 `clearSettings()` |
+| 刪除雲端的同步資料 | `DeviceSync.tsx` 的「刪除雲端的資料」、`apps/sync/src/store.ts` 的 `deleteSpace()` |
+| 清除天氣的城市、密碼鎖、各個按鈕名稱 | `WeatherSettings.tsx`、`Settings.tsx` |
+
+沒有寫的：Cloudflare 自己的流量統計、各家服務實際怎麼保存資料（只附它們的隱私政策：Anthropic、OpenAI、Google Gemini API 的條款、Intervals.icu、Open-Meteo、Cloudflare；雲端環境連不到這些網站，網址用搜尋確認，Anthropic 的實際打開過）；訂閱代理、手機 App、Discord bot（照工作單不寫，頁面開頭寫明只說明「使用你自己的 AI API key」的網頁版）。
+
+**驗證**
+- `npm test`（含新的 `privacy-page.test.ts`）、`npm run typecheck`。
+- 網頁實測：新的 `verify-privacy.cjs`：關掉 JavaScript 時手機與電腦、淺色與深色都看得到全部九個區塊、署名、聯絡方式、更新日期，樣式有套用、沒有腳本與行內樣式、只連本站、不會左右捲動；App 裡七個連結與教練回覆裡的連結都在新分頁打開 `/privacy`，回覆裡的「看完整說明」照常在 App 裡切換。`verify-environments.cjs` 加上：staging 的建置 `/privacy` 有 Staging 標示，正式版沒有。其他腳本全部通過。截圖看過（手機與電腦、淺色與深色、staging、設定最下面的連結）。
+- 沒驗證到：Cloudflare Pages 實際把 `privacy.html` 提供在 `/privacy`（本機用 vite preview 驗證；Pages 的行為照文件，推上 v2 後在 staging 確認）；`privacy@zone2mate.com` 收不收得到信（Email Routing 由使用者設定）。

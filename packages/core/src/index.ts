@@ -66,7 +66,7 @@ export {
   type WeatherSource,
 } from "./weather";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
-export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
+export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
   AnthropicProvider,
   LlmError,

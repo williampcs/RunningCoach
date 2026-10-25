@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
+import { PRIVACY_CSS_FILE, PRIVACY_HTML_FILE, privacyCss, renderPrivacyPage } from "./privacy/render";
+
 /** 對外的版本號與建置資訊：版本來自 repo 根目錄的 package.json（唯一的來源，規格 12.19）；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
 function buildInfo() {
   const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
@@ -78,6 +80,19 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
+/** 隱私說明頁（規格 12.20）：不用 JavaScript 的靜態頁，Cloudflare Pages 提供在 /privacy；staging 的版本有 Staging 標示 */
+function privacyPage(): Plugin {
+  return {
+    name: "privacy-page",
+    apply: "build",
+    generateBundle() {
+      const build = { staging: process.env.VITE_STAGING === "1", syncUrl: process.env.VITE_SYNC_URL ?? "" };
+      this.emitFile({ type: "asset", fileName: PRIVACY_HTML_FILE, source: renderPrivacyPage(build) });
+      this.emitFile({ type: "asset", fileName: PRIVACY_CSS_FILE, source: privacyCss() });
+    },
+  };
+}
+
 /** 輸出 version.json：和 __APP_BUILD__ 同一份建置資訊 */
 function versionFile(build: ReturnType<typeof buildInfo>): Plugin {
   return {
@@ -92,7 +107,7 @@ function versionFile(build: ReturnType<typeof buildInfo>): Plugin {
 const BUILD = buildInfo();
 
 export default defineConfig({
-  plugins: [react(), contentSecurityPolicy(), versionFile(BUILD)],
+  plugins: [react(), contentSecurityPolicy(), versionFile(BUILD), privacyPage()],
   define: { __APP_BUILD__: JSON.stringify(BUILD) },
   server: { port: 5173, strictPort: true },
   worker: { format: "es" },

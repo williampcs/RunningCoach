@@ -1,0 +1,125 @@
+/* 隱私說明頁（規格 12.20）：和 App 同樣的顏色，淺色與深色跟著系統 */
+:root {
+  color-scheme: light dark;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #0f766e;
+  --info: #e0f2fe;
+  --warn: #fef3c7;
+  font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  line-height: 1.7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #131c2e;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #24304a;
+    --accent: #2dd4bf;
+    --info: #0c3a55;
+    --warn: #57400a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px 16px 48px;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin: 8px 0 4px;
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin: 0 0 8px;
+}
+
+h3 {
+  font-size: 1.02rem;
+  margin: 18px 0 4px;
+}
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+section.summary {
+  background: var(--info);
+  border-color: transparent;
+}
+
+ul {
+  margin: 0;
+  padding-left: 1.3em;
+}
+
+li + li {
+  margin-top: 6px;
+}
+
+li ul {
+  margin-top: 6px;
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+.lead,
+.back,
+footer {
+  color: var(--muted);
+}
+
+.back {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+footer {
+  font-size: 0.92rem;
+  padding: 0 4px;
+}
+
+footer h2 {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.staging-banner {
+  background: var(--warn);
+  padding: 8px 16px;
+  text-align: center;
+}

@@ -4,6 +4,7 @@
 //   設定的最上面是搬家的步驟，「清除這個網址的資料」後重新載入顯示已清除；在正式網址打開時沒有提示
 // - staging 的建置（VITE_STAGING=1）：標題列與設定頁最下面是 Staging、每一頁上方有 Staging 的提醒、沒有搬家提示、
 //   _headers 有 noindex
+// - 隱私說明頁（/privacy）：staging 的版本上方有 Staging 標示，正式版沒有
 // 這個腳本自己建置正式版與 staging 兩份（放在 $E2E_OUT 底下），用 4174、4175 埠開 vite preview；
 // 只需要 npm run dev:mock（同步服務等指向模擬上游），一般的 preview（4173）用來檢查第 1 項。
 const { spawn, execFileSync } = require("child_process");
@@ -82,6 +83,20 @@ const viewports = {
   check.productionIndexable = !headersOf("production").includes("X-Robots-Tag");
 
   const browser = await chromium.launch();
+
+  // 隱私說明頁（規格 12.20）：staging 的版本有標示，正式版沒有；不用 JavaScript
+  step = "privacy";
+  for (const name of Object.keys(BUILDS)) {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await page.goto(`http://localhost:${BUILDS[name].port}/privacy`);
+    const banner = page.locator(".staging-banner");
+    const heading = await page.getByRole("heading", { name: "隱私說明", level: 1 }).isVisible();
+    check[`privacy.${name}`] =
+      heading && (name === "staging" ? (await banner.isVisible()) && (await banner.innerText()).includes("Staging") : (await banner.count()) === 0);
+    if (name === "staging") await page.screenshot({ path: `${E2E.OUT}/privacy-staging.png` });
+    await context.close();
+  }
   const open = async (tag, options = {}) => {
     const context = await browser.newContext({ ...viewports[tag.split("-")[0]], timezoneId: "Asia/Taipei", ...options });
     const page = await context.newPage();
