@@ -1102,3 +1102,26 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - 之後要加用到地點的功能時，不可以拿這個城市來用；要用地點就另外設定、另外說明。
 
 **驗證**：E2E 檢查送到模擬模型的所有請求都沒有城市名稱與座標，天氣服務只收到四捨五入後的座標（規格 12.14）。
+
+## [KI-044] 正式站偶爾 403：瀏覽器共用了 staging 的連線
+
+**發現時機**：2026-10-25，正式站搬到 `app.zone2mate.com` 之後，使用者在 Mac 的 Edge 上幾次遇到整頁 403（分頁放一段時間後重新整理），開著開發者工具再整理就正常。
+**狀態**：原因已確認；修法（staging 搬到另一個網域）等使用者設定。
+
+**經過**（細節見規格 9.4「正式站載入時偶爾 403」）：
+- 403 的回應是 Cloudflare 產生的（`referrer-policy: same-origin`、`expires: 1970`，不是我們 `_headers` 的 `no-referrer`），但 Security → Events 用 Ray ID 查不到，流量紀錄也沒有。
+- 只有 Mac 上的 Edge 會：同一台的 Safari、手機關 Wi-Fi 的 Edge 都正常。
+- 使用者照協調 session 的方法驗證：先重新整理 staging，再重新整理正式站就 403，開發者工具裡兩者的「連線 ID」相同。
+
+**原因**：`app.zone2mate.com` 與 `staging.zone2mate.com` 在同一個 zone、同一張涵蓋 `*.zone2mate.com` 的憑證、同樣的 Cloudflare IP，Chromium 系的瀏覽器（Edge、Chrome）會把為一個網址開的 HTTP/2 連線拿去送另一個網址的請求（連線共用）。Cloudflare 對送錯連線的 Pages 自訂網域請求直接回 403，這種請求不會進 Security Events 與流量紀錄。一般使用者不會同時開 staging，所以只有開發者自己會遇到；但只要兩個網址共用憑證，任何同時開兩者的人都可能遇到。
+
+**決定**：staging 不要和正式站共用網域與憑證，改用另一個網域 `staging.zonetwomate.com`（`zonetwomate.com` 本來就是買來轉址用的；轉址只針對根網域與 `www`，不影響子網域）。不用改程式。
+
+**使用者要做的**：
+1. Cloudflare → Workers & Pages → `running-coach-staging` → Custom domains → 加 `staging.zonetwomate.com`，等 Active。
+2. GitHub Variables：`STAGING_WEB_URL` 改成 `https://staging.zonetwomate.com`。
+3. 請協調 session 執行 Deploy staging（同步服務改成只允許新網址）。
+4. 打開 `https://staging.zonetwomate.com` 確認可以用；staging 的資料在新網址是空的（瀏覽器的資料依網址分開），要的話用 staging 的復原碼還原或重新匯入。
+5. 拿掉舊的：`running-coach-staging` → Custom domains 移除 `staging.zone2mate.com`，再到 `zone2mate.com` 的 DNS 刪掉 `staging` 那一筆（移除自訂網域不一定會刪 DNS）。
+
+**驗證**：搬好之後，同時開 staging 與正式站、輪流重新整理，正式站不再 403；開發者工具裡兩者的連線 ID 不同。
