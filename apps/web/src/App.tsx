@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   Coach,
@@ -176,6 +176,56 @@ export function App() {
     return () => observer.disconnect();
     // 標題列在資料庫開好後才出現
   }, [panel, coach]);
+  // 畫面上的面板：關閉後先留著滑出（leaving），動畫結束才移除；滑出途中再打開就直接換回來（規格 12.17 的後續）
+  const [shown, setShown] = useState<Panel | null>(panel);
+  const [leaving, setLeaving] = useState(false);
+  if (panel && (panel !== shown || leaving)) {
+    setShown(panel);
+    setLeaving(false);
+  } else if (!panel && shown && !leaving) {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) setShown(null);
+    else setLeaving(true);
+  }
+  const finishLeaving = useCallback(() => {
+    setShown(null);
+    setLeaving(false);
+  }, []);
+  useEffect(() => {
+    if (!leaving) return;
+    // 保險：動畫沒有觸發 animationend 時（例如分頁在背景）也會移除
+    const timer = setTimeout(finishLeaving, 400);
+    return () => clearTimeout(timer);
+  }, [leaving, finishLeaving]);
+  // 焦點：打開時移到面板的標題，關閉後回到打開它的按鈕（焦點留在面板裡或已經不見時才移，點了側邊的分頁就留在分頁上）
+  const panelTitle = useRef<HTMLHeadingElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(panel !== null);
+  // 電腦上側邊的分頁在暗幕之上、點得到（12.17），面板打開時只有手機把它設成 inert
+  const [wide, setWide] = useState(() => matchMedia("(min-width: 900px)").matches);
+  useEffect(() => {
+    const query = matchMedia("(min-width: 900px)");
+    const onChange = () => setWide(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  useLayoutEffect(() => {
+    const active = document.activeElement as HTMLElement | null;
+    const inPanel = !active || active === document.body || !!active.closest("#side-panel");
+    if (panel && !wasOpen.current) {
+      opener.current = active && active !== document.body ? active : null;
+      panelTitle.current?.focus();
+    } else if (panel && inPanel && !active?.closest(".side-panel-head")) {
+      // 從面板裡的連結換到另一個面板：原本的內容不見了，焦點移到新的標題
+      panelTitle.current?.focus();
+    } else if (!panel && wasOpen.current) {
+      const back = opener.current?.isConnected ? opener.current : null;
+      if (inPanel) (back ?? document.querySelector<HTMLElement>(shown === "help" ? ".help-button" : ".settings-button"))?.focus();
+      opener.current = null;
+    }
+    wasOpen.current = panel !== null;
+    // shown 只用來找關閉的是哪個面板
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel]);
   useEffect(() => {
     if (!panel) return;
     const onKey = (e: KeyboardEvent) => {
@@ -359,7 +409,7 @@ export function App() {
           </button>
         </header>
         {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit) && (
-          <div className="notices">
+          <div className="notices" inert={!!panel}>
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
               <div className="notice info update-banner" role="status">
@@ -391,14 +441,14 @@ export function App() {
             )}
           </div>
         )}
-        <main className={tab === "chat" ? "page chat-page" : "page"}>
+        <main className={tab === "chat" ? "page chat-page" : "page"} inert={!!panel}>
           {tab === "chat" && <ChatView outbox={outbox} onOutboxSent={() => setOutbox(null)} />}
           {tab === "report" && <ReportView preselect={reportPreselect} onPreselectUsed={() => setReportPreselect(null)} />}
           {tab === "history" && <HistoryView />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
         </main>
-        <nav className="tabbar" aria-label="主要分頁">
+        <nav className="tabbar" aria-label="主要分頁" inert={!!panel && !wide}>
           {TABS.map((t) => (
             <button key={t.id} className={t.id === tab ? "active" : ""} aria-current={t.id === tab} onClick={() => showTab(t.id)}>
               <span aria-hidden="true">{t.icon}</span>
@@ -406,18 +456,29 @@ export function App() {
             </button>
           ))}
         </nav>
-        {panel && (
+        {shown && (
           <>
             {/* 電腦上底下的頁面看得到（變暗），點暗的地方也關閉；側邊的分頁在暗幕之上，點了直接切過去 */}
-            <div className="panel-backdrop" onClick={closePanel} />
-            <aside id="side-panel" className="side-panel" role="dialog" aria-label={PANEL_LABELS[panel]}>
+            <div className={leaving ? "panel-backdrop leaving" : "panel-backdrop"} onClick={closePanel} />
+            <aside
+              id="side-panel"
+              className={leaving ? "side-panel leaving" : "side-panel"}
+              role="dialog"
+              aria-label={PANEL_LABELS[shown]}
+              inert={leaving}
+              onAnimationEnd={(e) => {
+                if (e.target === e.currentTarget && e.animationName === "panel-out") finishLeaving();
+              }}
+            >
               <div className="side-panel-head">
-                <h2>{PANEL_LABELS[panel]}</h2>
-                <button className="side-panel-close" aria-label={`關閉${PANEL_LABELS[panel]}`} title="關閉" onClick={closePanel}>
+                <h2 ref={panelTitle} tabIndex={-1}>
+                  {PANEL_LABELS[shown]}
+                </h2>
+                <button className="side-panel-close" aria-label={`關閉${PANEL_LABELS[shown]}`} title="關閉" onClick={closePanel}>
                   <span aria-hidden="true">✕</span>
                 </button>
               </div>
-              <div className="side-panel-body">{panel === "settings" ? <SettingsView /> : <HelpView topic={helpTopic} />}</div>
+              <div className="side-panel-body">{shown === "settings" ? <SettingsView /> : <HelpView topic={helpTopic} />}</div>
             </aside>
           </>
         )}
