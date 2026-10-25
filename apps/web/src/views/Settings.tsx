@@ -13,6 +13,7 @@ import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
+import { PrivacyLink } from "./PrivacyLink";
 import { TestModeCard } from "./TestMode";
 import {
   clearSettings,
@@ -55,6 +56,9 @@ function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
         {locked
           ? "API key 以你的密碼加密後存在這個瀏覽器。"
           : "API key 以明文存在這個瀏覽器；能操作這台裝置的人都讀得到。可以在下方的「保護 API key」啟用密碼鎖。"}
+      </li>
+      <li>
+        資料存在哪裡、會送到哪裡的完整說明：<PrivacyLink />
       </li>
     </ul>
   );
@@ -386,7 +390,9 @@ export function SettingsView() {
         <p className="small">教練透過 Intervals.icu 讀取你的跑步紀錄：</p>
         <IntervalsGuide where="下方的「API key」欄位" />
         <PhoneGuide />
-        <p className="muted small">key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得。</p>
+        <p className="muted small">
+          key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得（<PrivacyLink />）。
+        </p>
         <div className="grid">
           <label>
             API key
@@ -523,6 +529,7 @@ export function SettingsView() {
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼
         </a>
+        ・<PrivacyLink />
       </p>
     </>
   );

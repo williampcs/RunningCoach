@@ -4,6 +4,7 @@ import { useApp } from "../app-context";
 import { useSync } from "../use-sync";
 import { FirstSync } from "./FirstSync";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
+import { PrivacyLink } from "./PrivacyLink";
 
 const DISMISS_KEY = "running-coach.getting-started.dismissed";
 
@@ -112,7 +113,10 @@ export function GettingStarted() {
       </div>
       <ol className="steps">
         <Step n={1} done={llmReady} title="設定 AI 模型">
-          <p className="small muted">選擇 AI 供應商並填入你自己的 API key，費用由你的帳號支付。</p>
+          <p className="small muted">
+            選擇 AI 供應商並填入你自己的 API key，費用由你的帳號支付。資料存在你的裝置上，對話直接送到你選的 AI 服務，見
+            <PrivacyLink />。
+          </p>
           <button onClick={() => goTo("settings")}>前往設定</button>
         </Step>
         <Step n={2} done={intervalsReady} title="連接 Intervals.icu">

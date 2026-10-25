@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0f766e" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="stylesheet" href="/privacy.css" />
+    <!--HEAD-->
+    <title>隱私說明｜Running Coach</title>
+  </head>
+  <body>
+    <!--STAGING-->
+    <main>
+      <p class="back"><a href="/">← 回到 Running Coach</a></p>
+      <h1>隱私說明</h1>
+      <p class="lead">這一頁說明 Running Coach 網頁版（使用你自己的 AI API key）的資料存在哪裡、會送到哪裡。提供者：Zone2Mate（個人開發的專案）。</p>
+
+      <section class="summary" aria-labelledby="summary">
+        <h2 id="summary">重點</h2>
+        <ul>
+          <li><strong>你的資料存在你自己的裝置上</strong>（這個瀏覽器裡）。我們沒有存放你的對話或訓練資料、讀得到這些內容的伺服器。</li>
+          <li>和教練對話時，內容由你的瀏覽器<strong>用你自己的 API key 直接送到你選的 AI 服務</strong>，不經過我們。</li>
+          <li>跑步與恢復資料由你的瀏覽器直接向 <strong>Intervals.icu</strong> 讀取，目前只讀不寫。</li>
+          <li><strong>多裝置同步是選用的</strong>：開了才會把資料在你的裝置上加密後存到雲端，我們解不開。</li>
+          <li>目前沒有帳號；沒有廣告、沒有分析或追蹤的程式，App 的程式也不使用 cookie。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="stored">
+        <h2 id="stored">存在你裝置上的資料</h2>
+        <ul>
+          <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事、課表、每日自評、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
+          <li><strong>瀏覽器的 localStorage</strong>：設定，包括 AI 服務與模型、AI 的 API key、Intervals.icu 的 API key 與 Athlete ID、時區、天氣的城市、多裝置同步的金鑰、你確認過的資料流向；以及幾個畫面的小狀態，例如是否略過新手引導、教練動態裡按過「知道了」的項目。</li>
+          <li><strong>密碼鎖（選用）</strong>：在設定的「保護 API key」啟用後，API key、Intervals.icu 的 key 與同步金鑰會用你的密碼加密後才保存；沒有啟用時是以明文保存。對話與訓練資料不會加密。</li>
+          <li>設定裡「匯出資料庫」匯出的檔案不含 API key。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="sent">
+        <h2 id="sent">會送出去的資料</h2>
+        <p>以下每一項都由你的瀏覽器直接連到對方；對方也會看到你的 IP 位址等連線資訊。</p>
+
+        <h3>你選的 AI 服務</h3>
+        <ul>
+          <li><strong>什麼時候</strong>：和教練對話、教練分析一趟跑步、整理較早的對話成摘要、「從其他 AI 帶入」整理你貼上的文字時。</li>
+          <li><strong>送什麼</strong>：你的訊息與最近的對話、對話摘要、選手資料、記住的事、近期的賽事、今天的日期與你的時區；教練需要時，還有它查詢的跑步紀錄、恢復資料、每日自評、課表與天氣的數字（不含地點）。另外會帶著你的 API key，讓對方確認是你的帳號。</li>
+          <li><strong>送到哪裡</strong>：依你在設定選的供應商，<code>api.anthropic.com</code>（Anthropic）、<code>api.openai.com</code>（OpenAI）、<code>generativelanguage.googleapis.com</code>（Google Gemini），或你在「其他 OpenAI 相容服務」填的網址。不經過我們的伺服器。</li>
+          <li>這些服務看得到你送出的內容，如何保存與使用依它們的條款與隱私政策：<a href="https://www.anthropic.com/legal/privacy">Anthropic</a>、<a href="https://openai.com/policies/privacy-policy/">OpenAI</a>、<a href="https://ai.google.dev/gemini-api/terms">Google Gemini API</a>。</li>
+        </ul>
+
+        <h3>Intervals.icu</h3>
+        <ul>
+          <li><strong>送什麼</strong>：你的 Intervals.icu API key 與 Athlete ID，用來讀取你的跑步、其他運動、恢復資料，以及心率區間、配速曲線等設定。</li>
+          <li><strong>目前只讀不寫</strong>：App 現在不會在 Intervals.icu 新增、修改或刪除任何東西。之後如果加入「把課表寫進 Intervals.icu 的行事曆」，會是你自己打開的選項，並先更新這一頁。</li>
+          <li><strong>送到哪裡</strong>：<code>intervals.icu</code>。隱私政策：<a href="https://www.intervals.icu/privacy-policy/">Intervals.icu</a>。</li>
+        </ul>
+
+        <h3>Open-Meteo（設定了天氣的城市才會）</h3>
+        <ul>
+          <li><strong>查天氣</strong>：送出四捨五入到 0.1 度（約 10 公里）的座標與你的時區，到 <code>api.open-meteo.com</code> 與 <code>air-quality-api.open-meteo.com</code>。</li>
+          <li><strong>找城市</strong>：在設定搜尋城市時，送出你輸入的名稱到 <code>geocoding-api.open-meteo.com</code>；直接選台灣的縣市不會送出任何東西。</li>
+          <li>這個城市只存在這個瀏覽器的設定裡：不進資料庫、不同步，AI 服務也看不到地點。</li>
+          <li>條款與隱私：<a href="https://open-meteo.com/en/terms">Open-Meteo</a>。</li>
+        </ul>
+
+        <h3>Cloudflare（提供網頁與同步服務）</h3>
+        <ul>
+          <li>打開網頁時，從 Cloudflare Pages 下載這個網站的檔案；App 開著時也會定期讀取本站的版本檔，檢查有沒有新版本。</li>
+          <li>開了多裝置同步時，連到我們放在 Cloudflare Workers 上的同步服務（<!--SYNC_HOST-->），內容見下一節。</li>
+          <li>Cloudflare 會看到你的 IP 位址等連線資訊，依它的<a href="https://www.cloudflare.com/privacypolicy/">隱私政策</a>處理。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="device-sync">
+        <h2 id="device-sync">多裝置同步（開了才有）</h2>
+        <ul>
+          <li>同步的內容：選手資料、賽事、課表、每日自評、記住的事、對話與摘要，以及跑步的體感與教練的分析。跑步紀錄本身每台裝置各自向 Intervals.icu 讀取；API key 不會同步。</li>
+          <li>每一筆都在你的裝置上用同步金鑰加密（AES-GCM）後才送出。金鑰只在你的裝置上（以及你自己存下的復原碼），同步服務沒有，所以我們解不開。</li>
+          <li>同步服務存的只有：
+            <ul>
+              <li>同步空間的代號，與存取憑證的雜湊（都由你的同步金鑰算出來，不是你的名字或任何帳號）；</li>
+              <li>每一筆加密後的內容、它的代號（由金鑰算出，看不出是哪一種資料）與序號；</li>
+              <li>資料的總大小、建立與最後更新的時間；</li>
+              <li>配對新裝置時，暫存雙方臨時的公開金鑰與加密後的同步金鑰，十分鐘後失效。</li>
+            </ul>
+          </li>
+          <li>不需要帳號、email 或名字。同步服務的程式不記錄 IP 位址，我們也沒有開啟 Workers 的請求紀錄功能。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="dont">
+        <h2 id="dont">我們不做的事</h2>
+        <ul>
+          <li>目前沒有帳號。之後如果推出需要帳號的功能（例如訂閱），會先在這一頁說明收集哪些資料、存在哪裡。</li>
+          <li>沒有廣告。</li>
+          <li>沒有分析、追蹤或任何第三方的程式：App 只執行本站的程式，網站的內容安全政策（CSP）會擋下其他網站的程式。這一頁本身沒有任何程式。</li>
+          <li>App 的程式不使用 cookie。</li>
+          <li>不賣資料：我們本來就拿不到你的資料。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="control">
+        <h2 id="control">你可以做的事</h2>
+        <ul>
+          <li><strong>備份或帶走</strong>：設定 →「資料」→「匯出資料庫」，得到一份標準的 SQLite 檔。</li>
+          <li><strong>刪除這台裝置上的資料</strong>：設定 →「重置」→「全部重置」，刪除資料庫與設定（包括 API key 與同步金鑰）；或用瀏覽器的「清除網站資料」，刪除這個網站存在瀏覽器裡的全部內容。</li>
+          <li><strong>刪除雲端的同步資料</strong>：設定 →「多裝置同步」→「刪除雲端的資料」。</li>
+          <li><strong>撤銷或更換 key</strong>：AI 的 API key 到該服務的後台撤銷；Intervals.icu 的 key 在它的設定頁重新產生。</li>
+          <li><strong>停用天氣</strong>：設定 →「天氣」→「清除天氣的城市」。</li>
+          <li><strong>保護 key</strong>：設定 →「保護 API key」啟用密碼鎖。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="limits">
+        <h2 id="limits">要知道的限制</h2>
+        <ul>
+          <li>AI 服務看得到你送出的內容。它們如何保存與使用這些內容，依它們的條款而定，我們無法替它們保證。</li>
+          <li>沒有啟用密碼鎖時，API key 與同步金鑰以明文存在瀏覽器裡，能使用這個瀏覽器的人都讀得到；啟用後，解鎖時也擋不住惡意的瀏覽器擴充功能。</li>
+          <li>沒有開多裝置同步時，資料只在你的裝置上，我們沒有備份：瀏覽器清掉資料或裝置遺失，又沒有匯出過，就找不回來。開了同步時，雲端有一份加密的副本，可以用復原碼還原。</li>
+          <li>程式碼是公開的，但我們沒辦法向你證明線上執行的就是公開的這一份。</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="contact">
+        <h2 id="contact">開源與聯絡</h2>
+        <ul>
+          <li>原始碼：<a href="https://github.com/williampcs/RunningCoach">github.com/williampcs/RunningCoach</a>（AGPL-3.0）。</li>
+          <li>提供者：Zone2Mate（個人開發的專案）。</li>
+          <li>對隱私有疑問：<a href="mailto:privacy@zone2mate.com">privacy@zone2mate.com</a>。</li>
+        </ul>
+      </section>
+
+      <footer>
+        <p>這一頁說明目前的做法；做法改變時，會先更新這一頁，並寫在下面的異動紀錄。</p>
+        <p>最後更新：2026-10-25</p>
+        <h2 id="changes">異動紀錄</h2>
+        <ul>
+          <li>2026-10-25：第一版。</li>
+        </ul>
+      </footer>
+    </main>
+  </body>
+</html>

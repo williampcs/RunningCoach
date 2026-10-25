@@ -119,7 +119,7 @@ function activities() {
   ];
 }
 
-/** 範例課表（這週或下週）：週二輕鬆跑、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
+/** 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
 function samplePlan(text: string) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
@@ -133,7 +133,15 @@ function samplePlan(text: string) {
     warning_notes: "（模擬）測試用的課表",
     outline: "- 下週：維持跑量\n- 之後：每兩週加一點",
     sessions: [
-      { date: day(1), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" },
+      {
+        date: day(1),
+        kind: "easy",
+        title: "輕鬆跑",
+        steps: [{ duration_min: 40, target: { hr: "easy" } }, { repeat: 4, steps: [{ duration_min: 1 / 3, target: { rpe: [8, 9] }, note: "加速" }, { duration_min: 1 }] }],
+        purpose: "有氧基礎",
+        success: "心率不超過輕鬆跑上限",
+      },
+      { date: day(1), kind: "strength", title: "肌力", steps: [{ duration_min: 20, note: "深蹲、臀橋、核心" }], purpose: "減少受傷", success: "動作確實" },
       {
         date: day(3),
         kind: "threshold",

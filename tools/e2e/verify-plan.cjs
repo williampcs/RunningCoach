@@ -1,4 +1,6 @@
-// 驗證結構化課表：教練排的課表顯示換算後的目標與替代；跳過、改用替代、移到別天、恢復；訓練偏好
+// 驗證課表頁（12.8、12.15、12.22 的 B 版）：未來幾天的時間軸、今天放大、其他天收起與展開、休息日沒有按鈕、
+// 不到一分鐘寫秒、非跑步不寫公里、賽事排進時間軸、「為什麼這樣排」預設收起、沒有週的編號；
+// 跳過、改用替代、移到別天、恢復；先排好的下週接在這週後面；這週稍早的課與實際的對照；訓練偏好
 const E2E = require("./env.cjs");
 const { chromium } = E2E;
 
@@ -9,6 +11,13 @@ const scheme = process.argv[4] || "light";
 const mobile = width < 600;
 let step = "start";
 let failPage = null;
+
+// 模擬上游的「今天」是台北時間
+const taipei = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(d);
+const TODAY = taipei(new Date());
+const plusDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const WEEKDAY = (new Date(`${TODAY}T00:00:00Z`).getUTCDay() + 6) % 7;
+const NEXT_MONDAY = plusDays(TODAY, 7 - WEEKDAY);
 
 (async () => {
   const browser = await chromium.launch();
@@ -34,6 +43,16 @@ let failPage = null;
     return false;
   };
   const field = (label, tag) => page.locator("label", { hasText: new RegExp(`^${label}`) }).locator(tag);
+  // 分頁的內容在 .page 裡捲動：截一張打開時看到的畫面，再截整張課表卡片
+  const shot = async (name) => {
+    await page.locator(".page").evaluate((el) => el.scrollTo(0, 0));
+    await page.screenshot({ path: `${E2E.OUT}/plan-${width}-${scheme}-${name}.png` });
+    // 暫時把視窗拉高到放得下整張卡片，截圖後還原
+    const cardHeight = await page.locator("section.plan-card").evaluate((el) => el.scrollHeight);
+    await page.setViewportSize({ width, height: Math.max(height, cardHeight + 400) });
+    await page.locator("section.plan-card").screenshot({ path: `${E2E.OUT}/plan-${width}-${scheme}-${name}-card.png` });
+    await page.setViewportSize({ width, height });
+  };
 
   step = "設定";
   await page.goto(URL);
@@ -60,31 +79,96 @@ let failPage = null;
   await page.getByRole("button", { name: "儲存選手資料" }).click();
   await page.locator(".notice.ok", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
 
-  step = "請教練排課表";
+  step = "賽事";
+  // 下週六的半馬排在時間軸的那天；40 天後的接在最後面；比完的不放
+  await tab("計畫與賽事");
+  const racesCard = page.locator("section#races");
+  const addRace = async (name, date, km) => {
+    await racesCard.getByRole("button", { name: "新增賽事" }).click();
+    await racesCard.getByLabel("賽事名稱").fill(name);
+    await racesCard.getByLabel("日期").fill(date);
+    await racesCard.getByLabel("距離（km）").fill(String(km));
+    await racesCard.getByRole("button", { name: "新增", exact: true }).click();
+    await racesCard.getByText(name).first().waitFor({ timeout: 5000 });
+  };
+  await addRace("下週的半馬", plusDays(NEXT_MONDAY, 5), 21.0975);
+  await addRace("秋季全馬", plusDays(TODAY, 40), 42.195);
+
+  step = "請教練排下週的課表";
   await tab("對話");
   await page.getByPlaceholder("輸入訊息…").fill("幫我排下週的課表");
   await page.getByRole("button", { name: "送出" }).click();
   await page.locator('.msg.user:has-text("幫我排下週的課表") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
-  const reply = await page.locator(".bubble.assistant").last().innerText();
-  check.coachSaved = reply.includes("課表已儲存");
+  check.coachSaved = (await page.locator(".bubble.assistant").last().innerText()).includes("課表已儲存");
 
-  step = "計畫頁";
+  step = "課表頁";
   await tab("計畫與賽事");
-  // 第一張卡片是目前的課表；先排好的下週課表另外列在後面
-  const sessions = page.locator("section.card").first().locator("ul.sessions > li");
+  const card = page.locator("section.plan-card");
+  const sessions = card.locator(".plan-session");
   await sessions.first().waitFor({ timeout: 10000 });
-  check.threeSessions = (await sessions.count()) === 3;
-  const t = sessions.filter({ hasText: "T 閾值" });
+  const cardText = await card.innerText();
+  check.noWeekNumber = !/W\d\d/.test(await page.locator(".page").innerText());
+  check.dateRange = cardText.includes(`${NEXT_MONDAY.slice(5)} – ${plusDays(NEXT_MONDAY, 6).slice(5)}`);
+  check.topLine = /\d+(\.\d)? km · 3 次跑步/.test(cardText);
+  check.noBoilerplate = !cardText.includes("配速與心率由程式依你的訓練數值換算");
+  // 為什麼這樣排：預設收起；展開後是教練的理由，不是檢查器的警告
+  const whyButton = card.getByRole("button", { name: "為什麼這樣排" });
+  check.whyCollapsed = (await whyButton.getAttribute("aria-expanded")) === "false" && !cardText.includes("依最近的跑量排下週");
+  // 時間軸：日期由小到大，從下週一排到下週日
+  const dates = await card.locator(".tl-day[data-date]").evaluateAll((els) => els.map((e) => e.dataset.date));
+  check.timelineOrder = dates.length >= 7 && dates.every((d, i) => i === 0 || dates[i - 1] < d) && dates[0] === NEXT_MONDAY;
+  // 放大的是第一堂（下週二的輕鬆跑），步驟直列、有按鈕；同一天的肌力是小卡片
+  const focus = card.locator(".plan-session.focus");
+  const focusText = await focus.innerText();
+  check.oneFocus = (await focus.count()) === 1 && focusText.includes("輕鬆跑");
+  check.focusSteps = (await focus.locator(".plan-step").count()) >= 3 && (await focus.getByRole("button", { name: "跳過" }).count()) === 1;
+  check.seconds = focusText.includes("20 秒") && !/0\.\d 分鐘/.test(cardText);
+  const tuesday = card.locator(`.tl-day[data-date="${plusDays(NEXT_MONDAY, 1)}"]`);
+  check.twoOnSameDay = (await tuesday.locator(".plan-session").count()) === 2 && (await tuesday.locator(".tl-date").count()) === 1;
+  // 細節（目的、完成的標準）預設收起
+  check.detailsCollapsed = !focusText.includes("完成的標準");
+  await focus.getByRole("button", { name: /細節/ }).click();
+  check.detailsOpen = (await focus.innerText()).includes("完成的標準");
+  // 其他天收起：只有課名與小標籤
+  const others = card.locator(".plan-session:not(.focus)");
+  check.othersCollapsed = (await others.locator(".plan-steps").count()) === 0 && (await others.getByRole("button", { name: "跳過" }).count()) === 0;
+  const strength = sessions.filter({ hasText: "肌力" });
+  check.nonRunNoKm = (await strength.innerText()).includes("20 分鐘") && !(await strength.innerText()).includes("km");
+  check.kindOnce = !/休息：休息|輕鬆跑：輕鬆跑|長跑：長跑/.test(cardText);
+  // 休息日只有一行，沒有按鈕
+  const rests = card.locator(".plan-rest");
+  check.restNoButton = (await rests.count()) >= 1 && (await card.locator(".tl-day").filter({ has: page.locator(".plan-rest") }).locator("button").count()) === 0;
+  // 賽事：下週六在時間軸上，40 天後的接在虛線後面
+  const raceDay = card.locator(`.tl-day[data-date="${plusDays(NEXT_MONDAY, 5)}"]`);
+  check.raceOnDay = (await raceDay.locator(".plan-race", { hasText: "下週的半馬" }).count()) === 1 && (await raceDay.innerText()).includes("21.1 km");
+  check.laterRace = (await card.locator(".tl-gap", { hasText: "之後的課表還沒排" }).count()) === 1 && (await card.locator(".plan-race", { hasText: "秋季全馬" }).count()) === 1;
+  const lastDates = await card.locator(".timeline > li").evaluateAll((els) => els.map((e) => e.className));
+  check.laterRaceAfterGap = lastDates.at(-1).includes("tl-day") && lastDates.at(-2).includes("tl-gap");
+  await shot("1");
+
+  step = "展開其他天";
+  const t = sessions.filter({ hasText: "4×1 km 閾值" });
+  await t.locator("button.plan-session-head").click();
   const tText = await t.innerText();
-  check.paceResolved = /\d:\d\d–\d:\d\d\/km（T）/.test(tText) && /心率 ≤\d+/.test(tText);
-  check.fallbackShown = tText.includes("狀況不好時：改成 40 分鐘輕鬆跑");
-  check.reasonShown = (await page.getByText("排課的原因：（模擬）依最近的跑量排下週").count()) === 1;
-  // 模擬的紀錄只有兩趟，下週的跑量會超過漸進的上限：提醒與教練的理由一起顯示
-  const notes = page.locator(".notice.warn", { hasText: "檢查器的提醒" });
-  check.notesWithReason = (await notes.count()) === 0 || (await notes.innerText()).includes("教練的理由：（模擬）測試用的課表");
-  check.outlineShown = (await page.getByText("之後幾週").count()) === 1;
-  check.noEditForStructured = (await page.getByRole("button", { name: "編輯" }).count()) === 0;
-  await page.screenshot({ path: `${E2E.OUT}/plan-${width}-${scheme}-1.png`, fullPage: true });
+  check.expandOther = (await t.locator(".plan-step").count()) >= 3 && /\d:\d\d–\d:\d\d\/km/.test(tText) && /心率 ≤\d+/.test(tText);
+  await t.getByRole("button", { name: /細節/ }).click();
+  check.fallbackInDetails = (await t.innerText()).includes("改成 40 分鐘輕鬆跑");
+
+  step = "為什麼這樣排";
+  await whyButton.click();
+  const why = card.locator(".plan-why");
+  const whyText = await why.innerText();
+  check.whyOpen = whyText.includes("（模擬）依最近的跑量排下週") && whyText.includes("（模擬）測試用的課表") && whyText.includes("之後幾週");
+  // 檢查器的警告不給選手看
+  check.noCheckerWarnings = !(await card.innerText()).includes("檢查器") && !whyText.includes("教練的理由：") && (await card.locator(".notice.warn").count()) === 0;
+  await shot("2");
+
+  step = "點賽事捲到賽事區";
+  await card.locator(".plan-race", { hasText: "秋季全馬" }).click();
+  check.raceScrolls = await until(async () => {
+    const box = await racesCard.boundingBox();
+    return box !== null && box.y >= -2 && box.y < height;
+  });
 
   step = "改用替代";
   await t.getByRole("button", { name: "改用替代" }).click();
@@ -92,24 +176,29 @@ let failPage = null;
   check.fallbackBadge = await until(async () => (await t.locator(".badge").innerText()) === "改用替代");
 
   step = "跳過";
-  const easy = sessions.filter({ hasText: "輕鬆跑：輕鬆跑" });
-  await easy.getByRole("button", { name: "跳過" }).click();
+  await focus.getByRole("button", { name: "跳過" }).click();
   await page.locator(".notice.ok", { hasText: "已跳過" }).waitFor({ timeout: 5000 });
-  check.skipBadge = await until(async () => (await easy.locator(".badge").innerText()) === "已跳過");
+  const easy = sessions.filter({ hasText: "輕鬆跑" });
+  check.skipBadge = await until(async () => (await easy.first().locator(".badge").innerText()) === "已跳過");
 
   step = "移到別天";
-  const long = sessions.filter({ hasText: "長跑：長跑" });
-  const before = await long.locator(".session-when").innerText();
+  const long = sessions.filter({ hasText: "長跑" });
+  const dayOf = (loc) => loc.evaluate((el) => el.closest(".tl-day").dataset.date);
+  const before = await dayOf(long);
+  await long.locator("button.plan-session-head").click();
   await long.getByRole("button", { name: "移到別天" }).click();
-  await long.locator(".session-actions button.small").first().click();
+  await long.locator(".move-days button").first().click();
   await page.locator(".notice.ok", { hasText: "已移動" }).waitFor({ timeout: 5000 });
-  const moved = sessions.filter({ hasText: "長跑：長跑" });
-  check.moved = await until(async () => (await moved.locator(".session-when").innerText()) !== before);
+  check.moved = await until(async () => (await dayOf(sessions.filter({ hasText: "長跑" }))) !== before);
 
   step = "恢復";
-  await easy.getByRole("button", { name: "恢復原本的課" }).click();
+  // 跳過之後放大的是下一堂：跳過的那堂收起，點開才有「恢復原本的課」
+  const skipped = sessions.filter({ hasText: "輕鬆跑" }).first();
+  check.focusMoved = !(await skipped.evaluate((el) => el.classList.contains("focus")));
+  await skipped.locator("button.plan-session-head").click();
+  await skipped.getByRole("button", { name: "恢復原本的課" }).click();
   await page.locator(".notice.ok", { hasText: "已恢復原本的課" }).waitFor({ timeout: 5000 });
-  check.restored = await until(async () => (await easy.locator(".badge").count()) === 0);
+  check.restored = await until(async () => (await sessions.filter({ hasText: "輕鬆跑" }).first().locator(".badge").count()) === 0);
 
   step = "重新整理後";
   await page.reload();
@@ -132,33 +221,40 @@ let failPage = null;
   await page.getByRole("button", { name: "送出" }).click();
   await page.locator('.msg.user:has-text("幫我排這週的課表") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
   await tab("計畫與賽事");
-  await page.getByText("排課的原因：（模擬）依最近的跑量排這週").waitFor({ timeout: 10000 });
-  // 先排的下週課表沒有被這週的蓋掉，另外列出
-  check.nextWeekKept = (await page.getByText(/^下週的課表（/).count()) === 1;
-  const todayMd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit" }).format(new Date()).replace("/", "-");
-  const labels = ["達成", "部分達成", "跑了不一樣的課", "沒跑"];
-  let past = 0;
+  await card.locator(".plan-week", { hasText: "這週" }).waitFor({ timeout: 10000 });
+  // 先排的下週接在這週後面
+  check.nextWeekAppended = (await card.locator(".tl-week", { hasText: `下週 ${NEXT_MONDAY.slice(5)}` }).count()) === 1;
+  const days = await card.locator(".tl-day[data-date]").evaluateAll((els) => els.map((e) => e.dataset.date));
+  check.startsToday = days[0] === TODAY && days.includes(plusDays(NEXT_MONDAY, 6));
+  check.todayLabel = (await card.locator(".tl-date.today .tl-label").innerText()) === "今天";
+  // 這週今天以前的課收成一行「這週稍早」，預設收起
+  const earlier = card.locator("details.plan-earlier");
+  const past = WEEKDAY >= 4 ? 2 : WEEKDAY >= 2 ? 1 : 0; // 這週的課在二（輕鬆跑＋肌力）、四、日；今天的不算稍早
+  const pastSessions = WEEKDAY > 1 ? (WEEKDAY > 3 ? 3 : 2) : 0;
   check.pastSessionsJudged = true;
-  for (const li of await sessions.all()) {
-    const when = (await li.locator(".session-when").innerText()).slice(0, 5);
-    if (when === todayMd) continue;
-    if (when > todayMd) {
-      // 今天以後的課沒有判斷
-      if (await li.locator(".badge").count()) check.pastSessionsJudged = false;
-      continue;
+  if (past) {
+    check.earlierCollapsed = (await earlier.count()) === 1 && !(await earlier.evaluate((d) => d.open));
+    await earlier.locator("summary").click();
+    const items = earlier.locator(".plan-session");
+    check.earlierCount = (await items.count()) === pastSessions;
+    const labels = ["達成", "部分達成", "跑了不一樣的課", "沒跑", "沒做", "有休息", "休息日有運動"];
+    for (const li of await items.all()) {
+      const badge = (await li.locator(".badge").count()) ? await li.locator(".badge").innerText() : "";
+      if (!labels.includes(badge)) check.pastSessionsJudged = false;
+      await li.locator("button.plan-session-head").click();
+      // 配對到紀錄的課顯示實際，沒有調整的按鈕
+      if (["達成", "部分達成", "跑了不一樣的課"].includes(badge)) {
+        const result = await li.locator(".session-result").innerText().catch(() => "");
+        if (!result.startsWith("實際：") || (await li.locator(".session-actions").count()) > 0) check.pastSessionsJudged = false;
+      } else if (["沒跑", "沒做"].includes(badge) && !(await li.innerText()).includes("跳過即可，不要補")) check.pastSessionsJudged = false;
     }
-    past++;
-    const badge = (await li.locator(".badge").count()) ? await li.locator(".badge").innerText() : "";
-    if (!labels.includes(badge)) check.pastSessionsJudged = false;
-    // 配對到紀錄的課顯示實際，沒有調整的按鈕
-    if (badge !== "沒跑") {
-      const result = await li.locator(".session-result").innerText().catch(() => "");
-      if (!result.startsWith("實際：") || (await li.locator(".session-actions").count()) > 0) check.pastSessionsJudged = false;
-    } else if (!(await li.innerText()).includes("跳過即可，不要補")) check.pastSessionsJudged = false;
+  } else {
+    check.noEarlier = (await earlier.count()) === 0;
   }
-  check.pastDateWarned = past === 0 || (await page.locator(".notice.warn", { hasText: "排在今天以前" }).count()) === 1;
-  console.log(`這週今天以前的課：${past} 堂`);
-  await page.screenshot({ path: `${E2E.OUT}/plan-${width}-${scheme}-2.png`, fullPage: true });
+  // 排在今天以前的提醒只給教練看
+  check.pastDateNotShown = (await page.getByText("排在今天以前").count()) === 0;
+  console.log(`這週今天以前的課：${past ? pastSessions : 0} 堂`);
+  await shot("3");
   check.noOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
   check.noConsoleErrors = problems.length === 0;

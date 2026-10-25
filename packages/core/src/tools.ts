@@ -158,7 +158,12 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
         properties: {
           week_start: { type: "string", description: "這週的星期一 YYYY-MM-DD；不是星期一時以那週的星期一為準" },
           style: { type: "string", enum: ["fixed", "flexible"], description: "fixed 照星期排（每堂要有日期）；flexible 一週的菜單（date 可以不填）" },
-          reason: { type: "string", description: "這次排或改課表的原因（會保存並顯示給選手）" },
+          reason: {
+            type: "string",
+            description:
+              "給選手看的「為什麼這樣排」：一兩句，寫為什麼（例如這週的重點、和上週的差別）。" +
+              "不寫跑量、配速、心率、次數等數字：數字由程式算、程式顯示，自己寫的數字會和畫面對不上",
+          },
           sessions: {
             type: "array",
             description: "這週的每一堂課",
@@ -188,7 +193,12 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           },
           outline: { type: "string", description: "往後幾週的週期大綱（文字）" },
           accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
-          warning_notes: { type: "string", description: "保留的理由（accept_warnings=true 時必填）" },
+          warning_notes: {
+            type: "string",
+            description:
+              "保留的理由（accept_warnings=true 時必填）：給選手看的一句話，例：「這週的量比建議多，因為你上個月的量本來就比較高」；" +
+              "檢查器的提醒本身不會給選手看，不寫數字",
+          },
         },
         required: ["style", "reason", "sessions"],
       },

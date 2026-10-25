@@ -66,7 +66,7 @@ export {
   type WeatherSource,
 } from "./weather";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
-export { IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
+export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
   AnthropicProvider,
   LlmError,
@@ -117,6 +117,7 @@ export {
 } from "./types";
 export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
+  minutesText,
   EXPECTED_RPE,
   QUALITY_KINDS,
   SESSION_KINDS,
@@ -126,8 +127,11 @@ export {
   type SessionKind,
   type SessionStatus,
   type SessionView,
+  type StepIntensity,
+  type StepRow,
 } from "./plan";
-export { DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { LATER_RACE_DAYS, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
 export type { OtherActivity } from "./types";

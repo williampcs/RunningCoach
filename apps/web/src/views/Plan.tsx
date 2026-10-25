@@ -4,110 +4,365 @@ import {
   addDays,
   DIFFICULTY_LABELS,
   OUTCOME_LABELS,
+  planTimeline,
   QUALITY_KINDS,
+  raceStatusText,
   STATUS_LABELS,
   weekdayName,
   type ActivePlan,
+  type PlanTimeline,
+  type Race,
+  type SessionKind,
+  type StepIntensity,
+  type StepRow,
+  type TimelineSession,
 } from "@running-coach/core";
-
-type SessionRow = ActivePlan["sessions"][number];
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { RacesCard } from "./Races";
 
-/** 一堂課：換算後的目標、目的、完成的標準與替代；可以跳過、改用替代、移到這週的別天 */
-function SessionCard({ s, weekStart, fixed, onChange }: { s: SessionRow; weekStart: string; fixed: boolean; onChange: (action: "move" | "skip" | "fallback" | "restore", date?: string) => void }) {
-  const [moving, setMoving] = useState(false);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore", date?: string) => void;
+
+const weekdayOf = (date: string) => weekdayName(date).replace("星期", "");
+
+/** 一堂課的色條：和紀錄頁的強度橫條同一套顏色 */
+const KIND_INTENSITY: Record<SessionKind, StepIntensity> = {
+  easy: "low",
+  long: "low",
+  marathon: "moderate",
+  threshold: "moderate",
+  interval: "high",
+  repetition: "high",
+  race: "high",
+  rest: "other",
+  cross: "other",
+  strength: "other",
+};
+
+function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
   // 跳過與改用替代以外，顯示程式依實際紀錄的判斷
-  const status = r && !["skipped", "fallback"].includes(r.outcome) ? OUTCOME_LABELS[r.outcome] : STATUS_LABELS[s.status];
-  const done = r !== null && r.workoutId !== null;
-  return (
-    <li className={`session ${s.kind} ${s.status}`}>
-      <div className="session-head">
-        <span className="session-when">{s.when}</span>
-        <strong>
-          {s.kindLabel}：{s.title}
-        </strong>
-        {status && <span className={`badge ${r?.outcome ?? s.status}`}>{status}</span>}
-      </div>
-      {s.steps && (
-        <p className="small">
-          {s.steps}
-          <span className="muted">（約 {s.km} km、{s.minutes} 分鐘）</span>
-        </p>
-      )}
-      {(s.purpose || s.success) && (
-        <p className="small muted">
-          {s.purpose && `目的：${s.purpose}`}
-          {s.purpose && s.success ? "；" : ""}
-          {s.success && `完成的標準：${s.success}`}
-        </p>
-      )}
-      {s.fallback && <p className="small muted">狀況不好時：{s.fallback}</p>}
-      {s.note && <p className="small muted">調整的原因：{s.note}</p>}
-      {r && (r.actual || r.reasons.length > 0) && (
-        <p className="small session-result">
-          {r.actual && `實際：${r.actual}`}
-          {r.reasons.length > 0 && `${r.actual ? "。" : ""}${r.reasons.join("、")}`}
-          {r.difficulty && `。${DIFFICULTY_LABELS[r.difficulty]}`}
-        </p>
-      )}
-      {s.id !== null && !done && (
-        <div className="row session-actions">
-          {s.status === "planned" ? (
-            <>
-              {s.fallback && QUALITY_KINDS.has(s.kind) && <button onClick={() => onChange("fallback")}>改用替代</button>}
-              {fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
-              <button onClick={() => onChange("skip")}>跳過</button>
-            </>
-          ) : (
-            <button onClick={() => onChange("restore")}>恢復原本的課</button>
-          )}
-        </div>
-      )}
-      {moving && (
-        <div className="row session-actions">
-          {days
-            .filter((d) => d !== s.date)
-            .map((d) => (
-              <button
-                key={d}
-                className="small"
-                onClick={() => {
-                  setMoving(false);
-                  onChange("move", d);
-                }}
-              >
-                {d.slice(5)}（{weekdayName(d).replace("星期", "")}）
-              </button>
-            ))}
-        </div>
-      )}
+  const label =
+    r && !["skipped", "fallback"].includes(r.outcome)
+      ? r.outcome === "missed" && !s.isRun
+        ? "沒做"
+        : OUTCOME_LABELS[r.outcome]
+      : STATUS_LABELS[s.status];
+  return label ? { label, cls: r?.outcome ?? s.status } : null;
+}
+
+function Steps({ rows }: { rows: StepRow[] }) {
+  const line = (x: { name: string; target: string; length: string; intensity: StepIntensity }, key: number) => (
+    <li key={key} className="plan-step">
+      <span className={`bar ${x.intensity}`} aria-hidden="true" />
+      <span className="plan-step-name">
+        {x.name}
+        {x.target && <span className="muted"> {x.target}</span>}
+      </span>
+      <span className="muted plan-step-length">{x.length}</span>
     </li>
+  );
+  return (
+    <ol className="plan-steps">
+      {rows.map((row, i) =>
+        row.type === "repeat" ? (
+          <li key={i} className="plan-repeat">
+            <span className="plan-repeat-head">重複 {row.times} 次</span>
+            <ol className="plan-steps">{row.steps.map(line)}</ol>
+          </li>
+        ) : (
+          line(row, i)
+        ),
+      )}
+    </ol>
+  );
+}
+
+/** 一堂課：今天（或下一堂）放大；其他天是小卡片，點了展開成同樣的內容 */
+function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolean; onChange: SessionChange }) {
+  const [open, setOpen] = useState(false);
+  const [details, setDetails] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const status = statusOf(s);
+  const r = s.result && s.result.outcome !== "pending" ? s.result : null;
+  const done = r !== null && r.workoutId !== null;
+
+  if (s.kind === "rest") {
+    // 休息日只有一行，沒有按鈕
+    return (
+      <div className="plan-rest muted">
+        {s.title === "休息" ? "休息" : s.title}
+        {status && <span className={`badge ${status.cls}`}>{status.label}</span>}
+      </div>
+    );
+  }
+
+  const expanded = focus || open;
+  const title = (
+    <>
+      <span className={`bar ${KIND_INTENSITY[s.kind]}`} aria-hidden="true" />
+      <span className="plan-session-title">
+        {focus ? <h3>{s.title}</h3> : <strong>{s.title}</strong>}
+        {s.kindHint && <span className="muted small"> {s.kindHint}</span>}
+      </span>
+      {status && <span className={`badge ${status.cls}`}>{status.label}</span>}
+    </>
+  );
+  const chips = (list: string[]) =>
+    list.length > 0 && (
+      <div className="chips">
+        {list.map((c) => (
+          <span key={c} className="chip">
+            {c}
+          </span>
+        ))}
+      </div>
+    );
+  const days = Array.from({ length: 7 }, (_, i) => addDays(s.weekStart, i));
+  const hasDetails = !!(s.purpose || s.success || s.fallback);
+
+  return (
+    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind}>
+      {focus ? (
+        <div className="plan-session-head">{title}</div>
+      ) : (
+        <button type="button" className="plan-session-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {title}
+        </button>
+      )}
+      {!expanded && chips(s.brief)}
+      {expanded && (
+        <>
+          {chips(s.chips)}
+          {s.rows.length > 0 && <Steps rows={s.rows} />}
+          {r && (r.actual || r.reasons.length > 0) && (
+            <p className="small session-result">
+              {r.actual && `實際：${r.actual}`}
+              {r.reasons.length > 0 && `${r.actual ? "。" : ""}${r.reasons.join("、")}`}
+              {r.difficulty && `。${DIFFICULTY_LABELS[r.difficulty]}`}
+            </p>
+          )}
+          {s.note && <p className="small muted">調整的原因：{s.note}</p>}
+          {hasDetails && (
+            <button type="button" className="link-button muted" aria-expanded={details} onClick={() => setDetails(!details)}>
+              細節 {details ? "▴" : "▾"}
+            </button>
+          )}
+          {details && (
+            <dl className="plan-details small">
+              {s.purpose && (
+                <>
+                  <dt>目的</dt>
+                  <dd>{s.purpose}</dd>
+                </>
+              )}
+              {s.success && (
+                <>
+                  <dt>完成的標準</dt>
+                  <dd>{s.success}</dd>
+                </>
+              )}
+              {s.fallback && (
+                <>
+                  <dt>狀況不好時</dt>
+                  <dd>{s.fallback}</dd>
+                </>
+              )}
+            </dl>
+          )}
+          {s.id !== null && !done && (
+            <div className="row session-actions">
+              {s.status === "planned" ? (
+                <>
+                  {s.fallback && QUALITY_KINDS.has(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
+                  {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
+                  <button onClick={() => onChange(s, "skip")}>跳過</button>
+                </>
+              ) : (
+                <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>
+              )}
+            </div>
+          )}
+          {moving && (
+            <div className="row session-actions move-days">
+              {days
+                .filter((d) => d !== s.date)
+                .map((d) => (
+                  <button
+                    key={d}
+                    className="small"
+                    onClick={() => {
+                      setMoving(false);
+                      onChange(s, "move", d);
+                    }}
+                  >
+                    {d.slice(5)}（{weekdayOf(d)}）
+                  </button>
+                ))}
+            </div>
+          )}
+        </>
+      )}
+    </article>
+  );
+}
+
+const FLAG = (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M3 15V2M3 2h9l-2 3 2 3H3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+  </svg>
+);
+
+/** 賽事卡：點了捲到下面的賽事區 */
+function RaceItem({ race, today }: { race: Race; today: string }) {
+  return (
+    <button type="button" className="plan-race" onClick={() => document.getElementById("races")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+      <span className="plan-race-head">
+        <span className="plan-race-flag">{FLAG}</span>
+        <strong>{race.name}</strong>
+        <span className="plan-race-days">{raceStatusText(race, today)}</span>
+      </span>
+      <span className="chips">
+        <span className="chip">{Math.round(race.distance_km * 10) / 10} km</span>
+        {race.target_time && <span className="chip">目標 {race.target_time}</span>}
+      </span>
+    </button>
+  );
+}
+
+function DateLabel({ label, weekday, today, race }: { label: string; weekday: string; today?: boolean; race?: boolean }) {
+  return (
+    <div className={`tl-date ${today ? "today" : ""} ${race ? "race" : ""}`}>
+      <span className="tl-label">{label}</span>
+      <span className="tl-weekday">{weekday}</span>
+    </div>
+  );
+}
+
+
+function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onChange: SessionChange }) {
+  const item = (s: TimelineSession) => <SessionItem key={s.id ?? s.title} s={s} focus={s === t.focus} onChange={onChange} />;
+  return (
+    <ol className="timeline">
+      {t.undated.length > 0 && (
+        <li className="tl-day">
+          <DateLabel label="任一天" weekday="這週" />
+          <div className="tl-items">{t.undated.map(item)}</div>
+        </li>
+      )}
+      {t.days.map((d) => (
+        <li key={d.date} className={`tl-day ${d.date === today ? "today" : ""}`} data-date={d.date}>
+          {d.nextWeek && (
+            <div className="tl-week small muted">
+              下週 {d.nextWeek.range} · {d.nextWeek.km} km · {d.nextWeek.runs} 次跑步
+            </div>
+          )}
+          <div className="tl-row">
+            <DateLabel label={d.label} weekday={d.weekday} today={d.date === today} race={d.races.length > 0 && !d.sessions.length} />
+            <div className="tl-items">
+              {d.sessions.map(item)}
+              {!d.sessions.length && !d.races.length && <div className="plan-rest muted">休息</div>}
+              {d.races.map((r) => (
+                <RaceItem key={r.id} race={r} today={today} />
+              ))}
+            </div>
+          </div>
+        </li>
+      ))}
+      {t.laterRaces.length > 0 && (
+        <>
+          <li className="tl-gap small muted">之後的課表還沒排</li>
+          {t.laterRaces.map((r) => (
+            <li key={r.id} className="tl-day" data-date={r.date}>
+              <div className="tl-row">
+                <DateLabel label={r.date.slice(5)} weekday={weekdayOf(r.date)} race />
+                <div className="tl-items">
+                  <RaceItem race={r} today={today} />
+                </div>
+              </div>
+            </li>
+          ))}
+        </>
+      )}
+    </ol>
+  );
+}
+
+/** 這週今天以前的課：收成一行，點了展開 */
+function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; onChange: SessionChange }) {
+  const counts = new Map<string, number>();
+  for (const s of t.earlier) {
+    const label = statusOf(s)?.label;
+    if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const summary = [...counts].map(([label, n]) => `${label} ${n}`).join(" · ");
+  return (
+    <details className="plan-earlier">
+      <summary>
+        {t.thisWeek ? "這週稍早" : `之前的課（${t.week.range}）`}
+        {summary && <span className="muted"> · {summary}</span>}
+      </summary>
+      <div className="plan-earlier-list">
+        {t.earlier.map((s) => (
+          <div key={s.id ?? s.title} className="plan-earlier-item">
+            <span className="tl-label muted">
+              {s.date!.slice(5)}（{weekdayOf(s.date!)}）
+            </span>
+            <SessionItem s={s} focus={false} onChange={onChange} />
+          </div>
+        ))}
+        {extras.length > 0 && <p className="small muted">課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：{extras.join("；")}</p>}
+        <p className="small muted">實際的紀錄同步後自動對照課表。跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
+      </div>
+    </details>
+  );
+}
+
+function Why({ current, next }: { current: ActivePlan; next: ActivePlan | null }) {
+  const plan = current.plan;
+  return (
+    <div className="plan-why small" id="plan-why">
+      {plan.reason && <p>{plan.reason}</p>}
+      {current.coachNote && <p>{current.coachNote}</p>}
+      {next?.plan.reason && (
+        <p>
+          下週：{next.plan.reason}
+          {next.coachNote && ` ${next.coachNote}`}
+        </p>
+      )}
+      {plan.outline && (
+        <>
+          <h3>之後幾週</h3>
+          <Markdown>{plan.outline}</Markdown>
+        </>
+      )}
+    </div>
   );
 }
 
 export function PlanView() {
   const { coach, revision, touch } = useApp();
   const [current, setCurrent] = useState<ActivePlan | null>(null);
+  // 週日先排好的下週課表：接在這週的後面
+  const [next, setNext] = useState<ActivePlan | null>(null);
+  const [races, setRaces] = useState<Race[]>([]);
   const [changeNote, setChangeNote] = useState<string | null>(null);
   const [planDraft, setPlanDraft] = useState<string | null>(null);
+  const [why, setWhy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const today = coach.today();
 
   const plan = current?.plan ?? null;
   const structured = current !== null && current.plan.week_start != null;
-
-  // 週日先排好的下週課表：這週的還在用，下週的另外列在下面
-  const [next, setNext] = useState<ActivePlan | null>(null);
+  const timeline = structured ? planTimeline(current, next, races, today) : null;
+  const hasWhy = structured && !!(plan!.reason || current.coachNote || plan!.outline || next?.plan.reason);
 
   useEffect(() => {
     void coach.activePlan().then(setCurrent);
     void coach.nextPlan().then(setNext);
+    void coach.db.getAllRaces().then(setRaces);
   }, [coach, revision]);
 
   async function run(action: () => Promise<unknown>) {
@@ -120,102 +375,71 @@ export function PlanView() {
     }
   }
 
+  const onChange: SessionChange = (s, action, date) =>
+    void run(async () => {
+      setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
+    });
+
   return (
     <>
-      <section className="card">
-        <div className="row between">
-          <h2>訓練計畫{plan ? `（${plan.week_label}${structured ? `，${plan.week_start!.slice(5)} 起` : ""}）` : ""}</h2>
-          {planDraft === null && !structured && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
-        </div>
-        {error && <div className="notice error">{error}</div>}
-        {planDraft === null ? (
-          structured ? (
-            <>
-              <p className="small muted">
-                {current.styleLabel}｜約 {current.totalKm} km。配速與心率由程式依你的訓練數值換算；想改課表可以直接跟教練說，或在下面調整單堂課。
-              </p>
-              {plan!.reason && <p className="small">排課的原因：{plan!.reason}</p>}
-              {plan!.notes && <div className="notice warn small">檢查器的提醒與教練的理由：{plan!.notes}</div>}
-              {changeNote && <div className="notice ok small">{changeNote}</div>}
-              <ul className="sessions">
-                {current.sessions.map((s) => (
-                  <SessionCard
-                    key={s.id ?? s.title}
-                    s={s}
-                    weekStart={plan!.week_start!}
-                    fixed={plan!.style !== "flexible"}
-                    onChange={(action, date) =>
-                      void run(async () => {
-                        setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
-                      })
-                    }
-                  />
-                ))}
-              </ul>
-              {current.extras.length > 0 && (
-                <p className="small muted">課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：{current.extras.join("；")}</p>
+      <section className="card plan-card">
+        {timeline ? (
+          <>
+            <h2 className="sr-only">訓練計畫</h2>
+            <div className="plan-top">
+              <span className="plan-week">
+                <strong>{timeline.thisWeek ? "這週" : timeline.week.range}</strong> {timeline.week.km} km · {timeline.week.runs} 次跑步
+                {plan!.style === "flexible" && " · 彈性"}
+              </span>
+              {hasWhy && (
+                <button type="button" className="link-button" aria-expanded={why} aria-controls="plan-why" onClick={() => setWhy(!why)}>
+                  為什麼這樣排
+                </button>
               )}
-              <p className="small muted">實際的紀錄同步後自動對照課表。跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
-              {plan!.outline && (
-                <>
-                  <h3>之後幾週</h3>
-                  <Markdown>{plan!.outline}</Markdown>
-                </>
-              )}
-            </>
-          ) : plan ? (
-            <Markdown>{plan.content}</Markdown>
-          ) : (
-            <p className="muted">還沒有訓練計畫。可以在對話中請教練排，或自己填寫。</p>
-          )
+            </div>
+            {timeline.thisWeek && <p className="small muted plan-range">{timeline.week.range}</p>}
+            {why && <Why current={current!} next={next} />}
+            {error && <div className="notice error">{error}</div>}
+            {changeNote && <div className="notice ok small">{changeNote}</div>}
+            {timeline.earlier.length > 0 && <Earlier t={timeline} extras={current!.extras} onChange={onChange} />}
+            <Timeline t={timeline} today={today} onChange={onChange} />
+          </>
         ) : (
           <>
-            <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
-            <div className="row">
-              <button
-                className="primary"
-                disabled={!planDraft.trim()}
-                onClick={() =>
-                  void run(async () => {
-                    await coach.savePlanForThisWeek(planDraft.trim());
-                    setPlanDraft(null);
-                  })
-                }
-              >
-                儲存為本週計畫
-              </button>
-              <button onClick={() => setPlanDraft(null)}>取消</button>
+            <div className="row between">
+              <h2>訓練計畫</h2>
+              {planDraft === null && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
             </div>
+            {error && <div className="notice error">{error}</div>}
+            {planDraft === null ? (
+              plan ? (
+                <Markdown>{plan.content}</Markdown>
+              ) : (
+                <p className="muted">還沒有訓練計畫。可以在對話中請教練排，或自己填寫。</p>
+              )
+            ) : (
+              <>
+                <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
+                <div className="row">
+                  <button
+                    className="primary"
+                    disabled={!planDraft.trim()}
+                    onClick={() =>
+                      void run(async () => {
+                        await coach.savePlanForThisWeek(planDraft.trim());
+                        setPlanDraft(null);
+                      })
+                    }
+                  >
+                    儲存為本週計畫
+                  </button>
+                  <button onClick={() => setPlanDraft(null)}>取消</button>
+                </div>
+              </>
+            )}
           </>
         )}
       </section>
-
-      {next?.plan.week_start && (
-        <section className="card">
-          <h2>
-            下週的課表（{next.plan.week_label}，{next.plan.week_start.slice(5)} 起）
-          </h2>
-          <p className="small muted">
-            {next.styleLabel}｜約 {next.totalKm} km。已經排好，下週一開始用。
-          </p>
-          {next.plan.reason && <p className="small">排課的原因：{next.plan.reason}</p>}
-          <ul className="sessions">
-            {next.sessions.map((s) => (
-              <SessionCard
-                key={s.id ?? s.title}
-                s={s}
-                weekStart={next.plan.week_start!}
-                fixed={next.plan.style !== "flexible"}
-                onChange={(action, date) =>
-                  void run(async () => {
-                    setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
-                  })
-                }
-              />
-            ))}
-          </ul>
-        </section>
-      )}
 
       <RacesCard />
     </>
