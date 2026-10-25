@@ -20,6 +20,7 @@ const PANELS = ["設定", "使用說明"];
 /**
  * 切到分頁，或打開說明、設定的面板（規格 12.17）。
  * 面板已經開著就不再點（再點一次會關閉）；手機上面板蓋住底部的分頁，切分頁前先按 ✕ 關閉面板。
+ * 關閉時面板會滑出，等它移除後才操作底下的頁面（滑出途中底下的頁面已經不是 inert，但等完比較穩）。
  */
 async function go(page, label) {
   const button = page.getByRole("button", { name: label, exact: true });
@@ -28,11 +29,9 @@ async function go(page, label) {
     await page.locator("#side-panel").waitFor();
     return;
   }
-  const close = page.locator(".side-panel-close");
-  if (await close.isVisible()) {
-    await close.click();
-    await page.locator("#side-panel").waitFor({ state: "detached" });
-  }
+  const close = page.locator("#side-panel:not(.leaving) .side-panel-close");
+  if (await close.isVisible()) await close.click();
+  await page.locator("#side-panel").waitFor({ state: "detached" });
   await button.click();
 }
 

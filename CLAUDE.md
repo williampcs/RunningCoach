@@ -71,7 +71,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 2. 建 PR：`v2` → `main`，標題帶版號，說明改了什麼與怎麼驗證的。
 3. 在背景輪詢那個 commit 的 check runs，等 CI 全部成功。
 4. 合併：merge method 用 `merge`（不要 squash），帶完整 40 字元的 head SHA（`git rev-parse HEAD`）。
-5. 標籤：合併後由 workflow「Tag release」（`.github/workflows/tag-release.yml`）依 `package.json` 的版號在合併的 commit 自動打 `vX.Y.Z`，不用手動打（雲端 session 的 git 只能推自己的分支，推不了標籤）。在下一步確認它成功；漏掉的可以手動執行它並指定 commit。標籤不觸發部署；部署失敗要重來時不改標籤，修好後發下一個 patch 版。
+5. 標籤：合併後由 workflow「Tag release」（`.github/workflows/tag-release.yml`）依 `package.json` 的版號在合併的 commit 自動打 `vX.Y.Z`，不用手動打（雲端 session 的 git 只能推自己的分支，推不了標籤）。在下一步確認它成功；漏掉時手動執行它（不指定 commit 就是 `main` 最新的 commit）。補打更早的 commit 常會失敗：那個 commit 的 workflow 檔和現在的 `main` 不同時，GitHub 不讓 workflow 推指向它的標籤（規格 12.19），這時請使用者在本機打。標籤不觸發部署；部署失敗要重來時不改標籤，修好後發下一個 patch 版。
 6. 在背景輪詢合併後 commit 的 workflow runs（Deploy web app、Deploy sync service、Deploy Discord bot、Tag release），失敗時看 job log，回報結果（含這一版的版號）與使用者要確認的事。
 
 ## 文件入口

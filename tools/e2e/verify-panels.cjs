@@ -1,5 +1,6 @@
 // 驗證說明與設定的面板（規格 12.17）：同一個按鈕開關、✕、Esc、瀏覽器上一頁、說明與設定互換、
-// 關閉後對話打到一半的字與捲動位置還在、「前往設定」與說明連結打開面板、電腦上點側邊的分頁；手機與電腦、淺色與深色的截圖
+// 關閉後對話打到一半的字與捲動位置還在、「前往設定」與說明連結打開面板、電腦上點側邊的分頁；
+// 卡片之間的間距、關閉時滑出、滑出途中再打開、減少動態效果時直接關閉、焦點、底下的頁面 inert（12.17 的後續）；手機與電腦、淺色與深色的截圖
 const E2E = require("./env.cjs");
 const { chromium } = E2E;
 
@@ -16,6 +17,15 @@ async function send(page, text) {
 const panel = (page) => page.locator("#side-panel");
 const panelName = (page) => panel(page).getAttribute("aria-label");
 const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 }).then(() => true, () => false);
+// 面板裡相鄰的卡片之間的最小距離
+const minCardGap = (page) =>
+  panel(page).evaluate((el) => {
+    const cards = [...el.querySelectorAll(".side-panel-body section.card")].filter((c) => c.offsetParent).map((c) => c.getBoundingClientRect());
+    let min = Infinity;
+    for (let i = 1; i < cards.length; i++) min = Math.min(min, cards[i].top - cards[i - 1].bottom);
+    return cards.length >= 2 ? min : -1;
+  });
+const focusIn = (page, selector) => page.evaluate((s) => !!document.activeElement?.closest(s), selector);
 
 (async () => {
   const browser = await chromium.launch();
@@ -56,8 +66,17 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
         await page.getByLabel("我了解並同意以上的資料流向").check();
         await page.getByRole("button", { name: "儲存設定" }).click();
         await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+        // 卡片之間有間距（和分頁上一樣 12px）
+        check[`${tag}.settingsCardGap`] = (await minCardGap(page)) >= 11;
         await panel(page).getByRole("button", { name: "關閉設定" }).click();
+        {
+          const leaving = await panel(page).evaluate((el) => el.classList.contains("leaving") && el.inert).catch(() => false);
+          const backdropLeaving = (await page.locator(".panel-backdrop.leaving").count()) === 1;
+          check[`${tag}.slidesOut`] = leaving && backdropLeaving;
+        }
         check[`${tag}.closeButton`] = await closed(page);
+        // 打開前焦點在「前往設定」，卡片已經換成下一步了：焦點回到 ⚙️ 或那張卡片裡，不會留在 body
+        check[`${tag}.focusNotLost`] = await page.evaluate(() => document.activeElement !== document.body);
 
         step = "對話";
         await page.locator(".getting-started").getByRole("button", { name: "先略過" }).click().catch(() => undefined);
@@ -78,6 +97,11 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
         step = "Esc";
         await settingsButton.click();
         await panel(page).waitFor();
+        // 焦點移進面板的標題；底下的頁面 inert，Tab 不會走到底下的對話
+        check[`${tag}.focusMovesIn`] = await focusIn(page, "#side-panel h2");
+        check[`${tag}.mainInert`] = await page.locator("main.page").evaluate((el) => el.inert);
+        // 手機上底部的分頁被蓋住，也是 inert；電腦上側邊的分頁維持點得到（12.17）
+        check[`${tag}.tabbarInert`] = (await page.locator("nav.tabbar").evaluate((el) => el.inert)) === mobile;
         await page.waitForTimeout(300);
         await page.screenshot({ path: `${E2E.OUT}/panels-${tag}-settings.png` });
         if (mobile) {
@@ -94,6 +118,15 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
           check[`${tag}.halfWidth`] = box.width >= 1280 * 0.4 && box.width <= 1280 * 0.55 && Math.abs(box.x + box.width - 1280) <= 1;
           check[`${tag}.backdrop`] = await page.locator(".panel-backdrop").isVisible();
         }
+        // 截圖之後才按 Tab（焦點移動會捲動面板）
+        {
+          let reachedPage = false;
+          for (let i = 0; i < 12; i++) {
+            await page.keyboard.press("Tab");
+            if (await focusIn(page, "main.page")) reachedPage = true;
+          }
+          check[`${tag}.tabStaysOutOfPage`] = !reachedPage;
+        }
         check[`${tag}.topbarStaysClickable`] = await page.evaluate(() => {
           const b = document.querySelector(".help-button").getBoundingClientRect();
           return !!document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest(".help-button");
@@ -106,12 +139,32 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
           (await settingsButton.getAttribute("aria-expanded")) === "false" &&
           (await helpButton.getAttribute("aria-expanded")) === "true";
         await page.waitForTimeout(300);
+        check[`${tag}.helpCardGap`] = (await minCardGap(page)) >= 11;
         await page.screenshot({ path: `${E2E.OUT}/panels-${tag}-help.png` });
         await settingsButton.click();
         check[`${tag}.switchToSettings`] = (await panelName(page)) === "設定";
         await page.keyboard.press("Escape");
         check[`${tag}.escCloses`] = await closed(page);
         check[`${tag}.keptAfterEsc`] = await kept();
+        // 焦點回到打開它的 ⚙️
+        check[`${tag}.focusReturns`] = await focusIn(page, ".settings-button");
+        check[`${tag}.mainNotInert`] = !(await page.locator("main.page").evaluate((el) => el.inert));
+
+        step = "滑出途中再打開";
+        await settingsButton.click();
+        await panel(page).waitFor();
+        await page.waitForTimeout(300);
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(60);
+        await settingsButton.click();
+        await page.waitForTimeout(500);
+        check[`${tag}.reopenWhileLeaving`] =
+          (await panel(page).count()) === 1 &&
+          !(await panel(page).evaluate((el) => el.classList.contains("leaving"))) &&
+          (await settingsButton.getAttribute("aria-expanded")) === "true" &&
+          (await panel(page).evaluate((el) => Math.round(el.getBoundingClientRect().right))) === (mobile ? 390 : 1280);
+        await page.keyboard.press("Escape");
+        await closed(page);
 
         step = "上一頁";
         const before = page.url();
@@ -183,6 +236,32 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
     } catch (e) {
       console.error(`FAILED [direct] at [${step}]:`, e.message.split("\n").slice(0, 3).join(" | "));
       check["direct.completed"] = false;
+    }
+    await context.close();
+  }
+
+  // 減少動態效果：關閉時直接消失，不滑出
+  step = "減少動態效果";
+  for (const mobile of [true, false]) {
+    const tag = `reduced-${mobile ? "390" : "1280"}`;
+    const context = await browser.newContext({
+      ...(mobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width: 1280, height: 860 } }),
+      reducedMotion: "reduce",
+    });
+    const page = await context.newPage();
+    page.on("pageerror", (e) => problems.push(`[${tag} ${step}] ${e.message}`));
+    try {
+      await page.goto(E2E.URL);
+      await page.locator("nav.tabbar button").first().waitFor();
+      const settingsButton = page.getByRole("button", { name: "設定", exact: true });
+      await settingsButton.click();
+      await panel(page).waitFor();
+      await page.keyboard.press("Escape");
+      check[`${tag}.closesAtOnce`] = (await panel(page).count()) === 0 && (await page.locator(".panel-backdrop").count()) === 0;
+      check[`${tag}.focusReturns`] = await focusIn(page, ".settings-button");
+    } catch (e) {
+      console.error(`FAILED [${tag}] at [${step}]:`, e.message.split("\n").slice(0, 3).join(" | "));
+      check[`${tag}.completed`] = false;
     }
     await context.close();
   }
