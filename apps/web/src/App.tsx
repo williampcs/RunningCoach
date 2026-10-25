@@ -14,7 +14,9 @@ import {
 
 import { AppContext, errorText, type AppState, type Panel, type Tab } from "./app-context";
 import { HelpView } from "./views/Help";
-import { IS_PREVIEW, PreviewBanner } from "./views/Preview";
+import { IS_STAGING, MOVED_TO } from "./environment";
+import { MovedBanner } from "./views/Moved";
+import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
@@ -331,7 +333,7 @@ export function App() {
       <div className="shell">
         <header className="topbar" ref={topbar}>
           <h1>Running Coach</h1>
-          <span className="version" title={BUILD_DETAIL}>
+          <span className={IS_STAGING ? "version staging" : "version"} title={BUILD_DETAIL}>
             {STAGE_LABEL}
           </span>
           <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
@@ -356,7 +358,7 @@ export function App() {
             <span aria-hidden="true">⚙️</span>
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_PREVIEW || newVersion.commit) && (
+        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit) && (
           <div className="notices">
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
@@ -369,7 +371,8 @@ export function App() {
                 </button>
               </div>
             )}
-            <PreviewBanner />
+            <MovedBanner />
+            <StagingBanner />
             {!state.db.persistent && (
               <div className="notice warn">
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。

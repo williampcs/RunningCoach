@@ -83,6 +83,9 @@
 | 2.0-draft | 2026-10-24 | 版號從 0.1.0 重新開始、每次合併部署發一版、標題列只顯示 Beta；決定先買網域再分 staging 與正式環境（12.19） |
 | 2.0-draft | 2026-10-24 | 工作單 A 實作：版號只有一個來源（根目錄 `package.json`，0.1.0）、`npm run version:bump`、標題列只顯示 Beta、Discord `/status` 顯示版號、`CLAUDE.md` 的發版步驟（12.19、9.4） |
 | 0.1.0 | 2026-10-24 | **發版 v0.1.0**（第一個有版號的版本）：標題列只顯示 Beta、設定頁顯示完整版號、Discord 的 `/status` 顯示版號；之前已上線的有賽事的生命週期與成績、天氣、說明與設定的面板、有新版本的提示與資料保護、介面調整第一輪（12.14–12.19） |
+| 2.0-draft | 2026-10-24 | 工作單 B 實作：staging（推 `v2` 自動部署到另一個 Pages 專案與另一個同步服務，標示 Staging）、正式網址改成 `app.zone2mate.com`（`WEB_URL`；搬家期間同步服務也允許 `OLD_WEB_URL`）、舊網址的搬家提示、移除手動的預覽、使用者的設定清單（12.19、9.4） |
+| 2.0-draft | 2026-10-24 | staging 上線：`staging.zone2mate.com`，使用者試過沒問題；設定清單補上「Deploy staging 在合併前網頁上沒有 Run workflow 按鈕」（12.19、9.4） |
+| 0.2.0 | 2026-10-25 | **發版 v0.2.0**：網頁版搬到自己的網址 `app.zone2mate.com`；舊網址每一頁上方提示「網頁版搬到新網址了」，搬家期間舊網址也能同步，設定裡有清除舊網址資料的按鈕；新增測試用的 staging（`staging.zone2mate.com`，資料和正式的分開）（12.19） |
 | 2.0-draft | 2026-10-21 | 第三步的補充：課表要達得到、可以回饋與修改；依目標、強度偏好與生活節奏個人化（12.8，提案） |
 | 2.0-draft | 2026-10-21 | 教練動態：身體狀況那則不能略過；略過的項目可以找回（6.7） |
 | 2.0-draft | 2026-10-21 | 修正：網頁版回到前景或跨日時重新讀取、恢復資料自動更新並標明昨天的資料（6.7、KI-034）；Intervals.icu 沒有跑步設定時訓練數值出錯 |
@@ -610,17 +613,20 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - **有新版本時提示更新，加上要求瀏覽器不要自動清掉資料**（12.18）：狀態：已部署（2026-10-24，協調 session 檢查後依使用者事先的授權合併部署）。
 
 - **版號與 Beta 標示**（12.19 的工作單 A）：狀態：已推上 v2（2026-10-24）；等合併部署時發 0.1.0、打 `v0.1.0` 標籤（協調 session）。
-- **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：等使用者買網域，買好後再開開發 session。
+- **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：已推上 v2（2026-10-24，開發 session「staging 與正式環境（12.19 B）」）。使用者 2026-10-24 買了 `zone2mate.com` 與 `zonetwomate.com`。2026-10-24 使用者設好 staging（Variables、協調 session 用 API 執行 Deploy staging 成功、綁好 `staging.zone2mate.com`），在 staging 試過沒問題。下一步：使用者做 12.19「使用者要做的設定」的二之 1、2（正式專案綁 `app.zone2mate.com`、加 `OLD_WEB_URL`、改 `WEB_URL`）→ 說「合併部署」發 v0.2.0（同時補打 `v0.1.0` 標籤在 `0a137da`）→ 每台裝置搬家（四）→ 收尾（五）。
 
 *討論中*（協調 session 和使用者討論，還沒有決定）
 - 課表的其他部分（12.15）：看過去幾週的課表與達成狀況、選手能不能自己改課的內容、文字與結構化課表互斥。使用者還沒用過課表，等實際用過再談。
 - 賽後分析：用賽事連到的那趟跑步（`result_activity`）算前後半的配速變化、分段；分段成績現在不做（12.15）。
 - 比賽地點的天氣預報（12.14 沒做的）。
-- 自己的網域（11 #25）：已決定要買（12.19），等使用者在 Cloudflare 買好。
+- 自己的網域（11 #25）：已買 `zone2mate.com`（12.19），工作單 B 已推上 v2，等使用者設定與合併部署。
 - 教練上網搜尋（11 #13、6.6）：使用者在評估 Tavily 的費用。
+- 看得到有哪些裝置在同步（2026-10-24 使用者提出，有空討論）：現在的同步空間不記裝置，所有裝置共用同一把同步金鑰。初步想法：每台裝置在同步空間裡放一筆加密的「裝置」紀錄（名稱、平台、最後同步時間），設定頁列出來；要「移除某台」就得換一把新的金鑰、其他裝置重新配對，否則被移除的那台仍解得開。待討論範圍與做法。
+- Cloudflare 用量與免費額度（2026-10-24 使用者提出：怎麼知道沒超過免費額度，避免服務中斷或收到大筆帳單）：免費方案超過額度是**停止服務、不收錢**（Workers 每天 10 萬次請求，超過回錯誤到 UTC 午夜重置；D1 每天讀 500 萬列、寫 10 萬列、總共 5 GB，超過就拒絕查詢），只有升級到 Workers Paid（每月 5 美元起）才有用量計費；網域是每年的固定費用。待討論：要不要做用量的提醒（例如每週用 GitHub Actions 讀 Cloudflare 的用量 API，接近上限時開 issue 或通知；需要一個只能讀用量的 token），以及給別人用時預估的用量。
 - 教練主動發話：之後若做，系統提示裡教練的訊息也要帶上時間（12.16）。
 - 面板的小缺口（12.17 沒做的）：打開時焦點不會移進面板、底下的頁面沒有設成 inert（鍵盤 Tab 可能先走到底下）、關閉沒有滑出的動畫；iPhone 上的返回手勢與鍵盤待使用者實機確認。
-- `verify-devicesync.cjs` 偶爾第一次跑失敗、重跑就過（2026-10-24 在 12.17 與 12.19 的檢查各出現一次，都和改動無關）：要找原因，可能是時序；之後開一張小工作單查。
+- `verify-devicesync.cjs` 偶爾第一次跑失敗、重跑就過（2026-10-24 在 12.17 與 12.19 的檢查各出現一次，都和改動無關）：要找原因，可能是時序；之後開一張小工作單查。12.19 B 的檢查時第一次跑又失敗一次，之後連跑兩次都通過。
+- `verify-weather.cjs` 的 `feedGoneAfterClear`（清除天氣的城市後教練動態的天氣提醒消失）在 2026-10-24 UTC 15:30（台北 23:30）失敗；切回沒有 12.19 B 改動的 `v2` 一樣失敗，和改動無關。可能和跨日前後的時間有關（`tools/e2e/README.md` 的注意事項），之後一起查。
 - 整頁捲動（12.17 的 B）：讓手機瀏覽器捲動時收起工具列；等要推廣給其他人、多數人在瀏覽器裡用時再做。
 - 小修：賽事備註可以換行之後，賽事列表上的備註仍顯示成一行（12.16 沒做的）；iPhone Safari 的輸入框自動長高與注音選字時的 Enter 待使用者實機確認。
 
@@ -2142,7 +2148,7 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - 沒有對真正的 Cloudflare Pages 確認 `_headers` 合併後 `version.json` 的回應標頭；部署後可以用瀏覽器的開發者工具或 `curl -I <網址>/version.json` 看 `Cache-Control`。
 - 本機開發（`npm run dev`）與預覽版依程式的判斷不檢查／照常運作，沒有另外跑實測。
 
-### 12.19 版號、staging 與正式環境、網域（2026-10-24，已決定）
+### 12.19 版號、staging 與正式環境、網域（2026-10-24，已決定；工作單 B 已推上 v2）
 
 使用者打算再改善一些之後，找身邊有理工背景、也會跑步的人試用，問了加到主畫面、版號、版控與網域。
 
@@ -2152,6 +2158,7 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - 從 **0.1.0** 開始（0.0.0 表示什麼都沒有）。0 開頭表示還不是正式版；穩定、正式給大家用時再升 1.0.0。
 - 每次合併部署就是一次發版：有新功能加中間那碼（0.1.0 → 0.2.0），只修錯誤加最後一碼（0.2.0 → 0.2.1）。網頁版與 Discord bot 用同一個版號。
 - 發版時由協調 session 改版號、在合併的 commit 打 `vX.Y.Z` 標籤（標籤不觸發部署）、在版本異動表寫這一版的內容。
+- 2026-10-24 發 v0.1.0 時發現：雲端 session 的 git 只能推自己的分支，推不了標籤。改成 workflow「Tag release」在合併到 `main` 後依 `package.json` 的版號自動打標籤（也能手動執行補打）；v0.1.0 的標籤等這個 workflow 上了 `main` 之後補打在 `0a137da`。
 - 標題列只顯示「Beta」；設定頁最下面顯示完整的版號、commit 與建置日期（跟著版號自動更新）。
 
 **staging 與正式環境、網域**（使用者：要給別人用，是不是該分 staging 與 prod？要不要租網域？版控要改嗎？現在都是從 v2 改、看過就進 main）
@@ -2181,7 +2188,106 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 - Discord bot 的 esbuild 建置成功，打包結果含版號。Docker 映像在雲端環境建不了（沒有 Docker daemon），由 `v2-ci` 的 docker build 驗證。
 - 網頁實測：`verify-update.cjs` 加上檢查：標題列只顯示「Beta」、標題列的提示與設定頁最下面是 `v{根目錄的版號} Beta（commit，`。全部腳本 ALL OK；`verify-devicesync.cjs` 第一次跑有一項失敗，之後連跑四次（含重開模擬上游）都通過，沒有重現，和這次的改動無關。
 
-**工作單 B：staging 與正式環境、自己的網域**（等使用者買好網域）
-- 要做：`v2` 推上去自動部署 staging 的網頁版（Cloudflare Pages，`staging.網域`）與 staging 的同步服務（另一個 Worker 與 D1，網頁版的建置指向它）；正式環境改用 `app.網域`；同步服務允許的來源（`ALLOWED_ORIGINS`）改成新的網址；手動預覽（`web-preview.yml`）由 staging 取代；舊的 `running-coach-bgb.pages.dev` 怎麼處理（導向新網域或提示搬家）；使用說明與文件裡的網址；`CLAUDE.md` 與規格寫明新的流程。
-- 使用者要做的：在 Cloudflare 買網域；建 staging 需要的 repo Variables；在 Pages 綁自訂網域（或由 workflow 用 API 綁）；在新網址用復原碼還原、重填 API key、重新加入主畫面。
-- 驗收：staging 與正式各自部署成功、各自的同步只接受自己的網址、staging 的資料不出現在正式的同步；網頁實測照跑。
+**網域的選擇**（2026-10-24）
+- 使用者顧慮：跑步加教練的名字，之後兼容其他運動會受限；runningcoach 也早有人用。協調 session 的看法：網域等於品牌、之後很難換（資料跟著網址），App 裡的名稱與 repo 之後隨時能改；擴展最自然的邊界是耐力運動（跑步、自行車、游泳、三鐵），心率區間、訓練負荷、恢復與賽事減量都共通。
+- 使用者選了 `zone2mate.com`：Zone 2 是耐力運動共通的概念，也對應教練的 80/20 與「穩定、長久練下去」、不想讓人挫折的調性；mate 比 coach 親切。顧慮：數字 2 唸出來容易打錯（所以也買了 `zonetwomate.com`，導向主網域）、字面偏輕鬆跑（用標語補足）、App Store 上已有好幾個「Zone2 …」的 App（沒有叫 Zone2Mate 的）。
+- App 內的名稱暫時不改（仍是 Running Coach），之後另外討論。
+
+**工作單 B：staging 與正式環境、自己的網域**（使用者已買 `zone2mate.com`、`zonetwomate.com`，都在同一個 Cloudflare 帳號）
+- 網址規劃：
+  - 正式：`app.zone2mate.com`（網頁版）。根網域 `zone2mate.com` 留給之後的介紹頁，現在先導向 `app.zone2mate.com`；`www.zone2mate.com`、`zonetwomate.com`、`www.zonetwomate.com` 也都導向 `app.zone2mate.com`（Cloudflare 的轉址規則，使用者在後台設，步驟寫進文件）。
+  - staging：`staging.zone2mate.com`。建議另開一個 Pages 專案（正式分支就是 `v2`），自訂網域與環境變數都和正式的分開；或同一個專案用 `v2` 的分支網址加 CNAME，開發 session 評估後選一個並寫明理由。
+  - 同步服務：正式的照舊（workers.dev 的網址不變，雲端的資料不動）；staging 另開一個 Worker 與 D1，網址用 workers.dev 或 `sync-staging.zone2mate.com` 皆可。
+- 要做：
+  - `v2` 推上去自動部署 staging 的網頁版與 staging 的同步服務；staging 的網頁版建置指向 staging 的同步服務；畫面上標示「Staging」，和正式版分得出來（取代現在手動的預覽，`web-preview.yml` 移除或改成這個）。
+  - 正式環境改用 `app.zone2mate.com`：正式同步服務允許的來源（`ALLOWED_ORIGINS`）改成新網址；搬家期間舊的 `running-coach-bgb.pages.dev` 也允許。
+  - 舊網址 `running-coach-bgb.pages.dev`：pages.dev 不能設轉址，在舊網址打開時顯示搬家的提示（新網址、用復原碼或配對還原、重填 API key、重新加入主畫面），等使用者搬好再拿掉。
+  - 使用說明、README、規格裡的網址；`CLAUDE.md` 與規格寫明新的流程（推 `v2` → staging 自動更新 → 使用者在 staging 試 → 合併部署 → 正式）。
+  - `doc/architecture.md` 的全貌圖與部署一節更新。
+- 不做：App 名稱與品牌（另外討論）、介紹頁、通行密鑰。
+- 使用者要做的（開發 session 寫成一步一步的清單）：Cloudflare 上建 staging 的 D1（或由 workflow 建）、在 Pages 綁自訂網域、設轉址規則、在 GitHub 設新的 Variables（例如 staging 的 Pages 專案名稱、D1 的 id、各網址）、確認 API token 的權限夠；部署後在 `app.zone2mate.com` 用復原碼還原、重填 API key、重新加入主畫面，確認後再拿掉舊網址的允許來源與提示。
+- 驗收：workflow 用 actionlint 檢查；`npm test`、`npm run typecheck`；網頁實測照跑（staging 的「Staging」標示與舊網址的搬家提示要有測試）；實際部署要等使用者設好 Variables 後在 GitHub 上看，回報時寫清楚哪些還沒驗證。
+- 注意：同步服務的允許來源設錯，正式的同步會斷，改動要小心；所有網址從 Variables 讀，不寫死在程式。
+
+**工作單 B 的實作**（2026-10-24，開發 session「staging 與正式環境（12.19 B）」，已推上 v2）
+
+選擇與理由
+- **staging 另開一個 Pages 專案**（不用正式專案的 `v2` 分支網址加 CNAME）：Pages 的「自訂網域」只接在專案的正式分支上，staging 有自己的專案（正式分支是 `v2`），`staging.zone2mate.com` 就能在後台照一般的方式綁，憑證與 DNS 由 Pages 管理；分支網址加 CNAME 不經 Pages 的自訂網域設定，出問題時不好查。另外部署紀錄與「回到上一版」也分開，不會在正式專案裡誤按到 staging 的部署。代價是多一個（免費的）專案。
+- **staging 的同步服務用 workers.dev 的網址**（`running-coach-sync-staging.<子網域>.workers.dev`）：不用給 API token 網域（Zone）的權限，現有的 token 就夠。
+- **舊網址與新網址是同一份建置**：自訂網域 `app.zone2mate.com` 綁在原本的正式專案上，`running-coach-bgb.pages.dev` 照樣有同一份網頁。網頁在執行時比對網址：建置時的 `VITE_WEB_URL`（Variables 的 `WEB_URL`）不是目前的網址，就顯示搬家的提示。不必像 12.13 那樣另外建一份「已搬家」的版本。
+- **搬家的提示不拿掉也沒關係**：它只在正式網址以外的地方出現，之後有人從舊網址打開也會知道去哪裡。搬好之後要拿掉的是同步服務對舊網址的允許（`OLD_WEB_URL`）。
+- **原本手動的預覽（`web-preview.yml`）移除**：staging 取代它。staging 連自己的同步服務，所以多裝置同步也能在 staging 試（預覽版不能）。
+
+實作
+- `.github/workflows/staging.yml`（新）：push 到 `v2`（網頁版、同步服務、核心、`package.json`、lockfile、`tools/sync-config.ts` 有改時）或手動執行。型別檢查與測試 → 部署 staging 的同步服務（Worker `running-coach-sync-staging`、D1 `running-coach-sync-staging`，只允許 `STAGING_WEB_URL`）→ 建置並部署 staging 的網頁版（`VITE_STAGING=1`、`VITE_SYNC_URL` 是 staging 的同步服務；第一次執行時建立 Pages 專案，正式分支是 `v2`）。
+  - 沒設定的部分跳過、不失敗：沒有 `STAGING_PAGES_PROJECT` 不部署網頁版；沒有 `STAGING_SYNC_D1_DATABASE_ID` 或 `STAGING_WEB_URL` 不部署同步服務；兩者都沒有時整個跳過（連測試都不跑，`v2-ci` 已經跑了）。
+  - 防呆：`STAGING_SYNC_URL` 和正式的 `SYNC_URL` 一樣時失敗，不讓 staging 的網頁連到正式的同步服務；手動執行時只接受 `v2`。
+- `tools/sync-config.ts`（新）：部署同步服務前把 Worker 名稱、D1 的名稱與 id、允許的來源填進 `apps/sync/wrangler.toml`，正式與 staging 共用。網址只取來源、去掉重複；有任何一個不是 https、一個都沒有、D1 的 id 格式不對、`wrangler.toml` 的欄位找不到或不只一行時直接失敗、不部署，正式的同步服務維持上一次的設定（原本 `WEB_URL` 空的時候會照樣部署成誰都不能連）。紀錄裡只印網址，不印 D1 的 id。
+- `sync.yml`（正式）：允許的來源改成 `WEB_URL` 加上 `OLD_WEB_URL`（搬家期間的舊網址，沒設定就只有 `WEB_URL`），改用 `tools/sync-config.ts` 填。
+- `web.yml`（正式）：建置時帶 `VITE_WEB_URL`（Variables 的 `WEB_URL`）。
+- 網頁版：
+  - `apps/web/src/environment.ts`：`IS_STAGING`、`movedTo()`（目前的網址不是正式網址時回傳正式網址；staging、沒有設定正式網址、本機開發時都是 null）。
+  - staging：標題列的標籤是「Staging」（提示色），設定頁最下面是「v0.1.0 Staging（commit，日期 建置）」，每一頁上方「Staging：還沒上線的測試版，資料與同步都和正式版分開。」（`views/Staging.tsx`，取代原本的預覽版提示）；`_headers` 多 `X-Robots-Tag: noindex`，不讓搜尋引擎收錄。
+  - 舊網址的搬家提示（`views/Moved.tsx`，沿用 12.13 的做法）：每一頁上方「網頁版搬到新網址了：app.zone2mate.com」，說明資料不會自動搬（同步的用配對或復原碼，沒同步的匯出再匯入）、API key 重填、加到主畫面的從新網址重新加入，以及「搬好了，清除這裡的資料」；設定的最上面是步驟、這台上次同步的時間、「立即同步裝置」與「清除這個網址的資料」（先停掉這台的同步，再清掉資料庫與這個網址的 localStorage，重新載入後顯示已清除）。
+- 文件：`CLAUDE.md`（新的流程、push 到 `v2` 會更新 staging）、`doc/architecture.md`（全貌與部署一節）、`README.md`、`tools/e2e/README.md`。
+
+驗證
+- `npm test`（新增 `tools/test/sync-config.test.ts`：只取來源、去掉重複、沒設定的 `OLD_WEB_URL`、沒有網址或不是 https 時失敗、正式不改 Worker 名稱、staging 用自己的 Worker 與 D1、D1 的 id 與名稱的格式、已經填過的 `wrangler.toml` 不再填；`apps/web/test/environment.test.ts`：`movedTo()` 的各種情況）、`npm run typecheck`。
+- 實際跑 `tools/sync-config.ts` 一次（填好後還原），沒有網址時以錯誤結束。
+- actionlint 1.7.12 檢查 `.github/workflows/` 全部沒有問題。
+- 網頁實測：新增 `tools/e2e/verify-environments.cjs`，自己建置正式版（`VITE_WEB_URL=https://app.zone2mate.com`）與 staging 兩份：一般的建置沒有搬家提示與 Staging；正式版從其他網址打開時每一頁都有搬家提示（連到新網址、說明齊全）、「搬好了」打開設定且搬家的卡片在最上面、清除後重新載入顯示已清除且 localStorage 清掉；同一份正式版用路由接到 `https://app.zone2mate.com` 打開時沒有提示；staging 的標題列、每一頁上方、設定頁最下面都是 Staging，沒有搬家提示，沒有橫向捲動；staging 的 `_headers` 有 noindex、正式版沒有。手機與電腦、淺色與深色的截圖。其他 12 個腳本照跑：10 個 ALL OK；`verify-devicesync.cjs` 第一次失敗、再跑兩次都通過（9.4 已記的偶發問題）；`verify-weather.cjs` 的 `feedGoneAfterClear` 失敗，切回沒有這次改動的 `v2` 一樣失敗，和這次無關（記在 9.4）。
+
+沒驗證到的
+- 實際的部署：這個環境連不到 Cloudflare。staging 的 workflow、Pages 專案的建立、Worker 與 D1、自訂網域、轉址規則，都要等使用者設好 Variables 後在 GitHub 的 Actions 與瀏覽器確認。
+- 正式環境換網址：要等合併部署後，照下面的步驟在 `app.zone2mate.com` 還原與確認。
+
+**使用者要做的設定**（工作單 B）
+
+API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編輯、Cloudflare Pages 編輯，範圍是自己的帳號）就夠，不用改。自訂網域與轉址都在後台設，不經 token。
+
+一、staging（現在就可以做，不影響正式環境；做完之後每次推 `v2` 都會自動更新 staging）
+1. Cloudflare 後台 → Storage & Databases → D1 → Create database，名稱 `running-coach-sync-staging` → 建好後複製 Database ID。
+2. 算出 staging 同步服務的網址：看 GitHub Variables 現在的 `SYNC_URL`（`https://running-coach-sync.<子網域>.workers.dev`），把 `running-coach-sync` 換成 `running-coach-sync-staging`。
+3. GitHub repo → Settings → Secrets and variables → Actions → Variables，新增四個：
+   - `STAGING_PAGES_PROJECT`：`running-coach-staging`
+   - `STAGING_WEB_URL`：`https://staging.zone2mate.com`
+   - `STAGING_SYNC_D1_DATABASE_ID`：第 1 步的 Database ID
+   - `STAGING_SYNC_URL`：第 2 步的網址
+4. 請協調 session 執行「Deploy staging」（分支 `v2`）。會建立 Pages 專案、部署 staging 的同步服務與網頁版。失敗時看紀錄或把紀錄的錯誤貼給協調 session。
+   - GitHub 的網頁只在 workflow 檔已經在預設分支（`main`）上時才有「Run workflow」按鈕；`staging.yml` 合併部署之前只在 `v2`，所以網頁上沒有按鈕，由協調 session 用 API 執行，或在之前那次被跳過的執行點「Re-run all jobs」（會用現在的 Variables）。合併部署之後網頁上就有按鈕。
+   - 改了 Variables 之後同樣要再執行一次。
+5. Cloudflare 後台 → Workers & Pages → `running-coach-staging` → Custom domains → Set up a custom domain → `staging.zone2mate.com` → 確認（DNS 由 Cloudflare 自動加）→ 等狀態變成 Active（通常幾分鐘）。
+6. 打開 `https://staging.zone2mate.com`：標題列是「Staging」、上方有 Staging 的提醒。staging 的資料和正式版分開：要試就重新填 API key（會用你的額度），可以用測試模式；要試多裝置同步就在 staging 另外開一個同步空間（和正式的同步資料無關）。
+7. （可選）Cloudflare 的正式專案 `running-coach` → Deployments 裡以前手動部署的預覽（`v2` 分支）可以刪掉；`v2.running-coach-bgb.pages.dev` 不再更新。
+
+二、正式環境換到 `app.zone2mate.com`（在 staging 試過這一版之後、說「合併部署」之前做；**順序不要換**）
+1. Cloudflare 後台 → Workers & Pages → `running-coach`（正式的 Pages 專案）→ Custom domains → Set up a custom domain → `app.zone2mate.com` → 等 Active。這時打開 `app.zone2mate.com` 看到的是目前的正式版（還沒有搬家的提示，同步會失敗，先不要在這裡用）。
+2. GitHub Variables：
+   - 新增 `OLD_WEB_URL`：`https://running-coach-bgb.pages.dev`（搬家期間舊網址也能同步）
+   - 把 `WEB_URL` 改成 `https://app.zone2mate.com`
+   改完到合併部署之前，**不要手動執行「Deploy sync service」**：那時 `main` 上還是舊的 workflow，只允許 `WEB_URL`，舊網址的同步會斷（萬一執行了，合併部署之後就會恢復）。
+3. 說「合併部署」：這一版改了 `sync.yml` 與 `web.yml`，合併後兩個都會自動部署：同步服務允許 `app.zone2mate.com` 與舊網址，網頁版知道正式網址是 `app.zone2mate.com`。
+4. 確認：打開 `https://app.zone2mate.com` 沒有搬家的提示；打開 `https://running-coach-bgb.pages.dev` 每一頁上方有「網頁版搬到新網址了」。
+
+三、轉址（`zone2mate.com`、`www.zone2mate.com`、`zonetwomate.com`、`www.zonetwomate.com` → `app.zone2mate.com`；任何時候都可以做）
+兩個網域各做一次：
+1. Cloudflare 後台 → 選網域（例如 `zone2mate.com`）→ DNS → Records：沒有根網域與 `www` 的紀錄時各新增一筆：Type `A`、Name `@`（第二筆是 `www`）、IPv4 `192.0.2.1`、Proxy status 打開（橘色雲朵）。這個位址不會真的被連到，只是讓請求進到 Cloudflare 轉址。
+2. 同一個網域 → Rules → Redirect Rules（或 Rules → Overview → Create rule → Redirect Rule）→ Create rule：
+   - Rule name：`to app`
+   - If incoming requests match → Custom filter expression：Hostname equals `zone2mate.com`，Or，Hostname equals `www.zone2mate.com`（`zonetwomate.com` 那邊填它自己的兩個）
+   - Then → URL redirect → Type `Static`，URL `https://app.zone2mate.com`，Status code `302`（暫時：根網域之後要放介紹頁；`zonetwomate.com` 也可以用 `301`），Preserve query string 不勾
+   - Deploy
+3. 確認：瀏覽器打開 `zone2mate.com`、`www.zone2mate.com`、`zonetwomate.com`、`www.zonetwomate.com` 都到 `app.zone2mate.com`。
+
+四、每台裝置搬家（合併部署之後）
+1. 在舊網址（`running-coach-bgb.pages.dev`）的設定最上面按「立即同步裝置」（有開同步的話）。
+2. 打開 `https://app.zone2mate.com` → 設定 →「用復原碼還原」或「加入已經在同步的裝置」（用舊網址配對）；沒開同步的：舊網址「匯出資料庫」→ 新網址「匯入資料庫」。
+3. 新網址重新填 API key，按「同步最近 14 天」，確認對話、紀錄、賽事都在。
+4. 加到主畫面的：刪掉舊的圖示，從 `app.zone2mate.com` 重新加入主畫面，在主畫面的 App 裡再做一次第 2、3 步（主畫面的 App 和瀏覽器的資料分開存）。
+5. 回舊網址按「清除這個網址的資料」，刪掉舊網址的書籤。
+
+五、全部的裝置都搬好之後
+1. GitHub Variables 刪掉 `OLD_WEB_URL` → Actions → Deploy sync service → Run workflow（分支選 `main`）：舊網址不能再同步。
+2. 舊網址的搬家提示留著（只在舊網址出現，告訴打開的人去哪裡），不用改程式。
+3. （可選）之後想讓 `running-coach-bgb.pages.dev` 直接轉到新網址，可以用 Cloudflare 的 Bulk Redirects（Pages 的說明有「把 pages.dev 轉到自訂網域」的做法）；轉了之後就打不開舊網址的資料，確定沒有人要搬了再做。
+4. （可選）GitHub → Settings → Branches → 為 `main` 加規則：只能經 PR 合併、CI 要過。

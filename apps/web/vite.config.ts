@@ -70,7 +70,9 @@ function contentSecurityPolicy(): Plugin {
       },
     ],
     generateBundle() {
-      const lines = Object.entries(SECURITY_HEADERS).map(([name, value]) => `  ${name}: ${value}`);
+      // staging 不讓搜尋引擎收錄（規格 12.19）
+      const headers = process.env.VITE_STAGING === "1" ? { ...SECURITY_HEADERS, "X-Robots-Tag": "noindex" } : SECURITY_HEADERS;
+      const lines = Object.entries(headers).map(([name, value]) => `  ${name}: ${value}`);
       this.emitFile({ type: "asset", fileName: "_headers", source: `/*\n${lines.join("\n")}\n${VERSION_FILE_HEADERS}` });
     },
   };

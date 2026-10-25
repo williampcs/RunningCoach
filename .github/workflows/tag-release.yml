@@ -1,0 +1,46 @@
+# 發版的標籤（規格 12.19）：合併到 main 後，依 repo 根目錄 package.json 的 version 在那個 commit 打 vX.Y.Z。
+#
+# 雲端開發 session 的 git 只能推自己的分支，推不了標籤，所以由這裡打。標籤已經存在就跳過；
+# 標籤不會觸發部署。手動執行時可以指定 commit（補打之前漏掉的標籤），版號讀那個 commit 的 package.json。
+name: Tag release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 要打標籤的 commit（留空是 main 的最新 commit）
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          sha="${INPUT_SHA:-$GITHUB_SHA}"
+          git cat-file -e "${sha}^{commit}"
+          version=$(git show "${sha}:package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))')
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} 已經存在（$(git rev-list -n 1 "${tag}")），跳過"
+            exit 0
+          fi
+          git tag "${tag}" "${sha}"
+          git push origin "${tag}"
+          echo "打了 ${tag} → ${sha}"

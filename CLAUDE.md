@@ -1,10 +1,10 @@
 # Running Coach
 
-AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v2` 合併到 `main`，自建的 Discord bot 以 GHCR 映像部署到 VM（KI-025），網頁版在 Cloudflare Pages（12.13），多裝置同步服務在 Cloudflare Workers（12.10）。v1 的 Python 程式（`src/`）保留到觀察期結束後移除。
+AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v2` 合併到 `main`，自建的 Discord bot 以 GHCR 映像部署到 VM（KI-025），網頁版在 Cloudflare Pages（12.13，正式版 `app.zone2mate.com`），多裝置同步服務在 Cloudflare Workers（12.10）；另有一套 staging（`staging.zone2mate.com`，12.19）。v1 的 Python 程式（`src/`）保留到觀察期結束後移除。
 
 ## 必須遵守
 
-- **不要 push 或合併到 `main`。** push 到 `main` 會觸發部署：bot 用到的檔案有改動時重新部署 Discord bot（`doc/known-issues.md` 的 KI-025），網頁版或核心有改動時發布網頁版（KI-026）；何時部署由使用者決定。開發在 `v2` 分支，其他分支的 push 不會觸發部署。
+- **不要 push 或合併到 `main`。** push 到 `main` 會觸發部署：bot 用到的檔案有改動時重新部署 Discord bot（`doc/known-issues.md` 的 KI-025），網頁版或核心有改動時發布網頁版（KI-026）；何時部署由使用者決定。開發在 `v2` 分支：push 到 `v2` 只會更新 staging（網頁版與 staging 自己的同步服務，資料和正式的分開，12.19），不碰正式環境；其他分支的 push 不會觸發部署。
 - **這個 repo 是公開的。** 金鑰、個人的訓練與生理資料、主機名稱與登入資訊都不要寫進會進版控的檔案。使用者家目錄的路徑也不要寫進去。
 - 使用者貼過的 API key 不要在回覆裡重複。workflow 不可以把 secrets 印出來。
 - 使用者真實的訓練資料不進雲端 session；需要真實資料的驗證由使用者在本機跑腳本。
@@ -24,7 +24,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 
 **開發 session**（一次一個主題）
 - 開始時讀：本檔、規格第 9 節（進度、下一步、接手須知）、工作單指到的章節。工作單沒寫清楚的，先問協調 session 或使用者，不要自己猜大方向。
-- 開發在 `v2`，開始前先 `git pull`。做完：`npm test`、`npm run typecheck`、網頁實測（`tools/e2e/README.md`）、更新文件，commit 並推到 `v2`。
+- 開發在 `v2`，開始前先 `git pull`。做完：`npm test`、`npm run typecheck`、網頁實測（`tools/e2e/README.md`）、更新文件，commit 並推到 `v2`。推上去後 staging 會自動更新，回報時請使用者在 staging 試。
 - 回報：做了什麼、怎麼驗證的、沒驗證到的、使用者要做的事。
 - 發現工作單以外的問題：記到規格 9.4 或 KI，回報時提出，不要順手擴大範圍；明顯的錯誤可以修，但要在回報裡說。
 
@@ -45,9 +45,17 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 
 工作單的格式（規格 9.4）：標題、對應章節、要做什麼、不做什麼、驗收方式（測試、E2E 腳本）、注意事項、狀態（待開發／開發中（哪個 session）／已推上 v2／已部署）。
 
+## staging 與正式環境
+
+流程：開發 session 推 `v2` → staging（`staging.zone2mate.com`）自動更新（`.github/workflows/staging.yml`）→ 使用者在 staging 實際試 → 使用者說「合併部署」→ 正式環境（`app.zone2mate.com`）。緊急修正一樣走這條。
+
+- staging 的網頁版是另一個 Pages 專案，同步服務是另一個 Worker 與 D1：在 staging 試的資料不碰正式的；網頁上標示「Staging」。
+- 兩個環境的網址、專案名稱、D1 的 id 都在 GitHub 的 Variables（規格 12.19 有清單），不寫進 repo。
+- 改同步服務允許的來源要特別小心：設錯了，那個網址的同步就會失敗。
+
 ## 合併部署
 
-只有使用者說「合併部署」時才做；授權只限那一次，之後的改動仍要等使用者再說。
+只有使用者說「合併部署」時才做；授權只限那一次，之後的改動仍要等使用者再說。合併前確認使用者已經在 staging 試過這一版（沒試過的要在回報裡說）。
 
 每次合併部署就是發一版（規格 12.19）。版號只有一個來源：repo 根目錄 `package.json` 的 `version`，網頁版（標題列的 Beta、設定頁最下面的完整版號）與 Discord bot（`/status`）都讀它。
 
@@ -63,8 +71,8 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 2. 建 PR：`v2` → `main`，標題帶版號，說明改了什麼與怎麼驗證的。
 3. 在背景輪詢那個 commit 的 check runs，等 CI 全部成功。
 4. 合併：merge method 用 `merge`（不要 squash），帶完整 40 字元的 head SHA（`git rev-parse HEAD`）。
-5. 打標籤：在合併產生的 commit（`main` 上）打 `vX.Y.Z`：`git fetch origin main && git tag vX.Y.Z <合併的 commit> && git push origin vX.Y.Z`。標籤不觸發部署；部署失敗要重來時不改標籤，修好後發下一個 patch 版。
-6. 在背景輪詢合併後 commit 的 workflow runs（Deploy web app、Deploy sync service、Deploy Discord bot），失敗時看 job log，回報結果（含這一版的版號）與使用者要確認的事。
+5. 標籤：合併後由 workflow「Tag release」（`.github/workflows/tag-release.yml`）依 `package.json` 的版號在合併的 commit 自動打 `vX.Y.Z`，不用手動打（雲端 session 的 git 只能推自己的分支，推不了標籤）。在下一步確認它成功；漏掉的可以手動執行它並指定 commit。標籤不觸發部署；部署失敗要重來時不改標籤，修好後發下一個 patch 版。
+6. 在背景輪詢合併後 commit 的 workflow runs（Deploy web app、Deploy sync service、Deploy Discord bot、Tag release），失敗時看 job log，回報結果（含這一版的版號）與使用者要確認的事。
 
 ## 文件入口
 
