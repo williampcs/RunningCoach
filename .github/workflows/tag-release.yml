@@ -1,7 +1,8 @@
 # 發版的標籤（規格 12.19）：合併到 main 後，依 repo 根目錄 package.json 的 version 在那個 commit 打 vX.Y.Z。
 #
 # 雲端開發 session 的 git 只能推自己的分支，推不了標籤，所以由這裡打。標籤已經存在就跳過；
-# 標籤不會觸發部署。手動執行時可以指定 commit（補打之前漏掉的標籤），版號讀那個 commit 的 package.json。
+# 標籤不會觸發部署。手動執行時可以指定 commit，版號讀那個 commit 的 package.json；但那個 commit 的 workflow 檔和現在的
+# main 不同時，GitHub 不讓這裡的 token 推指向它的標籤（沒有 workflows 權限），只能在本機打。
 name: Tag release
 
 on:
