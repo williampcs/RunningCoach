@@ -622,6 +622,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - **staging 與正式環境、自己的網域**（12.19 的工作單 B）：狀態：已推上 v2（2026-10-24，開發 session「staging 與正式環境（12.19 B）」）。使用者 2026-10-24 買了 `zone2mate.com` 與 `zonetwomate.com`。2026-10-24 使用者設好 staging（Variables、協調 session 用 API 執行 Deploy staging 成功、綁好 `staging.zone2mate.com`），在 staging 試過沒問題。2026-10-25 使用者做完二之 1、2，說「合併部署」：發 v0.2.0（PR #41，合併 commit `ba7051e`），Deploy web app、Deploy sync service、Deploy Discord bot、Tag release 都成功，`v0.2.0` 標籤已打。狀態：**已部署**。下一步：使用者確認二之 4（新網址沒有搬家提示、舊網址有）→ 每台裝置搬家（四）→ 收尾（五）；轉址（三）任何時候都可以做。
 
 - **正式站載入時偶爾 403**（2026-10-25 使用者發現：「每次載入似乎有機率 403，尚未掌握觸發條件。staging 沒有這個毛病」）：調查中。待使用者提供：畫面上看到什麼（整頁的錯誤，或 App 裡某則訊息）、截圖、哪台裝置與瀏覽器（或主畫面的 App）、重新整理會不會好。可能的來源：同步服務（403 在 App 裡顯示為「同步金鑰不符」，不會出現數字）、Intervals.icu（顯示「…403（請確認 API Key 與 Athlete ID）」；staging 若用測試模式就不會連 Intervals.icu，所以只在正式站出現）、AI 服務、或 Cloudflare 回的整頁錯誤（網域的安全設定、Bulk Redirects）。
+  - 2026-10-25 使用者補充：是瀏覽器自己的 403 頁（不是 Cloudflare 的錯誤頁），之後重現不了；開發者工具裡看到 `https://app.zone2mate.com/manifest.webmanifest` 曾經 403，頁面看起來正常。推測：`app.zone2mate.com` 當天早上才綁到 Pages，新的自訂網域在各地機房生效前的短暫錯誤（staging 前一天就綁好，沒有這個問題）；未證實。再出現時請記下時間，看那個 403 請求的回應標頭（有沒有 `server: cloudflare`、`cf-ray` 的值），並看 Cloudflare 後台 zone2mate.com → Security → Events 當時有沒有攔截紀錄。觀察幾天都沒再出現就結案。
 
 - **面板的修正：卡片間距、滑出的動畫、焦點**（12.17 的後續；2026-10-25 使用者在正式站發現）
   - 使用者的話：「設定裡的每張卡片都黏在一起了」「設定跟使用說明滑入時有動畫，但滑出時沒有」。
