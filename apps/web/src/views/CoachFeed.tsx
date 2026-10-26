@@ -45,6 +45,7 @@ const ICONS: Record<FeedItem["kind"], string> = {
   gap: "🌱",
   duplicate: "🔁",
   weather: "🌦️",
+  cross: "🚴",
 };
 
 const SCALES = [

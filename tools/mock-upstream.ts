@@ -5,7 +5,7 @@
  *   POST /v1/chat/completions                 模擬 OpenAI 相容的 Chat Completions（同一套規則；支援串流）
  *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步；匯入完整歷史時另有 2024 年起的舊紀錄）
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
- *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
+ *   GET  /intervals/athlete/:id               選手與運動設定（跑步與騎車的閾值心率與區間，騎車的 FTP 與功率區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
  *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
@@ -53,6 +53,11 @@ function wellness() {
 /** 跑步的閾值心率與 Intervals.icu 預設的 7 區（各區的上限） */
 const LTHR = 170;
 const HR_ZONES = [144, 151, 160, 168, 173, 180, 190];
+/** 騎車自己的閾值心率與區間（比跑步低一些）、FTP 與 Coggan 的 7 區（FTP 的百分比）：交叉訓練的目標換算用（規格 12.24） */
+const RIDE_LTHR = 160;
+const RIDE_HR_ZONES = [135, 142, 150, 158, 163, 170, 185];
+const RIDE_FTP = 200;
+const POWER_ZONES = [55, 75, 90, 105, 120, 150, 999];
 
 /**
  * 匯入完整歷史用的舊紀錄：2024-01 起每 4 天一趟，到 45 天前為止（一般的同步只抓 14 天，碰不到）；
@@ -101,7 +106,20 @@ function activities() {
       icu_ctl: 38,
       icu_atl: 52,
     },
-    { id: "i-mock-ride", type: "Ride", start_date_local: `${daysAgo(1)}T18:00:00`, distance: 30000, moving_time: 3600 },
+    // 今天傍晚一趟課表外的騎車（輕鬆，心率區間是騎車自己的）：多運動的「要不要調整接下來的課」（規格 12.24）；
+    // 放在今天，不論星期幾都在這週的課表裡
+    {
+      id: "i-mock-ride",
+      type: "Ride",
+      start_date_local: `${today()}T17:30:00`,
+      distance: 30000,
+      moving_time: 3600,
+      average_heartrate: 128,
+      icu_training_load: 38,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [2400, 1200, 0, 0, 0, 0, 0],
+    },
     {
       id: "i-mock-3d",
       type: "Run",
@@ -119,8 +137,11 @@ function activities() {
   ];
 }
 
-/** 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
-function samplePlan(text: string) {
+/**
+ * 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由）.
+ * multisport：工具有交叉訓練的 sport 時（多運動的開關開著），週六加一堂 Z2 的騎車，今天加一堂肌力（回報做完了用）
+ */
+function samplePlan(text: string, multisport = false) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
   const start = /下週/.test(text) ? 7 : 0;
@@ -156,9 +177,28 @@ function samplePlan(text: string) {
         fallback: "改成 40 分鐘輕鬆跑",
       },
       { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: 10, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
+      ...(multisport
+        ? [
+            {
+              date: day(5),
+              kind: "cross",
+              sport: "ride",
+              title: "輕鬆騎車",
+              steps: [{ duration_min: 45, target: { zone: "Z2" } }, { duration_min: 10, target: { power: "Z3" } }],
+              purpose: "不增加衝擊的有氧量",
+              success: "心率維持在騎車的 Z2",
+            },
+            ...(start === 0
+              ? [{ date: today(), kind: "strength", title: "今天的肌力", steps: [{ duration_min: 20, note: "深蹲、弓箭步、單腳提踵" }], purpose: "減少受傷", success: "動作確實" }]
+              : []),
+          ]
+        : []),
     ],
   };
 }
+
+/** 工具清單有交叉訓練的 sport（多運動的開關開著） */
+const hasMultisport = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("交叉訓練（kind=cross）是哪種運動");
 
 const textOf = (m: Message | undefined) =>
   !m ? "" : typeof m.content === "string" ? m.content : m.content.map((b) => String(b.text ?? b.content ?? "")).join("\n");
@@ -216,7 +256,11 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
-  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
+  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
+  // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
+  if (/調整這週接下來的課/.test(lastText)) {
+    return [toolUse("save_training_plan", { ...samplePlan("", hasMultisport(body.tools)), reason: "（模擬）依課表外的騎車調整" })];
+  }
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   // Anthropic 的工具是 { name }，OpenAI 相容的是 { function: { name } }
   const toolNames = (body.tools ?? []).map((t) => (t as { name?: string; function?: { name?: string } }).name ?? (t as { function?: { name?: string } }).function?.name);
@@ -473,7 +517,7 @@ createServer((req, res) => {
       name: "Mock Runner",
       email: "mock@example.com",
       sportSettings: [
-        { types: ["Ride", "VirtualRide"], ftp: 200 },
+        { types: ["Ride", "VirtualRide"], ftp: RIDE_FTP, power_zones: POWER_ZONES, lthr: RIDE_LTHR, max_hr: 185, hr_zones: RIDE_HR_ZONES },
         { types: ["Run", "VirtualRun", "TrailRun"], lthr: LTHR, max_hr: 190, hr_zones: HR_ZONES, threshold_pace: null },
       ],
     });

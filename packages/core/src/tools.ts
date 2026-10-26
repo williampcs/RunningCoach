@@ -10,6 +10,7 @@ import type { Llm, ToolDef } from "./llm";
 import { otherActivitiesText } from "./activity-labels";
 import { findGuide, guideTopics } from "./app-guide";
 import type { Activity, ActivitySource, CoachSettings, Logger } from "./types";
+import { featureOn } from "./features";
 import {
   DNS_REASONS,
   duplicateGroups,
@@ -435,8 +436,39 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       },
     },
   ];
+  if (featureOn(settings, "multisport")) multisportTools(tools);
   if (options.weather) tools.push(WEATHER_TOOL);
   return tools;
+}
+
+type Schema = { properties: Record<string, { description?: string; enum?: string[]; items?: Schema } & Record<string, unknown>> };
+
+/**
+ * 多運動（功能開關，規格 12.24）：選手資料加上練哪些運動與各自的目標；交叉訓練的課寫運動，目標用那項運動的區間；
+ * 肌力與交叉訓練的課可以記下做完了。開關關著時工具和原本一樣
+ */
+function multisportTools(tools: ToolDef[]): void {
+  const props = (name: string) => (tools.find((t) => t.name === name)!.input_schema as unknown as Schema).properties;
+  const profileKey = props("update_athlete_profile").key!;
+  profileKey.description +=
+    "\n・練哪些運動：pref_sports（逗號分隔：run 跑步、ride 騎車、swim 游泳、strength 肌力訓練、other 其他，例：run,ride,strength）；" +
+    "各運動的目標：pref_goal_ride、pref_goal_swim、pref_goal_strength、pref_goal_other（文字，例：每週一次 2 小時的長騎）；跑步的目標仍是 pref_goal";
+  const session = props("save_training_plan").sessions!.items!.properties;
+  session.kind!.description =
+    "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note";
+  session.sport = {
+    type: "string",
+    enum: ["ride", "swim", "other"],
+    description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
+  };
+  session.steps!.description +=
+    '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
+    '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）';
+  const action = props("update_planned_session").action!;
+  action.enum = [...(action.enum ?? []), "done", "undone"];
+  action.description = "done：選手說肌力或交叉訓練做完了（沒有手錶紀錄也算完成）；undone：取消做完了的回報";
+  const update = tools.find((t) => t.name === "update_planned_session")!;
+  update.description += "選手說肌力或交叉訓練做完了（手錶沒有記錄）時，用 action=done 記下。";
 }
 
 /** 產生摘要用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -563,6 +595,7 @@ export type ToolExecutor = (name: string, input: Record<string, unknown>) => Pro
 export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
   const { db, llm, activities, settings, today, logger } = deps;
   const weather = deps.weather ?? null;
+  const multisport = featureOn(settings, "multisport");
 
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
@@ -668,11 +701,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "get_training_plan":
-        return planTextForTool(db, today());
+        return planTextForTool(db, today(), { multisport });
 
       case "get_training_values": {
         const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
-        return formatTrainingValues(await computeTrainingValues(db, today(), weeks));
+        return formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
       }
 
       case "get_recovery_status": {
@@ -860,14 +893,16 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "save_training_plan":
-        return savePlanFromTool(db, today(), input);
+        return savePlanFromTool(db, today(), input, { multisport });
 
       case "update_planned_session": {
         const action = str(input.action);
-        if (!["move", "skip", "fallback", "restore"].includes(action)) throw new Error("action 只能是 move、skip、fallback、restore");
+        const actions = multisport ? ["move", "skip", "fallback", "restore", "done", "undone"] : ["move", "skip", "fallback", "restore"];
+        if (!actions.includes(action)) throw new Error(`action 只能是 ${actions.join("、")}`);
         return changeSession(db, today(), toInt(input.session_id, "session_id"), action as SessionAction, {
           date: input.date === undefined ? undefined : str(input.date) || null,
           reason: str(input.reason),
+          multisport,
         });
       }
 

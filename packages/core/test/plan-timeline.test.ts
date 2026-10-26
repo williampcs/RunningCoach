@@ -18,6 +18,7 @@ const plan = (weekStart: string, sessions: ActivePlan["sessions"], style = "fixe
   sessions,
   styleLabel: null,
   totalKm: 20,
+  extraOthers: [],
   runCount: sessions.filter((s) => s.isRun).length,
   coachNote: null,
   extras: [],

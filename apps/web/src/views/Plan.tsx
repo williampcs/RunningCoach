@@ -20,11 +20,12 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { featureEnabled } from "../environment";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { RacesCard } from "./Races";
 
-type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore", date?: string) => void;
+type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
 
 const weekdayOf = (date: string) => weekdayName(date).replace("星期", "");
 
@@ -44,6 +45,8 @@ const KIND_INTENSITY: Record<SessionKind, StepIntensity> = {
 
 function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
+  // 選手在 App 裡回報做完了（肌力等沒有手錶紀錄的課，規格 12.24）
+  if (s.doneAt && r?.outcome === "achieved" && r.workoutId === null) return { label: "做完了", cls: "achieved" };
   // 跳過與改用替代以外，顯示程式依實際紀錄的判斷
   const label =
     r && !["skipped", "fallback"].includes(r.outcome)
@@ -91,6 +94,10 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   const status = statusOf(s);
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
   const done = r !== null && r.workoutId !== null;
+  // 肌力的課可以在 App 裡回報做完了（多運動，規格 12.24）：今天以前（或沒有日期）、還沒配到手錶紀錄的
+  const today = useApp().coach.today();
+  const reportable =
+    featureEnabled("multisport") && s.kind === "strength" && s.id !== null && (!s.date || s.date <= today) && !(r?.outcome === "achieved" && !s.doneAt);
 
   if (s.kind === "rest") {
     // 休息日只有一行，沒有按鈕
@@ -179,8 +186,15 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
           )}
           {s.id !== null && !done && (
             <div className="row session-actions">
-              {s.status === "planned" ? (
+              {s.doneAt ? (
+                featureEnabled("multisport") && <button onClick={() => onChange(s, "undone")}>取消「做完了」</button>
+              ) : s.status === "planned" ? (
                 <>
+                  {reportable && (
+                    <button className="primary" onClick={() => onChange(s, "done")}>
+                      做完了
+                    </button>
+                  )}
                   {s.fallback && QUALITY_KINDS.has(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
                   {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
                   <button onClick={() => onChange(s, "skip")}>跳過</button>

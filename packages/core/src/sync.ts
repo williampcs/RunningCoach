@@ -12,13 +12,13 @@
  */
 import { addDays } from "./dates";
 import type { Db, SaveResult } from "./db";
-import { IntervalsError } from "./intervals";
+import { IntervalsError, runSettingsOf } from "./intervals";
 import type { Llm } from "./llm";
 import { activityLabel } from "./activity-labels";
 import { planNoteFor } from "./planning";
 import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
-import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
+import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, SNAPSHOT_SPORT_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
 import type { ActivitySource, Activity, Logger } from "./types";
 import { runWeatherNote, type WeatherSource } from "./weather";
 
@@ -72,9 +72,20 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** 訓練數值用的跑步設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄 */
+/**
+ * 訓練數值用的運動設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄.
+ * 來源提供各運動的設定時只讀一次：跑步的設定從裡面取，其他運動（騎車等）的另外存（規格 12.24）
+ */
 async function refreshTrainingSnapshots(db: Db, activities: ActivitySource, logger: Logger): Promise<void> {
-  if (activities.fetchRunSettings) {
+  if (activities.fetchSportSettings) {
+    try {
+      const all = await activities.fetchSportSettings();
+      await db.saveSnapshot(SNAPSHOT_SPORT_SETTINGS, all);
+      await db.saveSnapshot(SNAPSHOT_RUN_SETTINGS, runSettingsOf(all));
+    } catch (e) {
+      logger.warn(`Sport settings fetch failed: ${message(e)}`);
+    }
+  } else if (activities.fetchRunSettings) {
     try {
       await db.saveSnapshot(SNAPSHOT_RUN_SETTINGS, await activities.fetchRunSettings());
     } catch (e) {

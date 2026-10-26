@@ -50,6 +50,8 @@ export function modifiedOf(data: EntityData | null): string | null {
 const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "result_time", "notes", "cancelled", "outcome", "outcome_reason", "gun_time", "result_source", "result_activity", "created_at"] as const;
 const PLAN_COLS = ["week_label", "content", "created_at", "is_active", "week_start", "style", "reason", "outline", "notes"] as const;
 const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "success", "fallback", "status", "note", "updated_at"] as const;
+/** schema 12 的欄位（多運動，規格 12.24）：有值時才放，之前同步過的課內容不變、不必全部重送 */
+const SESSION_OPTIONAL_COLS = ["sport", "done_at"] as const;
 const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as const;
 const MEMORY_COLS = ["content", "source", "created_at", "updated_at"] as const;
 
@@ -114,7 +116,9 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   for (const r of await sql.all("SELECT * FROM races")) data.set(`r:${r.sync_id}`, pick(r, RACE_COLS));
   for (const r of await sql.all("SELECT * FROM training_plans")) data.set(`pl:${r.sync_id}`, pick(r, PLAN_COLS));
   for (const r of await sql.all("SELECT s.*, p.sync_id AS plan FROM planned_sessions s JOIN training_plans p ON p.id = s.plan_id")) {
-    data.set(`ps:${r.sync_id}`, { plan: r.plan ?? null, ...pick(r, SESSION_COLS) });
+    const entity: EntityData = { plan: r.plan ?? null, ...pick(r, SESSION_COLS) };
+    for (const c of SESSION_OPTIONAL_COLS) if (r[c] != null) entity[c] = r[c];
+    data.set(`ps:${r.sync_id}`, entity);
   }
   for (const r of await sql.all("SELECT * FROM daily_checkins")) data.set(`ck:${r.date}`, pick(r, CHECKIN_COLS));
   for (const r of await sql.all("SELECT * FROM memories")) data.set(`m:${r.sync_id}`, pick(r, MEMORY_COLS));
@@ -201,7 +205,7 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       }
       const plan = (await sql.all("SELECT id FROM training_plans WHERE sync_id=?", [data.plan ?? ""]))[0];
       if (!plan) return "pending";
-      await upsert(sql, "planned_sessions", id, { plan_id: Number(plan.id), ...pick(data, SESSION_COLS) });
+      await upsert(sql, "planned_sessions", id, { plan_id: Number(plan.id), ...pick(data, [...SESSION_COLS, ...SESSION_OPTIONAL_COLS]) });
       return "applied";
     }
     case "ck":

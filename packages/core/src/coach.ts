@@ -2,6 +2,7 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
+import { featureOn } from "./features";
 import { accumulation, runCards, type Accumulation, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
 import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
@@ -548,7 +549,7 @@ export class Coach {
 
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
-    return changeSession(this.db, this.today(), id, action, options);
+    return changeSession(this.db, this.today(), id, action, { ...options, multisport: featureOn(this.settings, "multisport") });
   }
 
   // ---------------------------------------------------------------------------

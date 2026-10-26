@@ -7,9 +7,11 @@
  */
 import { STRENGTH_TYPES } from "./activity-labels";
 import { addDays } from "./dates";
+import { sportOfType } from "./sports";
 import {
   estimateSession,
   EXPECTED_RPE,
+  intensityMinutes,
   isRepeat,
   NON_RUN_KINDS,
   QUALITY_KINDS,
@@ -20,6 +22,8 @@ import {
 } from "./plan";
 import type { Db } from "./db";
 import type { OtherActivity, Workout } from "./types";
+
+export { intensityMinutes };
 
 export type Outcome = "achieved" | "partial" | "different" | "missed" | "pending" | "skipped" | "fallback" | "rested" | "not_rested";
 export type Difficulty = "hard" | "right" | "easy";
@@ -50,34 +54,8 @@ export interface WeekMatch {
   results: Map<number, SessionResult>;
   /** 這週沒有配到課的跑步（例如排課前已跑、課表外多跑的） */
   extraRuns: Workout[];
-}
-
-type Raw = Record<string, unknown>;
-function raw(json: string | null | undefined): Raw {
-  try {
-    const value: unknown = json ? JSON.parse(json) : null;
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Raw) : {};
-  } catch {
-    return {};
-  }
-}
-const nums = (v: unknown) => (Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : null);
-
-/** 依心率區間的時間：低強度與以上的分鐘（閾值心率 90% 以下為低）；沒有資料時為 null */
-export function intensityMinutes(w: Workout, fallbackLthr: number | null): { low: number; above: number } | null {
-  const r = raw(w.raw_json);
-  const times = nums(r.icu_hr_zone_times);
-  const bounds = nums(r.icu_hr_zones);
-  const lthr = typeof r.lthr === "number" ? r.lthr : fallbackLthr;
-  if (!times?.length || !bounds?.length || !lthr) return null;
-  let low = 0;
-  let above = 0;
-  times.forEach((secs, i) => {
-    const upper = bounds[i];
-    if (upper !== undefined && upper <= lthr * 0.9) low += secs;
-    else above += secs;
-  });
-  return { low: low / 60, above: above / 60 };
+  /** 這週沒有配到課的其他運動（課表外的騎車等；規格 12.24 的主動建議調整用） */
+  extraOthers: OtherActivity[];
 }
 
 /** 強度課在主課配速上的分鐘（M、T、I、R 的步驟） */
@@ -173,6 +151,12 @@ function judgeOther(session: PlannedSession, a: OtherActivity, ctx: TargetContex
 }
 
 const isRunSession = (s: PlannedSession) => !NON_RUN_KINDS.has(s.kind);
+/** 肌力的課配肌力訓練的類型；交叉訓練配其他的，寫了運動（sport）時只配那項運動 */
+function fits(s: PlannedSession, o: OtherActivity): boolean {
+  if (s.kind === "strength") return STRENGTH_TYPES.has(o.type);
+  if (STRENGTH_TYPES.has(o.type)) return false;
+  return !s.sport || s.sport === "other" || sportOfType(o.type) === s.sport;
+}
 /** 實際的一趟像不像強度課：中強度以上 15 分鐘以上，或體感 7 以上 */
 function looksHard(w: Workout, ctx: TargetContext): boolean {
   const i = intensityMinutes(w, ctx.values.hr?.lthr ?? null);
@@ -212,9 +196,8 @@ export function matchWeek(
         results.set(s.id, judgeRun(s, w, ctx));
       }
     } else {
-      const strength = s.kind === "strength";
       const a = closest(
-        weekOthers.filter((o) => o.date === s.date && !usedOthers.has(o.intervals_id) && STRENGTH_TYPES.has(o.type) === strength),
+        weekOthers.filter((o) => o.date === s.date && !usedOthers.has(o.intervals_id) && fits(s, o)),
         (o) => o.duration_min ?? 0,
         planned(s),
       );
@@ -238,8 +221,7 @@ export function matchWeek(
     results.set(s.id, judgeRun(s, w, ctx));
   }
   for (const s of sessions.filter((x) => !x.date && x.status !== "skipped" && !isRunSession(x) && x.kind !== "rest")) {
-    const strength = s.kind === "strength";
-    const a = weekOthers.find((o) => !usedOthers.has(o.intervals_id) && STRENGTH_TYPES.has(o.type) === strength);
+    const a = weekOthers.find((o) => !usedOthers.has(o.intervals_id) && fits(s, o));
     if (a) {
       usedOthers.add(a.intervals_id);
       results.set(s.id, judgeOther(s, a, ctx));
@@ -250,6 +232,8 @@ export function matchWeek(
   for (const s of sessions) {
     if (results.has(s.id)) continue;
     if (s.status === "skipped") results.set(s.id, { outcome: "skipped", reasons: [], difficulty: null, actual: null, workoutId: null });
+    // 選手在 App 裡回報做完了（肌力等沒有手錶紀錄的課，規格 12.24）
+    else if (s.done_at) results.set(s.id, { outcome: "achieved", reasons: [], difficulty: null, actual: "選手回報做完了", workoutId: null });
     else if (s.kind === "rest") {
       const ran = s.date ? runs.find((r) => r.date === s.date && !usedRuns.has(r.id)) : undefined;
       if (s.date && s.date <= today) {
@@ -263,7 +247,11 @@ export function matchWeek(
     }
   }
 
-  return { results, extraRuns: runs.filter((w) => !usedRuns.has(w.id)) };
+  return {
+    results,
+    extraRuns: runs.filter((w) => !usedRuns.has(w.id)),
+    extraOthers: weekOthers.filter((o) => !usedOthers.has(o.intervals_id)),
+  };
 }
 
 /**

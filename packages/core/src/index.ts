@@ -134,7 +134,18 @@ export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, t
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
-export type { OtherActivity } from "./types";
+export type { OtherActivity, Sport, SportSettings } from "./types";
+export { ALL_FEATURES, featureOn, FEATURES, parseFeatures, type Feature } from "./features";
+export {
+  athleteSports,
+  SPORT_CHOICES,
+  SPORT_LABELS,
+  sportGoalKey,
+  sportOfType,
+  sportTargets,
+  sportTargetsText,
+  type SportTargets,
+} from "./sports";
 export {
   computeTrainingValues,
   danielsPaces,

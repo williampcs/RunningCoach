@@ -54,6 +54,11 @@ export interface ActivitySource {
   fetchOtherActivities?(days: number): Promise<OtherActivity[]>;
   /** 跑步的閾值與心率區間（Intervals.icu 的運動設定）；不支援的來源不實作 */
   fetchRunSettings?(): Promise<RunSettings | null>;
+  /**
+   * 各運動的設定（Intervals.icu 的 sportSettings，包含跑步與騎車等），只留閾值與區間；不支援的來源不實作.
+   * 有這個時同步只讀一次，跑步的設定也從這裡取
+   */
+  fetchSportSettings?(): Promise<SportSettings[]>;
   /** 最近 N 天跑步的最佳配速曲線；不支援的來源不實作 */
   fetchPaceCurve?(days: number): Promise<PaceCurveSummary | null>;
 }
@@ -79,6 +84,31 @@ export interface RunSettings {
   /** 各心率區間的上限，由低到高 */
   hr_zones: number[] | null;
   /** 閾值配速，m/s */
+  threshold_pace: number | null;
+}
+
+/** 運動的代號（規格 12.24）：練哪些運動、交叉訓練的課是哪種運動 */
+export type Sport = "run" | "ride" | "swim" | "strength" | "other";
+
+/**
+ * 一組運動設定（Intervals.icu 的 sportSettings 的一項），只留教練用得到的閾值與區間；沒設定的是 null.
+ * 姓名、email、器材等不留
+ */
+export interface SportSettings {
+  /** 這組設定涵蓋的活動類型，例：["Ride", "VirtualRide"] */
+  types: string[];
+  /** 閾值心率 */
+  lthr: number | null;
+  max_hr: number | null;
+  /** 各心率區間的上限（bpm），由低到高 */
+  hr_zones: number[] | null;
+  /** FTP（瓦） */
+  ftp: number | null;
+  /** 室內的 FTP（瓦），有另外設定時 */
+  indoor_ftp: number | null;
+  /** 各功率區間的上限（FTP 的百分比），由低到高；最上面一區常是 999（沒有上限） */
+  power_zones: number[] | null;
+  /** 閾值配速，m/s（跑步、游泳） */
   threshold_pace: number | null;
 }
 
@@ -261,6 +291,8 @@ export interface CoachSettings {
   toolCallMaxRounds: number;
   /** 輸出上限含思考 token */
   maxResponseTokens: number;
+  /** 開著的功能開關（features.ts，規格 12.25）；預設全關 */
+  features: readonly string[];
 }
 
 export const DEFAULT_SETTINGS: CoachSettings = {
@@ -274,4 +306,5 @@ export const DEFAULT_SETTINGS: CoachSettings = {
   raceLookbackDays: 14,
   toolCallMaxRounds: 5,
   maxResponseTokens: 16000,
+  features: [],
 };

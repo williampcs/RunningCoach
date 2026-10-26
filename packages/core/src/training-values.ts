@@ -6,14 +6,15 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
-import { PLANNING_RULES } from "./coaching-method";
+import { planningRules } from "./coaching-method";
+import { sportTargets, sportTargetsText, type SportTargets } from "./sports";
 import { typicalPaceSec } from "./plan";
 import { recentAdjustment } from "./plan-match";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { raceOutcome } from "./races";
 import { formatPace } from "./fake-activities";
-import type { OtherActivity, PaceCurveSummary, Race, RunSettings, Workout } from "./types";
+import type { OtherActivity, PaceCurveSummary, Race, RunSettings, SportSettings, Workout } from "./types";
 
 /** 推算 VDOT 用的比賽與最佳表現，只看最近這麼多天：太久以前的成績不代表現在的體能 */
 export const VDOT_LOOKBACK_DAYS = 90;
@@ -383,14 +384,18 @@ export interface TrainingValues {
   distribution: IntensityDistribution;
   efforts: ReturnType<typeof effortDistribution>;
   fitness: FitnessSnapshot | null;
+  /** 跑步以外的運動的區間（騎車、游泳；Intervals.icu 各運動自己的設定，規格 12.24） */
+  sports: SportTargets[];
 }
 
 /** 同步時存下的 Intervals.icu 資料（Db 的 snapshot） */
 export const SNAPSHOT_RUN_SETTINGS = "run_settings";
 export const SNAPSHOT_PACE_CURVE = "pace_curve";
+/** 各運動的設定（跑步、騎車、游泳……），交叉訓練的目標換算用（規格 12.24） */
+export const SNAPSHOT_SPORT_SETTINGS = "sport_settings";
 
 export async function computeTrainingValues(db: Db, today: string, weeks = 4): Promise<TrainingValues> {
-  const [profile, settings, curve, races, workouts, wellness, others] = await Promise.all([
+  const [profile, settings, curve, races, workouts, wellness, others, sportSettings] = await Promise.all([
     db.getProfile(),
     // 來源沒有跑步設定或配速曲線時，同步存的是 null
     db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS),
@@ -399,6 +404,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     db.getRecentWorkouts(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
     db.getWellnessRaw(7),
     db.getOtherActivities(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
+    db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
   ]);
   const hr = heartRateInfo(profile, settings?.value ?? null, today);
   const vdot = estimateVdot(races, curve?.value ?? null, today);
@@ -439,6 +445,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     distribution,
     efforts,
     fitness: latestFitness(wellness, workouts),
+    sports: (["ride", "swim"] as const).map((sport) => sportTargets(sportSettings?.value, sport, today)),
   };
 }
 
@@ -480,7 +487,8 @@ function vdotSourceText(v: VdotEstimate): string {
   }
 }
 
-export function formatTrainingValues(v: TrainingValues): string {
+/** multisport（功能開關，規格 12.24）：加上騎車等的區間與交叉訓練的排課規則 */
+export function formatTrainingValues(v: TrainingValues, options: { multisport?: boolean } = {}): string {
   const lines = [`訓練數值（${v.today}；由程式依資料計算，課表與建議請用這些數字）`];
 
   const c = v.coverage;
@@ -581,7 +589,12 @@ export function formatTrainingValues(v: TrainingValues): string {
     lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : "，包含所有運動"}）`);
     lines.push(parts.join("｜"));
   }
-  lines.push("", PLANNING_RULES);
+  if (options.multisport) {
+    lines.push("", "【跑步以外的運動的區間】Intervals.icu 各運動自己的設定；交叉訓練的目標用這些，不要用跑步的區間");
+    // 游泳只在有設定時列出：沒有在游的人不需要
+    for (const t of v.sports.filter((x) => x.sport === "ride" || x.hr)) lines.push(`・${sportTargetsText(t)}`);
+  }
+  lines.push("", planningRules(options));
   return lines.join("\n");
 }
 

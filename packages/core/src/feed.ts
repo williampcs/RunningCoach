@@ -7,8 +7,10 @@
 import { addDays, daysBetween, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
-import { QUALITY_KINDS } from "./plan";
-import { activePlan } from "./planning";
+import { activityLabel, STRENGTH_TYPES } from "./activity-labels";
+import { featureOn } from "./features";
+import { isHardOther, QUALITY_KINDS } from "./plan";
+import { activePlan, type ActivePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
 import { WEATHER_CREDIT, weatherNotice, type WeatherForecast } from "./weather";
@@ -28,7 +30,7 @@ export type FeedAction =
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather";
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
@@ -45,8 +47,72 @@ const RACE_SOON_DAYS = 30;
 
 const ask = (label: string, message: string): FeedAction => ({ type: "ask", label, message });
 
+/** 可以直接當動詞的（「今天騎車了」）；其他的寫「今天做了…」 */
+const VERB_LABELS = new Set(["騎車", "游泳", "走路", "健行", "划船"]);
+
+/** 課表外的運動要多大才提醒調整：時間或負荷（走路要更久；我們的門檻） */
+const NOTABLE_OTHER = { minutes: 30, load: 25, walkMinutes: 90 };
+
+/**
+ * 做了課表外的運動，或用別的運動取代了課表上的課（規格 12.24 的第 4 項，多運動開著時）：
+ * 今天與昨天、沒有配到課的其他運動，這週還有沒上的課時，主動問要不要調整接下來的課（A → A'）
+ */
+function crossItems(active: ActivePlan, today: string): FeedItem[] {
+  const yesterday = addDays(today, -1);
+  const upcoming = active.sessions.filter((s) => s.kind !== "rest" && s.status !== "skipped" && (!s.date || s.date >= today) && s.result?.outcome !== "achieved");
+  if (!upcoming.length) return [];
+  const items: FeedItem[] = [];
+  for (const a of active.extraOthers) {
+    if (a.date !== today && a.date !== yesterday) continue;
+    // 肌力訓練沒有排進課表時不提醒（不影響接下來的課）；太短的也不提
+    if (STRENGTH_TYPES.has(a.type)) continue;
+    const minutes = a.duration_min ?? 0;
+    const load = a.training_load ?? 0;
+    const walk = a.type === "Walk";
+    if (load < NOTABLE_OTHER.load && minutes < (walk ? NOTABLE_OTHER.walkMinutes : NOTABLE_OTHER.minutes)) continue;
+    const label = activityLabel(a.type);
+    const day = a.date === today ? "今天" : "昨天";
+    // 那天課表上的跑步課沒跑（昨天的）：當成用這項運動取代了那堂課；今天的還可能晚點跑，問要照跑還是調整
+    const sameDay = active.sessions.find(
+      (s) => s.date === a.date && s.isRun && s.status === "planned" && (s.result?.outcome === "missed" || s.result?.outcome === "pending"),
+    );
+    const replaced = sameDay?.result?.outcome === "missed" ? sameDay : null;
+    const stillToday = sameDay && !replaced ? sameDay : null;
+    const hard = isHardOther(a);
+    const facts = [`${Math.round(minutes)} 分鐘`, a.avg_hr != null ? `平均心率 ${a.avg_hr}` : null, a.training_load != null ? `負荷 ${a.training_load}` : null]
+      .filter(Boolean)
+      .join("、");
+    const heavy = minutes >= 90 || load >= 60;
+    items.push({
+      id: `cross-${a.intervals_id}`,
+      kind: "cross",
+      tone: "info",
+      title: replaced
+        ? `${day}用${label}取代了「${replaced.title}」`
+        : stillToday
+          ? `今天${VERB_LABELS.has(label) ? `${label}了` : `做了${label}`}，課表上還有「${stillToday.title}」`
+          : `${day}有一趟課表外的${label}`,
+      detail:
+        `${facts}${hard ? "，強度不低" : ""}。` +
+        (heavy || hard ? "接下來的強度課可能要延後或減量；" : "") +
+        (replaced ? "取代掉的課不必補。" : stillToday ? "今天還要照課表跑，或改成休息、輕鬆一點？" : "") +
+        "要請教練依這趟調整接下來的課嗎？",
+      actions: [
+        ask(
+          "請教練調整接下來的課",
+          `${day}（${a.date}）我${replaced ? `沒有跑「${replaced.title}」，改做了` : "做了課表外的"}${label}：${facts}。` +
+            (stillToday ? `今天課表上還有「${stillToday.title}」。` : "") +
+            "請依這趟調整這週接下來的課。",
+        ),
+        { type: "plan" },
+      ],
+    });
+  }
+  return items;
+}
+
 /** 結構化課表的提醒：課表是建議，不是考核——沒跑的跳過即可，跑了不一樣的課問要不要調整 */
-async function planItems(db: Db, today: string): Promise<FeedItem[]> {
+async function planItems(db: Db, today: string, multisport: boolean): Promise<FeedItem[]> {
   const active = await activePlan(db, today);
   if (!active?.plan.week_start) return [];
   const items: FeedItem[] = [];
@@ -85,6 +151,7 @@ async function planItems(db: Db, today: string): Promise<FeedItem[]> {
       });
     }
   }
+  if (multisport) items.push(...crossItems(active, today));
   // 這週的最後一天，或課表已經過了：提醒排下週（已經排好的不提醒）
   const weekEnd = addDays(active.plan.week_start, 6);
   if (today >= weekEnd && !(await db.getNextTrainingPlan())) {
@@ -264,7 +331,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
 
   // 結構化的課表：今天的課、昨天沒跑的課、跑了不一樣的課、該排下週了
   if (plan?.week_start) {
-    items.push(...(await planItems(db, today)));
+    items.push(...(await planItems(db, today, featureOn(settings, "multisport"))));
   } else if (plan) {
     // 文字課表：課表裡寫到今天星期幾的行
     const lines = todaysPlanLines(plan.content, today);

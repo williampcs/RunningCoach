@@ -8,7 +8,8 @@
  * 層5 — Rolling Window（conversations 中所有尚未壓縮的對話）
  */
 import { otherActivitiesText } from "./activity-labels";
-import { COACHING_METHOD } from "./coaching-method";
+import { coachingMethod } from "./coaching-method";
+import { featureOn } from "./features";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
@@ -105,6 +106,7 @@ export class ContextManager {
     const year = Number(today.slice(0, 4));
 
     const profile = await this.db.getProfile();
+    const multisport = featureOn(this.settings, "multisport");
     const lines = [
       `今天日期：${today}（${weekdayName(today)}）` +
         `｜時區：${timeZone}（${utcOffsetLabel(now, timeZone)}）｜以星期一為一週的第一天`,
@@ -160,7 +162,7 @@ export class ContextManager {
     if (profile.pref_long_run_day) prefs.push(`長跑日：${profile.pref_long_run_day}`);
     if (profile.pref_rest_days) prefs.push(`休息日：${profile.pref_rest_days}`);
     if (profile.pref_train_time) prefs.push(`偏好時段：${profile.pref_train_time}`);
-    prefs.push(...preferenceText(profile));
+    prefs.push(...preferenceText(profile, { multisport }));
     if (prefs.length) lines.push("訓練偏好：" + prefs.join("｜"));
 
     // 記住的事：選手要教練記住、或教練記下的長期有效的事
@@ -243,7 +245,7 @@ export class ContextManager {
       "",
       "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
       "",
-      COACHING_METHOD,
+      coachingMethod({ multisport }),
       "",
       "【訓練歷史載入時機】",
       "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",

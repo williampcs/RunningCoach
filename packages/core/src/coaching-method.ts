@@ -4,13 +4,18 @@
  * 不靠檢索教材：固定的一套方法，每次都用同樣的說法。
  * - COACHING_METHOD：每次都放進系統提示（課的種類、強度分配、漸進、缺課、生病、疼痛、就醫）。
  * - PLANNING_RULES：排課表的細則，附在 get_training_values 的結果後面，排課表時才需要。
+ * - 多運動（功能開關 multisport，規格 12.24）開著時，另外加上跑者的交叉訓練（CROSS_TRAINING_*），版本是 v4；
+ *   關著時和 v3 一樣（提示詞不變）。
  * 出處與理由寫在 doc/coaching-method.md；改內容時兩邊一起改，並把版本號加一（有測試檢查兩邊一致）。
  */
 
-export const COACHING_METHOD_VERSION = 3;
+/** 目前的版本（doc/coaching-method.md 的版本）；v4 是 v3 加上多運動的交叉訓練 */
+export const COACHING_METHOD_VERSION = 4;
+/** 多運動的開關關著時用的版本（和加上交叉訓練之前一樣） */
+const BASE_VERSION = 3;
 
 export const COACHING_METHOD = [
-  `【教練方法 v${COACHING_METHOD_VERSION}】以 Daniels 的配速分區為準，強度分配採 80/20。照這套方法回答，不要混用其他流派的說法（例如 MAF 法、別的區間算法）。`,
+  `【教練方法 v${BASE_VERSION}】以 Daniels 的配速分區為準，強度分配採 80/20。照這套方法回答，不要混用其他流派的說法（例如 MAF 法、別的區間算法）。`,
   "・課的種類：E 輕鬆跑與長跑（有氧基礎與恢復，能聊天的強度）；M 馬拉松配速（全馬專項）；" +
     "T 閾值（「舒服的辛苦」，連續約 20 分鐘或分段）；I 間歇（每段 3–5 分鐘，休息稍短於跑的時間）；" +
     "R 反覆跑（每段 2 分鐘以內、充分休息，練速度與跑姿）；加速跑（輕鬆跑後 4–6 趟、每趟約 20 秒）。",
@@ -29,7 +34,7 @@ export const COACHING_METHOD = [
 ].join("\n");
 
 export const PLANNING_RULES = [
-  `【排課表的規則（教練方法 v${COACHING_METHOD_VERSION}）】`,
+  `【排課表的規則（教練方法 v${BASE_VERSION}）】`,
   "・每週至少一天休息或很輕鬆。強度課（M、T、I、R）一週最多兩堂，不連排兩天，中間至少隔一天輕鬆跑；長跑另外算。",
   "・每堂強度課的量（Daniels）：T 不超過週跑量的 10%；I 不超過 8%，最多 10 km；R 不超過 5%，最多 8 km；M 不超過 20%，最多 29 km。",
   "・長跑不超過週跑量的 25–30%，也不超過 2.5 小時；週跑量低時以時間為準。",
@@ -44,3 +49,32 @@ export const PLANNING_RULES = [
   "・肌力訓練（kind=strength）每週 1–2 次，排在強度課當天（課後）或輕鬆日，不排在強度課前一天；steps 寫時間，動作寫在 note。" +
     "選手有其他運動（訓練偏好的「其他運動」）時，可以排交叉訓練（kind=cross）代替部分輕鬆跑。",
 ].join("\n");
+
+/** 跑者的交叉訓練（v4，多運動開著時接在原則後面） */
+export const CROSS_TRAINING_METHOD = [
+  "・交叉訓練的目標（v4）：騎車、游泳的心率與跑步不同（騎車通常低一些），用那項運動自己的區間（get_training_values 的「跑步以外的運動的區間」），" +
+    "不要拿跑步的區間套用；那項運動在 Intervals.icu 沒有設定時用體感，並請選手到 Intervals.icu 的運動設定填閾值心率（或做一次 30 分鐘的測試）。" +
+    "有 FTP 的騎車可以用功率區間；沒有功率計時用心率。5 分鐘以內的短間歇心率跟不上，看體感。",
+  "・課表外的運動（v4）：選手做了課表外的運動、或用別的運動取代了課表上的課時，依那趟的時間、負荷與強度調整接下來的課：" +
+    "很久或很硬的隔天不排強度課（延後或減量）；高強度的交叉訓練算一堂強度課；取代掉的課不必補。跑量照跑步自己算，不把騎車換算成跑量。",
+  "・選手練的運動（v4）：看訓練偏好的「練的運動」與各自的目標；只排選手有練的運動。單車的課與方法還沒有：騎車只當交叉訓練（輕鬆到中等），不排單車的強度課表。",
+].join("\n");
+
+export const CROSS_TRAINING_RULES = [
+  "・交叉訓練（kind=cross，v4）要寫 sport（ride、swim、other），目標寫代號：{\"zone\":\"Z2\"} 或 {\"hr\":\"easy\"} 用那項運動的心率區間，騎車有 FTP 時可以寫 {\"power\":\"Z2\"}；" +
+    "沒有那項運動的區間時程式顯示體感。中強度以上 15 分鐘以上的交叉訓練算一堂強度課（數量與間隔一起檢查）。",
+  "・調整課表（A → A'）時，這週已經做的其他運動（get_training_plan 的「課表外的其他運動」）也算進去：檢查器會把高強度的算進強度課的數量與間隔、很久或很硬的隔天提醒延後或減量。",
+  "・肌力與交叉訓練的課，選手說做完了（手錶沒有紀錄）時用 update_planned_session 的 action=done 記下。",
+].join("\n");
+
+/** 系統提示的原則：多運動開著時是 v4（加上交叉訓練），關著時和 v3 一樣 */
+export function coachingMethod(options: { multisport?: boolean } = {}): string {
+  if (!options.multisport) return COACHING_METHOD;
+  return `${COACHING_METHOD.replace(`【教練方法 v${BASE_VERSION}】`, `【教練方法 v${COACHING_METHOD_VERSION}】`)}\n${CROSS_TRAINING_METHOD}`;
+}
+
+/** 排課表的細則：多運動開著時是 v4（加上交叉訓練），關著時和 v3 一樣 */
+export function planningRules(options: { multisport?: boolean } = {}): string {
+  if (!options.multisport) return PLANNING_RULES;
+  return `${PLANNING_RULES.replace(`教練方法 v${BASE_VERSION}`, `教練方法 v${COACHING_METHOD_VERSION}`)}\n${CROSS_TRAINING_RULES}`;
+}

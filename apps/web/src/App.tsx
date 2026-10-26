@@ -14,7 +14,7 @@ import {
 
 import { AppContext, errorText, type AppState, type Panel, type Tab } from "./app-context";
 import { HelpView } from "./views/Help";
-import { IS_STAGING, MOVED_TO } from "./environment";
+import { FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
 import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
@@ -116,7 +116,7 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
         })
       : null,
-    settings: { timeZone: settings.timeZone, shell: "web" },
+    settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
   };
 }
 

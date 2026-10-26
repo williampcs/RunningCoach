@@ -2,15 +2,33 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { COACHING_METHOD, COACHING_METHOD_VERSION, PLANNING_RULES } from "../src/coaching-method";
+import {
+  COACHING_METHOD,
+  COACHING_METHOD_VERSION,
+  coachingMethod,
+  CROSS_TRAINING_METHOD,
+  CROSS_TRAINING_RULES,
+  PLANNING_RULES,
+  planningRules,
+} from "../src/coaching-method";
 import { makeCoach, toolTurn, turn } from "./helpers";
 
 describe("教練方法", () => {
-  it("程式與 doc/coaching-method.md 的版本一致", () => {
+  it("程式與 doc/coaching-method.md 的版本一致（多運動開著時）", () => {
     const doc = readFileSync(new URL("../../../doc/coaching-method.md", import.meta.url), "utf8");
     expect(doc).toContain(`版本 ${COACHING_METHOD_VERSION}（`);
-    expect(COACHING_METHOD).toContain(`【教練方法 v${COACHING_METHOD_VERSION}】`);
-    expect(PLANNING_RULES).toContain(`教練方法 v${COACHING_METHOD_VERSION}`);
+    expect(coachingMethod({ multisport: true })).toContain(`【教練方法 v${COACHING_METHOD_VERSION}】`);
+    expect(coachingMethod({ multisport: true })).toContain(CROSS_TRAINING_METHOD);
+    expect(planningRules({ multisport: true })).toContain(`教練方法 v${COACHING_METHOD_VERSION}`);
+    expect(planningRules({ multisport: true })).toContain(CROSS_TRAINING_RULES);
+  });
+
+  it("多運動關著時和加上交叉訓練之前一樣（v3）", () => {
+    expect(coachingMethod()).toBe(COACHING_METHOD);
+    expect(planningRules()).toBe(PLANNING_RULES);
+    expect(COACHING_METHOD).toContain("【教練方法 v3】");
+    expect(COACHING_METHOD).not.toContain("v4");
+    expect(PLANNING_RULES).not.toContain("v4");
   });
 
   it("系統提示每次都帶原則；排課表的細則附在訓練數值後面", async () => {

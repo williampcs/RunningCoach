@@ -32,8 +32,9 @@ import type {
  * 9：多裝置同步（sync_state、sync_pending、sync_meta；賽事與課表的 sync_id）
  * 10：memories（記住的事）、conversations.archived（壓縮後保留原文）與 conversations.reply_to（回覆）
  * 11：races 的 outcome、outcome_reason（完賽、沒有完賽、沒有出賽）、gun_time、result_source、result_activity
+ * 12：planned_sessions 的 sport（交叉訓練的運動）與 done_at（選手回報做完了）（多運動，規格 12.24）
  */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -182,7 +183,9 @@ const SCHEMA = `
     fallback   TEXT,
     status     TEXT NOT NULL DEFAULT 'planned',
     note       TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    sport      TEXT,
+    done_at    TEXT
   );
 
   CREATE TABLE IF NOT EXISTS other_activities (
@@ -445,6 +448,12 @@ export class Db {
       // result_activity 比賽當天那趟跑步的 intervals_id（跨裝置不變），之後的賽後分析用
       for (const col of ["gun_time", "result_source", "result_activity"]) {
         if (!raceCols.has(col)) await d.exec(`ALTER TABLE races ADD COLUMN ${col} TEXT`);
+      }
+
+      // --- Migration: planned_sessions.sport、done_at（schema 12：交叉訓練的運動、選手回報做完了，規格 12.24） ---
+      const sessionCols = await columns("planned_sessions");
+      for (const col of ["sport", "done_at"]) {
+        if (!sessionCols.has(col)) await d.exec(`ALTER TABLE planned_sessions ADD COLUMN ${col} TEXT`);
       }
 
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
@@ -806,9 +815,9 @@ export class Db {
       );
       for (const [i, s] of sessions.entries()) {
         await d.run(
-          "INSERT INTO planned_sessions (plan_id, position, date, kind, title, steps, purpose, success, fallback, updated_at)" +
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [planId, i, s.date, s.kind, s.title, JSON.stringify(s.steps), s.purpose, s.success, s.fallback, this.stamp()],
+          "INSERT INTO planned_sessions (plan_id, position, date, kind, title, steps, purpose, success, fallback, sport, updated_at)" +
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [planId, i, s.date, s.kind, s.title, JSON.stringify(s.steps), s.purpose, s.success, s.fallback, s.sport ?? null, this.stamp()],
         );
       }
       return planId;
@@ -827,7 +836,7 @@ export class Db {
 
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note FROM planned_sessions WHERE plan_id=? ORDER BY position",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
     return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
@@ -835,16 +844,19 @@ export class Db {
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
     const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note FROM planned_sessions WHERE id=?",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE id=?",
       [id],
     );
     return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
   }
 
-  async updatePlannedSession(id: number, fields: { date?: string | null; status?: SessionStatus; note?: string | null }): Promise<void> {
+  async updatePlannedSession(
+    id: number,
+    fields: { date?: string | null; status?: SessionStatus; note?: string | null; done_at?: string | null },
+  ): Promise<void> {
     const sets: string[] = [];
     const params: SqlValue[] = [];
-    for (const key of ["date", "status", "note"] as const) {
+    for (const key of ["date", "status", "note", "done_at"] as const) {
       if (fields[key] !== undefined) {
         sets.push(`${key}=?`);
         params.push(fields[key] ?? null);
@@ -1218,7 +1230,7 @@ export class Db {
   /** 最近 N 天跑步以外的運動，新的在前 */
   getOtherActivities(days: number): Promise<OtherActivity[]> {
     return this.all<OtherActivity>(
-      "SELECT intervals_id, date, type, duration_min, distance_km, avg_hr, training_load FROM other_activities WHERE date >= ? ORDER BY date DESC",
+      "SELECT intervals_id, date, type, duration_min, distance_km, avg_hr, training_load, raw_json FROM other_activities WHERE date >= ? ORDER BY date DESC",
       [addDays(this.clock.today(), -days)],
     );
   }

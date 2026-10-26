@@ -1,8 +1,9 @@
-import { PREFERENCE_OPTIONS, REGION_CHOICES } from "@running-coach/core";
+import { athleteSports, PREFERENCE_OPTIONS, REGION_CHOICES, SPORT_CHOICES, SPORT_LABELS, sportGoalKey, type Sport } from "@running-coach/core";
 import { useEffect, useRef, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
 import { TrainingValuesCard } from "./TrainingValues";
@@ -68,6 +69,54 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   },
 ];
 
+/** 各運動的目標的提示（跑步的目標仍是上面的選單） */
+const GOAL_PLACEHOLDERS: Partial<Record<Sport, string>> = {
+  ride: "例如：週末一次 2 小時的長騎、通勤",
+  swim: "例如：每週一次、恢復用",
+  strength: "例如：每週兩次、預防受傷",
+  other: "例如：瑜伽、爬山",
+};
+
+/**
+ * 練哪些運動（可複選）與各自的目標（多運動的開關，規格 12.24）：存在 pref_sports 與 pref_goal_<運動>.
+ * 沒選時當成只跑步（舊的資料）
+ */
+function SportsPicker({ form, setForm }: { form: Record<string, string>; setForm: (form: Record<string, string>) => void }) {
+  const picked = form.pref_sports ? athleteSports(form) : [];
+  const toggle = (sport: Sport) => {
+    const next = picked.includes(sport) ? picked.filter((s) => s !== sport) : [...picked, sport];
+    setForm({ ...form, pref_sports: SPORT_CHOICES.filter((s) => next.includes(s)).join(",") });
+  };
+  return (
+    <>
+      <fieldset className="wide sports-picker">
+        <legend>練哪些運動（可複選）</legend>
+        <div className="row">
+          {SPORT_CHOICES.map((sport) => (
+            <label key={sport} className="check">
+              <input type="checkbox" checked={picked.includes(sport)} onChange={() => toggle(sport)} />
+              {SPORT_LABELS[sport]}
+            </label>
+          ))}
+        </div>
+        <p className="small muted">沒選的話，教練當成只跑步。單車的課表之後才會有；現在騎車是交叉訓練。</p>
+      </fieldset>
+      {picked
+        .filter((sport) => sport !== "run")
+        .map((sport) => (
+          <label key={sport} className="wide">
+            {SPORT_LABELS[sport]}的目標
+            <input
+              value={form[sportGoalKey(sport)] ?? ""}
+              placeholder={GOAL_PLACEHOLDERS[sport]}
+              onChange={(e) => setForm({ ...form, [sportGoalKey(sport)]: e.target.value })}
+            />
+          </label>
+        ))}
+    </>
+  );
+}
+
 export function ProfileView() {
   const { coach, revision, touch } = useApp();
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -120,6 +169,7 @@ export function ProfileView() {
             <h2>{group.title}</h2>
             {group.note && <p className="small muted">{group.note}</p>}
             <div className="grid">
+              {group.title === "訓練偏好" && featureEnabled("multisport") && <SportsPicker form={form} setForm={setForm} />}
               {group.fields.map((field) => (
                 <label key={field.key} className={field.wide ? "wide" : ""}>
                   {field.label}

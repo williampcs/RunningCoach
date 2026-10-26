@@ -11,7 +11,7 @@ import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
 import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
 import { storageProtection, type StorageProtection } from "../update-check";
-import { BUILD_DETAIL } from "../version";
+import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TestModeCard } from "./TestMode";
@@ -525,6 +525,12 @@ export function SettingsView() {
       <p className="muted small center">
         {BUILD_DETAIL}
         <br />
+        {FEATURES_LABEL && (
+          <>
+            <span className="features-on">{FEATURES_LABEL}</span>
+            <br />
+          </>
+        )}
         Zone2Mate 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼
