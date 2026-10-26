@@ -8,7 +8,7 @@ import {
   type Purpose,
 } from "@running-coach/core";
 
-import { createLock, openLock, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
+import { createLock, openLock, passwordMatches, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
 
 const STORAGE_KEY = "running-coach.settings.v1";
 /** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
@@ -164,6 +164,13 @@ export async function unlock(password: string): Promise<void> {
   const opened = await openLock(sealed, password);
   lockSession = opened.session;
   unlockedSecrets = opened.secrets;
+}
+
+/** 已解鎖後再確認一次密碼（顯示復原碼、新增裝置前，規格 12.26）；不改變解鎖的狀態 */
+export async function checkPassword(password: string): Promise<boolean> {
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  if (!sealed) throw new Error("沒有啟用密碼鎖");
+  return passwordMatches(sealed, password);
 }
 
 /** 以密碼加密目前的憑證，明文設定裡的憑證改為空白 */

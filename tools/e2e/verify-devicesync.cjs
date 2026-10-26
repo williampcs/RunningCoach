@@ -1,5 +1,6 @@
 // 驗證多裝置同步（規格 12.10）：A 開始同步並記下復原碼；B 用配對碼加入、C 用連結（掃 QR code）加入、D 用復原碼還原；
-// 課表、對話、選手資料、跑步的體感與分析帶到另一台；之後的修改也會過去；停止與刪除雲端資料
+// 課表、對話、選手資料、跑步的體感與分析帶到另一台；之後的修改也會過去；停止與刪除雲端資料；
+// 顯示復原碼與新增裝置前再確認身分、離開畫面就收起（12.26）
 const E2E = require("./env.cjs");
 const { chromium } = E2E;
 const URL = E2E.URL;
@@ -48,6 +49,14 @@ let step = "start";
     await d.page.getByRole("button", { name: "儲存設定" }).click();
     await d.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
   };
+  // 模擬切到別的分頁、App 到背景（headless 的分頁不會自己變成 hidden）
+  const background = (page) =>
+    page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      delete document.visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
   const field = (page, label, tag) => page.locator("label", { hasText: new RegExp(`^${label}`) }).locator(tag);
 
   try {
@@ -96,6 +105,11 @@ let step = "start";
     const code = (await B.card.locator(".pair-code").innerText()).trim();
     await B.page.screenshot({ path: `${E2E.OUT}/devsync-B-join.png` });
     await A.card.getByRole("button", { name: "新增裝置" }).click();
+    // 沒有密碼鎖：先警告、建議開密碼鎖，按「我了解，繼續」才出現配對碼的欄位
+    check.addWarnsWithoutLock = await A.card.getByText(/沒有設定密碼鎖，拿到這台的人都能把同步加到他的裝置/).isVisible();
+    check.addNotStartedBeforeConfirm = (await A.card.getByLabel("新裝置上顯示的配對碼").count()) === 0;
+    await A.card.screenshot({ path: `${E2E.OUT}/devsync-A-add-confirm.png` });
+    await A.card.getByRole("button", { name: "我了解，繼續" }).click();
     await A.card.getByLabel("新裝置上顯示的配對碼").fill(code.toLowerCase());
     await A.card.getByRole("button", { name: "下一步" }).click();
     const bNumbers = (await B.card.locator(".pair-confirm").innerText({ timeout: 15000 })).trim();
@@ -174,12 +188,17 @@ let step = "start";
     const fingerprint = await fingerprintOf(slot);
     // 指紋不符（資料被換掉）：停止
     await A.page.goto(`${URL}#pair=${slot}.${"A".repeat(22)}`);
+    // 從連結打開也要先確認身分
+    await A.card.getByRole("button", { name: "我了解，繼續" }).click({ timeout: 15000 });
     await A.card.getByRole("button", { name: "是我的裝置，繼續" }).click({ timeout: 15000 });
     check.badFingerprintStops = await A.card.getByText(/和 QR code 不符/).waitFor({ timeout: 5000 }).then(() => true, () => false);
     check.slotUntouchedAfterBadFp = (await (await fetch(`${SYNC}/v1/pair/${slot}`)).json()).oldPub === null;
     await A.card.getByRole("button", { name: "取消" }).click();
     // 正確的連結：先警告，不自動開始
     await A.page.goto(`${URL}#pair=${slot}.${fingerprint}`);
+    await A.card.getByRole("button", { name: "我了解，繼續" }).waitFor({ timeout: 15000 });
+    check.linkConfirmsFirst = (await A.card.getByRole("button", { name: "是我的裝置，繼續" }).count()) === 0;
+    await A.card.getByRole("button", { name: "我了解，繼續" }).click();
     await A.card.getByRole("button", { name: "是我的裝置，繼續" }).waitFor({ timeout: 15000 });
     check.linkOpensAdd = (await A.page.evaluate(() => location.hash)) === "";
     check.linkWarns = await A.card.getByText(/別人傳給你的連結/).isVisible();
@@ -193,6 +212,29 @@ let step = "start";
     await A.card.getByRole("button", { name: "完成" }).click();
     await C.tab("計畫與賽事");
     check.cPlan = await C.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+
+    // --- A：顯示復原碼（沒有密碼鎖）：先警告；離開畫面就收起，下次要再確認 ---
+    step = "A 顯示復原碼";
+    await A.tab("設定");
+    await A.card.getByRole("button", { name: "顯示復原碼" }).click();
+    check.codeWarnsWithoutLock = await A.card.getByText(/沒有設定密碼鎖，拿到這台的人都能看到復原碼/).isVisible();
+    check.codeHiddenBeforeConfirm = (await A.card.locator(".recovery-code").count()) === 0;
+    await A.card.screenshot({ path: `${E2E.OUT}/devsync-A-code-confirm.png` });
+    await A.card.getByRole("button", { name: "我了解，顯示" }).click();
+    check.codeShownAfterConfirm = (await A.card.locator(".recovery-code").innerText({ timeout: 5000 })).trim() === recovery;
+    const shownText = await A.card.innerText();
+    check.codeExplains = shownText.includes("只在新裝置還原時需要") && shownText.includes("懷疑復原碼外流");
+    await A.card.screenshot({ path: `${E2E.OUT}/devsync-A-code-shown.png` });
+    await background(A.page);
+    check.codeHidesInBackground = await A.card.locator(".recovery-code").waitFor({ state: "detached", timeout: 3000 }).then(() => true, () => false);
+    await A.card.getByRole("button", { name: "顯示復原碼" }).click();
+    check.codeAsksAgain = (await A.card.getByRole("button", { name: "我了解，顯示" }).count()) === 1 && (await A.card.locator(".recovery-code").count()) === 0;
+    await A.card.getByRole("button", { name: "我了解，顯示" }).click();
+    await A.card.locator(".recovery-code").waitFor();
+    // 關閉設定面板再打開：收起
+    await A.tab("對話");
+    await A.tab("設定");
+    check.codeHidesOnClose = (await A.card.locator(".recovery-code").count()) === 0 && (await A.card.getByRole("button", { name: "顯示復原碼" }).count()) === 1;
 
     // --- D：用復原碼還原；打錯的碼被拒絕 ---
     step = "D 用復原碼還原";
@@ -240,6 +282,45 @@ let step = "start";
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
     await A.tab("選手資料");
     check.eChangeReachesA = await A.page.waitForFunction(() => [...document.querySelectorAll("input, textarea")].some((i) => i.value === "E 改的目標"), null, { timeout: 15000 }).then(() => true, () => false);
+
+    // --- D 開了密碼鎖：顯示復原碼與新增裝置都要再輸入密碼，錯的不顯示 ---
+    step = "D 密碼鎖";
+    await D.tab("設定");
+    const lockCard = D.page.locator("section.card", { has: D.page.getByRole("heading", { name: "保護 API key" }) });
+    await lockCard.getByLabel("密碼", { exact: true }).fill("correct horse");
+    await lockCard.getByLabel("再輸入一次", { exact: true }).fill("correct horse");
+    await lockCard.getByRole("button", { name: "啟用密碼鎖" }).click();
+    await lockCard.getByRole("button", { name: "停用密碼鎖" }).waitFor({ timeout: 20000 });
+    await D.card.getByRole("button", { name: "顯示復原碼" }).click();
+    const pw = D.card.getByLabel(/再輸入一次密碼鎖的密碼/);
+    check.lockAsksPassword = await pw.isVisible();
+    check.lockNoWarnButton = (await D.card.getByRole("button", { name: "我了解，顯示" }).count()) === 0;
+    await pw.fill("wrong horse");
+    await D.card.getByRole("button", { name: "確認" }).click();
+    check.wrongPasswordRejected = await D.card.getByText("密碼不正確，不顯示復原碼。").waitFor({ timeout: 20000 }).then(() => true, () => false);
+    check.wrongPasswordNoCode = (await D.card.locator(".recovery-code").count()) === 0;
+    await D.card.screenshot({ path: `${E2E.OUT}/devsync-D-code-password.png` });
+    await pw.fill("correct horse");
+    await pw.press("Enter");
+    check.rightPasswordShowsCode = (await D.card.locator(".recovery-code").innerText({ timeout: 20000 })).trim() === recovery;
+    check.stillUnlocked = (await D.page.locator("nav.tabbar button").count()) > 0;
+    await D.card.screenshot({ path: `${E2E.OUT}/devsync-D-code-shown.png` });
+    await background(D.page);
+    check.lockCodeHidesInBackground = await D.card.locator(".recovery-code").waitFor({ state: "detached", timeout: 3000 }).then(() => true, () => false);
+    await D.card.getByRole("button", { name: "新增裝置" }).click();
+    const addPw = D.card.getByLabel(/再輸入一次密碼鎖的密碼，才開始配對/);
+    await D.page.emulateMedia({ colorScheme: "dark" });
+    await D.card.screenshot({ path: `${E2E.OUT}/devsync-D-add-password-dark.png` });
+    await D.page.emulateMedia({ colorScheme: "light" });
+    check.addAsksPassword = (await addPw.isVisible()) && (await D.card.getByLabel("新裝置上顯示的配對碼").count()) === 0;
+    await addPw.fill("wrong horse");
+    await D.card.getByRole("button", { name: "確認" }).click();
+    check.addWrongPasswordRejected = await D.card.getByText("密碼不正確，不能新增裝置。").waitFor({ timeout: 20000 }).then(() => true, () => false);
+    await addPw.fill("correct horse");
+    await D.card.getByRole("button", { name: "確認" }).click();
+    check.addRightPasswordOpens = await D.card.getByLabel("新裝置上顯示的配對碼").waitFor({ timeout: 20000 }).then(() => true, () => false);
+    await D.card.getByRole("button", { name: "取消" }).click();
+    check.noOverflowConfirm = await D.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
     step = "停止與刪除";
     await D.tab("設定");

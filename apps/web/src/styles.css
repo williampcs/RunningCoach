@@ -2497,6 +2497,12 @@ a.credit {
   gap: 8px;
 }
 
+.confirm-identity form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .pairing ol {
   margin: 0;
   padding-left: 1.2em;

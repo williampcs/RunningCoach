@@ -21,7 +21,7 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
-import { lockEnabled } from "../settings";
+import { checkPassword, lockEnabled } from "../settings";
 import { PrivacyLink } from "./PrivacyLink";
 
 interface Slot {
@@ -294,10 +294,83 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
   );
 }
 
+/**
+ * 顯示復原碼、新增裝置前再確認身分（規格 12.26）：開了密碼鎖要再輸入一次密碼；
+ * 沒開的先說明風險、建議開密碼鎖，按「我了解」才繼續
+ */
+function ConfirmIdentity({ purpose, onConfirmed, onCancel }: { purpose: "code" | "add"; onConfirmed: () => void; onCancel: () => void }) {
+  const locked = lockEnabled();
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const risk =
+    purpose === "code"
+      ? "看得到復原碼的人可以在他的裝置還原，之後一直同步到你的資料。"
+      : "把同步加到另一台後，那台會一直同步到你的資料。只有在你自己的另一台裝置正顯示配對碼時才繼續。";
+
+  async function check() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (await checkPassword(password)) onConfirmed();
+      else setError(`密碼不正確，${purpose === "code" ? "不顯示復原碼" : "不能新增裝置"}。`);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="pairing confirm-identity">
+      <p className="small">{risk}</p>
+      {locked ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (password && !busy) void check();
+          }}
+        >
+          <label>
+            {purpose === "code" ? "再輸入一次密碼鎖的密碼，才顯示復原碼" : "再輸入一次密碼鎖的密碼，才開始配對"}
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          <div className="row">
+            <button className="primary" type="submit" disabled={busy || !password}>
+              {busy ? "確認中…" : "確認"}
+            </button>
+            <button type="button" onClick={onCancel}>
+              取消
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <div className="notice warn">
+            <span>
+              {purpose === "code" ? "這台沒有設定密碼鎖，拿到這台的人都能看到復原碼。" : "這台沒有設定密碼鎖，拿到這台的人都能把同步加到他的裝置。"}
+              建議先到上面的「保護 API key」設定密碼鎖，之後{purpose === "code" ? "顯示復原碼" : "新增裝置"}前要輸入密碼。
+            </span>
+          </div>
+          <div className="row">
+            <button className="primary" onClick={onConfirmed}>
+              {purpose === "code" ? "我了解，顯示" : "我了解，繼續"}
+            </button>
+            <button onClick={onCancel}>取消</button>
+          </div>
+        </>
+      )}
+      {error && <div className="notice error">{error}</div>}
+    </div>
+  );
+}
+
 /** 設定頁的多裝置同步（規格 12.10） */
 export function DeviceSyncCard() {
   const { settings, updateSettings, deviceSync, testMode, pairFromLink, clearPairFromLink, coach } = useApp();
-  const [mode, setMode] = useState<"idle" | "start" | "join" | "add" | "restore" | "showCode">("idle");
+  const [mode, setMode] = useState<
+    "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode"
+  >("idle");
   const [linkCode, setLinkCode] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [newRoot, setNewRoot] = useState<Uint8Array | null>(null);
@@ -307,14 +380,30 @@ export function DeviceSyncCard() {
   const [message, setMessage] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
   const card = useRef<HTMLElement>(null);
 
-  // 從配對連結打開（或在開著的分頁貼上連結）：直接進入「新增裝置」
+  // 從配對連結打開（或在開著的分頁貼上連結）：直接進入「新增裝置」（一樣先確認身分）
   useEffect(() => {
     if (!pairFromLink) return;
     setLinkCode(pairFromLink);
-    setMode("add");
+    setMode("confirmAdd");
     clearPairFromLink();
     card.current?.scrollIntoView({ block: "start" });
   }, [pairFromLink, clearPairFromLink]);
+
+  // 顯示中的復原碼：切到別的分頁、App 到背景就收起，下次要再確認（關閉設定面板時這張卡整個移除）
+  useEffect(() => {
+    if (mode !== "showCode") return;
+    const hide = () => {
+      if (document.visibilityState !== "hidden") return;
+      setMode("idle");
+      setCode(null);
+    };
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("pagehide", hide);
+    return () => {
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("pagehide", hide);
+    };
+  }, [mode]);
 
   const saveKey = (root: Uint8Array | null) => updateSettings({ ...settings, sync: { ...settings.sync, key: root ? toBase64url(root) : "" } });
 
@@ -471,7 +560,7 @@ export function DeviceSyncCard() {
   } else if (!deviceSync.enabled) {
     body = (
       <>
-        {linkCode && mode === "add" && (
+        {linkCode && (mode === "add" || mode === "confirmAdd") && (
           <div className="notice warn">這台還沒開啟同步，無法把同步加到另一台。請用已經在同步的那台掃 QR code。</div>
         )}
         <p className="small">
@@ -506,12 +595,21 @@ export function DeviceSyncCard() {
           )}
         </p>
         {deviceSync.error && <div className="notice error">同步失敗：{deviceSync.error}</div>}
-        {!lockEnabled() && (
+        {!lockEnabled() && mode !== "confirmAdd" && mode !== "confirmCode" && (
           <div className="notice warn">
             建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡，能用這個瀏覽器的人就讀得到。
           </div>
         )}
-        {mode === "add" ? (
+        {mode === "confirmAdd" || mode === "confirmCode" ? (
+          <ConfirmIdentity
+            purpose={mode === "confirmAdd" ? "add" : "code"}
+            onConfirmed={() => (mode === "confirmAdd" ? setMode("add") : void showCode())}
+            onCancel={() => {
+              setMode("idle");
+              setLinkCode("");
+            }}
+          />
+        ) : mode === "add" ? (
           <AddDeviceFlow
             key={linkCode}
             initialCode={linkCode}
@@ -522,10 +620,22 @@ export function DeviceSyncCard() {
           />
         ) : mode === "showCode" ? (
           <div className="pairing">
-            <p className="small">復原碼：所有裝置都不見時用它取回資料。請存在安全的地方，不要傳給別人。</p>
+            <p className="small">
+              復原碼只在新裝置還原時需要（所有裝置都不見、或沒有另一台可以配對時）。請存在安全的地方，不要傳給別人；離開這個畫面就會收起。
+            </p>
             <code className="recovery-code">{code}</code>
+            <p className="muted small">
+              懷疑復原碼外流：目前的做法是按「刪除雲端的資料」，再用這台「這是第一台：開始同步」產生新的金鑰與復原碼，其他裝置停止同步後重新配對加入；舊的復原碼就不能用了（已經被同步走的資料收不回來）。
+            </p>
             <div className="row">
-              <button onClick={() => setMode("idle")}>收起</button>
+              <button
+                onClick={() => {
+                  setMode("idle");
+                  setCode(null);
+                }}
+              >
+                收起
+              </button>
             </div>
           </div>
         ) : (
@@ -533,8 +643,22 @@ export function DeviceSyncCard() {
             <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
               {deviceSync.busy ? "同步中…" : "立即同步裝置"}
             </button>
-            <button onClick={() => setMode("add")}>新增裝置</button>
-            <button onClick={() => void showCode()}>顯示復原碼</button>
+            <button
+              onClick={() => {
+                setMessage(null);
+                setMode("confirmAdd");
+              }}
+            >
+              新增裝置
+            </button>
+            <button
+              onClick={() => {
+                setMessage(null);
+                setMode("confirmCode");
+              }}
+            >
+              顯示復原碼
+            </button>
             <button className="link" onClick={() => void stopHere()}>
               停止這台的同步
             </button>

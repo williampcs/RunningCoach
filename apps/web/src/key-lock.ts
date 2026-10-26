@@ -98,3 +98,14 @@ export async function openLock(
   }
   return { secrets: JSON.parse(new TextDecoder().decode(plain)) as Secrets, session };
 }
+
+/** 只確認密碼對不對（顯示復原碼、新增裝置前再確認身分，規格 12.26）；不回傳金鑰與憑證 */
+export async function passwordMatches(sealed: SealedSecrets, password: string): Promise<boolean> {
+  try {
+    await openLock(sealed, password);
+    return true;
+  } catch (e) {
+    if (e instanceof WrongPasswordError) return false;
+    throw e;
+  }
+}
