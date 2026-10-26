@@ -18,6 +18,8 @@ const TODAY = taipei(new Date());
 const plusDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const WEEKDAY = (new Date(`${TODAY}T00:00:00Z`).getUTCDay() + 6) % 7;
 const NEXT_MONDAY = plusDays(TODAY, 7 - WEEKDAY);
+// 課表頁的日期是 m/d，不補零（10/27、11/1）
+const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
 
 (async () => {
   const browser = await chromium.launch();
@@ -108,7 +110,23 @@ const NEXT_MONDAY = plusDays(TODAY, 7 - WEEKDAY);
   await sessions.first().waitFor({ timeout: 10000 });
   const cardText = await card.innerText();
   check.noWeekNumber = !/W\d\d/.test(await page.locator(".page").innerText());
-  check.dateRange = cardText.includes(`${NEXT_MONDAY.slice(5)} – ${plusDays(NEXT_MONDAY, 6).slice(5)}`);
+  check.dateRange = cardText.includes(`${md(NEXT_MONDAY)} – ${md(plusDays(NEXT_MONDAY, 6))}`);
+  // 日期一律 m/d（今天、明天照舊），沒有 MM-DD
+  const dateLabels = await card.locator(".tl-date .tl-label").allInnerTexts();
+  check.dateFormat = dateLabels.length > 0 && dateLabels.every((l) => /^(今天|明天|\d{1,2}\/\d{1,2})$/.test(l)) && !/\b\d\d-\d\d\b/.test(cardText);
+  // 電腦上：卡片和上面那一行同寬、填滿；日期欄是一行的「m/d 星期X」。手機上日期與星期分兩行
+  const widthOf = (loc) => loc.evaluate((el) => el.getBoundingClientRect().width);
+  const topWidth = await widthOf(card.locator(".plan-top"));
+  const timelineWidth = await widthOf(card.locator(".timeline"));
+  const cardInner = await card.evaluate((el) => el.clientWidth - parseFloat(getComputedStyle(el).paddingLeft) - parseFloat(getComputedStyle(el).paddingRight));
+  check.widthAligned = Math.abs(topWidth - timelineWidth) < 2 && Math.abs(timelineWidth - cardInner) < 2;
+  const when = card.locator(".tl-day:not(:has(.tl-date.today)) .tl-when").nth(1);
+  const whenText = (await when.innerText()).replace(/\s+/g, " ").trim();
+  const whenBox = await when.boundingBox();
+  const lineHeight = await when.locator(".tl-label").evaluate((el) => el.getBoundingClientRect().height);
+  check.dateColumn = mobile
+    ? whenBox.height > lineHeight * 1.5 && /^\d{1,2}\/\d{1,2} [一二三四五六日]$/.test(whenText)
+    : whenBox.height < lineHeight * 1.5 && /^\d{1,2}\/\d{1,2} 星期[一二三四五六日]$/.test(whenText);
   check.topLine = /\d+(\.\d)? km · 3 次跑步/.test(cardText);
   check.noBoilerplate = !cardText.includes("配速與心率由程式依你的訓練數值換算");
   // 為什麼這樣排：預設收起；展開後是教練的理由，不是檢查器的警告
@@ -153,6 +171,26 @@ const NEXT_MONDAY = plusDays(TODAY, 7 - WEEKDAY);
   check.expandOther = (await t.locator(".plan-step").count()) >= 3 && /\d:\d\d–\d:\d\d\/km/.test(tText) && /心率 ≤\d+/.test(tText);
   await t.getByRole("button", { name: /細節/ }).click();
   check.fallbackInDetails = (await t.innerText()).includes("改成 40 分鐘輕鬆跑");
+
+  step = "點整張卡片展開與收合";
+  // 點卡片裡標題以外的地方（小標籤）就展開；點卡片裡的按鈕不會收合；再點空白處收合
+  const strengthCard = sessions.filter({ hasText: "肌力" });
+  await strengthCard.locator(".chips").click();
+  check.cardClickExpands = (await strengthCard.locator(":scope > .plan-steps").count()) === 1 && (await strengthCard.locator("button.plan-session-head").getAttribute("aria-expanded")) === "true";
+  await strengthCard.getByRole("button", { name: /細節/ }).click();
+  check.buttonKeepsOpen = (await strengthCard.locator(":scope > .plan-steps").count()) === 1 && (await strengthCard.innerText()).includes("完成的標準");
+  await strengthCard.locator(":scope > .plan-steps").click();
+  check.cardClickCollapses = (await strengthCard.locator(":scope > .plan-steps").count()) === 0 && (await strengthCard.locator("button.plan-session-head").getAttribute("aria-expanded")) === "false";
+  // 放大的那張也可以點來收合、再展開
+  await focus.locator(":scope > .plan-steps").click();
+  const focusCollapsed = (await focus.locator(":scope > .plan-steps").count()) === 0;
+  await focus.locator(".chips").click();
+  check.focusToggles = focusCollapsed && (await focus.locator(":scope > .plan-steps").count()) === 1;
+  // 鍵盤：標題是真正的按鈕
+  await strengthCard.locator("button.plan-session-head").focus();
+  await page.keyboard.press("Enter");
+  check.keyboardToggles = (await strengthCard.locator(":scope > .plan-steps").count()) === 1;
+  await page.keyboard.press("Enter");
 
   step = "為什麼這樣排";
   await whyButton.click();
@@ -223,7 +261,7 @@ const NEXT_MONDAY = plusDays(TODAY, 7 - WEEKDAY);
   await tab("計畫與賽事");
   await card.locator(".plan-week", { hasText: "這週" }).waitFor({ timeout: 10000 });
   // 先排的下週接在這週後面
-  check.nextWeekAppended = (await card.locator(".tl-week", { hasText: `下週 ${NEXT_MONDAY.slice(5)}` }).count()) === 1;
+  check.nextWeekAppended = (await card.locator(".tl-week", { hasText: `下週 ${md(NEXT_MONDAY)} – ` }).count()) === 1;
   const days = await card.locator(".tl-day[data-date]").evaluateAll((els) => els.map((e) => e.dataset.date));
   check.startsToday = days[0] === TODAY && days.includes(plusDays(NEXT_MONDAY, 6));
   check.todayLabel = (await card.locator(".tl-date.today .tl-label").innerText()) === "今天";

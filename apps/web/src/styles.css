@@ -1296,11 +1296,6 @@ span.quote {
   white-space: nowrap;
 }
 
-.plan-card > :not(.sr-only) {
-  width: 100%;
-  max-width: 640px;
-}
-
 .plan-top {
   display: flex;
   justify-content: space-between;
@@ -1402,6 +1397,43 @@ button.link-button.muted {
   white-space: nowrap;
 }
 
+.tl-when {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wide-only {
+  display: none;
+}
+
+/* 電腦上夠寬：日期欄寫成一行「10/27 星期二」 */
+@media (min-width: 900px) {
+  .tl-row {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+
+  .tl-when {
+    flex-direction: row;
+    gap: 4px;
+    white-space: nowrap;
+  }
+
+  .wide-only {
+    display: inline;
+  }
+
+  /* .tl-week 與 .tl-gap 的基本樣式寫在後面：加上 .timeline 才蓋得過 */
+  .timeline .tl-week {
+    margin-left: calc(6.5rem + 12px);
+  }
+
+  .timeline .tl-gap {
+    margin-left: calc(3.25rem - 1px);
+    padding-left: calc(3.25rem + 11px);
+  }
+}
+
 .tl-date.today {
   color: var(--accent);
   font-weight: 700;
@@ -1479,6 +1511,7 @@ button.link-button.muted {
   flex-direction: column;
   gap: 8px;
   background: var(--surface);
+  cursor: pointer;
 }
 
 .plan-session.focus {
@@ -1508,9 +1541,7 @@ button.plan-session-head {
   min-width: 0;
 }
 
-.plan-session h3 {
-  display: inline;
-  margin: 0;
+.plan-session-name.big {
   font-size: 1.2rem;
   line-height: 1.3;
 }

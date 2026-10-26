@@ -15,7 +15,7 @@ export type TimelineSession = ActivePlan["sessions"][number] & {
 };
 
 export interface TimelineWeek {
-  /** 例：10-26 – 11-01 */
+  /** 例：10/26 – 11/1 */
   range: string;
   km: number;
   runs: number;
@@ -23,7 +23,7 @@ export interface TimelineWeek {
 
 export interface TimelineDay {
   date: string;
-  /** 今天、明天，其他寫 MM-DD */
+  /** 今天、明天，其他寫 m/d */
   label: string;
   /** 星期幾的一個字，例：四 */
   weekday: string;
@@ -52,12 +52,13 @@ const WEEKDAY_SHORT = ["一", "二", "三", "四", "五", "六", "日"];
 /** 課表範圍外的賽事：只放這幾天內的（最多兩場）；一場都沒有時放最近的一場 */
 export const LATER_RACE_DAYS = 60;
 
-const mmdd = (date: string) => date.slice(5);
-export const weekRange = (weekStart: string) => `${mmdd(weekStart)} – ${mmdd(addDays(weekStart, 6))}`;
+/** 月/日，不補零（例：10/27、11/1） */
+export const monthDay = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+export const weekRange = (weekStart: string) => `${monthDay(weekStart)} – ${monthDay(addDays(weekStart, 6))}`;
 
 function dayLabel(date: string, today: string): string {
   const diff = daysBetween(today, date);
-  return diff === 0 ? "今天" : diff === 1 ? "明天" : mmdd(date);
+  return diff === 0 ? "今天" : diff === 1 ? "明天" : monthDay(date);
 }
 
 const isRest = (s: TimelineSession) => s.kind === "rest";
