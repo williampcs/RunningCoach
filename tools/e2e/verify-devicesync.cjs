@@ -236,6 +236,26 @@ let step = "start";
     await A.tab("設定");
     check.codeHidesOnClose = (await A.card.locator(".recovery-code").count()) === 0 && (await A.card.getByRole("button", { name: "顯示復原碼" }).count()) === 1;
 
+    // 一段時間後自動收起（切到別的 App 時視窗沒有隱藏）：測試把 60 秒縮成 3 秒；倒數、「再顯示一分鐘」不用再確認
+    step = "A 復原碼自動收起";
+    await A.page.evaluate(() => (window.__zone2mateAutoHideSeconds = 3));
+    await A.card.getByRole("button", { name: "顯示復原碼" }).click();
+    await A.card.getByRole("button", { name: "我了解，顯示" }).click();
+    await A.card.locator(".recovery-code").waitFor();
+    check.codeCountdown = /\d 秒後收起/.test(await A.card.locator(".auto-hide-left").innerText());
+    await A.card.screenshot({ path: `${E2E.OUT}/devsync-A-code-countdown.png` });
+    await A.page.waitForTimeout(2000);
+    await A.card.getByRole("button", { name: "再顯示一分鐘" }).click();
+    await A.page.waitForTimeout(2000);
+    check.codeExtended = (await A.card.locator(".recovery-code").count()) === 1 && (await A.card.getByRole("button", { name: "我了解，顯示" }).count()) === 0;
+    check.codeAutoHides = await A.card.locator(".recovery-code").waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
+    // 配對碼的輸入畫面也一樣
+    await A.card.getByRole("button", { name: "新增裝置" }).click();
+    await A.card.getByRole("button", { name: "我了解，繼續" }).click();
+    await A.card.getByLabel("新裝置上顯示的配對碼").waitFor();
+    check.addAutoHides = await A.card.getByLabel("新裝置上顯示的配對碼").waitFor({ state: "detached", timeout: 6000 }).then(() => true, () => false);
+    await A.page.evaluate(() => delete window.__zone2mateAutoHideSeconds);
+
     // --- D：用復原碼還原；打錯的碼被拒絕 ---
     step = "D 用復原碼還原";
     const D = await device("D", true);

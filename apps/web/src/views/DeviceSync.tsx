@@ -162,6 +162,57 @@ function parsePairCode(text: string): { slot: string; fingerprint: string | null
   return { slot: code.toUpperCase().replace(/[^0-9A-Z]/g, ""), fingerprint: fingerprint ?? null };
 }
 
+/**
+ * 顯示中的復原碼與配對碼的輸入畫面：多久後自動收起（規格 12.26 的後續）. 切到別的 App 時視窗沒有隱藏，
+ * 不會觸發 visibilitychange，所以加上時間的限制；E2E 可以用 window.__zone2mateAutoHideSeconds 縮短
+ */
+const AUTO_HIDE_SECONDS = 60;
+const autoHideSeconds = () => {
+  const override = (globalThis as { __zone2mateAutoHideSeconds?: unknown }).__zone2mateAutoHideSeconds;
+  return typeof override === "number" && override > 0 ? override : AUTO_HIDE_SECONDS;
+};
+
+/** 倒數；active 時從頭開始，到 0 時呼叫 onExpire。restart 讓使用者「再顯示一分鐘」 */
+function useAutoHide(active: boolean, onExpire: () => void): { left: number; restart: () => void } {
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const expire = useRef(onExpire);
+  expire.current = onExpire;
+  useEffect(() => {
+    setDeadline(active ? Date.now() + autoHideSeconds() * 1000 : null);
+  }, [active]);
+  useEffect(() => {
+    if (deadline === null) return;
+    const tick = () => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= deadline) {
+        setDeadline(null);
+        expire.current();
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [deadline]);
+  return {
+    left: deadline === null ? 0 : Math.max(0, Math.ceil((deadline - now) / 1000)),
+    restart: () => setDeadline(Date.now() + autoHideSeconds() * 1000),
+  };
+}
+
+/** 「N 秒後收起」與「再顯示一分鐘」（不用再確認） */
+function AutoHideNote({ left, restart }: { left: number; restart: () => void }) {
+  return (
+    <p className="small muted auto-hide" role="timer" aria-live="off">
+      <span className="auto-hide-left">{left} 秒後收起</span>{" "}
+      <button type="button" className="link" onClick={restart}>
+        再顯示一分鐘
+      </button>
+    </p>
+  );
+}
+
 /** 舊裝置：輸入或從連結帶入配對碼，輸入新裝置上顯示的數字，相符才把加密的同步金鑰傳給新裝置 */
 function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose: () => void }) {
   const { deviceSync, settings } = useApp();
@@ -176,6 +227,8 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
   const [error, setError] = useState<string | null>(null);
   const secrets = useRef<PairSecrets | null>(null);
   const { slot, fingerprint } = parsePairCode(code);
+  // 輸入配對碼的畫面一段時間後收起；配對進行中（等新裝置、輸入數字、已傳送）不收起
+  const autoHide = useAutoHide(!busy && !ready && !sent, onClose);
 
   async function start() {
     setBusy(true);
@@ -258,6 +311,7 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
             </button>
             <button onClick={onClose}>取消</button>
           </div>
+          {!busy && <AutoHideNote {...autoHide} />}
         </>
       )}
       {ready && !sent && (
@@ -404,6 +458,12 @@ export function DeviceSyncCard() {
       window.removeEventListener("pagehide", hide);
     };
   }, [mode]);
+
+  // 顯示中的復原碼一段時間後也收起（切到別的 App 時視窗沒有隱藏，上面的不會觸發）
+  const codeAutoHide = useAutoHide(mode === "showCode", () => {
+    setMode("idle");
+    setCode(null);
+  });
 
   const saveKey = (root: Uint8Array | null) => updateSettings({ ...settings, sync: { ...settings.sync, key: root ? toBase64url(root) : "" } });
 
@@ -621,9 +681,10 @@ export function DeviceSyncCard() {
         ) : mode === "showCode" ? (
           <div className="pairing">
             <p className="small">
-              復原碼只在新裝置還原時需要（所有裝置都不見、或沒有另一台可以配對時）。請存在安全的地方，不要傳給別人；離開這個畫面就會收起。
+              復原碼只在新裝置還原時需要（所有裝置都不見、或沒有另一台可以配對時）。請存在安全的地方，不要傳給別人；離開這個畫面或一分鐘後就會收起。
             </p>
             <code className="recovery-code">{code}</code>
+            <AutoHideNote {...codeAutoHide} />
             <p className="muted small">
               懷疑復原碼外流：目前的做法是按「刪除雲端的資料」，再用這台「這是第一台：開始同步」產生新的金鑰與復原碼，其他裝置停止同步後重新配對加入；舊的復原碼就不能用了（已經被同步走的資料收不回來）。
             </p>
