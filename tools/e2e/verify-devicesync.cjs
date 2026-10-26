@@ -199,7 +199,9 @@ let step = "start";
     const D = await device("D", true);
     await setup(D, false);
     await D.card.getByRole("button", { name: "用復原碼還原" }).click();
-    await D.card.getByLabel("復原碼").fill(recovery.slice(0, -1) + (recovery.endsWith("0") ? "1" : "0"));
+    // 最後一個字元是檢查碼的 4 個位元加 1 個補位：改它的資料位元（不是補位），金鑰不變、檢查碼一定不符
+    const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    await D.card.getByLabel("復原碼").fill(recovery.slice(0, -1) + alphabet[alphabet.indexOf(recovery.slice(-1)) ^ 2]);
     await D.card.getByRole("button", { name: "還原" }).click();
     check.badCodeRejected = await D.card.locator(".notice.error", { hasText: "復原碼不對" }).waitFor({ timeout: 5000 }).then(() => true, () => false);
     await D.card.getByLabel("復原碼").fill(recovery.toLowerCase().replace(/-/g, " "));

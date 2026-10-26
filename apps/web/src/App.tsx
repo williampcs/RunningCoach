@@ -382,7 +382,7 @@ export function App() {
     <AppContext.Provider value={state}>
       <div className="shell">
         <header className="topbar" ref={topbar}>
-          <h1>Running Coach</h1>
+          <h1>Zone2Mate</h1>
           <span className={IS_STAGING ? "version staging" : "version"} title={BUILD_DETAIL}>
             {STAGE_LABEL}
           </span>

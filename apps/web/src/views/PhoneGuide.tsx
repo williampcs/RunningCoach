@@ -14,7 +14,7 @@ export function PhoneGuide() {
           <a href="https://apps.apple.com/app/id6739638454" target="_blank" rel="noreferrer">
             Intervals.icu Companion
           </a>
-          。這是第三方 App，與 Running Coach 無關；免費下載，部分功能需要內購。我們還沒有實測過。
+          。這是第三方 App，與 Zone2Mate 無關；免費下載，部分功能需要內購。我們還沒有實測過。
         </li>
         <li>
           用 Intervals.icu 帳號登入，開啟運動的同步。有 Apple Watch 的話，也開啟每日健康資料（HRV、睡眠、靜息心率）的同步，教練就能參考恢復狀況。

@@ -1,7 +1,7 @@
 {
-  "name": "Running Coach",
-  "short_name": "Coach",
-  "description": "資料留在你裝置上的 AI 跑步教練",
+  "name": "Zone2Mate",
+  "short_name": "Zone2Mate",
+  "description": "資料留在你裝置上的 AI 耐力運動教練",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f8fafc",

@@ -344,7 +344,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "get_app_help",
       description:
-        "查 App 的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
+        "查這個 App（Zone2Mate）的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
         "topic 用系統提示【App 的使用方式】列的代號，或選手問的關鍵字。",
       input_schema: {
         type: "object",

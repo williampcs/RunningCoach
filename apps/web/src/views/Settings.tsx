@@ -39,9 +39,9 @@ function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   if (draft.llmMode === "proxy") {
     return (
       <ul>
-        <li>你的對話、選手資料與訓練紀錄會經過 Running Coach 的代理伺服器，轉送給 Anthropic 產生回覆。</li>
+        <li>你的對話、選手資料與訓練紀錄會經過 Zone2Mate 的代理伺服器，轉送給 Anthropic 產生回覆。</li>
         <li>代理只在記憶體中轉發，不儲存內容；會記錄的只有帳號識別、訂閱狀態與 token 用量。</li>
-        <li>Anthropic 如何保存與使用這些資料，依它的 API 條款而定，Running Coach 無法替它保證。</li>
+        <li>Anthropic 如何保存與使用這些資料，依它的 API 條款而定，Zone2Mate 無法替它保證。</li>
       </ul>
     );
   }
@@ -49,9 +49,9 @@ function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   return (
     <ul>
       <li>
-        你的對話、選手資料與訓練紀錄會從這個瀏覽器直接送到 {recipient}，不經過 Running Coach 的任何伺服器。
+        你的對話、選手資料與訓練紀錄會從這個瀏覽器直接送到 {recipient}，不經過 Zone2Mate 的任何伺服器。
       </li>
-      <li>{recipient} 如何保存與使用這些資料，依它的 API 條款而定，Running Coach 無法替它保證。</li>
+      <li>{recipient} 如何保存與使用這些資料，依它的 API 條款而定，Zone2Mate 無法替它保證。</li>
       <li>
         {locked
           ? "API key 以你的密碼加密後存在這個瀏覽器。"
@@ -116,7 +116,7 @@ function KeyProtection({
     <section className="card">
       <h2>保護 API key</h2>
       <ul className="guide small">
-        <li>替 Running Coach 另外建立一把專用的 key，並在供應商的後台設定每月金額上限，外洩時損失有限。</li>
+        <li>替 Zone2Mate 另外建立一把專用的 key，並在供應商的後台設定每月金額上限，外洩時損失有限。</li>
         <li>懷疑外洩時，到供應商的後台撤銷這把 key 再產生新的；Intervals.icu 的 key 也可以在它的設定頁重新產生。</li>
         <li>匯出的資料庫不含 API key。</li>
       </ul>
@@ -525,7 +525,7 @@ export function SettingsView() {
       <p className="muted small center">
         {BUILD_DETAIL}
         <br />
-        Running Coach 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
+        Zone2Mate 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼
         </a>

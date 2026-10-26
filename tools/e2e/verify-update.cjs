@@ -2,6 +2,7 @@
 // 版本相同不提示；伺服器的 version.json 換成別的 commit 後，回到前景時出現提示、不自動重新載入（打到一半的字還在）、
 // 關掉後同一個版本不再出現（重新整理後也是）、更新的版本又出現、點了才重新載入；讀不到（離線、404、回傳網頁）時不提示也不報錯；
 // 設定頁「資料」顯示資料保護的三種狀態；標題列只顯示 Beta、設定頁最下面是完整的版號（規格 12.19）；
+// App 的名稱是 Zone2Mate：標題列、<title>、manifest、隱私說明頁（規格 12.24）；
 // 手機與電腦、淺色與深色的截圖
 const path = require("path");
 
@@ -48,6 +49,14 @@ const bannerShown = async (page, expected) => {
     check.settingsShowsFullVersion = settingsText.includes(`v${version} Beta（${actual.commit}，`);
     check.topbarShowsOnlyBeta = (await page.locator(".topbar .version").innerText()).trim() === "Beta";
     check.topbarTitleHasFullVersion = ((await page.locator(".topbar .version").getAttribute("title")) ?? "").startsWith(`v${version} Beta（`);
+    // App 的名稱（規格 12.24）
+    check.topbarName = (await page.locator(".topbar h1").innerText()).trim() === "Zone2Mate";
+    check.documentTitle = (await page.title()) === "Zone2Mate";
+    const manifest = await (await page.request.get(new URL("manifest.webmanifest", E2E.URL).href)).json();
+    check.manifestName = manifest.name === "Zone2Mate" && manifest.short_name === "Zone2Mate";
+    await page.goto(new URL("privacy", E2E.URL).href);
+    check.privacyPageName = (await page.title()) === "隱私說明｜Zone2Mate" && (await page.locator(".back a").innerText()).includes("Zone2Mate");
+    check.noOldName = !(await page.content()).includes("Running Coach");
     await context.close();
   }
 
@@ -81,6 +90,7 @@ const bannerShown = async (page, expected) => {
         await page.locator("nav.tabbar button").first().waitFor();
         check[`${tag}.sameNoBanner`] = !(await bannerShown(page, false));
         check[`${tag}.checkedOnOpen`] = fetches >= 1;
+        await page.locator(".topbar").screenshot({ path: path.join(E2E.OUT, `update-topbar-${tag}.png`) });
 
         step = "設定";
         // 對話的輸入框要設定好 AI 才出現
