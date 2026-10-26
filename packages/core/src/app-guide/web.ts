@@ -322,6 +322,8 @@ App 打開時、切回來時、改了資料後幾秒會自動同步。`,
   {
     id: "test-mode",
     title: "測試模式",
+    // 正式版沒有測試模式（功能開關 testmode，規格 12.25）
+    feature: "testmode",
     keywords: ["測試", "假資料", "模擬", "試用"],
     body: `設定頁的「測試模式」用另一個資料庫與假的跑步資料試用 App，不會動到正式資料，也不連 Intervals.icu。
 

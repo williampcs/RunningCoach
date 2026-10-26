@@ -448,7 +448,8 @@ async function offFlow(browser, check, problems) {
     await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
     await page.getByLabel("我了解並同意以上的資料流向").check();
     await page.getByRole("button", { name: "儲存設定" }).click();
-    check.offNoFeatures = (await page.locator(".features-on").count()) === 0;
+    // 一般的建置開著 testmode（測試模式，E2E 用），沒有多運動
+    check.offNoFeatures = !(await page.locator(".features-on").innerText().catch(() => "")).includes("多運動");
     step = "關著：選手資料";
     await E2E.go(page, "選手資料");
     await page.locator("section.training-values").waitFor({ timeout: 10000 });

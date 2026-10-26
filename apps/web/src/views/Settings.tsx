@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { formatStatus, type Effort, type Purpose } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { featureEnabled } from "../environment";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
 import { DeviceSyncCard } from "./DeviceSync";
@@ -482,7 +483,8 @@ export function SettingsView() {
         </div>
       </section>
 
-      <TestModeCard />
+      {/* 測試模式只在 staging 與開發用的建置（功能開關 testmode，規格 12.25） */}
+      {featureEnabled("testmode") && <TestModeCard />}
 
       <section className="card">
         <h2>重置</h2>

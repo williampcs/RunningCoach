@@ -10,6 +10,8 @@
 export const FEATURES = {
   /** 多運動（規格 12.24）：讀騎車等的運動設定、選手練哪些運動、交叉訓練的目標、課表外的運動主動建議調整、回報肌力 */
   multisport: "多運動",
+  /** 測試模式（假的跑步紀錄、另一個資料庫、模擬日期，規格 6.1）：開發與 staging 用，正式版關著（規格 12.25） */
+  testmode: "測試模式",
 } as const;
 
 export type Feature = keyof typeof FEATURES;

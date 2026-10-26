@@ -67,8 +67,8 @@ describe("功能開關", () => {
     expect(parseFeatures("")).toEqual([]);
     expect(parseFeatures("multisport")).toEqual(["multisport"]);
     expect(parseFeatures(" MultiSport , nope")).toEqual(["multisport"]);
-    expect(parseFeatures("all")).toEqual(["multisport"]);
-    expect(parseFeatures(undefined, { staging: true })).toEqual(["multisport"]);
+    expect(parseFeatures("all")).toEqual(["multisport", "testmode"]);
+    expect(parseFeatures(undefined, { staging: true })).toEqual(["multisport", "testmode"]);
     expect(DEFAULT_SETTINGS.features).toEqual([]);
     expect(featureOn(DEFAULT_SETTINGS, "multisport")).toBe(false);
     expect(featureOn({ features: ["multisport"] }, "multisport")).toBe(true);
