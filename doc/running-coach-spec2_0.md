@@ -2849,6 +2849,11 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 - 沒驗證到：真實的模型怎麼用單車的課與規則；真實的 Intervals.icu 騎車活動的 `icu_eftp`、`average_temp`、功率區間的時間（`icu_zone_times`）欄位（照 API 說明，要使用者在本機用 `tools/intervals-fields.ts --names-only` 確認）；功率只用模擬資料測過。
 - 沒做（照工作單）：游泳、鐵人三項的連續訓練、踏頻與爬坡專項、W′ 等進階功率分析、拿掉開關。另外：騎車沒有 AI 的單趟分析（跑步每一趟有；騎車的回報可以按「請教練分析」在對話中問）；Discord bot 沒有騎車的回報指令（教練在對話中用 `save_activity_feedback`）；熱天的判斷只看裝置量的氣溫，沒有用天氣預報。
 - 在 staging 試：見 9.4 的工作單（回報給協調 session 的步驟）。
+- 2026-10-26 使用者在本機跑 `tools/intervals-fields.ts --names-only` 的結果（只看欄位名稱，沒有數值）：
+  - 運動設定只有跑步那一組，沒有騎車的設定（腳本沒有列出「跑步以外的一組運動設定」）；所以使用者的騎車目標會走「沒有騎車的區間 → 體感＋提示到 Intervals.icu 設定」那條路，這正是設計的行為。
+  - 最近的活動都是跑步，沒有跑步以外的紀錄，所以騎車活動的欄位這次看不到。跑步活動上有 `icu_hr_zones`、`lthr`、`icu_hr_zone_times`（長度 7）、`icu_training_load`、`average_temp`；`icu_zone_times`、`icu_power_zones` 是 null（沒有功率）。Intervals.icu 的活動欄位不分運動，騎車應該一樣，但要等有騎車紀錄時再確認一次。
+  - 活動上沒有 `icu_eftp` 這個欄位（選手摘要與 wellness 的 `eftp` 是 null）；使用者沒有功率計，目前不影響，有功率的使用者要另外確認欄位名稱。
+  - 使用者要做的：之後要用騎車的心率區間，在 Intervals.icu 的設定加一組騎車的運動設定（填騎車的閾值心率，或騎幾趟有心率的車讓它偵測），再跑一次腳本確認。
 
 ### 12.25 發版的節奏與功能開關（2026-10-26，已決定）
 
