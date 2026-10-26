@@ -2853,7 +2853,7 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 - 2026-10-26 使用者在本機跑 `tools/intervals-fields.ts --names-only` 的結果（只看欄位名稱，沒有數值）：
   - 運動設定只有跑步那一組，沒有騎車的設定（腳本沒有列出「跑步以外的一組運動設定」）；所以使用者的騎車目標會走「沒有騎車的區間 → 體感＋提示到 Intervals.icu 設定」那條路，這正是設計的行為。
   - 最近的活動都是跑步，沒有跑步以外的紀錄，所以騎車活動的欄位這次看不到。跑步活動上有 `icu_hr_zones`、`lthr`、`icu_hr_zone_times`（長度 7）、`icu_training_load`、`average_temp`；`icu_zone_times`、`icu_power_zones` 是 null（沒有功率）。Intervals.icu 的活動欄位不分運動，騎車應該一樣，但要等有騎車紀錄時再確認一次。
-  - 活動上沒有 `icu_eftp` 這個欄位（選手摘要與 wellness 的 `eftp` 是 null）；使用者沒有功率計，目前不影響，有功率的使用者要另外確認欄位名稱。
+  - 活動上沒有 `icu_eftp` 這個欄位（選手摘要與 wellness 的 `eftp` 是 null）；使用者沒有功率計，目前不影響，有功率的使用者要另外確認欄位名稱。開發 session 確認：程式讀活動上的 `icu_eftp`，讀不到時 eFTP 是空的、不會出錯；之後有功率計的使用者要改讀 wellness 或選手摘要的 `eftp`（記在這裡，先不改）。
   - 使用者要做的：之後要用騎車的心率區間，在 Intervals.icu 的設定加一組騎車的運動設定（填騎車的閾值心率，或騎幾趟有心率的車讓它偵測），再跑一次腳本確認。
 
 ### 12.25 發版的節奏與功能開關（2026-10-26，已決定）
