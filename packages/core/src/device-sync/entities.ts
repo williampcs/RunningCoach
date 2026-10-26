@@ -2,7 +2,7 @@
  * 同步哪些資料、每一筆在各裝置上叫什麼名字（規格 12.10）.
  *
  * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、對話與對話摘要，以及跑步上的體感、
- * 教練的分析與「不是同一趟」. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
+ * 教練的分析與「不是同一趟」、其他運動（騎車等）的體感. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
  * API key 與設定不在資料庫裡，不同步.
  *
  * 名稱：選手資料用欄位名、自評用日期、賽事、課表與記住的事用 sync_id（同步時補上的隨機 id）、
@@ -17,7 +17,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd|af):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -48,6 +48,8 @@ export function modifiedOf(data: EntityData | null): string | null {
 }
 
 const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "result_time", "notes", "cancelled", "outcome", "outcome_reason", "gun_time", "result_source", "result_activity", "created_at"] as const;
+/** schema 13 的欄位（賽事的運動）：有值時才放，之前同步過的賽事內容不變 */
+const RACE_OPTIONAL_COLS = ["sport"] as const;
 const PLAN_COLS = ["week_label", "content", "created_at", "is_active", "week_start", "style", "reason", "outline", "notes"] as const;
 const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "success", "fallback", "status", "note", "updated_at"] as const;
 /** schema 12 的欄位（多運動，規格 12.24）：有值時才放，之前同步過的課內容不變、不必全部重送 */
@@ -113,7 +115,11 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   for (const r of await sql.all("SELECT key, value, updated_at FROM athlete_profile")) {
     data.set(`p:${r.key}`, { v: r.value ?? null, u: r.updated_at ?? null });
   }
-  for (const r of await sql.all("SELECT * FROM races")) data.set(`r:${r.sync_id}`, pick(r, RACE_COLS));
+  for (const r of await sql.all("SELECT * FROM races")) {
+    const entity = pick(r, RACE_COLS);
+    for (const c of RACE_OPTIONAL_COLS) if (r[c] != null) entity[c] = r[c];
+    data.set(`r:${r.sync_id}`, entity);
+  }
   for (const r of await sql.all("SELECT * FROM training_plans")) data.set(`pl:${r.sync_id}`, pick(r, PLAN_COLS));
   for (const r of await sql.all("SELECT s.*, p.sync_id AS plan FROM planned_sessions s JOIN training_plans p ON p.id = s.plan_id")) {
     const entity: EntityData = { plan: r.plan ?? null, ...pick(r, SESSION_COLS) };
@@ -153,6 +159,10 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
     const key = keyById.get(Number(r.workout_id));
     if (key) data.set(`ws:${key}`, { s: r.summary ?? null, at: r.created_at ?? null });
   }
+  // 其他運動的體感（運動回報）：用 Intervals.icu 的活動 id；回報存在另一個表，這台還沒同步到那趟也照樣套用與送出
+  for (const r of await sql.all("SELECT intervals_id, perceived_effort, subjective_notes, updated_at FROM activity_feedback")) {
+    data.set(`af:${r.intervals_id}`, { e: r.perceived_effort ?? null, n: r.subjective_notes ?? null, updated_at: r.updated_at ?? null });
+  }
   for (const r of await sql.all("SELECT a, b FROM workout_distinct")) {
     const [ka, kb] = [keyById.get(Number(r.a)), keyById.get(Number(r.b))];
     if (ka && kb) data.set(`wd:${[ka, kb].sort().join("|")}`, {});
@@ -190,7 +200,7 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       return "applied";
     case "r":
       if (!data) await sql.run("DELETE FROM races WHERE sync_id=?", [id]);
-      else await upsert(sql, "races", id, pick(data, RACE_COLS));
+      else await upsert(sql, "races", id, pick(data, [...RACE_COLS, ...RACE_OPTIONAL_COLS]));
       return "applied";
     case "pl":
       if (!data) {
@@ -276,6 +286,17 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       }
       return "applied";
     }
+    case "af":
+      // 回報存在 activity_feedback（不依賴這台有沒有那趟），不必暫存
+      if (!data) await sql.run("DELETE FROM activity_feedback WHERE intervals_id=?", [id]);
+      else {
+        await sql.run(
+          "INSERT INTO activity_feedback (intervals_id, perceived_effort, subjective_notes, updated_at) VALUES (?, ?, ?, ?)" +
+            " ON CONFLICT(intervals_id) DO UPDATE SET perceived_effort=excluded.perceived_effort, subjective_notes=excluded.subjective_notes, updated_at=excluded.updated_at",
+          [id, data.e ?? null, data.n ?? null, data.updated_at ?? ""],
+        );
+      }
+      return "applied";
     case "wd": {
       const [ka, kb] = id.split("|");
       const [a, b] = [await workoutId(sql, ka ?? ""), await workoutId(sql, kb ?? "")];

@@ -120,6 +120,33 @@ function activities() {
       icu_hr_zones: RIDE_HR_ZONES,
       icu_hr_zone_times: [2400, 1200, 0, 0, 0, 0, 0],
     },
+    // 之前的騎車（多運動的第 3 階段）：紀錄頁的騎車、長騎的增幅有依據；都不到 90 分鐘、負荷 60 以下
+    // （不觸發「前一天騎很久」，開關關著的腳本不受影響）
+    {
+      id: "i-mock-ride-4d",
+      type: "Ride",
+      start_date_local: `${daysAgo(4)}T07:00:00`,
+      distance: 32000,
+      moving_time: 4500,
+      average_heartrate: 141,
+      icu_training_load: 58,
+      icu_eftp: 205,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [900, 1200, 1500, 900, 0, 0, 0],
+    },
+    {
+      id: "i-mock-ride-8d",
+      type: "VirtualRide",
+      start_date_local: `${daysAgo(8)}T20:00:00`,
+      distance: 38000,
+      moving_time: 5100,
+      average_heartrate: 130,
+      icu_training_load: 52,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [2400, 2400, 300, 0, 0, 0, 0],
+    },
     {
       id: "i-mock-3d",
       type: "Run",
@@ -197,6 +224,73 @@ function samplePlan(text: string, multisport = false) {
   };
 }
 
+/**
+ * 跑步＋騎車（或只騎車）的課表（多運動的第 3 階段）：今天一堂耐力騎（配對今天傍晚的騎車）、相鄰兩天甜蜜點與 T、
+ * 再一堂最大攝氧間歇——第一次不設 accept_warnings，檢查器會回跨運動的警告（兩項合計的數量、不連排）。
+ * rideOnly：只練騎車（耐力、甜蜜點、長騎），照規則排、沒有警告
+ */
+function cyclingPlan(rideOnly: boolean, accept = false) {
+  const t = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const at = (index: number) => daysAgo(t - index);
+  const zone = (z: string, minutes: number) => ({ duration_min: minutes, target: { zone: z } });
+  const endurance = { date: today(), kind: "ride_endurance", title: "耐力騎", steps: [zone("Z2", 60)], purpose: "有氧基礎", success: "心率大多在騎車的 Z2" };
+  const sweetspot = (date: string) => ({
+    date,
+    kind: "ride_sweetspot",
+    title: "甜蜜點 2 × 15 分鐘",
+    steps: [zone("Z2", 15), { repeat: 2, steps: [zone("SS", 15), { duration_min: 5 }] }, zone("Z1", 10)],
+    purpose: "提高 FTP",
+    success: "第二組仍能維持",
+    fallback: "改成 60 分鐘耐力騎",
+  });
+  if (rideOnly) {
+    const [a, b] = t <= 3 ? [t + 2, 6] : [t - 3, t === 6 ? 5 : 6];
+    return {
+      week_start: at(0),
+      style: "fixed",
+      reason: "（模擬）只練騎車：耐力為主，一堂甜蜜點",
+      // 週五以後甜蜜點會排在今天以前（past_date 的提醒）：一律寫理由存
+      accept_warnings: true,
+      warning_notes: "（模擬）測試用的課表",
+      sessions: [endurance, sweetspot(at(a)), { date: at(b), kind: "ride_long", title: "長騎", steps: [zone("Z2", 95)], purpose: "耐力", success: "補給與心率穩定" }],
+    };
+  }
+  const [a, b] = t <= 4 ? [t + 1, t + 2] : [t - 2, t - 1];
+  const free = [0, 1, 2, 3, 4, 5, 6].filter((i) => ![t, a, b].includes(i));
+  return {
+    week_start: at(0),
+    style: "fixed",
+    reason: "（模擬）跑步＋騎車",
+    ...(accept ? { accept_warnings: true, warning_notes: "（模擬）測試跨運動的警告" } : {}),
+    sessions: [
+      endurance,
+      sweetspot(at(a)),
+      {
+        date: at(b),
+        kind: "threshold",
+        title: "20 分鐘 T",
+        steps: [{ duration_min: 15, target: { hr: "easy" } }, { duration_min: 20, target: { pace: "T" } }, { duration_min: 10, target: { hr: "easy" } }],
+        purpose: "提高閾值",
+        success: "配速穩定",
+        fallback: "改成 40 分鐘輕鬆跑",
+      },
+      {
+        date: at(free.find((i) => Math.abs(i - a) > 1 && Math.abs(i - b) > 1 && i !== t) ?? free[0]!),
+        kind: "ride_vo2",
+        title: "5 × 4 分鐘",
+        steps: [zone("Z2", 15), { repeat: 5, steps: [zone("Z5", 4), { duration_min: 4 }] }, zone("Z1", 10)],
+        purpose: "最大攝氧量",
+        success: "最後一趟仍能完成",
+        fallback: "改成 60 分鐘耐力騎",
+      },
+      { date: at(free.at(-1)!), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" },
+    ],
+  };
+}
+
+/** 工具清單有單車的課（多運動的第 3 階段） */
+const hasCycling = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("ride_sweetspot");
+
 /** 工具清單有交叉訓練的 sport（多運動的開關開著） */
 const hasMultisport = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("交叉訓練（kind=cross）是哪種運動");
 
@@ -241,6 +335,10 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (body.tool_choice?.type === "none") return [{ type: "text", text: "（模擬回覆）已達工具呼叫上限，先回覆到這裡。" }];
 
   if (isToolResult) {
+    // 跑步＋騎車的課表有跨運動的警告：寫理由再存一次
+    if (lastText.includes("尚未儲存") && lastText.includes("跑步與騎車")) {
+      return [toolUse("save_training_plan", cyclingPlan(false, true))];
+    }
     if (lastText.includes("✅ 是今天的活動")) {
       return [toolUse("save_workout", { perceived_effort: 7, subjective_notes: "腿有點重" })];
     }
@@ -256,6 +354,12 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
+  if (/騎完|剛騎/.test(lastText) && hasCycling(body.tools)) {
+    return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
+  }
+  if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
+    return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
+  }
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
   // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
   if (/調整這週接下來的課/.test(lastText)) {

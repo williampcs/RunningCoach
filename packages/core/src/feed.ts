@@ -9,7 +9,8 @@ import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
 import { activityLabel, STRENGTH_TYPES } from "./activity-labels";
 import { featureOn } from "./features";
-import { isHardOther, QUALITY_KINDS } from "./plan";
+import { isHardOther, QUALITY_KINDS, RIDE_QUALITY_KINDS } from "./plan";
+import { athleteSports, sportOfType } from "./sports";
 import { activePlan, type ActivePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
@@ -17,8 +18,8 @@ import { WEATHER_CREDIT, weatherNotice, type WeatherForecast } from "./weather";
 
 export type FeedAction =
   | { type: "checkin" }
-  /** 前往跑後回報；有 workoutId 時預先選好那一筆 */
-  | { type: "report"; workoutId?: number }
+  /** 前往跑後回報；有 workoutId 時預先選好那一筆（騎車等其他運動是 intervalsId，多運動） */
+  | { type: "report"; workoutId?: number; intervalsId?: string }
   | { type: "sync" }
   | { type: "plan" }
   /** 帶著這段文字開始和教練對話 */
@@ -140,12 +141,12 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
         });
       }
     }
-    if (s.date === yesterday && r?.outcome === "missed" && QUALITY_KINDS.has(s.kind)) {
+    if (s.date === yesterday && r?.outcome === "missed" && (QUALITY_KINDS.has(s.kind) || (multisport && RIDE_QUALITY_KINDS.has(s.kind)))) {
       items.push({
         id: `plan-missed-${s.id}`,
         kind: "plan",
         tone: "info",
-        title: `昨天的${s.title}沒跑`,
+        title: `昨天的${s.title}${RIDE_QUALITY_KINDS.has(s.kind) ? "沒騎" : "沒跑"}`,
         detail: "跳過即可，不要補，也不要把強度課擠在一起；照課表繼續。",
         actions: [{ type: "plan" }],
       });
@@ -181,7 +182,8 @@ function todaysPlanLines(content: string, today: string): string[] {
 
 /** weather：今天起的預報（設定了天氣且取得到時），用來提醒濕熱、下雨與空氣品質 */
 export async function buildFeed(db: Db, today: string, settings: CoachSettings, weather: WeatherForecast | null = null): Promise<FeedItem[]> {
-  const [checkins, wellness, workouts, pending, races, pastRaces, plan, distinct] = await Promise.all([
+  const multisport = featureOn(settings, "multisport");
+  const [checkins, wellness, workouts, pending, races, pastRaces, plan, distinct, profile, others] = await Promise.all([
     db.getCheckins(1),
     db.getWellness(36),
     db.getRecentWorkouts(28),
@@ -190,7 +192,12 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
     db.getPastRacesWithoutResult(settings.raceLookbackDays),
     db.getActiveTrainingPlan(),
     db.getDistinctPairs(),
+    db.getProfile(),
+    multisport ? db.getOtherActivities(28) : Promise.resolve([]),
   ]);
+  // 多運動：只練騎車的人不提醒「很久沒跑」；騎車有自己的回報與提醒
+  const sports = multisport ? athleteSports(profile) : ["run"];
+  const rides = others.filter((a) => sportOfType(a.type) === "ride");
   const items: FeedItem[] = [];
   const recovery = analyzeRecovery(wellness, checkins, today);
   // 手錶早上同步之前，最新的恢復資料是昨天的：寫明是昨天的
@@ -292,6 +299,19 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
     });
   }
 
+  // 多運動：最近一次騎車還沒回報感受（今天或昨天，練騎車的人）
+  const latestRide = rides[0];
+  if (sports.includes("ride") && latestRide && latestRide.perceived_effort == null && daysBetween(latestRide.date, today) <= 1) {
+    items.push({
+      id: `report-ride-${latestRide.intervals_id}`,
+      kind: "report",
+      tone: "info",
+      title: `${latestRide.date === today ? "今天" : "昨天"}的騎車（${Math.round(latestRide.duration_min ?? 0)} 分鐘）還沒回報感受`,
+      detail: "補上體感，教練判斷這堂課的難度會更準。",
+      actions: [{ type: "report", intervalsId: latestRide.intervals_id }],
+    });
+  }
+
   if (pending) {
     items.push({
       id: `pending-${today}`,
@@ -331,7 +351,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
 
   // 結構化的課表：今天的課、昨天沒跑的課、跑了不一樣的課、該排下週了
   if (plan?.week_start) {
-    items.push(...(await planItems(db, today, featureOn(settings, "multisport"))));
+    items.push(...(await planItems(db, today, multisport)));
   } else if (plan) {
     // 文字課表：課表裡寫到今天星期幾的行
     const lines = todaysPlanLines(plan.content, today);
@@ -363,8 +383,20 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
     });
   }
 
-  // 很久沒跑
-  if (latest) {
+  // 很久沒跑（不跑步的選手不提醒；只練騎車的人看騎車）
+  if (!sports.includes("run") && sports.includes("ride")) {
+    const gap = latestRide ? daysBetween(latestRide.date, today) : null;
+    if (gap !== null && gap >= GAP_DAYS) {
+      items.push({
+        id: `gap-${today}`,
+        kind: "gap",
+        tone: "info",
+        title: `已經 ${gap} 天沒騎車了`,
+        detail: "休息也是訓練的一部分。想恢復節奏的話，可以請教練安排。",
+        actions: [ask("聊聊恢復節奏", `我已經 ${gap} 天沒騎車了，想慢慢恢復，該怎麼開始？`), { type: "sync" }],
+      });
+    }
+  } else if (latest && sports.includes("run")) {
     const gap = daysBetween(latest.date, today);
     if (gap >= GAP_DAYS) {
       items.push({

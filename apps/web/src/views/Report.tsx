@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 
-import { addDays, heartRateText, type Activity, type ReportCandidate, type ReportTarget, type RunCard, type RunReport } from "@running-coach/core";
+import {
+  activityLabel,
+  addDays,
+  heartRateText,
+  type Activity,
+  type OtherActivity,
+  type ReportCandidate,
+  type ReportTarget,
+  type RunCard,
+  type RunReport,
+} from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
 import { SyncNotice } from "./PhoneGuide";
 import { RunCardView } from "./RunCard";
 import { useSync } from "../use-sync";
@@ -36,6 +47,20 @@ export function analysisRequest(a: RunData, effort: number, notes: string, backf
   ].join("\n");
 }
 
+/** 騎車等其他運動交給教練分析的訊息（多運動）：體感已存檔，教練用 get_recent_workouts 看得到這趟 */
+export function otherAnalysisRequest(a: OtherActivity, effort: number, notes: string): string {
+  const parts = [`${Math.round(a.duration_min ?? 0)} 分鐘`, a.distance_km ? `${a.distance_km} km` : null, a.avg_hr != null ? `平均心率 ${a.avg_hr}` : null, a.training_load != null ? `負荷 ${a.training_load}` : null];
+  return [
+    `我在 ${a.date} 做了${activityLabel(a.type)}，請以教練角度給我回饋。`,
+    "",
+    `${activityLabel(a.type)}：${parts.filter(Boolean).join("｜")}`,
+    `體感強度：${effort}/10`,
+    `主觀感受：${notes || "未記錄"}`,
+    "",
+    "（體感已經存檔，不需要再呼叫 save_activity_feedback；這趟的數據在 get_recent_workouts 的其他運動，對照課表用 get_training_plan。）",
+  ].join("\n");
+}
+
 /** 今天、昨天、前天；更早的顯示日期 */
 function dayLabel(date: string, today: string): string {
   if (date === today) return "今天";
@@ -46,10 +71,10 @@ function dayLabel(date: string, today: string): string {
 
 const PENDING = "pending";
 const targetKey = (t: ReportTarget) =>
-  t.kind === "saved" ? `saved:${t.workoutId}` : t.kind === "new" ? `new:${t.intervalsId}` : PENDING;
+  t.kind === "saved" ? `saved:${t.workoutId}` : t.kind === "new" ? `new:${t.intervalsId}` : t.kind === "other" ? `other:${t.intervalsId}` : PENDING;
 
-/** preselect：從教練動態進來時要預先選好的紀錄 */
-export function ReportView({ preselect, onPreselectUsed }: { preselect: number | null; onPreselectUsed: () => void }) {
+/** preselect：從教練動態進來時要預先選好的紀錄（跑步是 workout id，騎車等是 intervals_id） */
+export function ReportView({ preselect, onPreselectUsed }: { preselect: number | string | null; onPreselectUsed: () => void }) {
   const { coach, settings, revision, touch, goTo, activitiesReady } = useApp();
   const today = coach.today();
   const [effort, setEffort] = useState(5);
@@ -98,8 +123,9 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     const keys = choices.candidates.map((c) => targetKey(c.target));
     if (preselect !== null) {
       onPreselectUsed();
-      if (keys.includes(`saved:${preselect}`)) {
-        setSelected(`saved:${preselect}`);
+      const key = typeof preselect === "number" ? `saved:${preselect}` : `other:${preselect}`;
+      if (keys.includes(key)) {
+        setSelected(key);
         return;
       }
     }
@@ -113,8 +139,12 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
 
   const chosen = choices?.candidates.find((c) => targetKey(c.target) === selected) ?? null;
   const when = (c: ReportCandidate) => `${dayLabel(c.activity.date, today)}${c.startTime ? ` ${c.startTime}` : ""}`;
+  const multisport = featureEnabled("multisport");
+  const isOther = (c: ReportCandidate) => c.target.kind === "other";
   const submitLabel = chosen
-    ? `存到${dayLabel(chosen.activity.date, today)}${chosen.startTime ? ` ${chosen.startTime} ` : ""}的 ${chosen.activity.distance_km ?? "?"} km`
+    ? isOther(chosen)
+      ? `存到${dayLabel(chosen.activity.date, today)}${chosen.startTime ? ` ${chosen.startTime} ` : ""}的${activityLabel(chosen.activity.type)}（${Math.round(chosen.activity.duration_min ?? 0)} 分鐘）`
+      : `存到${dayLabel(chosen.activity.date, today)}${chosen.startTime ? ` ${chosen.startTime} ` : ""}的 ${chosen.activity.distance_km ?? "?"} km`
     : "先存起來，等同步";
 
   async function submit() {
@@ -148,18 +178,22 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
       )}
 
       <section className="card">
-        <h2>跑後回報</h2>
-        <p className="muted small">選一趟跑步，填上體感。更早的跑步可以在「紀錄」補填。</p>
+        <h2>{multisport ? "運動回報" : "跑後回報"}</h2>
+        <p className="muted small">
+          {multisport
+            ? "選一趟跑步或騎車，填上體感。騎車要先同步才會出現；更早的可以在「紀錄」補填。"
+            : "選一趟跑步，填上體感。更早的跑步可以在「紀錄」補填。"}
+        </p>
         {hasIntervals &&
           (choices === null ? (
             <p className="muted small">讀取最近的跑步…</p>
           ) : (
-            <fieldset className="choices" aria-label="要回報的跑步">
+            <fieldset className="choices" aria-label={multisport ? "要回報的運動" : "要回報的跑步"}>
               {choices.fetchError && (
                 <div className="notice warn">無法取得 Intervals.icu 的活動（{choices.fetchError}），只列出已同步的紀錄。</div>
               )}
               {choices.candidates.length === 0 && !choices.fetchError && (
-                <p className="muted small">最近 3 天沒有還沒回報的跑步。</p>
+                <p className="muted small">{multisport ? "最近 3 天沒有還沒回報的跑步或騎車。" : "最近 3 天沒有還沒回報的跑步。"}</p>
               )}
               {choices.candidates.map((c) => {
                 const key = targetKey(c.target);
@@ -167,10 +201,16 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                   <label key={key} className={`choice${selected === key ? " selected" : ""}`}>
                     <input type="radio" name="report-target" checked={selected === key} onChange={() => setSelected(key)} />
                     <span>
-                      <strong>{when(c)}</strong>
+                      <strong>
+                        {when(c)}
+                        {isOther(c) && ` ${c.sport === "ride" ? "🚴 " : ""}${activityLabel(c.activity.type)}`}
+                      </strong>
                       <span className="muted small">
-                        {c.activity.distance_km ?? "?"} km・{c.activity.duration_min ?? "?"} 分
-                        {c.activity.avg_pace ? `・${c.activity.avg_pace}` : ""}
+                        {isOther(c)
+                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${c.activity.distance_km} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null]
+                              .filter(Boolean)
+                              .join("・")
+                          : `${c.activity.distance_km ?? "?"} km・${c.activity.duration_min ?? "?"} 分${c.activity.avg_pace ? `・${c.activity.avg_pace}` : ""}`}
                       </span>
                     </span>
                   </label>
@@ -238,6 +278,19 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
             ) : (
               <p className="muted small">讀取中…</p>
             )}
+          </div>
+        )}
+        {report?.status === "other" && (
+          <div className="report-result" ref={resultRef}>
+            <div className="notice ok">已存到這趟{activityLabel(report.activity.type)}。</div>
+            <div className="row">
+              <button className="primary" onClick={() => goTo("chat", otherAnalysisRequest(report.activity, submitted?.effort ?? 5, submitted?.notes ?? ""))}>
+                請教練分析
+              </button>
+              <button className="link" onClick={() => goTo("history")}>
+                看所有紀錄
+              </button>
+            </div>
           </div>
         )}
         {report?.status === "pending" && (

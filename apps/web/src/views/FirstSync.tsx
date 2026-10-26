@@ -1,4 +1,5 @@
 import { useApp } from "../app-context";
+import { featureEnabled } from "../environment";
 import type { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
 
@@ -13,7 +14,11 @@ export function FirstSync({ sync, disabled = false }: { sync: ReturnType<typeof 
   return (
     <>
       <ul className="small muted first-sync">
-        <li>「同步最近 14 天」：最近兩週的跑步與恢復資料，每一趟都產生一段教練的分析（花一點模型的費用）。</li>
+        <li>
+          {featureEnabled("multisport")
+            ? "「同步最近 14 天」：最近兩週的跑步、騎車等運動與恢復資料，每一趟跑步都產生一段教練的分析（花一點模型的費用）。"
+            : "「同步最近 14 天」：最近兩週的跑步與恢復資料，每一趟都產生一段教練的分析（花一點模型的費用）。"}
+        </li>
         {canAll && <li>「匯入全部的紀錄」：先同步最近 14 天，再把更早的跑步全部存進來；更早的不產生分析、不花模型的費用，可能要一兩分鐘。</li>}
       </ul>
       <div className="row wrap">

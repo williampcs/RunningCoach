@@ -8,6 +8,8 @@ import {
   parseSessions,
   planMarkdown,
   QUALITY_KINDS,
+  RIDE_KINDS,
+  SESSION_KINDS,
   sessionView,
   sortSessions,
   STATUS_LABELS,
@@ -86,12 +88,14 @@ async function contextFor(db: Db, today: string, weekStart: string, style: PlanS
     db.getAllRaces(),
     db.getWellness(36),
     db.getCheckins(1),
-    db.getOtherActivities(14),
+    // 單車的規則看最近四週的騎車（長騎的增幅、恢復週、賽前減量）
+    db.getOtherActivities(42),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
   ]);
   return {
     sports: Object.fromEntries(TARGET_SPORTS.map((sport) => [sport, sportTargets(sportSettings?.value, sport, today)])),
     multisport: options.multisport,
+    rideKmh: values.ride.kmh,
     values,
     challenge: profile.pref_intensity === "challenge",
     fallbackPaceSec: typicalPaceSec(workouts),
@@ -192,6 +196,9 @@ export interface ActivePlan {
   totalKm: number;
   /** 這週的跑步次數（不含跳過的、不是跑步的課） */
   runCount: number;
+  /** 這週的單車的課（不含跳過的）：堂數與分鐘（多運動） */
+  rideCount: number;
+  rideMinutes: number;
   /** 教練蓋過檢查器的警告時寫的理由（給選手看）；檢查器的警告本身只給教練看 */
   coachNote: string | null;
   /** 這週沒有配到課的跑步（排課前已跑、課表外多跑的） */
@@ -213,7 +220,7 @@ export async function nextPlan(db: Db, today: string): Promise<ActivePlan | null
 }
 
 async function planView(db: Db, today: string, plan: TrainingPlan): Promise<ActivePlan> {
-  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, runCount: 0, coachNote: null, extras: [], extraOthers: [] };
+  if (!plan.week_start) return { plan, sessions: [], styleLabel: null, totalKm: 0, runCount: 0, rideCount: 0, rideMinutes: 0, coachNote: null, extras: [], extraOthers: [] };
   const style = (plan.style ?? "fixed") as PlanStyle;
   const ctx = await contextFor(db, today, plan.week_start, style);
   const planned = await db.getPlannedSessions(plan.id);
@@ -221,12 +228,15 @@ async function planView(db: Db, today: string, plan: TrainingPlan): Promise<Acti
   const sessions = sortSessions(planned).map((s) => ({ ...sessionView(s, ctx), result: match.results.get(s.id) ?? null }));
   const totalKm = Math.round(sessions.filter((s) => s.status !== "skipped").reduce((sum, s) => sum + s.km, 0) * 10) / 10;
   const runCount = sessions.filter((s) => s.isRun && s.status !== "skipped").length;
+  const rides = sessions.filter((s) => RIDE_KINDS.has(s.kind) && s.status !== "skipped");
   return {
     plan,
     sessions,
     styleLabel: STYLE_LABELS[style],
     totalKm,
     runCount,
+    rideCount: rides.length,
+    rideMinutes: rides.reduce((sum, s) => sum + s.minutes, 0),
     coachNote: coachNoteOf(plan.notes),
     extras: extrasText(match),
     extraOthers: match.extraOthers,
@@ -369,31 +379,35 @@ export interface RunPlanResult {
 }
 
 /**
- * since 以後每週的結構化課表與實際的對照，依跑步的 id 列出。
- * inPlannedWeek：落在有課表的週、但沒有配到課的跑步（課表外的跑步）.
+ * since 以後每週的結構化課表與實際的對照，依跑步的 id 列出（騎車等其他運動依 intervals_id，byOther）。
+ * inPlannedWeek：落在有課表的週、但沒有配到課的跑步（課表外的跑步）；othersInPlannedWeek 是其他運動的.
  */
 export async function planResultsSince(
   db: Db,
   today: string,
   since: string,
-): Promise<{ byWorkout: Map<number, RunPlanResult>; inPlannedWeek: Set<number> }> {
+): Promise<{ byWorkout: Map<number, RunPlanResult>; inPlannedWeek: Set<number>; byOther: Map<string, RunPlanResult>; othersInPlannedWeek: Set<string> }> {
   const byWorkout = new Map<number, RunPlanResult>();
   const inPlannedWeek = new Set<number>();
+  const byOther = new Map<string, RunPlanResult>();
+  const othersInPlannedWeek = new Set<string>();
   const plans = await db.getWeeklyPlansSince(addDays(since, -6));
-  if (!plans.length) return { byWorkout, inPlannedWeek };
+  if (!plans.length) return { byWorkout, inPlannedWeek, byOther, othersInPlannedWeek };
   const ctx = await contextFor(db, today, plans[0]!.week_start!, "fixed");
   for (const plan of plans) {
     const sessions = await db.getPlannedSessions(plan.id);
     const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start!, today, ctx);
     for (const s of sessions) {
       const result = match.results.get(s.id);
+      if (result?.activityId) byOther.set(result.activityId, { kind: s.kind, kindLabel: SESSION_KINDS[s.kind], title: s.title, result });
       if (result?.workoutId == null) continue;
       const v = sessionView(s, ctx);
       byWorkout.set(result.workoutId, { kind: s.kind, kindLabel: v.kindLabel, title: s.title, result });
     }
     for (const w of match.extraRuns) inPlannedWeek.add(w.id);
+    for (const a of match.extraOthers) othersInPlannedWeek.add(a.intervals_id);
   }
-  return { byWorkout, inPlannedWeek };
+  return { byWorkout, inPlannedWeek, byOther, othersInPlannedWeek };
 }
 
 /**

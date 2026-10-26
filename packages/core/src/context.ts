@@ -17,6 +17,7 @@ import type { ChatMessage } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { guideTopics } from "./app-guide";
+import { athleteSports, SPORT_LABELS } from "./sports";
 import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings } from "./types";
 
 /** get_recent_workouts tool 的預設查詢天數 */
@@ -59,6 +60,9 @@ export interface StatusSummary {
 function toInt(value: string | undefined): number | null {
   return value !== undefined && /^\s*-?\d+\s*$/.test(value) ? Number(value) : null;
 }
+
+/** 單車的賽事標出運動；跑步的不標（和開關關著時一樣） */
+const raceSportLabel = (race: Race) => (race.sport === "ride" ? "（單車）" : "");
 
 function targetLabel(race: Race): string {
   return race.target_time ? `｜目標 ${race.target_time}` : "｜目標完賽";
@@ -107,6 +111,11 @@ export class ContextManager {
 
     const profile = await this.db.getProfile();
     const multisport = featureOn(this.settings, "multisport");
+    // 多運動：教練的角色不限跑步，依選手練的運動（規格 12.24 的第 3 階段）
+    const sports = athleteSports(profile);
+    const role = multisport
+      ? `你是一位專業的耐力運動教練（這位選手練的運動：${sports.map((s) => SPORT_LABELS[s]).join("、")}），以下是選手資料：`
+      : "你是一位專業跑步教練，以下是選手資料：";
     const lines = [
       `今天日期：${today}（${weekdayName(today)}）` +
         `｜時區：${timeZone}（${utcOffsetLabel(now, timeZone)}）｜以星期一為一週的第一天`,
@@ -114,7 +123,7 @@ export class ContextManager {
       "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
         "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
       "",
-      "你是一位專業跑步教練，以下是選手資料：",
+      role,
       "",
     ];
 
@@ -192,7 +201,7 @@ export class ContextManager {
       for (const r of races) {
         const status = r.confirmed ? "已確認報名" : "考慮中";
         lines.push(
-          `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km` +
+          `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${raceSportLabel(r)}` +
             `${targetLabel(r)}｜距今 ${daysBetween(today, r.date)} 天（${status}）`,
         );
       }
@@ -204,7 +213,7 @@ export class ContextManager {
       lines.push("", "待記錄成績的賽事（已結束、尚未回報成績）：");
       for (const r of pastRaces) {
         lines.push(
-          `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${targetLabel(r)}｜${daysBetween(r.date, today)} 天前`,
+          `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${raceSportLabel(r)}${targetLabel(r)}｜${daysBetween(r.date, today)} 天前`,
         );
       }
     }
@@ -243,9 +252,9 @@ export class ContextManager {
 
     lines.push(
       "",
-      "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
+      multisport ? "請根據選手資料給予個人化的訓練建議，只排選手有練的運動。回應使用繁體中文。" : "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
       "",
-      coachingMethod({ multisport }),
+      coachingMethod({ multisport, sports }),
       "",
       "【訓練歷史載入時機】",
       "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
@@ -281,13 +290,20 @@ export class ContextManager {
       "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
       "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
         (this.settings.shell === "web"
-          ? "並告知使用者等手錶上傳到 Intervals.icu 後，到「跑後回報」按「同步最近 14 天」完成合併"
+          ? `並告知使用者等手錶上傳到 Intervals.icu 後，到「${multisport ? "運動回報" : "跑後回報"}」按「同步最近 14 天」完成合併`
           : "並告知使用者手錶同步後輸入 /sync 完成合併"),
+      ...(multisport
+        ? [
+            "・回報的是騎車等跑步以外的運動時，不要用 fetch_latest_activity 與 save_workout（那是跑步的）：用 save_activity_feedback 記下那趟的體感與感受" +
+              (this.settings.shell === "web" ? "；選手也可以在「運動回報」自己填" : "") +
+              "，再依那趟的數據（get_recent_workouts 的其他運動）給回饋。",
+          ]
+        : []),
       "",
       "【App 的使用方式】",
       `選手問 App 怎麼用（某個分頁、按鈕、設定、同步或資料存在哪裡）時，先用 get_app_help 查，不要憑印象回答；只回答選手問的部分，${
         this.settings.shell === "web" ? "最後附上工具給的說明頁連結。" : "需要時說明網頁版的做法不同。"
-      }可查的主題：${guideTopics(this.settings.shell)}`,
+      }可查的主題：${guideTopics(this.settings.shell, this.settings.features)}`,
     );
     return lines.join("\n");
   }

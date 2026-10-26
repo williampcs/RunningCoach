@@ -11,6 +11,7 @@
  * 沒有跑步時也更新，失敗不影響活動的同步
  */
 import { addDays } from "./dates";
+import { athleteSports } from "./sports";
 import type { Db, SaveResult } from "./db";
 import { IntervalsError, runSettingsOf } from "./intervals";
 import type { Llm } from "./llm";
@@ -108,6 +109,8 @@ export async function runSync(deps: {
   activities: ActivitySource;
   weather?: WeatherSource | null;
   logger: Logger;
+  /** 多運動的開關：不跑步的選手（只練騎車等）沒有跑步時不當成問題 */
+  multisport?: boolean;
 }): Promise<string> {
   const { db, llm, activities, logger } = deps;
 
@@ -148,6 +151,9 @@ export async function runSync(deps: {
   await refreshTrainingSnapshots(db, activities, logger);
   const others = await syncOtherActivities(db, activities, logger);
 
+  if (!fetched.length && deps.multisport && others?.stored && !athleteSports(await db.getProfile()).includes("run")) {
+    return `✅ Intervals.icu 同步完成：其他運動 ${countsText(others.counts)}（教練會參考）${removedNote ? `，${removedNote}` : ""}${wellnessDays ? `，更新恢復資料 ${wellnessDays} 天` : ""}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
+  }
   if (!fetched.length) {
     // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明怎麼改，不必檢查上傳
     const othersNote = others

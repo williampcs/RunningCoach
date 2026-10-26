@@ -16,6 +16,7 @@ import {
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
 
 interface RaceForm {
   id: number | null;
@@ -27,6 +28,8 @@ interface RaceForm {
   target: string;
   confirmed: boolean;
   notes: string;
+  /** 賽事的運動（多運動）：run 跑步、ride 騎車 */
+  sport: "run" | "ride";
 }
 
 const EMPTY_RACE: RaceForm = {
@@ -38,6 +41,7 @@ const EMPTY_RACE: RaceForm = {
   target: "",
   confirmed: true,
   notes: "",
+  sport: "run",
 };
 
 interface ResultForm {
@@ -111,6 +115,8 @@ export function RacesCard() {
         target_time: f.target.trim(),
         confirmed: f.confirmed ? 1 : 0,
         notes: f.notes.trim(),
+        // 多運動：單車的賽事；開關關著時不寫（和原本一樣）
+        ...(featureEnabled("multisport") ? { sport: f.sport } : {}),
       };
       if (f.id === null) await coach.db.addRace(fields);
       else await coach.editRace(f.id, fields);
@@ -185,6 +191,15 @@ export function RacesCard() {
             <p className="small muted wide">賽後只能改名稱與備註；成績用「修改成績」。</p>
           ) : (
             <>
+              {featureEnabled("multisport") && (
+                <label>
+                  運動
+                  <select value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value as RaceForm["sport"] })}>
+                    <option value="run">跑步</option>
+                    <option value="ride">騎車（公路賽、百公里等）</option>
+                  </select>
+                </label>
+              )}
               <label>
                 日期
                 <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
@@ -244,6 +259,7 @@ export function RacesCard() {
           <span className="small">{raceStatusText(race, today)}</span>
         </div>
         <div className="muted small">
+          {featureEnabled("multisport") && race.sport === "ride" && "🚴 單車｜"}
           {race.date}｜{race.distance_km}km｜目標 {race.target_time || "完賽"}
           {outcome === "finished" && resultDetail(race).map((d) => `｜${d}`)}
           {race.notes && `｜${race.notes}`}
@@ -260,6 +276,7 @@ export function RacesCard() {
                 target: race.target_time ?? "",
                 confirmed: Boolean(race.confirmed),
                 notes: race.notes ?? "",
+                sport: race.sport === "ride" ? "ride" : "run",
               })
             }
           >

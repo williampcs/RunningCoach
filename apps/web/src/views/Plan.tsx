@@ -4,13 +4,16 @@ import {
   addDays,
   DIFFICULTY_LABELS,
   monthDay,
+  activityLabel,
+  isQualityKind,
   OUTCOME_LABELS,
   planTimeline,
-  QUALITY_KINDS,
+  sportOfType,
   raceStatusText,
   STATUS_LABELS,
   weekdayName,
   type ActivePlan,
+  type OtherActivity,
   type PlanTimeline,
   type Race,
   type SessionKind,
@@ -41,7 +44,38 @@ const KIND_INTENSITY: Record<SessionKind, StepIntensity> = {
   rest: "other",
   cross: "other",
   strength: "other",
+  ride_recovery: "low",
+  ride_endurance: "low",
+  ride_long: "low",
+  ride_tempo: "moderate",
+  ride_sweetspot: "moderate",
+  ride_threshold: "moderate",
+  ride_vo2: "high",
+  ride_anaerobic: "high",
 };
+
+/** 跑步以外的課的圖示（多運動）：單車、肌力、游泳等；跑步的課沒有圖示（和開關關著時一樣） */
+const SPORT_ICONS: Record<string, string> = { ride: "🚴", strength: "🏋️", swim: "🏊", other: "🤸" };
+function sportIcon(s: TimelineSession): string | null {
+  if (!featureEnabled("multisport")) return null;
+  if (s.kind === "strength") return SPORT_ICONS.strength!;
+  return s.sport ? (SPORT_ICONS[s.sport] ?? null) : null;
+}
+
+/** 分鐘 → 「3 小時 20 分」「45 分鐘」 */
+const hoursText = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} 小時${m % 60 ? ` ${m % 60} 分` : ""}` : `${m} 分鐘`);
+
+/** 課表外的其他運動（多運動）：一行，例「🚴 課表外的騎車 60 分鐘・心率 128」 */
+function OtherItem({ a }: { a: OtherActivity }) {
+  const sport = sportOfType(a.type);
+  const facts = [`${Math.round(a.duration_min ?? 0)} 分鐘`, a.avg_hr != null ? `心率 ${a.avg_hr}` : null, a.training_load != null ? `負荷 ${a.training_load}` : null];
+  return (
+    <div className="plan-other small" data-sport={sport}>
+      <span aria-hidden="true">{SPORT_ICONS[sport] ?? SPORT_ICONS.other}</span> 課表外的{activityLabel(a.type)}
+      <span className="muted"> {facts.filter(Boolean).join("・")}</span>
+    </div>
+  );
+}
 
 function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
@@ -110,6 +144,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   }
 
   const expanded = open;
+  const icon = sportIcon(s);
   // 點卡片的任何地方都展開或收合；卡片裡的按鈕、連結照原本的行為；選取文字時不觸發
   const onCardClick = (e: MouseEvent<HTMLElement>) => {
     if ((e.target as HTMLElement).closest("button, a, input, select, textarea, summary")) return;
@@ -119,6 +154,11 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   const title = (
     <>
       <span className={`bar ${KIND_INTENSITY[s.kind]}`} aria-hidden="true" />
+      {icon && (
+        <span className="plan-sport-icon" aria-label={s.sport === "ride" ? "騎車" : s.kind === "strength" ? "肌力訓練" : undefined}>
+          {icon}
+        </span>
+      )}
       <span className="plan-session-title">
         <strong className={focus ? "plan-session-name big" : "plan-session-name"}>{s.title}</strong>
         {s.kindHint && <span className="muted small"> {s.kindHint}</span>}
@@ -140,7 +180,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   const hasDetails = !!(s.purpose || s.success || s.fallback);
 
   return (
-    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind} onClick={onCardClick}>
+    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind} data-sport={featureEnabled("multisport") ? (s.sport ?? undefined) : undefined} onClick={onCardClick}>
       <button type="button" className="plan-session-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         {title}
       </button>
@@ -195,7 +235,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                       做完了
                     </button>
                   )}
-                  {s.fallback && QUALITY_KINDS.has(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
+                  {s.fallback && isQualityKind(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
                   {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
                   <button onClick={() => onChange(s, "skip")}>跳過</button>
                 </>
@@ -240,7 +280,10 @@ function RaceItem({ race, today }: { race: Race; today: string }) {
     <button type="button" className="plan-race" onClick={() => document.getElementById("races")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
       <span className="plan-race-head">
         <span className="plan-race-flag">{FLAG}</span>
-        <strong>{race.name}</strong>
+        <strong>
+          {featureEnabled("multisport") && race.sport === "ride" && "🚴 "}
+          {race.name}
+        </strong>
         <span className="plan-race-days">{raceStatusText(race, today)}</span>
       </span>
       <span className="chips">
@@ -269,6 +312,14 @@ function DateLabel({ label, weekday, today, race }: { label: string; weekday?: s
 }
 
 
+/** 一週的總量：跑步的公里與次數；有單車的課時加上騎車的時間（多運動），只騎車時只寫騎車 */
+function weekText(w: { km: number; runs: number; rides: number; rideMinutes: number }): string {
+  const run = `${w.km} km · ${w.runs} 次跑步`;
+  if (!w.rides) return run;
+  const ride = `騎車 ${w.rides} 次 ${hoursText(w.rideMinutes)}`;
+  return w.runs ? `${run} · ${ride}` : ride;
+}
+
 function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onChange: SessionChange }) {
   const item = (s: TimelineSession) => <SessionItem key={s.id ?? s.title} s={s} focus={s === t.focus} onChange={onChange} />;
   return (
@@ -283,14 +334,17 @@ function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onCh
         <li key={d.date} className={`tl-day ${d.date === today ? "today" : ""}`} data-date={d.date}>
           {d.nextWeek && (
             <div className="tl-week small muted">
-              下週 {d.nextWeek.range} · {d.nextWeek.km} km · {d.nextWeek.runs} 次跑步
+              下週 {d.nextWeek.range} · {weekText(d.nextWeek)}
             </div>
           )}
           <div className="tl-row">
             <DateLabel label={d.label} weekday={d.weekday} today={d.date === today} race={d.races.length > 0 && !d.sessions.length} />
             <div className="tl-items">
               {d.sessions.map(item)}
-              {!d.sessions.length && !d.races.length && <div className="plan-rest muted">休息</div>}
+              {d.others.map((a) => (
+                <OtherItem key={a.intervals_id} a={a} />
+              ))}
+              {!d.sessions.length && !d.races.length && !d.others.length && <div className="plan-rest muted">休息</div>}
               {d.races.map((r) => (
                 <RaceItem key={r.id} race={r} today={today} />
               ))}
@@ -341,6 +395,14 @@ function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; o
           </div>
         ))}
         {extras.length > 0 && <p className="small muted">課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：{extras.join("；")}</p>}
+        {t.earlierOthers.map((a) => (
+          <div key={a.intervals_id} className="plan-earlier-item">
+            <span className="tl-label muted">
+              {monthDay(a.date)}（{weekdayOf(a.date)}）
+            </span>
+            <OtherItem a={a} />
+          </div>
+        ))}
         <p className="small muted">實際的紀錄同步後自動對照課表。跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
       </div>
     </details>
@@ -383,7 +445,7 @@ export function PlanView() {
 
   const plan = current?.plan ?? null;
   const structured = current !== null && current.plan.week_start != null;
-  const timeline = structured ? planTimeline(current, next, races, today) : null;
+  const timeline = structured ? planTimeline(current, next, races, today, { others: featureEnabled("multisport") }) : null;
   const hasWhy = structured && !!(plan!.reason || current.coachNote || plan!.outline || next?.plan.reason);
 
   useEffect(() => {
@@ -415,7 +477,7 @@ export function PlanView() {
             <h2 className="sr-only">訓練計畫</h2>
             <div className="plan-top">
               <span className="plan-week">
-                <strong>{timeline.thisWeek ? "這週" : timeline.week.range}</strong> {timeline.week.km} km · {timeline.week.runs} 次跑步
+                <strong>{timeline.thisWeek ? "這週" : timeline.week.range}</strong> {weekText(timeline.week)}
                 {plan!.style === "flexible" && " · 彈性"}
               </span>
               {hasWhy && (

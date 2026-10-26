@@ -5,10 +5,11 @@
 import { addDays, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { EXPECTED_RPE } from "./plan";
-import { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome } from "./plan-match";
-import { planResultsSince } from "./planning";
+import { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
+import { planResultsSince, type RunPlanResult } from "./planning";
+import { sportOfType } from "./sports";
 import { computeTrainingValues, intensityDistribution } from "./training-values";
-import type { Workout } from "./types";
+import type { OtherActivity, Workout } from "./types";
 
 export interface RunCard {
   workout: Workout;
@@ -74,6 +75,20 @@ export function splitSummary(summary: string | null | undefined): { headline: st
   return { headline: headline || null, details: rest(i + 1) };
 }
 
+function planOf(p: RunPlanResult | undefined): RunCard["plan"] {
+  return p
+    ? {
+        kindLabel: p.kindLabel,
+        title: p.title,
+        outcome: p.result.outcome,
+        outcomeLabel: OUTCOME_LABELS[p.result.outcome],
+        reasons: p.result.reasons,
+        difficulty: p.result.difficulty,
+        difficultyLabel: p.result.difficulty ? DIFFICULTY_LABELS[p.result.difficulty] : null,
+      }
+    : null;
+}
+
 export function runCardOf(
   workout: Workout,
   lthr: number | null,
@@ -84,21 +99,84 @@ export function runCardOf(
   return {
     workout,
     intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
-    plan: p
-      ? {
-          kindLabel: p.kindLabel,
-          title: p.title,
-          outcome: p.result.outcome,
-          outcomeLabel: OUTCOME_LABELS[p.result.outcome],
-          reasons: p.result.reasons,
-          difficulty: p.result.difficulty,
-          difficultyLabel: p.result.difficulty ? DIFFICULTY_LABELS[p.result.difficulty] : null,
-        }
-      : null,
+    plan: planOf(p),
     outsidePlan: planned.inPlannedWeek.has(workout.id),
     expectedRpe: p && p.result.outcome !== "fallback" ? EXPECTED_RPE[p.kind] : p ? EXPECTED_RPE.easy : null,
     ...splitSummary(workout.summary),
   };
+}
+
+/** 紀錄頁的一趟騎車（多運動的第 3 階段）：和跑步的卡片同一種樣式，數字換成騎車用的 */
+export interface RideCard {
+  activity: OtherActivity;
+  /** 依那趟自己的心率區間（騎車的閾值心率）的時間（秒）；沒有區間資料時為 null */
+  intensity: { low: number; moderate: number; high: number } | null;
+  /** 平均功率（瓦）；沒有功率計時為 null */
+  watts: number | null;
+  plan: RunCard["plan"];
+  outsidePlan: boolean;
+  expectedRpe: [number, number] | null;
+}
+
+function rawNumber(json: string | null | undefined, key: string): number | null {
+  try {
+    const v = json ? (JSON.parse(json) as Record<string, unknown>)[key] : null;
+    return typeof v === "number" && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<typeof planResultsSince>>): RideCard {
+  const d = intensityDistribution([activity], null);
+  const p = planned.byOther.get(activity.intervals_id);
+  const result: SessionResult | undefined = p?.result;
+  const watts = rawNumber(activity.raw_json, "icu_average_watts") ?? rawNumber(activity.raw_json, "average_watts");
+  return {
+    activity,
+    intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
+    watts: watts ? Math.round(watts) : null,
+    plan: planOf(p),
+    outsidePlan: planned.othersInPlannedWeek.has(activity.intervals_id),
+    expectedRpe: p && result?.outcome !== "fallback" ? EXPECTED_RPE[p.kind] : p ? EXPECTED_RPE.ride_endurance : null,
+  };
+}
+
+/** 最近 N 天的騎車卡片，新的在前 */
+export async function rideCards(db: Db, today: string, days: number): Promise<RideCard[]> {
+  const [others, planned] = await Promise.all([db.getOtherActivities(days), planResultsSince(db, today, addDays(today, -days))]);
+  return others.filter((a) => sportOfType(a.type) === "ride").map((a) => rideCardOf(a, planned));
+}
+
+/** 紀錄頁的騎車累積（簡單的：總次數、時間、距離、這週、最長的一趟） */
+export interface RideAccumulation {
+  rides: number;
+  km: number;
+  minutes: number;
+  since: string | null;
+  thisWeek: { rides: number; km: number; minutes: number } | null;
+  longest: { minutes: number; km: number | null; date: string } | null;
+}
+
+export function accumulateRides(others: OtherActivity[], today: string): RideAccumulation {
+  const rides = others.filter((a) => sportOfType(a.type) === "ride").sort((a, b) => a.date.localeCompare(b.date));
+  const weekStart = addDays(today, -weekdayIndex(today));
+  const week = rides.filter((a) => a.date >= weekStart && a.date <= today);
+  const sum = (list: OtherActivity[], key: "distance_km" | "duration_min") => list.reduce((t, a) => t + (a[key] ?? 0), 0);
+  const longest = rides.reduce<OtherActivity | null>((best, a) => ((a.duration_min ?? 0) > (best?.duration_min ?? 0) ? a : best), null);
+  return {
+    rides: rides.length,
+    km: round1(sum(rides, "distance_km")),
+    minutes: Math.round(sum(rides, "duration_min")),
+    since: rides[0]?.date ?? null,
+    thisWeek: week.length ? { rides: week.length, km: round1(sum(week, "distance_km")), minutes: Math.round(sum(week, "duration_min")) } : null,
+    longest: longest?.duration_min ? { minutes: Math.round(longest.duration_min), km: longest.distance_km, date: longest.date } : null,
+  };
+}
+
+/** 資料庫裡所有的騎車的累積（其他運動只保存同步過的期間） */
+export async function rideAccumulation(db: Db, today: string): Promise<RideAccumulation> {
+  return accumulateRides(await db.getOtherActivities(365 * 100), today);
 }
 
 /** 最近 N 天的跑步卡片，新的在前 */

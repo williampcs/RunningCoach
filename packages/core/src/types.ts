@@ -74,6 +74,9 @@ export interface OtherActivity {
   avg_hr: number | null;
   training_load: number | null;
   raw_json?: string | null;
+  /** 選手回報的體感（1–10）與感受（activity_feedback，多運動的「運動回報」，schema 13） */
+  perceived_effort?: number | null;
+  subjective_notes?: string | null;
 }
 
 /** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */
@@ -177,6 +180,8 @@ export interface Race {
   result_source?: string | null;
   /** 比賽當天那趟跑步的 intervals_id */
   result_activity?: string | null;
+  /** 賽事的運動（run 跑步、ride 騎車；多運動，schema 13）；沒有時是跑步 */
+  sport?: string | null;
   created_at: string;
 }
 

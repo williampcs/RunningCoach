@@ -99,7 +99,7 @@ function SportsPicker({ form, setForm }: { form: Record<string, string>; setForm
             </label>
           ))}
         </div>
-        <p className="small muted">沒選的話，教練當成只跑步。單車的課表之後才會有；現在騎車是交叉訓練。</p>
+        <p className="small muted">沒選的話，教練當成只跑步。選了騎車，教練會排單車的課；只選騎車也可以。</p>
       </fieldset>
       {picked
         .filter((sport) => sport !== "run")

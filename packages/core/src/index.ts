@@ -1,6 +1,7 @@
 export {
   buildExtractionPrompt,
   IMPORT_PROMPT,
+  importPrompt,
   parseExtraction,
   PROFILE_FIELDS,
   type ImportedRace,
@@ -35,7 +36,19 @@ export {
   type FakeSpec,
 } from "./fake-activities";
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
-export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accumulation, type Region, type RunCard } from "./history";
+export {
+  accumulate,
+  accumulateRides,
+  REGION_CHOICES,
+  regionOf,
+  REGIONS,
+  splitSummary,
+  type Accumulation,
+  type Region,
+  type RideAccumulation,
+  type RideCard,
+  type RunCard,
+} from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
 export {
   DNS_REASONS,
@@ -119,8 +132,12 @@ export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
   minutesText,
   EXPECTED_RPE,
+  isQualityKind,
   QUALITY_KINDS,
+  RIDE_KINDS,
+  RIDE_QUALITY_KINDS,
   SESSION_KINDS,
+  sessionSport,
   STATUS_LABELS,
   type PlannedSession,
   type PlanStyle,

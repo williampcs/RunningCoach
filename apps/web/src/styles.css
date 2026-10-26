@@ -21,6 +21,9 @@
   /* 課表頁：不算強度的課（肌力、交叉訓練、休息）與賽事 */
   --other: #7c3aed;
   --race: #db2777;
+  /* 騎車（多運動）：單車的課與紀錄的騎車 */
+  --ride: #2563eb;
+  --ride-bg: #eff6ff;
   font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
   line-height: 1.6;
 }
@@ -46,6 +49,8 @@
     --board-text: #a5b4cc;
     --other: #a78bfa;
     --race: #f9a8d4;
+    --ride: #60a5fa;
+    --ride-bg: #142443;
   }
 }
 
@@ -1592,6 +1597,12 @@ button.plan-session-head {
   white-space: nowrap;
 }
 
+/* 很長的一個標籤（例：短間歇的體感說明）在窄的畫面換行，不撐出卡片 */
+.plan-session[data-sport] .chip {
+  max-width: 100%;
+  white-space: normal;
+}
+
 .plan-steps {
   list-style: none;
   margin: 0;
@@ -2617,4 +2628,45 @@ button.link.danger {
 .notice.moved a {
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* 多運動：單車的課、課表外的運動、紀錄的騎車、新手引導的練哪些運動（規格 12.24 的第 3 階段） */
+.plan-session[data-sport="ride"] {
+  border-left: 3px solid var(--ride);
+  background: linear-gradient(90deg, var(--ride-bg), var(--surface) 70%);
+}
+
+.plan-session.focus[data-sport="ride"] {
+  border-color: var(--ride);
+}
+
+.plan-sport-icon {
+  flex: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.plan-other {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 6px 12px;
+  background: var(--surface);
+}
+
+.plan-other[data-sport="ride"] {
+  border-color: var(--ride);
+}
+
+.runs li.ride .run-row {
+  border-left: 3px solid var(--ride);
+  padding-left: 8px;
+}
+
+.ride-totals h2 {
+  margin-bottom: 4px;
+}
+
+.onboarding-sports {
+  gap: 16px;
+  margin: 8px 0;
 }

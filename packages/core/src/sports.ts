@@ -89,8 +89,9 @@ export function sportTargets(all: SportSettings[] | null | undefined, sport: Spo
 /** 區間代號的數字，例：Z5b → 5 */
 export const zoneNumber = (zone: string) => Number(/^Z(\d)/i.exec(zone)?.[1] ?? 0);
 
-/** 沒有那項運動的區間時，區間代號改成體感（我們的對照，大致等於跑步的 E、M–T、I） */
+/** 沒有那項運動的區間時，區間代號改成體感（我們的對照，大致等於跑步的 E、M–T、I）；甜蜜點是 6–7 */
 export function zoneRpe(zone: string): [number, number] {
+  if (zone.toUpperCase() === "SS") return [6, 7];
   const n = zoneNumber(zone);
   return n <= 1 ? [1, 2] : n === 2 ? [2, 4] : n === 3 ? [5, 6] : n === 4 ? [6, 7] : [8, 9];
 }
@@ -115,4 +116,35 @@ export function powerRange(z: { min: number | null; max: number | null }): strin
   if (z.min === null) return `≤${z.max} W`;
   if (z.max === null) return `≥${z.min} W`;
   return `${z.min}–${z.max} W`;
+}
+
+// ---------------------------------------------------------------------------
+// 單車的課（規格 12.24 的第 3 階段、doc/coaching-method-cycling.md）
+// ---------------------------------------------------------------------------
+
+/** 甜蜜點的代號（{"power":"SS"}、{"zone":"SS"}）：FTP 的 88–94%；沒有功率時用騎車閾值心率的 91–96%（我們的對照） */
+export const SWEET_SPOT = "SS";
+export const SWEET_SPOT_POWER: [number, number] = [88, 94];
+export const SWEET_SPOT_HR: [number, number] = [91, 96];
+
+/** 沒有功率資料時，心率跟不上的短間歇：每段這麼多分鐘以內、Z5 以上的，目標改看體感 */
+export const SHORT_INTERVAL_MIN = 5;
+
+/** 估算騎車距離與時間用的均速（km/h）：最近沒有騎車紀錄時用 */
+export const DEFAULT_RIDE_KMH = 25;
+
+/** 區間代號的強度等級（1–7）；甜蜜點算 3.5（中強度的上段） */
+export function zoneLevel(zone: string): number {
+  return zone.toUpperCase() === SWEET_SPOT ? 3.5 : zoneNumber(zone);
+}
+
+/** 甜蜜點的心率範圍（騎車的閾值心率的 91–96%）；沒有閾值心率時為 null */
+export function sweetSpotHr(t: SportTargets | undefined): [number, number] | null {
+  const lthr = t?.hr?.lthr;
+  return lthr ? [Math.round((lthr * SWEET_SPOT_HR[0]) / 100), Math.round((lthr * SWEET_SPOT_HR[1]) / 100)] : null;
+}
+
+/** 甜蜜點的功率範圍（FTP 的 88–94%）；沒有 FTP 時為 null */
+export function sweetSpotPower(t: SportTargets | undefined): [number, number] | null {
+  return t?.ftp ? [Math.round((t.ftp * SWEET_SPOT_POWER[0]) / 100), Math.round((t.ftp * SWEET_SPOT_POWER[1]) / 100)] : null;
 }

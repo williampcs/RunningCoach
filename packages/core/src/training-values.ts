@@ -7,7 +7,7 @@
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
 import { planningRules } from "./coaching-method";
-import { sportTargets, sportTargetsText, type SportTargets } from "./sports";
+import { athleteSports, DEFAULT_RIDE_KMH, sportOfType, sportTargets, sportTargetsText, type SportTargets } from "./sports";
 import { typicalPaceSec } from "./plan";
 import { recentAdjustment } from "./plan-match";
 import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
@@ -123,7 +123,8 @@ export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, toda
   const candidates: VdotEstimate[] = [];
   for (const r of races) {
     const secs = parseDuration(r.result_time);
-    if (raceOutcome(r) !== "finished" || secs === null || r.date < since || r.date > today) continue;
+    // 單車的賽事不拿來推算跑步的配速
+    if (raceOutcome(r) !== "finished" || secs === null || r.date < since || r.date > today || r.sport === "ride") continue;
     const value = vdotOf(r.distance_km * 1000, secs);
     if (value !== null) candidates.push({ value, kind: "race", distanceM: r.distance_km * 1000, secs, date: r.date, name: r.name });
   }
@@ -249,7 +250,7 @@ export interface IntensityDistribution {
  * 依各心率區間的時間分成低、中、高強度。用每筆活動自己記下的區間與閾值心率，
  * 和 Intervals.icu 算區間時間時用的一致；沒有閾值心率時退回 fallbackLthr。
  */
-export function intensityDistribution(workouts: Workout[], fallbackLthr: number | null): IntensityDistribution {
+export function intensityDistribution(workouts: { raw_json?: string | null }[], fallbackLthr: number | null): IntensityDistribution {
   const out: IntensityDistribution = { runs: workouts.length, withZones: 0, lowSecs: 0, moderateSecs: 0, highSecs: 0 };
   for (const w of workouts) {
     const raw = parseRaw(w.raw_json);
@@ -386,6 +387,64 @@ export interface TrainingValues {
   fitness: FitnessSnapshot | null;
   /** 跑步以外的運動的區間（騎車、游泳；Intervals.icu 各運動自己的設定，規格 12.24） */
   sports: SportTargets[];
+  /** 騎車的量（多運動的第 3 階段）：最近幾週的時間與負荷、最長的一趟、eFTP */
+  ride: RideValues;
+  /** 選手練的運動（選手資料的 pref_sports；沒填時是跑步） */
+  athleteSports: string[];
+}
+
+export interface RideWeek {
+  label: string;
+  start: string;
+  rides: number;
+  minutes: number;
+  km: number;
+  load: number | null;
+  longestMin: number;
+}
+
+export interface RideValues {
+  weeks: RideWeek[];
+  /** 最近 30 天最長的一趟（分鐘）；沒有騎車時為 0 */
+  longest30Min: number;
+  /** 最近騎車的均速（km/h），估算課的距離用；沒有紀錄時為預設值 */
+  kmh: number;
+  /** Intervals.icu 由騎車紀錄估的 FTP（最新一趟有的；欄位 icu_eftp，還沒以真實帳號確認）；沒有功率計時為 null */
+  eftp: { watts: number; date: string } | null;
+}
+
+/** 騎車的量：最近 N 週（週一起算，含這週）、最長的一趟、均速、eFTP */
+export function rideValues(others: OtherActivity[], today: string, weeks: number): RideValues {
+  const rides = others.filter((a) => sportOfType(a.type) === "ride");
+  const thisMonday = addDays(today, -weekdayIndex(today));
+  const out: RideWeek[] = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = addDays(thisMonday, -7 * i);
+    const inWeek = rides.filter((a) => a.date >= start && a.date <= addDays(start, 6));
+    const loads = inWeek.flatMap((a) => (a.training_load != null ? [a.training_load] : []));
+    out.push({
+      label: isoWeekLabel(start),
+      start,
+      rides: inWeek.length,
+      minutes: inWeek.reduce((sum, a) => sum + (a.duration_min ?? 0), 0),
+      km: inWeek.reduce((sum, a) => sum + (a.distance_km ?? 0), 0),
+      load: loads.length ? loads.reduce((a, b) => a + b, 0) : null,
+      longestMin: Math.max(0, ...inWeek.map((a) => a.duration_min ?? 0)),
+    });
+  }
+  const recent = rides.filter((a) => daysBetween(a.date, today) <= 30);
+  const timed = rides.filter((a) => a.distance_km && a.duration_min);
+  const hours = timed.reduce((sum, a) => sum + a.duration_min! / 60, 0);
+  const kmh = hours >= 1 ? timed.reduce((sum, a) => sum + a.distance_km!, 0) / hours : DEFAULT_RIDE_KMH;
+  let eftp: RideValues["eftp"] = null;
+  for (const a of [...rides].sort((x, y) => y.date.localeCompare(x.date))) {
+    const value = num(parseRaw(a.raw_json).icu_eftp);
+    if (value && value > 0) {
+      eftp = { watts: Math.round(value), date: a.date };
+      break;
+    }
+  }
+  return { weeks: out, longest30Min: Math.max(0, ...recent.map((a) => a.duration_min ?? 0)), kmh: Math.round(kmh * 10) / 10, eftp };
 }
 
 /** 同步時存下的 Intervals.icu 資料（Db 的 snapshot） */
@@ -403,7 +462,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     db.getAllRaces(),
     db.getRecentWorkouts(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
     db.getWellnessRaw(7),
-    db.getOtherActivities(Math.max(weeks * 7, DISTRIBUTION_DAYS)),
+    db.getOtherActivities(Math.max(weeks * 7, 31)),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
   ]);
   const hr = heartRateInfo(profile, settings?.value ?? null, today);
@@ -446,6 +505,8 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     efforts,
     fitness: latestFitness(wellness, workouts),
     sports: (["ride", "swim"] as const).map((sport) => sportTargets(sportSettings?.value, sport, today)),
+    ride: rideValues(others, today, weeks),
+    athleteSports: athleteSports(profile),
   };
 }
 
@@ -490,7 +551,16 @@ function vdotSourceText(v: VdotEstimate): string {
 /** multisport（功能開關，規格 12.24）：加上騎車等的區間與交叉訓練的排課規則 */
 export function formatTrainingValues(v: TrainingValues, options: { multisport?: boolean } = {}): string {
   const lines = [`訓練數值（${v.today}；由程式依資料計算，課表與建議請用這些數字）`];
+  // 不跑步的選手（多運動，只練騎車等）：跑步的數值省略，只列體能與疲勞、各運動的區間與騎車的量
+  if (options.multisport && !v.athleteSports.includes("run")) {
+    lines.push("", "【跑步】選手不跑步（選手資料的「練的運動」），跑步的數值省略；不要排跑步的課。");
+  } else lines.push(...runningLines(v));
+  return [...lines, ...commonLines(v, options)].join("\n");
+}
 
+/** 跑步的數值：資料、心率、配速、最近幾週、強度分配 */
+function runningLines(v: TrainingValues): string[] {
+  const lines: string[] = [];
   const c = v.coverage;
   lines.push("", `【資料】最近 ${DISTRIBUTION_DAYS} 天 ${c.runs} 次跑步`);
   if (c.runs) {
@@ -580,7 +650,12 @@ export function formatTrainingValues(v: TrainingValues, options: { multisport?: 
   } else {
     lines.push("沒有心率區間的資料，回報體感的次數也不夠，無法估計強度分配。");
   }
+  return lines;
+}
 
+/** 體能與疲勞、跑步以外的運動的區間、騎車的量與排課表的規則 */
+function commonLines(v: TrainingValues, options: { multisport?: boolean }): string[] {
+  const lines: string[] = [];
   if (v.fitness) {
     const f = v.fitness;
     const form = f.ctl - f.atl;
@@ -594,8 +669,34 @@ export function formatTrainingValues(v: TrainingValues, options: { multisport?: 
     // 游泳只在有設定時列出：沒有在游的人不需要
     for (const t of v.sports.filter((x) => x.sport === "ride" || x.hr)) lines.push(`・${sportTargetsText(t)}`);
   }
-  lines.push("", planningRules(options));
-  return lines.join("\n");
+  const cycling = !!options.multisport && v.athleteSports.includes("ride");
+  if (cycling) lines.push("", ...rideLines(v));
+  lines.push("", planningRules({ ...options, sports: v.athleteSports }));
+  return lines;
+}
+
+/** 【騎車】的段落：練騎車的人才有（多運動的第 3 階段） */
+function rideLines(v: TrainingValues): string[] {
+  const r = v.ride;
+  const ride = v.sports.find((t) => t.sport === "ride");
+  const lines = [`【騎車】最近 ${r.weeks.length} 週（週一起算，最後一週是這週；騎車不算跑量）`];
+  for (const w of r.weeks) {
+    const parts = [`${w.rides} 次`, `${Math.round(w.minutes)} 分鐘`];
+    if (w.km) parts.push(`${round1(w.km)} km`);
+    if (w.load !== null) parts.push(`負荷 ${Math.round(w.load)}`);
+    if (w.rides) parts.push(`最長 ${Math.round(w.longestMin)} 分鐘`);
+    lines.push(`・${w.label}（${w.start.slice(5)} 起）：${parts.join("｜")}`);
+  }
+  lines.push(
+    r.longest30Min
+      ? `・最近 30 天最長的一趟：${Math.round(r.longest30Min)} 分鐘（長騎每次多 15–20 分鐘就好）`
+      : "・最近 30 天沒有騎車的紀錄：第一次排騎車先 90 分鐘以內，耐力騎為主",
+  );
+  if (ride?.power) lines.push(`・FTP ${ride.ftp} W（Intervals.icu 的騎車設定）；功率的目標用 {"power":"Z2"}、甜蜜點 {"power":"SS"}`);
+  else if (r.eftp) lines.push(`・eFTP ${r.eftp.watts} W（Intervals.icu 由 ${r.eftp.date} 的騎車估的）；騎車設定沒有 FTP，功率的目標還不能換算，先用心率`);
+  else lines.push("・沒有 FTP（沒有功率計）：目標用騎車的心率區間 {\"zone\":\"Z2\"}、甜蜜點 {\"zone\":\"SS\"}；5 分鐘以內的短間歇用體感");
+  if (!ride?.hr) lines.push("・Intervals.icu 沒有騎車的閾值心率與區間：目標會顯示成體感；請選手到 Intervals.icu 的騎車設定填閾值心率，或做一次 30 分鐘的測試（最後 20 分鐘的平均心率）");
+  return lines;
 }
 
 /** 以 VDOT 推算，用 speed（m/s）能持續多少秒 */

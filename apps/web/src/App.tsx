@@ -14,7 +14,7 @@ import {
 
 import { AppContext, errorText, type AppState, type Panel, type Tab } from "./app-context";
 import { HelpView } from "./views/Help";
-import { FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
+import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
 import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
@@ -42,7 +42,8 @@ import { BUILD, BUILD_DETAIL, STAGE_LABEL } from "./version";
 // 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "chat", label: "對話", icon: "💬" },
-  { id: "report", label: "跑後回報", icon: "🏃" },
+  // 多運動：騎完也能回報，分頁名稱不限跑步（規格 12.24 的第 3 階段）
+  featureEnabled("multisport") ? { id: "report", label: "運動回報", icon: "🏃" } : { id: "report", label: "跑後回報", icon: "🏃" },
   { id: "history", label: "紀錄", icon: "📖" },
   { id: "plan", label: "計畫與賽事", icon: "📅" },
   { id: "profile", label: "選手資料", icon: "👤" },
@@ -236,7 +237,7 @@ export function App() {
   }, [panel, closePanel]);
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
-  const [reportPreselect, setReportPreselect] = useState<number | null>(null);
+  const [reportPreselect, setReportPreselect] = useState<number | string | null>(null);
   // 用手機掃了另一台顯示的 QR code：網址的 #pair= 後面是配對碼（不會送到伺服器）
   const [pairFromLink, setPairFromLink] = useState<string | null>(readPairLink);
   // 已經開著的分頁貼上配對連結：只有 # 後面改變，頁面不會重新載入
@@ -345,8 +346,8 @@ export function App() {
           openPanel(next);
         } else showTab(next);
       },
-      openReport(workoutId) {
-        setReportPreselect(workoutId ?? null);
+      openReport(target) {
+        setReportPreselect(target ?? null);
         showTab("report");
       },
       deviceSync,

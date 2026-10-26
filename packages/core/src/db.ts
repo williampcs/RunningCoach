@@ -33,8 +33,9 @@ import type {
  * 10：memories（記住的事）、conversations.archived（壓縮後保留原文）與 conversations.reply_to（回覆）
  * 11：races 的 outcome、outcome_reason（完賽、沒有完賽、沒有出賽）、gun_time、result_source、result_activity
  * 12：planned_sessions 的 sport（交叉訓練的運動）與 done_at（選手回報做完了）（多運動，規格 12.24）
+ * 13：races.sport（賽事的運動）與 activity_feedback（騎車等其他運動的體感與感受）（多運動的第 3 階段）
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -222,6 +223,13 @@ const SCHEMA = `
     k  TEXT PRIMARY KEY,
     v  TEXT NOT NULL
   );
+  -- 跑步以外的運動的體感與感受（運動回報）：other_activities 跟著來源整批更新，回報另外存，不會被同步蓋掉
+  CREATE TABLE IF NOT EXISTS activity_feedback (
+    intervals_id     TEXT PRIMARY KEY,
+    perceived_effort INTEGER,
+    subjective_notes TEXT,
+    updated_at       TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     date             TEXT NOT NULL,
@@ -231,7 +239,7 @@ const SCHEMA = `
   );
 `;
 
-const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes"] as const;
+const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport"] as const;
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
 
 function parseJsonArray(json: string | null): unknown[] {
@@ -456,6 +464,9 @@ export class Db {
         if (!sessionCols.has(col)) await d.exec(`ALTER TABLE planned_sessions ADD COLUMN ${col} TEXT`);
       }
 
+      // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
+      if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
+
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
@@ -523,10 +534,12 @@ export class Db {
     target_time?: string;
     confirmed?: number;
     notes?: string;
+    /** run 跑步（預設，存成 NULL）、ride 騎車 */
+    sport?: string | null;
   }): Promise<number> {
     const result = await this.run(
-      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at)" +
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at, sport)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [
         race.name,
         race.date,
@@ -535,6 +548,7 @@ export class Db {
         race.confirmed ?? 1,
         race.notes || null,
         this.stamp(),
+        race.sport && race.sport !== "run" ? race.sport : null,
       ],
     );
     return result.lastInsertRowid;
@@ -1230,8 +1244,38 @@ export class Db {
   /** 最近 N 天跑步以外的運動，新的在前 */
   getOtherActivities(days: number): Promise<OtherActivity[]> {
     return this.all<OtherActivity>(
-      "SELECT intervals_id, date, type, duration_min, distance_km, avg_hr, training_load, raw_json FROM other_activities WHERE date >= ? ORDER BY date DESC",
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
       [addDays(this.clock.today(), -days)],
+    );
+  }
+
+  /** 存了幾筆跑步以外的運動（只練騎車的人的新手引導用） */
+  async countOtherActivities(): Promise<number> {
+    const rows = await this.all<{ n: number }>("SELECT COUNT(*) AS n FROM other_activities");
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /** 跑步以外的一筆運動（含回報的體感）；找不到時為 null */
+  async getOtherActivity(intervalsId: string): Promise<OtherActivity | null> {
+    const rows = await this.all<OtherActivity>(
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
+      [intervalsId],
+    );
+    return rows[0] ?? null;
+  }
+
+  /** 騎車等其他運動的體感與感受（運動回報）；兩個都是 null 時刪掉 */
+  async setActivityFeedback(intervalsId: string, perceivedEffort: number | null, subjectiveNotes: string | null, updatedAt = this.stamp()): Promise<void> {
+    if (perceivedEffort === null && !subjectiveNotes) {
+      await this.run("DELETE FROM activity_feedback WHERE intervals_id=?", [intervalsId]);
+      return;
+    }
+    await this.run(
+      "INSERT INTO activity_feedback (intervals_id, perceived_effort, subjective_notes, updated_at) VALUES (?, ?, ?, ?)" +
+        " ON CONFLICT(intervals_id) DO UPDATE SET perceived_effort=excluded.perceived_effort, subjective_notes=excluded.subjective_notes, updated_at=excluded.updated_at",
+      [intervalsId, perceivedEffort, subjectiveNotes, updatedAt],
     );
   }
 

@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 
-import type { Accumulation, RunCard, Workout } from "@running-coach/core";
+import type { Accumulation, RideAccumulation, RideCard, RunCard, Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
 import { analysisRequest } from "./Report";
 import { AccumulationView } from "./Accumulation";
 import { FirstSync } from "./FirstSync";
 import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
-import { dayText, IntensityBar, PlanBadge, RunCardView } from "./RunCard";
+import { dayText, IntensityBar, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
 
 const HISTORY_DAYS = 30;
 
@@ -26,15 +27,110 @@ export function HistoryView() {
   const [editing, setEditing] = useState<{ id: number; effort: number; notes: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [backfilled, setBackfilled] = useState<{ workout: Workout; summary: string | null } | null>(null);
+  // 多運動：騎車也列出來（規格 12.24 的第 3 階段）
+  const multisport = featureEnabled("multisport");
+  const [rides, setRides] = useState<RideCard[]>([]);
+  const [rideTotals, setRideTotals] = useState<RideAccumulation | null>(null);
+  const [openRides, setOpenRides] = useState<Set<string>>(new Set());
+  const [rideEditing, setRideEditing] = useState<{ id: string; effort: number; notes: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
     void coach.runCards(HISTORY_DAYS).then((c) => alive && setCards(c));
     void coach.accumulation().then((a) => alive && setTotals(a));
+    if (multisport) {
+      void coach.rideCards(HISTORY_DAYS).then((c) => alive && setRides(c));
+      void coach.rideAccumulation().then((a) => alive && setRideTotals(a));
+    }
     return () => {
       alive = false;
     };
-  }, [coach, revision]);
+  }, [coach, revision, multisport]);
+
+  async function saveRideFeedback() {
+    if (!rideEditing) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      await coach.reportRun(rideEditing.effort, rideEditing.notes, { kind: "other", intervalsId: rideEditing.id });
+      setRideEditing(null);
+      touch();
+    } catch (e) {
+      setMessage({ kind: "error", text: errorText(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function rideRow(card: RideCard) {
+    const a = card.activity;
+    const expanded = openRides.has(a.intervals_id) || rideEditing?.id === a.intervals_id;
+    const toggleRide = () =>
+      setOpenRides((current) => {
+        const next = new Set(current);
+        if (next.has(a.intervals_id)) next.delete(a.intervals_id);
+        else next.add(a.intervals_id);
+        return next;
+      });
+    return (
+      <li key={`ride-${a.intervals_id}`} className={`ride${expanded ? " open" : ""}`} data-sport="ride">
+        <button className="run-row" aria-expanded={expanded} onClick={toggleRide}>
+          <span className="run-date">{dayText(a.date, today)}</span>
+          <span className="run-main">
+            {expanded ? (
+              <strong>🚴 {card.plan ? (card.plan.title.includes(card.plan.kindLabel) ? card.plan.title : `${card.plan.kindLabel}：${card.plan.title}`) : "騎車"}</strong>
+            ) : (
+              <>
+                <strong>🚴 {Math.round(a.duration_min ?? 0)} 分鐘</strong>
+                <span className="muted small">{a.distance_km ? `${a.distance_km} km` : "騎車"}</span>
+              </>
+            )}
+          </span>
+          <span className="run-tags">
+            <PlanBadge card={card} />
+            {a.perceived_effort == null && <span className="badge">未填體感</span>}
+          </span>
+          {card.intensity && !expanded && <IntensityBar intensity={card.intensity} compact />}
+        </button>
+        {expanded && (
+          <RideCardView card={card}>
+            {rideEditing?.id === a.intervals_id ? (
+              <div className="backfill">
+                <label>
+                  <span>
+                    體感強度：<strong>{rideEditing.effort}</strong> / 10
+                  </span>
+                  <input type="range" min={1} max={10} value={rideEditing.effort} onChange={(e) => setRideEditing({ ...rideEditing, effort: Number(e.target.value) })} />
+                </label>
+                <label>
+                  主觀感受
+                  <AutoGrowTextarea value={rideEditing.notes} placeholder="例如：爬坡腿很酸，最後一組撐不住" onChange={(e) => setRideEditing({ ...rideEditing, notes: e.target.value })} />
+                </label>
+                <div className="row">
+                  <button className="primary" disabled={saving} onClick={() => void saveRideFeedback()}>
+                    {saving ? "儲存中…" : "儲存體感"}
+                  </button>
+                  <button disabled={saving} onClick={() => setRideEditing(null)}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="row">
+                <button
+                  className="small"
+                  disabled={rideEditing !== null || editing !== null}
+                  onClick={() => setRideEditing({ id: a.intervals_id, effort: a.perceived_effort ?? 5, notes: a.subjective_notes ?? "" })}
+                >
+                  {a.perceived_effort != null ? "修改體感" : "補填體感"}
+                </button>
+              </div>
+            )}
+          </RideCardView>
+        )}
+      </li>
+    );
+  }
 
   const toggle = (id: number) =>
     setOpen((current) => {
@@ -150,12 +246,16 @@ export function HistoryView() {
   return (
     <>
       {totals && totals.runs > 0 && <AccumulationView totals={totals} today={today} onImported={touch} />}
+      {multisport && rideTotals && rideTotals.rides > 0 && <RideTotals totals={rideTotals} />}
       <section className="card">
-        <h2>最近 {HISTORY_DAYS} 天的跑步</h2>
+        <h2>
+          最近 {HISTORY_DAYS} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
+        </h2>
         <p className="muted small">點一趟看數據、強度與教練的分析；也可以在這裡補填或修改體感。</p>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
         {cards?.length === 0 &&
+          !rides.length &&
           (totals?.runs === 0 ? (
             <>
               <p className="muted">還沒有跑步紀錄。</p>
@@ -167,10 +267,14 @@ export function HistoryView() {
           ))}
         {sync.message && totals !== null && totals.runs > 0 && <SyncNotice message={sync.message} />}
         <ul className="runs">
-          {cards?.map((card) => {
+          {cards?.map((card, index) => {
             const w = card.workout;
             const expanded = open.has(w.id) || editing?.id === w.id;
-            return (
+            // 騎車依日期插在跑步之間（新的在前）
+            const newer = index === 0 ? "9999" : cards[index - 1]!.workout.date;
+            const before = rides.filter((r) => r.activity.date > w.date && r.activity.date <= newer);
+            return [
+              ...before.map(rideRow),
               <li key={w.id} className={expanded ? "open" : ""}>
                 <button className="run-row" aria-expanded={expanded} onClick={() => toggle(w.id)}>
                   <span className="run-date">{dayText(w.date, today)}</span>
@@ -197,9 +301,11 @@ export function HistoryView() {
                     {actions(w)}
                   </RunCardView>
                 )}
-              </li>
-            );
+              </li>,
+            ];
           })}
+          {/* 比最舊的跑步還早的騎車（或沒有跑步時的全部） */}
+          {rides.filter((r) => !cards?.length || r.activity.date <= cards.at(-1)!.workout.date).map(rideRow)}
         </ul>
       </section>
     </>

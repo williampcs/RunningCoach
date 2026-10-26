@@ -89,7 +89,7 @@ describe("功能開關", () => {
     expect(JSON.stringify(buildTools(DEFAULT_SETTINGS))).toBe(off);
   });
 
-  it("關著時系統提示和原本一樣（v3）；開著時是 v4，有練的運動與目標", async () => {
+  it("關著時系統提示和原本一樣（v3）；開著時是 v5，有練的運動與目標", async () => {
     const profile = { pref_sports: "run,ride,strength", pref_goal_ride: "週末長騎" };
     const prompt = async (settings: Partial<CoachSettings>) => {
       const { coach, provider } = await makeCoach([turn({ text: "好" })], { settings });
@@ -101,7 +101,7 @@ describe("功能開關", () => {
     expect(offPrompt).toContain("【教練方法 v3】");
     expect(offPrompt).not.toContain("練的運動");
     expect(offPrompt).not.toContain("交叉訓練的目標（v4）");
-    expect(onPrompt).toContain("【教練方法 v4】");
+    expect(onPrompt).toContain("【教練方法 v5】");
     expect(onPrompt).toContain("練的運動：跑步、騎車、肌力訓練");
     expect(onPrompt).toContain("騎車的目標：週末長騎");
     expect(onPrompt).toContain("交叉訓練的目標（v4）");
@@ -185,7 +185,7 @@ describe("交叉訓練的目標", () => {
     const c = targetCtx([RUN]);
     expect(targetText({ zone: "Z2" }, c, "ride")).toBe("體感 2–4/10（Z2；騎車的心率區間還沒在 Intervals.icu 設定）");
     expect(targetText({ zone: "Z4" }, c, "swim")).toBe("體感 6–7/10（Z4；游泳的心率區間還沒在 Intervals.icu 設定）");
-    expect(targetText({ power: "Z3" }, c, "ride")).toBe("體感 5–6/10（Z3；還沒有騎車的 FTP）");
+    expect(targetText({ power: "Z3" }, c, "ride")).toBe("體感 5–6/10（Z3；還沒有騎車的 FTP，騎車的心率區間還沒在 Intervals.icu 設定）");
   });
 
   it("交叉訓練要寫運動；功率只能用在騎車；開關關著時照舊", () => {

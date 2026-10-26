@@ -3,6 +3,7 @@
  * 網頁版與 Discord bot 的操作不同，各一份. 說明裡用「」括起來的是畫面上的名稱，
  * 測試會確認網頁版的程式裡真的有（改了按鈕名稱卻忘了改說明時測試失敗）；舉例的說法用“”.
  */
+import type { Feature } from "../features";
 import { DISCORD_GUIDE } from "./discord";
 import { WEB_GUIDE } from "./web";
 
@@ -16,15 +17,22 @@ export interface GuideSection {
   keywords: string[];
   /** Markdown */
   body: string;
+  /** 在功能開關後面的段落（規格 12.25）：開關關著時不出現 */
+  feature?: Feature;
 }
 
-export function appGuide(shell: Shell): GuideSection[] {
-  return shell === "web" ? WEB_GUIDE : DISCORD_GUIDE;
+/**
+ * 這個外殼的說明；開關關著的功能的段落不列. 多運動開著時「跑後回報」分頁叫「運動回報」，說明跟著改
+ */
+export function appGuide(shell: Shell, features: readonly string[] = []): GuideSection[] {
+  const sections = (shell === "web" ? WEB_GUIDE : DISCORD_GUIDE).filter((s) => !s.feature || features.includes(s.feature));
+  if (shell !== "web" || !features.includes("multisport")) return sections;
+  return sections.map((s) => ({ ...s, title: s.title.replace("跑後回報", "運動回報"), body: s.body.replaceAll("「跑後回報」", "「運動回報」") }));
 }
 
 /** 依代號、標題、其他說法或內容找；代號完全相同的優先 */
-export function findGuide(shell: Shell, query: string): GuideSection[] {
-  const sections = appGuide(shell);
+export function findGuide(shell: Shell, query: string, features: readonly string[] = []): GuideSection[] {
+  const sections = appGuide(shell, features);
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const exact = sections.filter((s) => s.id === q);
@@ -47,8 +55,8 @@ export function findGuide(shell: Shell, query: string): GuideSection[] {
 }
 
 /** 系統提示裡列的主題：只有代號與標題，內容要用的時候才查 */
-export function guideTopics(shell: Shell): string {
-  return appGuide(shell)
+export function guideTopics(shell: Shell, features: readonly string[] = []): string {
+  return appGuide(shell, features)
     .map((s) => `${s.id}（${s.title}）`)
     .join("、");
 }

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { addDays, type RunCard } from "@running-coach/core";
+import { addDays, type RideAccumulation, type RideCard, type RunCard } from "@running-coach/core";
 
 import { Markdown } from "../Markdown";
 
@@ -62,7 +62,7 @@ function EffortScale({ effort, expected, difficulty }: { effort: number | null; 
 }
 
 /** 和課表比的結果；不在課表上時標示「課表外」 */
-export function PlanBadge({ card }: { card: RunCard }) {
+export function PlanBadge({ card }: { card: Pick<RunCard, "plan" | "outsidePlan"> }) {
   if (card.plan) return <span className={`badge ${card.plan.outcome}`}>{card.plan.outcomeLabel}</span>;
   if (card.outsidePlan) return <span className="badge missed">課表外</span>;
   return null;
@@ -127,5 +127,68 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
       )}
       {children}
     </div>
+  );
+}
+
+/** 一趟騎車（多運動）：和跑步的卡片同樣的樣式，數字換成騎車用的（時間、距離、平均心率、負荷、有功率時的功率） */
+export function RideCardView({ card, children }: { card: RideCard; children?: ReactNode }) {
+  const a = card.activity;
+  return (
+    <div className="run-card ride-card">
+      {card.plan && card.plan.reasons.length > 0 && <p className="small">{card.plan.reasons.join("、")}</p>}
+      <dl className="stats">
+        <div>
+          <dt>{(a.duration_min ?? 0) >= 60 ? "時間" : "時間 分"}</dt>
+          <dd>{minutesText(a.duration_min)}</dd>
+        </div>
+        <div>
+          <dt>距離 km</dt>
+          <dd>{a.distance_km ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>平均心率</dt>
+          <dd>{a.avg_hr ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>{card.watts ? "功率 W" : "負荷"}</dt>
+          <dd>{card.watts ?? a.training_load ?? "—"}</dd>
+        </div>
+      </dl>
+      {card.watts && a.training_load != null && <p className="small muted">負荷 {a.training_load}</p>}
+      {a.avg_hr == null && <p className="small muted">沒有心率資料</p>}
+      {card.intensity && <IntensityBar intensity={card.intensity} />}
+      <EffortScale effort={a.perceived_effort ?? null} expected={card.expectedRpe} difficulty={card.plan?.difficultyLabel ?? null} />
+      {a.subjective_notes && <p className="small">「{a.subjective_notes}」</p>}
+      {children}
+    </div>
+  );
+}
+
+/** 騎車的累積（多運動，簡單的一塊）：總次數、時間、距離、這週、最長的一趟 */
+export function RideTotals({ totals }: { totals: RideAccumulation }) {
+  const hours = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} 小時 ${m % 60} 分` : `${m} 分鐘`);
+  return (
+    <section className="card ride-totals">
+      <h2>🚴 騎車的累積</h2>
+      <dl className="stats">
+        <div>
+          <dt>騎了</dt>
+          <dd>{totals.rides} 次</dd>
+        </div>
+        <div>
+          <dt>時間</dt>
+          <dd>{hours(totals.minutes)}</dd>
+        </div>
+        <div>
+          <dt>距離 km</dt>
+          <dd>{Math.round(totals.km)}</dd>
+        </div>
+      </dl>
+      <p className="small muted">
+        {totals.thisWeek ? `這週 ${totals.thisWeek.rides} 次、${hours(totals.thisWeek.minutes)}` : "這週還沒騎"}
+        {totals.longest && `・最長的一趟 ${hours(totals.longest.minutes)}（${totals.longest.date.slice(5)}）`}
+        {totals.since && `・從 ${totals.since} 起同步到的騎車`}
+      </p>
+    </section>
   );
 }

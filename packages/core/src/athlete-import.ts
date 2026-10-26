@@ -79,6 +79,16 @@ export const IMPORT_PROMPT = `請根據我們過去的對話與你對我的了�
 
 【目前的訓練計畫】（有固定的每週課表就逐日列出；沒有就寫「無」）`;
 
+/**
+ * 多運動開著時的提示詞（規格 12.24 的第 3 階段）：不限跑步，多問練哪些運動；擷取的欄位不變
+ * （練哪些運動由選手在選手資料選，騎車的區間從 Intervals.icu 讀）
+ */
+export function importPrompt(options: { multisport?: boolean } = {}): string {
+  if (!options.multisport) return IMPORT_PROMPT;
+  return IMPORT_PROMPT.replace("整理我的跑步相關資料，我要帶到另一個跑步教練 App 使用。", "整理我的耐力運動（跑步、騎車等）相關資料，我要帶到另一個耐力運動教練 App 使用。")
+    .replace("【訓練偏好】\n", "【訓練偏好】\n- 練哪些運動（例如跑步、騎車、肌力訓練）與各自的目標：\n");
+}
+
 /** 送給摘要模型的擷取指示 */
 export function buildExtractionPrompt(text: string, today: string): string {
   const keys = PROFILE_FIELDS.map((f) => `- ${f.key}：${f.label}${f.hint ? `（${f.hint}）` : ""}`).join("\n");

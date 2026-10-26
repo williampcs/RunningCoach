@@ -4,6 +4,7 @@ import { shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem } fro
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
 
@@ -203,7 +204,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
         setCheckinOpen(true);
         return;
       case "report":
-        openReport(action.workoutId);
+        openReport(action.workoutId ?? action.intervalsId);
         return;
       case "plan":
         goTo("plan");
@@ -228,7 +229,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
       case "checkin":
         return item.kind === "checkin" && item.tone === "info" ? "回報身體狀況" : "修改自評";
       case "report":
-        return "前往跑後回報";
+        return featureEnabled("multisport") ? "前往運動回報" : "前往跑後回報";
       case "plan":
         return "查看計畫";
       case "sync":
