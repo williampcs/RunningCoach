@@ -10,6 +10,7 @@
 import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
+import { ALLOCATION_RULES, type WeekAllocation } from "./allocation";
 import { raceOutcome } from "./races";
 import type { TrainingValues } from "./training-values";
 import {
@@ -498,6 +499,8 @@ export interface CheckContext extends TargetContext {
    * 課表外的運動之後重排（A → A'）時檢查得到
    */
   multisport?: boolean;
+  /** 這週的額度（練騎車的人，allocation.ts）；沒有時照強度偏好檢查 */
+  allocation?: WeekAllocation | null;
 }
 
 /** 其他運動算「很久或很硬」的門檻：隔天不排強度課 */
@@ -587,12 +590,15 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   // 2. 強度課一週最多兩堂，不連排兩天
   const intensity = ctx.profile.pref_intensity;
   const maxQuality = intensity === "easy" ? 0 : intensity === "moderate" ? 1 : 2;
-  // 單車的強度課（多運動）：輕鬆就好的人可以有一堂少量的節奏騎，不算
+  // 單車的強度課（多運動）：騎車的強度偏好是輕鬆就好時，可以有一堂少量的節奏騎，不算
   const rideQualityAll = sessions.map((s, i) => ({ s, i })).filter(({ s }) => RIDE_QUALITY_KINDS.has(s.kind));
-  const tempoFree = intensity === "easy" && rideQualityAll.filter(({ s }) => s.kind === "ride_tempo").length === 1 ? 1 : 0;
+  const rideIntensity = ctx.profile.pref_intensity_ride || intensity;
+  const tempoFree = rideIntensity === "easy" && rideQualityAll.filter(({ s }) => s.kind === "ride_tempo").length === 1 ? 1 : 0;
   const rideQuality = tempoFree ? rideQualityAll.filter(({ s }) => s.kind !== "ride_tempo") : rideQualityAll;
   const cycling = !!ctx.multisport && (athleteSports(ctx.profile).includes("ride") || rideQualityAll.length > 0);
-  if (quality.length > maxQuality) {
+  // 練騎車的人：強度課與時間照這週的額度（allocation.ts，規格 12.26 第 4 點）
+  const allocation = cycling ? (ctx.allocation ?? null) : null;
+  if (!allocation && quality.length > maxQuality) {
     warn(
       "quality_count",
       intensity === "easy" || intensity === "moderate"
@@ -602,26 +608,48 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   }
   // 多運動：這週已經做過的高強度交叉訓練（今天以前、沒有排進課表的那天）與排進課表的，一起算（規格 12.24）
   const weekEnd = addDays(ctx.weekStart, 6);
+  const rideSessionDates = new Set(sessions.flatMap((x) => (x.date && RIDE_KINDS.has(x.kind) ? [x.date] : [])));
   const hardDone = ctx.multisport
-    ? ctx.others.filter((a) => a.date >= ctx.weekStart && a.date <= weekEnd && a.date < ctx.today && isHardOther(a))
+    ? ctx.others.filter(
+        (a) => a.date >= ctx.weekStart && a.date <= weekEnd && a.date < ctx.today && isHardOther(a) && !(cycling && rideSessionDates.has(a.date) && sportOfType(a.type) === "ride"),
+      )
     : [];
   const hardPlanned = ctx.multisport ? sessions.filter((x) => isHardCross(x, ctx) && !(x.date && x.date < ctx.today)) : [];
   const hardCross = hardDone.length + hardPlanned.length;
-  // 練騎車的人：兩項合計的上限依強度偏好（輕鬆就好 0、適度 2、想要挑戰 3；單車的教練方法）
-  const combinedMax = intensity === "easy" ? 0 : intensity === "challenge" ? 3 : 2;
   if (cycling) {
-    const total = quality.length + rideQuality.length + hardCross;
-    if (total > combinedMax && !(quality.length > maxQuality && total === quality.length)) {
-      const parts = [
-        quality.length ? `跑步 ${quality.length} 堂` : null,
-        rideQuality.length ? `騎車 ${rideQuality.length} 堂` : null,
-        hardCross ? `高強度的交叉訓練 ${hardCross} 堂` : null,
-      ].filter(Boolean);
-      warn(
-        "quality_count",
-        `跑步與騎車的強度課兩項合計${intensity === "easy" ? "（強度偏好是「輕鬆就好」）" : intensity === "challenge" ? "" : intensity === "moderate" ? "（強度偏好是「適度」）" : ""}這週最多 ${combinedMax} 堂，` +
-          `排了 ${parts.join("、")}，共 ${total} 堂；少排一堂，或改成耐力騎、輕鬆跑。`,
-      );
+    const runQ = quality.length;
+    const rideQ = rideQuality.length + hardCross;
+    const cap = allocation?.qualityCap ?? ALLOCATION_RULES.qualityCap;
+    const reason = allocation?.reasons[0] ? `（${allocation.reasons[0]}）` : "";
+    const allowed = (sport: "run" | "ride") => allocation?.sports.find((x) => x.sport === sport)?.quality ?? null;
+    const runAllowed = allowed("run");
+    const rideAllowed = allowed("ride");
+    if (runAllowed !== null && runQ > runAllowed) warn("allocation", `跑步的強度課這週的額度是 ${runAllowed} 堂，排了 ${runQ} 堂${reason}。`);
+    if (rideAllowed !== null && rideQ > rideAllowed) {
+      warn("allocation", `騎車（含高強度的交叉訓練）的強度課這週的額度是 ${rideAllowed} 堂，排了 ${rideQ} 堂${reason}。`);
+    }
+    if (runQ + rideQ > cap) {
+      const parts = [runQ ? `跑步 ${runQ} 堂` : null, rideQuality.length ? `騎車 ${rideQuality.length} 堂` : null, hardCross ? `高強度的交叉訓練 ${hardCross} 堂` : null].filter(Boolean);
+      warn("quality_count", `跑步與騎車的強度課兩項合計這週最多 ${cap} 堂，排了 ${parts.join("、")}，共 ${runQ + rideQ} 堂；少排一堂，或改成耐力騎、輕鬆跑。`);
+    }
+    if (allocation) {
+      // 時間：騎車照額度（多 15% 以內不提醒）；跑步只在被主要運動減少時檢查（次數照「每週跑幾次」另外檢查）
+      const minutesOf = (pred: (x: SessionDraft) => boolean) =>
+        sessions.reduce((sum, x, j) => sum + (pred(x) && (!x.date || x.date >= ctx.today) ? estimates[j]!.minutes : 0), 0);
+      const doneRide = ctx.others
+        .filter((a) => a.date >= ctx.weekStart && a.date < ctx.today && sportOfType(a.type) === "ride")
+        .reduce((sum, a) => sum + (a.duration_min ?? 0), 0);
+      const ride = allocation.sports.find((x) => x.sport === "ride");
+      const rideMinutes = minutesOf((x) => RIDE_KINDS.has(x.kind) || (x.kind === "cross" && x.sport === "ride")) + doneRide;
+      if (ride && rideMinutes > ride.minutes * 1.15 + 1) {
+        warn("allocation", `這週騎車約 ${Math.round(rideMinutes)} 分鐘，額度約 ${Math.round(ride.minutes)} 分鐘${reason}。`);
+      }
+      const run = allocation.sports.find((x) => x.sport === "run");
+      const doneRun = ctx.workouts.filter((w) => w.date >= ctx.weekStart && w.date < ctx.today).reduce((sum, w) => sum + (w.duration_min ?? 0), 0);
+      const runMinutes = minutesOf((x) => !NON_RUN_KINDS.has(x.kind)) + doneRun;
+      if (run && run.minutes < run.wanted.minutes && runMinutes > run.minutes * 1.25 + 1) {
+        warn("allocation", `這週跑步約 ${Math.round(runMinutes)} 分鐘，額度約 ${Math.round(run.minutes)} 分鐘${reason}。`);
+      }
     }
   } else if (hardCross && quality.length <= maxQuality && quality.length + hardCross > maxQuality) {
     warn(
@@ -710,20 +738,39 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
   // 9. 選手的偏好：每週次數、每次最多多久、休息日、長跑日
   const perWeek = intOf(ctx.profile.pref_runs_per_week);
   if (perWeek !== null && runs.length > perWeek) warn("preference", `選手每週最多跑 ${perWeek} 次，排了 ${runs.length} 次。`);
+  // 練騎車的人：每次最多多久分跑步與騎車（各自的卡），跑步的那個只看跑步的課
   const maxMinutes = intOf(ctx.profile.pref_max_minutes);
-  if (maxMinutes !== null) {
-    sessions.forEach((s, i) => {
-      if (s.kind !== "race" && estimates[i]!.minutes > maxMinutes + 1) warn("preference", `${label(s, i)} 約 ${Math.round(estimates[i]!.minutes)} 分鐘，選手每次最多 ${maxMinutes} 分鐘。`);
-    });
+  const rideMaxMinutes = cycling ? intOf(ctx.profile.pref_ride_max_minutes) : null;
+  sessions.forEach((s, i) => {
+    if (s.kind === "race") return;
+    const minutes = estimates[i]!.minutes;
+    const isRide = RIDE_KINDS.has(s.kind) || (s.kind === "cross" && s.sport === "ride");
+    const limit = cycling ? (isRide ? rideMaxMinutes : NON_RUN_KINDS.has(s.kind) ? null : maxMinutes) : maxMinutes;
+    if (limit !== null && minutes > limit + 1) {
+      warn("preference", `${label(s, i)} 約 ${Math.round(minutes)} 分鐘，選手${cycling ? (isRide ? "騎車" : "跑步") : ""}每次最多 ${limit} 分鐘。`);
+    }
+  });
+  // 多運動：每週最多練幾天（跑步、騎車與交叉訓練一起算；休息與肌力不算）
+  const daysLimit = ctx.multisport ? intOf(ctx.profile.pref_days_per_week) : null;
+  if (daysLimit !== null && ctx.style === "fixed") {
+    const days = new Set(sessions.flatMap((s) => (s.date && !["rest", "strength"].includes(s.kind) ? [s.date] : []))).size;
+    if (days > daysLimit) warn("preference", `選手每週最多練 ${daysLimit} 天，排了 ${days} 天。`);
   }
   if (ctx.style === "fixed") {
     const restDays = parseWeekdays(ctx.profile.pref_rest_days);
     sessions.forEach((s, i) => {
-      if (s.date && !NON_RUN_KINDS.has(s.kind) && restDays.includes(weekdayIndex(s.date))) warn("preference", `${label(s, i)} 排在選手的休息日。`);
+      const training = !NON_RUN_KINDS.has(s.kind) || (ctx.multisport && (RIDE_KINDS.has(s.kind) || s.kind === "cross"));
+      if (s.date && training && restDays.includes(weekdayIndex(s.date))) warn("preference", `${label(s, i)} 排在選手的休息日。`);
     });
     const longDays = parseWeekdays(ctx.profile.pref_long_run_day);
     sessions.forEach((s, i) => {
       if (s.kind === "long" && s.date && longDays.length && !longDays.includes(weekdayIndex(s.date))) warn("preference", `${label(s, i)} 不在選手的長跑日（${ctx.profile.pref_long_run_day}）。`);
+    });
+    const longRideDays = cycling ? parseWeekdays(ctx.profile.pref_long_ride_day) : [];
+    sessions.forEach((s, i) => {
+      if (s.kind === "ride_long" && s.date && longRideDays.length && !longRideDays.includes(weekdayIndex(s.date))) {
+        warn("preference", `${label(s, i)} 不在選手的長騎日（${ctx.profile.pref_long_ride_day}）。`);
+      }
     });
   }
 

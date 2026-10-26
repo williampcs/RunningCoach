@@ -24,6 +24,7 @@ import {
   type TargetContext,
 } from "./plan";
 import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
+import { weekAllocation } from "./allocation";
 import { analyzeRecovery } from "./recovery";
 import { raceOutcome } from "./races";
 import { otherActivitiesText } from "./activity-labels";
@@ -41,6 +42,10 @@ export const PREFERENCE_OPTIONS = {
   pref_goal: { health: "只想運動、養成習慣", speed: "練速度（5–10 km）", distance: "加強長距離（半馬、全馬）", race: "準備特定比賽" },
   pref_intensity: { easy: "輕鬆就好（不排強度課）", moderate: "適度（每週一堂強度課）", challenge: "想要挑戰（每週兩堂）" },
   pref_schedule: { fixed: "固定（照星期排）", flexible: "彈性（一週的菜單，哪天跑都可以）" },
+  // 多運動（規格 12.26 第 4 點）：主要運動、騎車的卡
+  pref_primary_sport: { run: "跑步", ride: "騎車" },
+  pref_goal_ride: { health: "保持健康、養成習慣", ftp: "提升 FTP（爬坡、速度）", distance: "長距離（百公里、長途）", race: "準備比賽" },
+  pref_intensity_ride: { easy: "輕鬆就好（不排強度課）", moderate: "適度（每週一堂強度課）", challenge: "想要挑戰（每週兩堂）" },
 } as const;
 
 /** 沒填偏好時的預設（規格 12.8 的決定）：強度適度、節奏固定、每週次數用最近四週的平均 */
@@ -52,26 +57,54 @@ export const DEFAULT_PREFERENCES = "強度適度、節奏固定、每週次數�
  */
 export function preferenceText(profile: Record<string, string>, options: PlanOptions = {}): string[] {
   const out: string[] = [];
-  const pick = <K extends keyof typeof PREFERENCE_OPTIONS>(key: K, label: string) => {
+  const text = <K extends keyof typeof PREFERENCE_OPTIONS>(key: K): string | null => {
     const value = profile[key];
-    if (!value) return;
-    const options = PREFERENCE_OPTIONS[key] as Record<string, string>;
-    out.push(`${label}：${options[value] ?? value}`);
+    if (!value) return null;
+    return (PREFERENCE_OPTIONS[key] as Record<string, string>)[value] ?? value;
   };
+  const pick = <K extends keyof typeof PREFERENCE_OPTIONS>(key: K, label: string) => {
+    const value = text(key);
+    if (value) out.push(`${label}：${value}`);
+  };
+  // 多運動：共通的設定與每項運動的卡（規格 12.26 第 4 點）
+  if (options.multisport && profile.pref_sports) {
+    const sports = athleteSports(profile);
+    out.push(`練的運動：${sports.map((s) => SPORT_LABELS[s]).join("、")}${sports.includes("run") ? "" : "（不跑步）"}`);
+    pick("pref_primary_sport", "主要運動");
+    pick("pref_schedule", "節奏");
+    if (profile.pref_days_per_week) out.push(`每週最多練 ${profile.pref_days_per_week} 天`);
+    if (profile.pref_other) out.push(`其他活動（不排課，只讓教練知道）：${profile.pref_other}`);
+    if (sports.includes("run")) {
+      const run = [
+        text("pref_goal") && `目標 ${text("pref_goal")}`,
+        text("pref_intensity") && `強度 ${text("pref_intensity")}`,
+        profile.pref_runs_per_week && `每週最多 ${profile.pref_runs_per_week} 次`,
+        profile.pref_max_minutes && `每次最多 ${profile.pref_max_minutes} 分鐘`,
+      ].filter(Boolean);
+      if (run.length) out.push(`跑步：${run.join("、")}`);
+    }
+    if (sports.includes("ride")) {
+      const ride = [
+        text("pref_goal_ride") && `目標 ${text("pref_goal_ride")}`,
+        text("pref_intensity_ride") && `強度 ${text("pref_intensity_ride")}`,
+        profile.pref_ride_hours && `每週約 ${profile.pref_ride_hours} 小時`,
+        profile.pref_ride_max_minutes && `每次最多 ${profile.pref_ride_max_minutes} 分鐘`,
+        profile.pref_long_ride_day && `長騎日 ${profile.pref_long_ride_day}`,
+      ].filter(Boolean);
+      if (ride.length) out.push(`騎車：${ride.join("、")}`);
+    }
+    for (const sport of sports.filter((s) => s !== "run" && s !== "ride")) {
+      const goal = profile[sportGoalKey(sport)];
+      if (goal) out.push(`${SPORT_LABELS[sport]}的目標：${goal}`);
+    }
+    return out;
+  }
   pick("pref_goal", "目標");
   pick("pref_intensity", "強度");
   if (profile.pref_runs_per_week) out.push(`每週最多 ${profile.pref_runs_per_week} 次`);
   if (profile.pref_max_minutes) out.push(`每次最多 ${profile.pref_max_minutes} 分鐘`);
   pick("pref_schedule", "節奏");
   if (profile.pref_other) out.push(`其他運動：${profile.pref_other}`);
-  if (options.multisport && profile.pref_sports) {
-    const sports = athleteSports(profile);
-    out.push(`練的運動：${sports.map((s) => SPORT_LABELS[s]).join("、")}${sports.includes("run") ? "" : "（不跑步）"}`);
-    for (const sport of sports) {
-      const goal = profile[sportGoalKey(sport)];
-      if (goal) out.push(`${SPORT_LABELS[sport]}的目標：${goal}`);
-    }
-  }
   return out;
 }
 
@@ -88,13 +121,15 @@ async function contextFor(db: Db, today: string, weekStart: string, style: PlanS
     db.getAllRaces(),
     db.getWellness(36),
     db.getCheckins(1),
-    // 單車的規則看最近四週的騎車（長騎的增幅、恢復週、賽前減量）
-    db.getOtherActivities(42),
+    // 單車的規則看最近四週的騎車（長騎的增幅、恢復週、賽前減量）；額度看最近 8 週
+    db.getOtherActivities(70),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
   ]);
   return {
     sports: Object.fromEntries(TARGET_SPORTS.map((sport) => [sport, sportTargets(sportSettings?.value, sport, today)])),
     multisport: options.multisport,
+    // 練騎車的人：這週（排課的那週）的額度
+    allocation: options.multisport ? weekAllocation(profile, races, weekStart, today, workouts, others) : null,
     rideKmh: values.ride.kmh,
     values,
     challenge: profile.pref_intensity === "challenge",

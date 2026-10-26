@@ -119,10 +119,14 @@ async function flow(browser, { width, height, scheme }, check, problems) {
     await page.locator("section.training-values").waitFor({ timeout: 10000 });
     await page.waitForTimeout(300);
     const picker = page.locator("fieldset.sports-picker");
+    // 每項運動一張卡，勾了才出現（規格 12.26 第 4 點）；沒勾任何運動時只有跑步的卡（當成只跑步）
+    const rideFieldset = page.locator('fieldset.sport-card[data-sport="ride"]');
+    if (first) check.rideCardHiddenBefore = (await rideFieldset.count()) === 0 && (await page.locator('fieldset.sport-card[data-sport="run"]').count()) === 1;
     for (const name of ["跑步", "騎車", "肌力訓練"]) await picker.getByLabel(name, { exact: true }).check();
-    await page.getByLabel("騎車的目標").fill("週末一次 2 小時的長騎");
+    if (first) check.rideCardShown = (await rideFieldset.count()) === 1 && (await page.locator("fieldset.pref-common").getByLabel("主要運動").count()) === 1;
+    await page.getByLabel("騎車的目標").selectOption("distance");
     if (first) check.goalFields = (await page.getByLabel("肌力訓練的目標").count()) === 1 && (await page.getByLabel("游泳的目標").count()) === 0;
-    await page.locator("label", { hasText: /^強度/ }).locator("select").selectOption("moderate");
+    await page.getByLabel("跑步的強度").selectOption("moderate");
     await page.getByRole("button", { name: "儲存選手資料" }).click();
     await page.locator(".notice.ok", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
     await picker.screenshot({ path: `${E2E.OUT}/multisport-${tag}-profile.png` });
@@ -133,7 +137,7 @@ async function flow(browser, { width, height, scheme }, check, problems) {
       await page.locator("section.training-values").waitFor({ timeout: 10000 });
       check.sportsSaved =
         (await until(async () => (await picker.getByLabel("騎車", { exact: true }).isChecked()) && !(await picker.getByLabel("游泳", { exact: true }).isChecked()))) &&
-        (await page.getByLabel("騎車的目標").inputValue()) === "週末一次 2 小時的長騎";
+        (await page.getByLabel("騎車的目標").inputValue()) === "distance";
     }
 
     step = "請教練排這週的課表";
@@ -143,7 +147,7 @@ async function flow(browser, { width, height, scheme }, check, problems) {
       const llm = (await requests()).filter((r) => r.kind === "llm").map((r) => JSON.stringify(r.body));
       const last = llm.filter((b) => b.includes("幫我排這週的課表")).at(-1) ?? "";
       check.toolHasSport = last.includes("交叉訓練（kind=cross）是哪種運動");
-      check.promptHasSports = last.includes("練的運動：跑步、騎車、肌力訓練") && last.includes("騎車的目標：週末一次 2 小時的長騎") && last.includes("【教練方法 v5】");
+      check.promptHasSports = last.includes("練的運動：跑步、騎車、肌力訓練") && last.includes("騎車：目標 長距離（百公里、長途）") && last.includes("【教練方法 v6】");
     }
 
     step = "課表頁：騎車的目標";
@@ -280,9 +284,25 @@ async function cyclingFlow(browser, { width, height, scheme }, check, problems) 
     await page.waitForTimeout(300);
     const picker = page.locator("fieldset.sports-picker");
     for (const name of ["跑步", "騎車"]) await picker.getByLabel(name, { exact: true }).check();
-    await page.locator("label", { hasText: /^強度/ }).locator("select").selectOption("moderate");
+    await page.getByLabel("跑步的強度").selectOption("moderate");
+    await page.getByLabel("騎車的強度").selectOption("moderate");
+    await page.getByLabel("主要運動").selectOption("run");
+    await page.getByLabel("每週騎幾小時").fill("3");
     await page.getByRole("button", { name: "儲存選手資料" }).click();
     await page.locator(".notice.ok", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
+    await page.locator("fieldset.pref-common").screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-common.png` });
+    await page.locator('fieldset.sport-card[data-sport="ride"]').screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-ride.png` });
+
+    if (first) {
+      step = "單車：教練看到的額度";
+      // 回覆會把整份訓練數值念一遍（模擬上游逐段送出，很長），等久一點
+      await tab("對話");
+      await page.getByPlaceholder("輸入訊息…").fill("這週的強度怎麼分配");
+      await page.getByRole("button", { name: "送出" }).click();
+      await page.locator('.msg.user:has-text("這週的強度怎麼分配") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 120000 });
+      const values = (await requests()).filter((r) => r.kind === "llm").map((r) => JSON.stringify(r.body)).filter((b) => b.includes("這週的強度怎麼分配")).join("\n");
+      check.coachSeesAllocation = values.includes("【這週的額度】") && values.includes("主要運動是跑步") && /騎車 [0-9]/.test(values) && values.includes("強度課");
+    }
 
     step = "單車：排跑步和騎車的課表";
     const reply = await send("幫我排跑步和騎車的課表");
@@ -290,14 +310,15 @@ async function cyclingFlow(browser, { width, height, scheme }, check, problems) 
       check.cyclingPlanSaved = reply.includes("課表已儲存");
       const bodies = (await requests()).filter((r) => r.kind === "llm").map((r) => JSON.stringify(r.body)).filter((b) => b.includes("幫我排跑步和騎車的課表"));
       const all = bodies.join("\n");
-      check.crossSportWarnings = all.includes("尚未儲存") && all.includes("跑步與騎車的強度課兩項合計") && all.includes("跑步與騎車的強度課一起算");
-      check.cyclingPrompt = all.includes("【單車的教練方法 v1】") && all.includes("你是一位專業的耐力運動教練") && all.includes("ride_sweetspot");
+      check.crossSportWarnings = all.includes("尚未儲存") && all.includes("強度課這週的額度是") && all.includes("跑步與騎車的強度課一起算");
+      check.cyclingPrompt = all.includes("【單車的教練方法 v2】") && all.includes("你是一位專業的耐力運動教練") && all.includes("ride_sweetspot");
     }
 
     step = "單車：課表頁";
     await tab("計畫與賽事");
     const card = page.locator("section.plan-card");
-    await card.locator(".plan-session").first().waitFor({ timeout: 10000 });
+    // 今天以前的課收在「這週稍早」（看不見），等時間軸上的
+    await card.locator(".timeline .plan-session").first().waitFor({ timeout: 10000 });
     const earlier = card.locator("details.plan-earlier");
     if (await earlier.count()) await earlier.locator("summary").click();
     const top = await card.locator(".plan-week").innerText();
@@ -417,12 +438,22 @@ async function rideOnlyFlow(browser, check, problems) {
     // 系統提示（OpenAI 相容的請求是第一則 system）；工具的說明本來就提到 Daniels，不算
     const sent = (await requests()).filter((r) => r.kind === "llm" && JSON.stringify(r.body).includes("幫我排只騎車的課表"))[0]?.body;
     const system = String(sent?.messages?.find((m) => m.role === "system")?.content ?? "");
-    check.rideOnlyPrompt = system.includes("這位選手練的運動：騎車") && !system.includes("Daniels") && system.includes("【單車的教練方法 v1】");
+    check.rideOnlyPrompt = system.includes("這位選手練的運動：騎車") && !system.includes("Daniels") && system.includes("【單車的教練方法 v2】");
     check.rideOnlySaved = (await page.locator(".bubble.assistant").last().innerText()).includes("課表已儲存");
     await E2E.go(page, "計畫與賽事");
     const top = page.locator("section.plan-card .plan-week");
     await top.waitFor({ timeout: 10000 });
     check.rideOnlyPlan = /騎車 3 次/.test(await top.innerText()) && !(await top.innerText()).includes("跑步");
+    await E2E.go(page, "選手資料");
+    await page.locator("fieldset.sports-picker").waitFor({ timeout: 10000 });
+    // 選手資料讀進來之前當成只跑步：等跑步的卡消失
+    for (let i = 0; i < 25 && (await page.locator('fieldset.sport-card[data-sport="run"]').count()) > 0; i++) await page.waitForTimeout(200);
+    check.rideOnlyCards =
+      (await page.locator('fieldset.sport-card[data-sport="run"]').count()) === 0 &&
+      (await page.locator('fieldset.sport-card[data-sport="ride"]').count()) === 1 &&
+      (await page.getByLabel("長跑日").count()) === 0 &&
+      (await page.getByLabel("主要運動").count()) === 0;
+    await page.locator('fieldset.sport-card[data-sport="ride"]').screenshot({ path: `${E2E.OUT}/cycling-ride-only-profile.png` });
     await E2E.go(page, "對話");
     check.rideOnlyNoRunGap = (await page.locator(".feed-item", { hasText: "天沒跑了" }).count()) === 0;
   } catch (e) {

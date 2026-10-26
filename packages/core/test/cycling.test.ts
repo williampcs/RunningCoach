@@ -17,6 +17,7 @@ import { applyEntity, snapshot } from "../src/device-sync/entities";
 import { accumulateRides } from "../src/history";
 import { checkPlan, parseSessions, sessionView, stepsText, type CheckContext, type PlannedSession, type SessionDraft } from "../src/plan";
 import { judgeOther, matchWeek } from "../src/plan-match";
+import { weekAllocation } from "../src/allocation";
 import { raceActivity } from "../src/races";
 import { sportTargets } from "../src/sports";
 import { buildTools } from "../src/tools";
@@ -103,7 +104,7 @@ describe("單車的教練方法", () => {
     expect(planningRules({ multisport: true, sports: ["run"] })).not.toContain(CYCLING_RULES);
     // 跑步＋騎車：兩份都有
     expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_METHOD);
-    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v5】");
+    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v6】");
     expect(planningRules({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_RULES);
     // 只練騎車：不帶跑步的方法
     const rideOnly = coachingMethod({ multisport: true, sports: ["ride"] });
@@ -121,7 +122,10 @@ describe("單車的教練方法", () => {
       expect(doc).toContain(name);
       expect(CYCLING_METHOD).toContain(name);
     }
-    for (const text of ["輕鬆就好 0", "適度 2", "想要挑戰 3", "88–94%", "91–96%", "15–20 分鐘", "5 點", "30–60 公克"]) expect(doc).toContain(text);
+    for (const text of ["輕鬆就好 0", "適度 1", "想要挑戰 2", "最多 3 堂", "新手 2 堂", "六到七成", "全馬約 12 週", "88–94%", "91–96%", "15–20 分鐘", "5 點", "30–60 公克"]) {
+      expect(doc).toContain(text);
+      if (!["88–94%", "91–96%", "30–60 公克", "15–20 分鐘", "5 點"].includes(text)) expect(CYCLING_METHOD).toContain(text);
+    }
   });
 });
 
@@ -175,20 +179,24 @@ describe("單車的課", () => {
 });
 
 describe("檢查器：單車與跨運動的規則", () => {
-  const ctx = (partial: Partial<CheckContext> = {}): CheckContext => ({
-    ...targetCtx([RUN, RIDE_HR]),
-    weekStart: "2026-10-12",
-    style: "fixed",
-    today: "2026-10-12",
-    profile: { pref_intensity: "moderate", pref_sports: "run,ride" },
-    workouts: [],
-    races: [],
-    recovery: null,
-    // 最近兩週每週兩趟 90 分鐘的騎車（長騎的增幅有依據）
-    others: ["2026-10-01", "2026-10-04", "2026-10-07", "2026-10-10"].map((d) => ride(d, { duration_min: 90 })),
-    multisport: true,
-    ...partial,
-  });
+  const ctx = (partial: Partial<CheckContext> = {}): CheckContext => {
+    const c: CheckContext = {
+      ...targetCtx([RUN, RIDE_HR]),
+      weekStart: "2026-10-12",
+      style: "fixed",
+      today: "2026-10-12",
+      profile: { pref_intensity: "moderate", pref_sports: "run,ride", pref_ride_hours: "5" },
+      workouts: [],
+      races: [],
+      recovery: null,
+      // 最近五週都有騎（不是新手），最近兩週每週兩趟 90 分鐘（長騎的增幅有依據）
+      others: ["2026-09-10", "2026-09-17", "2026-09-24", "2026-10-01", "2026-10-04", "2026-10-07", "2026-10-10"].map((d) => ride(d, { duration_min: 90 })),
+      multisport: true,
+      ...partial,
+    };
+    // 額度照實際的算法（沒有另外給時）
+    return { ...c, allocation: "allocation" in partial ? partial.allocation : weekAllocation(c.profile, c.races, c.weekStart, c.today, c.workouts, c.others) };
+  };
   const rules = (sessions: SessionDraft[], c: Partial<CheckContext> = {}) => checkPlan(sessions, ctx(c)).map((w) => w.rule);
 
   it("一週跑步＋騎車：照規則排的沒有警告", () => {
@@ -197,14 +205,20 @@ describe("檢查器：單車與跨運動的規則", () => {
     expect(rules(week)).toEqual([]);
   });
 
-  it("強度課兩項合計依強度偏好：適度 2、想要挑戰 3、輕鬆就好 0（一堂少量的節奏騎不算）", () => {
+  it("強度課照額度：各項的強度偏好、主要運動、兩項合計的上限；輕鬆就好可以有一堂少量的節奏騎", () => {
     const week = [sweetspot("2026-10-13"), tempoRun("2026-10-15"), vo2("2026-10-17")];
-    expect(rules(week)).toEqual(["quality_count"]);
-    expect(checkPlan(week, ctx()).find((w) => w.rule === "quality_count")!.message).toContain("跑步 1 堂、騎車 2 堂，共 3 堂");
-    expect(rules(week, { profile: { pref_intensity: "challenge", pref_sports: "run,ride" } })).toEqual([]);
+    // 兩項都適度：各 1 堂；騎車排了 2 堂
+    expect(rules(week)).toEqual(["allocation"]);
+    expect(checkPlan(week, ctx()).find((w) => w.rule === "allocation")!.message).toContain("騎車（含高強度的交叉訓練）的強度課這週的額度是 1 堂，排了 2 堂");
+    // 想要挑戰、主要運動是騎車：騎車 2、跑步 1（合計上限 3，先減輔助的）
+    const challenge = { pref_intensity: "challenge", pref_sports: "run,ride", pref_primary_sport: "ride", pref_ride_hours: "5" };
+    expect(rules(week, { profile: challenge })).toEqual([]);
+    // 新手（最近 8 週有練的不到 4 週）：合計 2 堂
+    expect(rules(week, { profile: challenge, others: [ride("2026-10-10")] })).toEqual(["allocation", "quality_count"]);
     const tempoRide = draft("2026-10-14", "ride_tempo", [{ duration_min: 20, target: { zone: "Z3" } }]);
-    expect(rules([tempoRide, endurance("2026-10-16")], { profile: { pref_intensity: "easy", pref_sports: "ride" } })).toEqual([]);
-    expect(rules([tempoRide, sweetspot("2026-10-16")], { profile: { pref_intensity: "easy", pref_sports: "ride" } })).toEqual(["quality_count"]);
+    const easyRide = { pref_intensity_ride: "easy", pref_sports: "ride", pref_ride_hours: "5" };
+    expect(rules([tempoRide, endurance("2026-10-16")], { profile: easyRide })).toEqual([]);
+    expect(rules([tempoRide, sweetspot("2026-10-16")], { profile: easyRide })).toEqual(["allocation"]);
   });
 
   it("不連排兩天（跑步與騎車一起算）；強度課要有替代", () => {
@@ -263,7 +277,7 @@ describe("檢查器：單車與跨運動的規則", () => {
   });
 
   it("只練騎車的人：沒有跑步的資料與課，也不出錯", () => {
-    const c = { profile: { pref_intensity: "moderate", pref_sports: "ride" } };
+    const c = { profile: { pref_intensity: "moderate", pref_sports: "ride", pref_ride_hours: "4" } };
     expect(rules([endurance("2026-10-13"), sweetspot("2026-10-15"), endurance("2026-10-18", 100)], c)).toEqual([]);
   });
 
@@ -370,7 +384,7 @@ describe("訓練數值、教練的角色與只練騎車的人", () => {
   });
 
   it("只練騎車的人：課表、教練動態、紀錄都不出錯", async () => {
-    const { coach } = await setup({ pref_sports: "ride", pref_intensity: "moderate" });
+    const { coach } = await setup({ pref_sports: "ride", pref_intensity: "moderate", pref_ride_hours: "5" });
     const input = {
       week_start: WEEK,
       style: "fixed",

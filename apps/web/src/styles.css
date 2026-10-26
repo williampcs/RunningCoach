@@ -2676,3 +2676,27 @@ button.link.danger {
   gap: 16px;
   margin: 8px 0;
 }
+
+/* 多運動的訓練偏好：共通的設定與每項運動的卡（規格 12.26 第 4 點） */
+.pref-common,
+.sport-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px 14px;
+  margin: 0;
+  min-width: 0;
+}
+
+.sport-card[data-sport="ride"] {
+  border-left: 3px solid var(--ride);
+}
+
+.sport-card[data-sport="run"] {
+  border-left: 3px solid var(--accent);
+}
+
+.pref-common legend,
+.sport-card legend {
+  font-weight: 600;
+  padding: 0 4px;
+}

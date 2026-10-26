@@ -474,7 +474,11 @@ function multisportTools(tools: ToolDef[]): void {
   const profileKey = props("update_athlete_profile").key!;
   profileKey.description +=
     "\n・練哪些運動：pref_sports（逗號分隔：run 跑步、ride 騎車、swim 游泳、strength 肌力訓練、other 其他，例：run,ride,strength）；" +
-    "各運動的目標：pref_goal_ride、pref_goal_swim、pref_goal_strength、pref_goal_other（文字，例：每週一次 2 小時的長騎）；跑步的目標仍是 pref_goal";
+    "主要運動：pref_primary_sport（run、ride，或空白表示不選）；每週最多練幾天：pref_days_per_week（整數）；pref_other 是其他活動（不排課，只讓教練知道）；" +
+    "跑步的卡沿用 pref_goal、pref_intensity、pref_runs_per_week、pref_max_minutes、pref_long_run_day；" +
+    "騎車的卡：pref_goal_ride（health 保持健康／ftp 提升 FTP／distance 長距離／race 準備比賽）、pref_intensity_ride（easy／moderate／challenge）、" +
+    "pref_ride_hours（每週騎幾小時，數字）、pref_ride_max_minutes（每次最多幾分鐘）、pref_long_ride_day（長騎日，例：週六）；" +
+    "其他運動的目標：pref_goal_swim、pref_goal_strength、pref_goal_other（文字）";
   const session = props("save_training_plan").sessions!.items!.properties;
   // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排
   session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];

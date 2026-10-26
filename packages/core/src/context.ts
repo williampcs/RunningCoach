@@ -168,7 +168,8 @@ export class ContextManager {
 
     // 訓練偏好
     const prefs: string[] = [];
-    if (profile.pref_long_run_day) prefs.push(`長跑日：${profile.pref_long_run_day}`);
+    // 只練騎車的人不列跑步的長跑日（舊資料留著的）
+    if (profile.pref_long_run_day && (!multisport || sports.includes("run"))) prefs.push(`長跑日：${profile.pref_long_run_day}`);
     if (profile.pref_rest_days) prefs.push(`休息日：${profile.pref_rest_days}`);
     if (profile.pref_train_time) prefs.push(`偏好時段：${profile.pref_train_time}`);
     prefs.push(...preferenceText(profile, { multisport }));

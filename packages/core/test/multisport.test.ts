@@ -89,7 +89,7 @@ describe("功能開關", () => {
     expect(JSON.stringify(buildTools(DEFAULT_SETTINGS))).toBe(off);
   });
 
-  it("關著時系統提示和原本一樣（v3）；開著時是 v5，有練的運動與目標", async () => {
+  it("關著時系統提示和原本一樣（v3）；開著時是 v6，有練的運動與目標", async () => {
     const profile = { pref_sports: "run,ride,strength", pref_goal_ride: "週末長騎" };
     const prompt = async (settings: Partial<CoachSettings>) => {
       const { coach, provider } = await makeCoach([turn({ text: "好" })], { settings });
@@ -101,9 +101,9 @@ describe("功能開關", () => {
     expect(offPrompt).toContain("【教練方法 v3】");
     expect(offPrompt).not.toContain("練的運動");
     expect(offPrompt).not.toContain("交叉訓練的目標（v4）");
-    expect(onPrompt).toContain("【教練方法 v5】");
+    expect(onPrompt).toContain("【教練方法 v6】");
     expect(onPrompt).toContain("練的運動：跑步、騎車、肌力訓練");
-    expect(onPrompt).toContain("騎車的目標：週末長騎");
+    expect(onPrompt).toContain("騎車：目標 週末長騎");
     expect(onPrompt).toContain("交叉訓練的目標（v4）");
   });
 });
@@ -163,7 +163,15 @@ describe("各運動的設定", () => {
     expect(athleteSports({})).toEqual(["run"]);
     expect(athleteSports({ pref_sports: "ride, strength,bogus" })).toEqual(["ride", "strength"]);
     expect(preferenceText({ pref_sports: "ride" })).toEqual([]);
-    expect(preferenceText({ pref_sports: "ride", pref_goal_ride: "長騎" }, { multisport: true })).toEqual(["練的運動：騎車（不跑步）", "騎車的目標：長騎"]);
+    // 舊的騎車目標是文字：照原文；新的是選單
+    expect(preferenceText({ pref_sports: "ride", pref_goal_ride: "長騎" }, { multisport: true })).toEqual(["練的運動：騎車（不跑步）", "騎車：目標 長騎"]);
+    expect(preferenceText({ pref_sports: "run,ride", pref_goal_ride: "ftp", pref_intensity: "moderate", pref_primary_sport: "run", pref_days_per_week: "5" }, { multisport: true })).toEqual([
+      "練的運動：跑步、騎車",
+      "主要運動：跑步",
+      "每週最多練 5 天",
+      "跑步：強度 適度（每週一堂強度課）",
+      "騎車：目標 提升 FTP（爬坡、速度）",
+    ]);
   });
 });
 

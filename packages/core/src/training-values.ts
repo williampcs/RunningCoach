@@ -6,6 +6,7 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
+import { allocationLine, allocationText, weekAllocation, type WeekAllocation } from "./allocation";
 import { planningRules } from "./coaching-method";
 import { athleteSports, DEFAULT_RIDE_KMH, sportOfType, sportTargets, sportTargetsText, type SportTargets } from "./sports";
 import { typicalPaceSec } from "./plan";
@@ -391,6 +392,8 @@ export interface TrainingValues {
   ride: RideValues;
   /** 選手練的運動（選手資料的 pref_sports；沒填時是跑步） */
   athleteSports: string[];
+  /** 這週與下週的額度（練騎車的人，allocation.ts）；沒有時為 null */
+  allocation: { thisWeek: WeekAllocation; nextWeek: WeekAllocation } | null;
 }
 
 export interface RideWeek {
@@ -507,7 +510,23 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     sports: (["ride", "swim"] as const).map((sport) => sportTargets(sportSettings?.value, sport, today)),
     ride: rideValues(others, today, weeks),
     athleteSports: athleteSports(profile),
+    allocation: await allocationFor(db, profile, races, today),
   };
+}
+
+/** 這週與下週的額度（練騎車的人）：看最近 8 週以上的跑步與騎車（新手的判斷） */
+export async function allocationFor(
+  db: Db,
+  profile: Record<string, string>,
+  races: Race[],
+  today: string,
+): Promise<{ thisWeek: WeekAllocation; nextWeek: WeekAllocation } | null> {
+  if (!athleteSports(profile).includes("ride")) return null;
+  const [workouts, others] = await Promise.all([db.getRecentWorkouts(70), db.getOtherActivities(70)]);
+  const monday = addDays(today, -weekdayIndex(today));
+  const thisWeek = weekAllocation(profile, races, monday, today, workouts, others);
+  const nextWeek = weekAllocation(profile, races, addDays(monday, 7), today, workouts, others);
+  return thisWeek && nextWeek ? { thisWeek, nextWeek } : null;
 }
 
 /** 秒 → 「22:30」或「1:43:20」 */
@@ -671,8 +690,16 @@ function commonLines(v: TrainingValues, options: { multisport?: boolean }): stri
   }
   const cycling = !!options.multisport && v.athleteSports.includes("ride");
   if (cycling) lines.push("", ...rideLines(v));
+  if (options.multisport && v.allocation) {
+    lines.push("", ...allocationText(v.allocation.thisWeek));
+    lines.push(`・下週（${v.allocation.nextWeek.weekStart} 起）：${nextWeekLine(v.allocation.nextWeek)}`);
+  }
   lines.push("", planningRules({ ...options, sports: v.athleteSports }));
   return lines;
+}
+
+function nextWeekLine(a: WeekAllocation): string {
+  return [allocationLine(a), ...a.reasons].join("；");
 }
 
 /** 【騎車】的段落：練騎車的人才有（多運動的第 3 階段） */

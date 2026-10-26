@@ -69,24 +69,89 @@ const GROUPS: { title: string; note?: string; fields: Field[] }[] = [
   },
 ];
 
-/** 各運動的目標的提示（跑步的目標仍是上面的選單） */
+/** 跑步、騎車以外的運動的目標的提示（文字；跑步、騎車的目標在各自的卡用選單） */
 const GOAL_PLACEHOLDERS: Partial<Record<Sport, string>> = {
-  ride: "例如：週末一次 2 小時的長騎、通勤",
   swim: "例如：每週一次、恢復用",
   strength: "例如：每週兩次、預防受傷",
   other: "例如：瑜伽、爬山",
 };
 
+type Form = Record<string, string>;
+
+function FieldInput({ field, form, setForm }: { field: Field; form: Form; setForm: (form: Form) => void }) {
+  const value = form[field.key] ?? "";
+  // 選單：舊資料不是選項之一時（例如以前用文字寫的騎車目標）照原文留著
+  const legacy = field.options && value && !(value in field.options) ? value : null;
+  return (
+    <label className={field.wide ? "wide" : ""}>
+      {field.label}
+      {field.options ? (
+        <select value={value} onChange={(e) => setForm({ ...form, [field.key]: e.target.value })}>
+          <option value="">{field.emptyLabel ?? "未填"}</option>
+          {Object.entries(field.options).map(([v, text]) => (
+            <option key={v} value={v}>
+              {text}
+            </option>
+          ))}
+          {legacy && <option value={legacy}>{legacy}（原本寫的）</option>}
+        </select>
+      ) : field.long ? (
+        <AutoGrowTextarea enter="submit" value={value} placeholder={field.placeholder} onChange={(e) => setForm({ ...form, [field.key]: e.target.value })} />
+      ) : (
+        <input value={value} placeholder={field.placeholder} onChange={(e) => setForm({ ...form, [field.key]: e.target.value })} />
+      )}
+    </label>
+  );
+}
+
+/** 共通的設定（一個人的時間是共用的，跨運動一起算） */
+const COMMON_FIELDS: Field[] = [
+  { key: "pref_schedule", label: "節奏", options: PREFERENCE_OPTIONS.pref_schedule, wide: true },
+  { key: "pref_days_per_week", label: "每週最多練幾天", placeholder: "5" },
+  { key: "pref_rest_days", label: "休息日", placeholder: "週一、週五" },
+  { key: "pref_train_time", label: "偏好時段", placeholder: "清晨" },
+  { key: "pref_other", label: "其他活動（不排課，只讓教練知道）", placeholder: "登山、球類、瑜伽", wide: true, long: true },
+];
+
+/** 每項運動一張卡：跑步沿用原本的欄位（舊資料自動帶過去） */
+const SPORT_CARDS: { sport: "run" | "ride"; fields: Field[] }[] = [
+  {
+    sport: "run",
+    fields: [
+      { key: "pref_goal", label: "跑步的目標", options: PREFERENCE_OPTIONS.pref_goal, wide: true },
+      { key: "pref_intensity", label: "跑步的強度", options: PREFERENCE_OPTIONS.pref_intensity, wide: true },
+      { key: "pref_runs_per_week", label: "每週跑幾次", placeholder: "4" },
+      { key: "pref_max_minutes", label: "跑步每次最多幾分鐘", placeholder: "60" },
+      { key: "pref_long_run_day", label: "長跑日", placeholder: "週日" },
+    ],
+  },
+  {
+    sport: "ride",
+    fields: [
+      { key: "pref_goal_ride", label: "騎車的目標", options: PREFERENCE_OPTIONS.pref_goal_ride, wide: true },
+      { key: "pref_intensity_ride", label: "騎車的強度", options: PREFERENCE_OPTIONS.pref_intensity_ride, emptyLabel: "未填（沿用跑步的）", wide: true },
+      { key: "pref_ride_hours", label: "每週騎幾小時", placeholder: "3" },
+      { key: "pref_ride_max_minutes", label: "騎車每次最多幾分鐘", placeholder: "120" },
+      { key: "pref_long_ride_day", label: "長騎日", placeholder: "週六" },
+    ],
+  },
+];
+
 /**
- * 練哪些運動（可複選）與各自的目標（多運動的開關，規格 12.24）：存在 pref_sports 與 pref_goal_<運動>.
- * 沒選時當成只跑步（舊的資料）
+ * 多運動的訓練偏好（規格 12.26 第 4 點）：共通的設定＋每項運動一張卡（勾了那項才出現）.
+ * 沒選練哪些運動時當成只跑步（舊的資料）：跑步的卡照樣出現
  */
-function SportsPicker({ form, setForm }: { form: Record<string, string>; setForm: (form: Record<string, string>) => void }) {
+function MultisportPreferences({ form, setForm }: { form: Form; setForm: (form: Form) => void }) {
   const picked = form.pref_sports ? athleteSports(form) : [];
+  const sports = picked.length ? picked : (["run"] as Sport[]);
   const toggle = (sport: Sport) => {
     const next = picked.includes(sport) ? picked.filter((s) => s !== sport) : [...picked, sport];
-    setForm({ ...form, pref_sports: SPORT_CHOICES.filter((s) => next.includes(s)).join(",") });
+    const update: Form = { ...form, pref_sports: SPORT_CHOICES.filter((s) => next.includes(s)).join(",") };
+    // 主要運動不在練的運動裡了就清掉
+    if (update.pref_primary_sport && !next.includes(update.pref_primary_sport as Sport)) update.pref_primary_sport = "";
+    setForm(update);
   };
+  const primaryChoices = Object.fromEntries(Object.entries(PREFERENCE_OPTIONS.pref_primary_sport).filter(([s]) => sports.includes(s as Sport)));
   return (
     <>
       <fieldset className="wide sports-picker">
@@ -101,8 +166,39 @@ function SportsPicker({ form, setForm }: { form: Record<string, string>; setForm
         </div>
         <p className="small muted">沒選的話，教練當成只跑步。選了騎車，教練會排單車的課；只選騎車也可以。</p>
       </fieldset>
+      <fieldset className="wide pref-common">
+        <legend>共通的設定</legend>
+        <div className="grid">
+          {Object.keys(primaryChoices).length > 1 && (
+            <FieldInput
+              field={{ key: "pref_primary_sport", label: "主要運動", options: primaryChoices, emptyLabel: "不選（依各項的設定）", wide: true }}
+              form={form}
+              setForm={setForm}
+            />
+          )}
+          {COMMON_FIELDS.map((field) => (
+            <FieldInput key={field.key} field={field} form={form} setForm={setForm} />
+          ))}
+        </div>
+        {Object.keys(primaryChoices).length > 1 && (
+          <p className="small muted">主要運動拿大部分的時間與強度課；賽事快到時，那項會暫時變成主要。每週的分配由程式依這些設定算，教練照著排。</p>
+        )}
+      </fieldset>
+      {SPORT_CARDS.filter((card) => sports.includes(card.sport)).map((card) => (
+        <fieldset key={card.sport} className={`wide sport-card`} data-sport={card.sport}>
+          <legend>
+            {card.sport === "ride" ? "🚴 " : "🏃 "}
+            {SPORT_LABELS[card.sport]}
+          </legend>
+          <div className="grid">
+            {card.fields.map((field) => (
+              <FieldInput key={field.key} field={field} form={form} setForm={setForm} />
+            ))}
+          </div>
+        </fieldset>
+      ))}
       {picked
-        .filter((sport) => sport !== "run")
+        .filter((sport) => sport !== "run" && sport !== "ride")
         .map((sport) => (
           <label key={sport} className="wide">
             {SPORT_LABELS[sport]}的目標
@@ -169,8 +265,9 @@ export function ProfileView() {
             <h2>{group.title}</h2>
             {group.note && <p className="small muted">{group.note}</p>}
             <div className="grid">
-              {group.title === "訓練偏好" && featureEnabled("multisport") && <SportsPicker form={form} setForm={setForm} />}
-              {group.fields.map((field) => (
+              {group.title === "訓練偏好" && featureEnabled("multisport") && <MultisportPreferences form={form} setForm={setForm} />}
+              {/* 多運動開著時，訓練偏好的欄位都在上面的共通設定與各項運動的卡裡 */}
+              {!(group.title === "訓練偏好" && featureEnabled("multisport")) && group.fields.map((field) => (
                 <label key={field.key} className={field.wide ? "wide" : ""}>
                   {field.label}
                   {field.options ? (
