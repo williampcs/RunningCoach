@@ -1435,6 +1435,10 @@ span.quote {
   color: var(--muted);
 }
 
+.feed-tags {
+  margin: var(--sp-1) 0;
+}
+
 /* 右邊的數字：賽事的倒數 */
 .feed-badge {
   align-self: center;

@@ -202,6 +202,10 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   }, [rotating]);
 
   const dateLabel = `今天 ${shortDateLabel(today)}`;
+  // 整張看板是一張卡，最多一顆實心按鈕（規格 12.28）：還沒回報身體狀況時只給身體狀況那列；
+  // 回報過了，給排第一、要動手的那列（今天的課的「查看計畫」不算，課表頁才是做事的地方）
+  const unreported = visible.find((i) => i.kind === "checkin" && i.tone === "info");
+  const primaryId = (unreported ?? visible.find((i) => i.actions.length > 0 && i.tone !== "ok" && i.kind !== "plan"))?.id ?? null;
 
   if (visible.length === 0) {
     return hidden ? (
@@ -321,6 +325,15 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                     ))}
                   </ul>
                 )}
+                {item.tags && (
+                  <span className="chips feed-tags">
+                    {item.tags.map((t) => (
+                      <span key={t} className="chip">
+                        {t}
+                      </span>
+                    ))}
+                  </span>
+                )}
                 {item.detail && (
                   <span className="feed-sub" title={item.detail}>
                     {item.detail}
@@ -336,11 +349,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                 <CheckinForm onDone={() => setCheckinOpen(false)} />
               ) : (
                 <div className="feed-actions">
-                  {/* 第一個是這一列的主要動作（今天的課是外框：課表頁才是做事的地方），其他是文字按鈕 */}
+                  {/* 整張看板最多一顆實心按鈕（primaryId）；其他列的第一個動作是外框，其餘是文字按鈕 */}
                   {item.actions.map((action, i) => (
                     <button
                       key={i}
-                      className={i > 0 ? "text" : item.tone === "ok" || item.kind === "plan" ? "" : "primary"}
+                      className={i > 0 ? "text" : item.id === primaryId ? "primary" : ""}
                       disabled={(action.type === "ask" && llmProblem !== null) || (action.type === "sync" && sync.busy)}
                       onClick={() => runAction(action, item)}
                     >

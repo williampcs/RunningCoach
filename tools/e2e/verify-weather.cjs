@@ -73,10 +73,12 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
 
   // 教練動態：濕熱的提醒與來源標示
   await E2E.go(page, "對話");
-  const heat = page.locator(".feed-item").filter({ hasText: "今天濕熱" });
+  // 標題是短句（濕熱，可能下雨），數字是標籤（規格 12.28）
+  const heat = page.locator(".feed-item").filter({ has: page.locator(".feed-title", { hasText: /^濕熱/ }) });
   await heat.waitFor({ timeout: 10000 });
   // 濕熱與下雨合成一則
-  check.oneWeatherItem = (await page.locator(".feed-item").filter({ hasText: "Weather data by Open-Meteo.com" }).count()) === 1 && (await heat.innerText()).includes("可能下雨");
+  check.oneWeatherItem = (await page.locator(".feed-item").filter({ hasText: "Weather data by Open-Meteo.com" }).count()) === 1 && (await heat.locator(".feed-title").innerText()) === "濕熱，可能下雨";
+  check.weatherTags = (await heat.locator(".feed-tags .chip").allInnerTexts()).some((t) => /^體感 \d+°C$/.test(t)) && !/（/.test(await heat.locator(".feed-title").innerText());
   check.feedCredit = (await heat.getByRole("link", { name: "Weather data by Open-Meteo.com" }).count()) === 1;
   await page.screenshot({ path: `${OUT}/weather-2-feed.png`, fullPage: false });
 
@@ -113,7 +115,7 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   check.cleared = (await page.evaluate(() => JSON.parse(localStorage.getItem("running-coach.settings.v1")).weather)) === null;
   await E2E.go(page, "對話");
   await page.waitForTimeout(800);
-  check.feedGoneAfterClear = (await page.locator(".feed-item").filter({ hasText: "今天濕熱" }).count()) === 0;
+  check.feedGoneAfterClear = (await page.locator(".feed-item").filter({ hasText: "Weather data by Open-Meteo.com" }).count()) === 0;
   await page.context().close();
 
   check.noConsoleErrors = problems.length === 0;

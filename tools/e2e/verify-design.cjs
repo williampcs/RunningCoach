@@ -1,10 +1,10 @@
 // 驗證介面改版（規格 12.28、doc/design-guidelines.md 的檢查清單）：每一頁在手機與電腦、淺色與深色、功能開關開著與關著：
 // - 畫面上沒有 emoji（教練的回覆、使用說明的內文這類內容不算）
 // - 主要內容用到的字級不超過五種（數字、標題、小標、內文、輔助）
-// - 每張卡（卡片、看板的一列、課表的一堂課、提示）最多一顆主要（實心）按鈕
+// - 每張卡（卡片、整張看板、課表的一堂課、提示）最多一顆主要（實心）按鈕
 // - 分頁是線條圖示＋兩個字（對話、回報、紀錄、計畫、選手）
 // - 只有圖示的按鈕（✕ ? 設定 › ⓘ）都有名稱；其他按鈕旁邊都有字
-// - 按鈕至少 44 高（句子裡的連結、「細節」這類收起的按鈕、清單的一列除外）；不左右捲動
+// - 看板的標題不帶括號裡的數字；按鈕至少 44 高（句子裡的連結、「細節」這類收起的按鈕、清單的一列除外）；不左右捲動
 // 每一頁截圖（design-{開關}-{頁}-{寬}-{配色}.png，整頁捲動的內容也截進去）。
 // 開關關著用一般的建置（E2E_URL，開著 testmode）；開著的自己建置一份 VITE_FEATURES=all（4178 埠）。只需要 npm run dev:mock。
 const { spawn, execFileSync } = require("child_process");
@@ -75,7 +75,7 @@ function inspect() {
   };
   // 內容（教練的回覆、使用說明的內文、跑後分析、匯入的課表、輸入框裡打的字）不算介面
   const CONTENT = ".bubble, .markdown, .summary-text, .run-summary, .import-plan, .recovery-code, .help-section, .quote";
-  const out = { emoji: [], sizes: {}, primary: [], unnamed: [], small: [], tabs: null, overflow: false };
+  const out = { emoji: [], sizes: {}, primary: [], unnamed: [], small: [], feedTitles: [], tabs: null, overflow: false };
 
   // 1. emoji：看得到的文字（不含內容）
   const emoji = /\p{Extended_Pictographic}/u;
@@ -91,8 +91,8 @@ function inspect() {
     }
   }
 
-  // 3. 每張卡最多一顆主要按鈕（算最裡面的那張）
-  const CARDS = ".card, .feed-item, .plan-session, .notice";
+  // 3. 每張卡最多一顆主要按鈕（算最裡面的那張）；看板整張算一張卡
+  const CARDS = ".card, .feed, .plan-session, .notice";
   for (const card of document.querySelectorAll(CARDS)) {
     if (!visible(card)) continue;
     const primaries = [...card.querySelectorAll("button.primary")].filter((b) => visible(b) && b.closest(CARDS) === card);
@@ -112,6 +112,9 @@ function inspect() {
     const h = b.getBoundingClientRect().height;
     if (!exempt && h < 43.5) out.small.push(`${text || b.getAttribute("aria-label")}（${Math.round(h)}）`);
   }
+
+  // 4b. 看板的標題不帶括號裡的數字（數字放標籤）
+  out.feedTitles = [...document.querySelectorAll(".feed-title")].map((t) => t.textContent).filter((t) => /（[^）]*\d/.test(t));
 
   // 5. 分頁：線條圖示＋兩個字
   out.tabs = [...document.querySelectorAll("nav.tabbar button")].map((b) => ({ text: b.innerText.trim(), svg: !!b.querySelector("svg") }));
@@ -268,6 +271,8 @@ const PAGES = [
             check[`${tag}.tabs`] =
               r.tabs.map((t) => t.text).join(",") === TABS.join(",") && r.tabs.every((t) => t.svg);
             check[`${tag}.noOverflow`] = !r.overflow;
+            check[`${tag}.feedTitlesNoNumbers`] = r.feedTitles.length === 0;
+            if (r.feedTitles.length) problems.push(`[${tag}] 看板的標題有括號裡的數字：${r.feedTitles.join(" | ")}`);
             if (r.emoji.length) problems.push(`[${tag}] emoji：${r.emoji.join(" | ")}`);
             if (sizes.length > 5) problems.push(`[${tag}] 字級 ${sizes.length} 種：${sizes.map((s) => `${s}（${r.sizes[s].slice(0, 2).join("、")}）`).join(" ")}`);
             if (r.primary.length) problems.push(`[${tag}] 主要按鈕不只一顆：${r.primary.join(" | ")}`);

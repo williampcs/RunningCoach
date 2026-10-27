@@ -43,6 +43,8 @@ export interface FeedItem {
   lines?: { sport: "run" | "ride" | "strength" | "swim" | "other"; text: string }[];
   /** 右邊的數字（賽事的倒數，例：12 天） */
   badge?: string;
+  /** 數字的標籤（天氣：體感 36°C、露點 24°C、降雨 70%）；標題不帶括號裡的數字 */
+  tags?: string[];
 }
 
 /** 連續幾天沒跑才提醒 */
@@ -328,8 +330,8 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `report-ride-${latestRide.intervals_id}`,
       kind: "report",
       tone: "info",
-      title: `${latestRide.date === today ? "今天" : "昨天"}的騎車（${Math.round(latestRide.duration_min ?? 0)} 分鐘）還沒回報感受`,
-      detail: "補上體感，分析會更準。",
+      title: `${latestRide.date === today ? "今天" : "昨天"}的騎車還沒回報感受`,
+      detail: `${Math.round(latestRide.duration_min ?? 0)} 分鐘 · 補上體感，分析會更準。`,
       actions: [{ type: "report", intervalsId: latestRide.intervals_id }],
     });
   }
@@ -439,8 +441,9 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "weather",
       tone: notice.tone,
       title: notice.title,
+      tags: notice.tags,
       detail: notice.detail,
-      actions: [ask("請教練調整", `${notice.title}，我今天的訓練要怎麼調整？`)],
+      actions: [ask("請教練調整", `${notice.summary}，我今天的訓練要怎麼調整？`)],
       credit: { ...WEATHER_CREDIT },
     });
   }
