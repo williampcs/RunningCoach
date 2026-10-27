@@ -5,17 +5,8 @@ const { chromium } = E2E;
 const OUT = E2E.OUT;
 const URL = E2E.URL;
 
-async function setup(page, { intervals }) {
-  await E2E.go(page, "設定");
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  if (intervals) await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
-  await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
-}
+// 設定的第一層是清單（規格 12.28）：用 env.cjs 的 setupMock 進到「AI 教練」「訓練紀錄」填好
+const setup = (page, { intervals, timeZone = null }) => E2E.setupMock(page, { mock: E2E.MOCK, intervals, timeZone });
 
 async function newPage(browser, problems) {
   // 每次用新的 context：OPFS 與 localStorage 都是空的，等同第一次使用
@@ -42,10 +33,11 @@ async function newPage(browser, problems) {
   await page.screenshot({ path: `${OUT}/first-1-settings.png`, fullPage: true });
   await page.locator("#side-panel").getByRole("button", { name: "匯入全部的紀錄" }).click();
   await page.getByText(/更早的紀錄：匯入 \d+ 趟/).waitFor({ timeout: 60000 });
-  const text = await page.locator(".notice.ok").filter({ hasText: "更早的紀錄" }).innerText();
+  // 成功的結果是畫面下方的小提示（規格 12.28）；下一步完成後收起
+  const text = await page.locator(".toast").filter({ hasText: "更早的紀錄" }).innerText();
   check.recentSynced = /同步完成/.test(text);
   check.olderAdded = Number(/匯入 (\d+) 趟/.exec(text)[1]) > 0;
-  check.nextStepStays = await page.getByText("下一步：抓進你的跑步紀錄").isVisible();
+  check.nextStepDone = (await page.getByText("下一步：抓進你的跑步紀錄").count()) === 0;
   await page.screenshot({ path: `${OUT}/first-2-settings-done.png`, fullPage: true });
   // 紀錄頁：累積算進更早的跑步；最近的有分析
   await E2E.go(page, "紀錄");
@@ -78,6 +70,7 @@ async function newPage(browser, problems) {
   await page.screenshot({ path: `${OUT}/first-4-history-empty.png`, fullPage: true });
   await page.locator("main").getByRole("button", { name: "匯入全部的紀錄" }).click();
   await page.getByText(/更早的紀錄：匯入 \d+ 趟/).waitFor({ timeout: 60000 });
+  await page.locator(".runs li").first().waitFor({ timeout: 10000 }).catch(() => undefined);
   check.historyListed = (await page.locator(".runs li").count()) > 0;
   check.historyChoicesGone = (await page.locator("main").getByRole("button", { name: "匯入全部的紀錄" }).count()) === 0;
   await page.screenshot({ path: `${OUT}/first-5-history-done.png`, fullPage: true });

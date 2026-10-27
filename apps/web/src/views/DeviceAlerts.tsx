@@ -96,18 +96,18 @@ export function RemovedBanner({ onDismiss }: { onDismiss: () => void }) {
       <span className="small">
         如果不是你自己移除的，你的復原碼可能已經外流：可以「用這台的資料重新開始同步」，產生新的同步空間與新的復原碼，你的其他裝置再重新加入。
       </span>
-      <span className="row wrap">
-        <button className="link" onClick={() => void exportHere()}>
+      <span className="actions">
+        <button className="text" onClick={() => void exportHere()}>
           匯出
         </button>
-        <button className="link danger" onClick={() => void clearHere()}>
+        <button className="text danger" onClick={() => void clearHere()}>
           清除這台的資料
         </button>
-        <button className="link" onClick={showDevices}>
+        <button className="text" onClick={showDevices}>
           用這台的資料重新開始同步
         </button>
         <button
-          className="link"
+          className="text"
           onClick={() => {
             clearRemoved();
             onDismiss();
@@ -138,11 +138,11 @@ export function NewDevicesBanner() {
         ))}
         。不是你的？
       </span>
-      <span className="row">
-        <button className="link" onClick={showDevices}>
+      <span className="actions">
+        <button className="text" onClick={showDevices}>
           查看與移除
         </button>
-        <button className="link" onClick={() => deviceSync.acknowledge(fresh.map((d) => d.id))}>
+        <button className="text" onClick={() => deviceSync.acknowledge(fresh.map((d) => d.id))}>
           是我的
         </button>
       </span>

@@ -10,7 +10,10 @@ import {
   type ReplyRef,
 } from "@running-coach/core";
 
+import { Archive, X } from "lucide-react";
+
 import { errorText, useApp } from "../app-context";
+import { EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
@@ -62,7 +65,7 @@ function plainText(content: string): string {
 const excerpt = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
 export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOutboxSent: () => void }) {
-  const { coach, llmProblem, revision, touch, goTo } = useApp();
+  const { coach, llmProblem, revision, touch, openSettings, toast } = useApp();
   const [messages, setMessages] = useState<ConversationRow[]>([]);
   // 畫面上要顯示幾則（往上捲時增加）、更早的還有沒有
   const [limit, setLimit] = useState(PAGE);
@@ -229,7 +232,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     try {
       await coach.db.addMemory(remembering.text, "user");
       setRemembering(null);
-      setNotice({ kind: "ok", text: "已記住。教練每次都會看到；可以在「選手資料」頁查看與修改。" });
+      setNotice(null);
+      toast("已記住。可以在「選手」頁查看與修改。");
       touch();
     } catch (e) {
       setNotice({ kind: "error", text: errorText(e) });
@@ -272,7 +276,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         <GettingStarted />
         <div ref={top} />
         {hasOlder && (
-          <button className="link center small" disabled={loadingOlder} onClick={loadOlder}>
+          <button className="text" disabled={loadingOlder} onClick={loadOlder}>
             {loadingOlder ? "讀取中…" : "載入更早的對話"}
           </button>
         )}
@@ -335,7 +339,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
                     <button type="submit" className="primary" disabled={!remembering.text.trim()}>
                       記住
                     </button>
-                    <button type="button" onClick={() => setRemembering(null)}>
+                    <button className="text" type="button" onClick={() => setRemembering(null)}>
                       取消
                     </button>
                   </div>
@@ -346,7 +350,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               <div className="archived-divider" role="separator">
                 <span>
                   <span>
-                    <span aria-hidden="true">🗂️</span> 以上已整理成摘要
+                    <Icon as={Archive} size={16} /> 以上已整理成摘要
                   </span>
                   <span className="archived-sub">教練記得重點，也能查回原文</span>
                 </span>
@@ -370,13 +374,17 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           ))}
         {error && <div className="notice error">沒有收到回覆：{error}</div>}
         {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
-        {footer && sending === null && <div className="muted small footer">{footer}</div>}
+        {footer && sending === null && (
+          <div className="muted small footer">
+            <EmojiText text={footer} size={14} />
+          </div>
+        )}
         <div ref={bottom} />
       </div>
       {llmProblem ? (
-        <div className="notice warn">
-          {llmProblem}，目前無法對話。
-          <button className="link" onClick={() => goTo("settings")}>
+        <div className="notice warn inline">
+          <span>{llmProblem}，目前無法對話。</span>
+          <button className="text" onClick={() => openSettings("ai")}>
             前往設定
           </button>
         </div>
@@ -395,8 +403,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           {replyTo && (
             <div className="reply-bar">
               {quote(replyTo)}
-              <button type="button" className="link small" aria-label="取消回覆" onClick={() => setReplyTo(null)}>
-                ✕
+              <button type="button" className="icon-button" aria-label="取消回覆" title="取消回覆" onClick={() => setReplyTo(null)}>
+                <Icon as={X} />
               </button>
             </div>
           )}

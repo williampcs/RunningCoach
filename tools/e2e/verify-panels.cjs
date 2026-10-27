@@ -20,7 +20,10 @@ const closed = (page) => panel(page).waitFor({ state: "detached", timeout: 3000 
 // 面板裡相鄰的卡片之間的最小距離
 const minCardGap = (page) =>
   panel(page).evaluate((el) => {
-    const cards = [...el.querySelectorAll(".side-panel-body section.card")].filter((c) => c.offsetParent).map((c) => c.getBoundingClientRect());
+    // 設定的一項（規格 12.28）裡是標題、卡片與提示；說明頁是一張一張的卡片
+    const cards = [...el.querySelectorAll(".side-panel-body > .card, .side-panel-body > .notice, .side-panel-body .subpage > .card, .side-panel-body .subpage > .notice, .side-panel-body .stack > section.card")]
+      .filter((c) => c.offsetParent)
+      .map((c) => c.getBoundingClientRect());
     let min = Infinity;
     for (let i = 1; i < cards.length; i++) min = Math.min(min, cards[i].top - cards[i - 1].bottom);
     return cards.length >= 2 ? min : -1;
@@ -57,17 +60,11 @@ const focusIn = (page, selector) => page.evaluate((s) => !!document.activeElemen
         check[`${tag}.toggleCloses`] = (await closed(page)) && (await settingsButton.getAttribute("aria-expanded")) === "false";
 
         step = "設定";
-        await E2E.go(page, "設定");
-        await page.getByLabel("時區").fill("Asia/Taipei");
-        await page.getByLabel("供應商").selectOption("openai-compatible");
-        await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-        await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-        await page.getByLabel("主對話模型").fill("mock-model");
-        await page.getByLabel("我了解並同意以上的資料流向").check();
-        await page.getByRole("button", { name: "儲存設定" }).click();
-        await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
-        // 卡片之間有間距（和分頁上一樣 12px）
-        check[`${tag}.settingsCardGap`] = (await minCardGap(page)) >= 11;
+        await E2E.setupMock(page, { mock: E2E.MOCK, intervals: false, timeZone: "Asia/Taipei" });
+        // 卡片之間有間距（和分頁上一樣 12px）；設定的一項裡只有一張卡片時看排列的間距
+        check[`${tag}.settingsCardGap`] = await panel(page).evaluate(
+          (el) => getComputedStyle(el.querySelector(".side-panel-body")).rowGap === "12px" && getComputedStyle(el.querySelector(".subpage")).rowGap === "12px",
+        );
         await panel(page).getByRole("button", { name: "關閉設定" }).click();
         {
           const leaving = await panel(page).evaluate((el) => el.classList.contains("leaving") && el.inert).catch(() => false);

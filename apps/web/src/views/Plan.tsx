@@ -3,6 +3,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import {
   addDays,
   DIFFICULTY_LABELS,
+  distanceText,
   monthDay,
   activityLabel,
   isQualityKind,
@@ -19,10 +20,14 @@ import {
   type SessionKind,
   type StepIntensity,
   type StepRow,
+  type StructureSegment,
   type TimelineSession,
 } from "@running-coach/core";
 
+import { Activity, Check, Gauge, HeartPulse, Repeat, Route, Timer, Zap, type LucideIcon } from "lucide-react";
+
 import { errorText, useApp } from "../app-context";
+import { Disclosure, DisclosureButton, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
 import { featureEnabled } from "../environment";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
@@ -32,7 +37,7 @@ type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" |
 
 const weekdayOf = (date: string) => weekdayName(date).replace("星期", "");
 
-/** 一堂課的色條：和紀錄頁的強度橫條同一套顏色 */
+/** 一堂課的強度：運動圖示的顏色（和紀錄頁的強度橫條同一套顏色）；不算強度的是灰 */
 const KIND_INTENSITY: Record<SessionKind, StepIntensity> = {
   easy: "low",
   long: "low",
@@ -54,25 +59,31 @@ const KIND_INTENSITY: Record<SessionKind, StepIntensity> = {
   ride_anaerobic: "high",
 };
 
-/** 跑步以外的課的圖示（多運動）：單車、肌力、游泳等；跑步的課沒有圖示（和開關關著時一樣） */
-const SPORT_ICONS: Record<string, string> = { ride: "🚴", strength: "🏋️", swim: "🏊", other: "🤸" };
-function sportIcon(s: TimelineSession): string | null {
-  if (!featureEnabled("multisport")) return null;
-  if (s.kind === "strength") return SPORT_ICONS.strength!;
-  return s.sport ? (SPORT_ICONS[s.sport] ?? null) : null;
+const INTENSITY_NAMES: Record<StepIntensity, string> = { low: "低強度", moderate: "中強度", high: "高強度", other: "" };
+const PHASE_NAMES: Record<StructureSegment["phase"], string> = { warmup: "暖身", main: "主課", cooldown: "緩和" };
+
+/** 運動種類用圖示分（規格 12.28）：跑步、騎車、肌力、游泳、其他 */
+function sportOf(s: TimelineSession): SportKey {
+  if (s.kind === "strength") return "strength";
+  if (s.sport === "ride" || s.sport === "swim" || s.sport === "other") return s.sport;
+  if (s.kind === "cross") return "other";
+  return s.isRun ? "run" : "other";
 }
 
 /** 分鐘 → 「3 小時 20 分」「45 分鐘」 */
 const hoursText = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} 小時${m % 60 ? ` ${m % 60} 分` : ""}` : `${m} 分鐘`);
 
-/** 課表外的其他運動（多運動）：一行，例「🚴 課表外的騎車 60 分鐘・心率 128」 */
+/** 課表外的其他運動（多運動）：一行，例「課表外的騎車 60 分鐘・心率 128」 */
 function OtherItem({ a }: { a: OtherActivity }) {
   const sport = sportOfType(a.type);
   const facts = [`${Math.round(a.duration_min ?? 0)} 分鐘`, a.avg_hr != null ? `心率 ${a.avg_hr}` : null, a.training_load != null ? `負荷 ${a.training_load}` : null];
   return (
-    <div className="plan-other small" data-sport={sport}>
-      <span aria-hidden="true">{SPORT_ICONS[sport] ?? SPORT_ICONS.other}</span> 課表外的{activityLabel(a.type)}
-      <span className="muted"> {facts.filter(Boolean).join("・")}</span>
+    <div className="plan-other" data-sport={sport}>
+      <SportIcon sport={sport === "ride" || sport === "swim" ? sport : "other"} />
+      <span>
+        課表外的{activityLabel(a.type)}
+        <span className="muted small"> {facts.filter(Boolean).join("・")}</span>
+      </span>
     </div>
   );
 }
@@ -91,15 +102,25 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   return label ? { label, cls: r?.outcome ?? s.status } : null;
 }
 
+/** 狀態：達成打勾（綠），其他是灰（不用紅，課表是建議不是考核） */
+function StatusBadge({ status }: { status: { label: string; cls: string } }) {
+  return (
+    <span className={`badge ${status.cls}`}>
+      {status.cls === "achieved" && <Icon as={Check} size={ICON_CHIP} />}
+      {status.label}
+    </span>
+  );
+}
+
 function Steps({ rows }: { rows: StepRow[] }) {
   const line = (x: { name: string; target: string; length: string; intensity: StepIntensity }, key: number) => (
     <li key={key} className="plan-step">
-      <span className={`bar ${x.intensity}`} aria-hidden="true" />
+      <span className={`dot ${x.intensity}`} aria-hidden="true" />
       <span className="plan-step-name">
         {x.name}
         {x.target && <span className="muted"> {x.target}</span>}
       </span>
-      <span className="muted plan-step-length">{x.length}</span>
+      <span className="plan-step-length">{x.length}</span>
     </li>
   );
   return (
@@ -116,6 +137,62 @@ function Steps({ rows }: { rows: StepRow[] }) {
       )}
     </ol>
   );
+}
+
+/** 整堂課的結構：一條強度條（長度是時間、顏色是強度），下面一行標暖身、主課、緩和 */
+function Structure({ segments }: { segments: StructureSegment[] }) {
+  if (!segments.length) return null;
+  const phases: { phase: StructureSegment["phase"]; minutes: number }[] = [];
+  for (const seg of segments) {
+    const last = phases.at(-1);
+    if (last?.phase === seg.phase) last.minutes += seg.minutes;
+    else phases.push({ phase: seg.phase, minutes: seg.minutes });
+  }
+  const label = segments
+    .map((seg) => INTENSITY_NAMES[seg.intensity])
+    .filter((name, i, all) => name && name !== all[i - 1])
+    .join("、");
+  return (
+    <div className="strip">
+      <div className="split-bar" role="img" aria-label={`這堂課的強度：${label || "不分強度"}`}>
+        {segments.map((seg, i) => (
+          <span key={i} className={seg.intensity} style={{ flexGrow: seg.minutes }} />
+        ))}
+      </div>
+      {phases.length > 1 && (
+        <div className="strip-labels">
+          {phases.map((p, i) => (
+            <span key={i} style={{ flexGrow: p.minutes, flexBasis: 0 }}>
+              {PHASE_NAMES[p.phase]} {Math.round(p.minutes)} 分
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 標籤的圖示：時間、距離、心率、配速、體感、功率、重複 */
+function chipIcon(text: string): LucideIcon | null {
+  if (/×/.test(text)) return Repeat;
+  if (/心率/.test(text)) return HeartPulse;
+  if (/體感/.test(text)) return Activity;
+  if (/功率|\bW\b/.test(text)) return Zap;
+  if (/\/km/.test(text)) return Gauge;
+  if (/km$/.test(text)) return Route;
+  if (/(分鐘|秒|小時|分)$/.test(text)) return Timer;
+  return null;
+}
+
+/** 標籤最多三個，不重複標題已經寫的；括號裡的說明留在「細節」 */
+function chipsOf(s: TimelineSession): string[] {
+  const words = s.title.replace(/\s+/g, "");
+  return s.chips
+    .filter((c) => !words.includes(c.replace(/\s+/g, "")))
+    // 數字的括號（心率的範圍）留著；文字的說明（短間歇看體感…）收進「細節」
+    .map((c) => c.replace(/（[^）]*[\u4e00-\u9fff，][^）]*）?$/u, "").replace(/(\d) 分鐘$/, "$1 分").trim())
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 /** 一堂課：今天（或下一堂）放大；其他天是小卡片，點了展開成同樣的內容 */
@@ -136,59 +213,59 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   if (s.kind === "rest") {
     // 休息日只有一行，沒有按鈕
     return (
-      <div className="plan-rest muted">
+      <div className="plan-rest">
+        <SportIcon sport="rest" />
         {s.title === "休息" ? "休息" : s.title}
-        {status && <span className={`badge ${status.cls}`}>{status.label}</span>}
+        {status && <StatusBadge status={status} />}
       </div>
     );
   }
 
   const expanded = open;
-  const icon = sportIcon(s);
+  const sport = sportOf(s);
+  const intensity = KIND_INTENSITY[s.kind];
   // 點卡片的任何地方都展開或收合；卡片裡的按鈕、連結照原本的行為；選取文字時不觸發
   const onCardClick = (e: MouseEvent<HTMLElement>) => {
     if ((e.target as HTMLElement).closest("button, a, input, select, textarea, summary")) return;
     if (window.getSelection()?.toString()) return;
     setOpen(!open);
   };
-  const title = (
-    <>
-      <span className={`bar ${KIND_INTENSITY[s.kind]}`} aria-hidden="true" />
-      {icon && (
-        <span className="plan-sport-icon" aria-label={s.sport === "ride" ? "騎車" : s.kind === "strength" ? "肌力訓練" : undefined}>
-          {icon}
-        </span>
-      )}
-      <span className="plan-session-title">
-        <strong className={focus ? "plan-session-name big" : "plan-session-name"}>{s.title}</strong>
-        {s.kindHint && <span className="muted small"> {s.kindHint}</span>}
-      </span>
-      {status && <span className={`badge ${status.cls}`}>{status.label}</span>}
-    </>
-  );
-  const chips = (list: string[]) =>
-    list.length > 0 && (
-      <div className="chips">
-        {list.map((c) => (
-          <span key={c} className="chip">
-            {c}
-          </span>
-        ))}
-      </div>
-    );
+  // 副標：和課名不同時的種類，加上收起時的時間或距離
+  const sub = [s.kindHint, ...(expanded ? [] : s.brief)].filter(Boolean).join(" · ");
   const days = Array.from({ length: 7 }, (_, i) => addDays(s.weekStart, i));
-  const hasDetails = !!(s.purpose || s.success || s.fallback);
+  const hasDetails = !!(s.purpose || s.success || s.fallback || s.rows.length);
+  const chips = chipsOf(s);
+  const detailsId = `session-details-${s.id ?? s.title}`;
 
   return (
-    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind} data-sport={featureEnabled("multisport") ? (s.sport ?? undefined) : undefined} onClick={onCardClick}>
+    <article className={`plan-session ${focus ? "focus" : ""} ${s.status}`} data-kind={s.kind} data-sport={sport} onClick={onCardClick}>
       <button type="button" className="plan-session-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {title}
+        <span className={`plan-sport-icon ${intensity}`} title={SPORT_NAMES[sport]}>
+          <SportIcon sport={sport} />
+          <span className="sr-only">{SPORT_NAMES[sport]}</span>
+        </span>
+        <span className="plan-session-title">
+          <span className={focus ? "plan-session-name big" : "plan-session-name"}>{s.title}</span>
+          {sub && <span className="plan-session-sub">{sub}</span>}
+        </span>
+        {status && <StatusBadge status={status} />}
       </button>
-      {!expanded && chips(s.brief)}
       {expanded && (
         <>
-          {chips(s.chips)}
-          {s.rows.length > 0 && <Steps rows={s.rows} />}
+          {chips.length > 0 && (
+            <div className="chips">
+              {chips.map((c) => {
+                const icon = chipIcon(c);
+                return (
+                  <span key={c} className="chip">
+                    {icon && <Icon as={icon} size={ICON_CHIP} />}
+                    {c}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {s.structure.length > 0 && <Structure segments={s.structure} />}
           {r && (r.actual || r.reasons.length > 0) && (
             <p className="small session-result">
               {r.actual && `實際：${r.actual}`}
@@ -197,37 +274,42 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
             </p>
           )}
           {s.note && <p className="small muted">調整的原因：{s.note}</p>}
-          {hasDetails && (
-            <button type="button" className="link-button muted" aria-expanded={details} onClick={() => setDetails(!details)}>
-              細節 {details ? "▴" : "▾"}
-            </button>
-          )}
+          {hasDetails && <DisclosureButton open={details} onToggle={() => setDetails(!details)} controls={detailsId} />}
           {details && (
-            <dl className="plan-details small">
-              {s.purpose && (
-                <>
-                  <dt>目的</dt>
-                  <dd>{s.purpose}</dd>
-                </>
+            <div id={detailsId} className="stack small">
+              {s.rows.length > 0 && <Steps rows={s.rows} />}
+              {(s.purpose || s.success || s.fallback) && (
+                <dl className="plan-details">
+                  {s.purpose && (
+                    <>
+                      <dt>目的</dt>
+                      <dd>{s.purpose}</dd>
+                    </>
+                  )}
+                  {s.success && (
+                    <>
+                      <dt>完成的標準</dt>
+                      <dd>{s.success}</dd>
+                    </>
+                  )}
+                  {s.fallback && (
+                    <>
+                      <dt>狀況不好時</dt>
+                      <dd>{s.fallback}</dd>
+                    </>
+                  )}
+                </dl>
               )}
-              {s.success && (
-                <>
-                  <dt>完成的標準</dt>
-                  <dd>{s.success}</dd>
-                </>
-              )}
-              {s.fallback && (
-                <>
-                  <dt>狀況不好時</dt>
-                  <dd>{s.fallback}</dd>
-                </>
-              )}
-            </dl>
+            </div>
           )}
           {s.id !== null && !done && (
-            <div className="row session-actions">
+            <div className="session-actions">
               {s.doneAt ? (
-                featureEnabled("multisport") && <button onClick={() => onChange(s, "undone")}>取消「做完了」</button>
+                featureEnabled("multisport") && (
+                  <button className="text" onClick={() => onChange(s, "undone")}>
+                    取消「做完了」
+                  </button>
+                )
               ) : s.status === "planned" ? (
                 <>
                   {reportable && (
@@ -237,7 +319,9 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                   )}
                   {s.fallback && isQualityKind(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
                   {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
-                  <button onClick={() => onChange(s, "skip")}>跳過</button>
+                  <button className="text" onClick={() => onChange(s, "skip")}>
+                    跳過
+                  </button>
                 </>
               ) : (
                 <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>
@@ -245,13 +329,12 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
             </div>
           )}
           {moving && (
-            <div className="row session-actions move-days">
+            <div className="session-actions move-days">
               {days
                 .filter((d) => d !== s.date)
                 .map((d) => (
                   <button
                     key={d}
-                    className="small"
                     onClick={() => {
                       setMoving(false);
                       onChange(s, "move", d);
@@ -268,28 +351,23 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   );
 }
 
-const FLAG = (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M3 15V2M3 2h9l-2 3 2 3H3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-  </svg>
-);
-
 /** 賽事卡：點了捲到下面的賽事區 */
 function RaceItem({ race, today }: { race: Race; today: string }) {
+  const sub = [
+    featureEnabled("multisport") && race.sport === "ride" ? "騎車" : null,
+    distanceText(race.distance_km * 1000),
+    race.target_time ? `目標 ${race.target_time}` : null,
+  ].filter(Boolean);
   return (
     <button type="button" className="plan-race" onClick={() => document.getElementById("races")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
-      <span className="plan-race-head">
-        <span className="plan-race-flag">{FLAG}</span>
-        <strong>
-          {featureEnabled("multisport") && race.sport === "ride" && "🚴 "}
-          {race.name}
-        </strong>
-        <span className="plan-race-days">{raceStatusText(race, today)}</span>
+      <span className="plan-race-icon">
+        <SportIcon sport="race" />
       </span>
-      <span className="chips">
-        <span className="chip">{Math.round(race.distance_km * 10) / 10} km</span>
-        {race.target_time && <span className="chip">目標 {race.target_time}</span>}
+      <span className="plan-race-text">
+        <strong>{race.name}</strong>
+        <span className="small muted">{sub.join(" · ")}</span>
       </span>
+      <span className="plan-race-days">{raceStatusText(race, today)}</span>
     </button>
   );
 }
@@ -310,7 +388,6 @@ function DateLabel({ label, weekday, today, race }: { label: string; weekday?: s
     </div>
   );
 }
-
 
 /** 一週的總量：跑步的公里與次數；有單車的課時加上騎車的時間（多運動），只騎車時只寫騎車 */
 function weekText(w: { km: number; runs: number; rides: number; rideMinutes: number }): string {
@@ -344,7 +421,12 @@ function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onCh
               {d.others.map((a) => (
                 <OtherItem key={a.intervals_id} a={a} />
               ))}
-              {!d.sessions.length && !d.races.length && !d.others.length && <div className="plan-rest muted">休息</div>}
+              {!d.sessions.length && !d.races.length && !d.others.length && (
+                <div className="plan-rest">
+                  <SportIcon sport="rest" />
+                  休息
+                </div>
+              )}
               {d.races.map((r) => (
                 <RaceItem key={r.id} race={r} today={today} />
               ))}
@@ -380,11 +462,15 @@ function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; o
   }
   const summary = [...counts].map(([label, n]) => `${label} ${n}`).join(" · ");
   return (
-    <details className="plan-earlier">
-      <summary>
-        {t.thisWeek ? "這週稍早" : `之前的課（${t.week.range}）`}
-        {summary && <span className="muted"> · {summary}</span>}
-      </summary>
+    <Disclosure
+      className="plan-earlier"
+      summary={
+        <>
+          {t.thisWeek ? "這週稍早" : `之前的課 ${t.week.range}`}
+          {summary && <span className="muted"> · {summary}</span>}
+        </>
+      }
+    >
       <div className="plan-earlier-list">
         {t.earlier.map((s) => (
           <div key={s.id ?? s.title} className="plan-earlier-item">
@@ -394,7 +480,7 @@ function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; o
             <SessionItem s={s} focus={false} onChange={onChange} />
           </div>
         ))}
-        {extras.length > 0 && <p className="small muted">課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：{extras.join("；")}</p>}
+        {extras.length > 0 && <p className="small muted">課表外的跑步，算進這週的跑量：{extras.join("；")}</p>}
         {t.earlierOthers.map((a) => (
           <div key={a.intervals_id} className="plan-earlier-item">
             <span className="tl-label muted">
@@ -403,16 +489,16 @@ function Earlier({ t, extras, onChange }: { t: PlanTimeline; extras: string[]; o
             <OtherItem a={a} />
           </div>
         ))}
-        <p className="small muted">實際的紀錄同步後自動對照課表。跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
+        <p className="small muted">跑了不一樣的課、沒跑的課都不是失敗；沒跑的跳過即可，不要補。</p>
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
 function Why({ current, next }: { current: ActivePlan; next: ActivePlan | null }) {
   const plan = current.plan;
   return (
-    <div className="plan-why small" id="plan-why">
+    <div className="plan-why" id="plan-why">
       {plan.reason && <p>{plan.reason}</p>}
       {current.coachNote && <p>{current.coachNote}</p>}
       {next?.plan.reason && (
@@ -477,25 +563,28 @@ export function PlanView() {
             <h2 className="sr-only">訓練計畫</h2>
             <div className="plan-top">
               <span className="plan-week">
-                <strong>{timeline.thisWeek ? "這週" : timeline.week.range}</strong> {weekText(timeline.week)}
-                {plan!.style === "flexible" && " · 彈性"}
+                <span className="title">{timeline.thisWeek ? "這週" : timeline.week.range}</span>
+                <span className="small muted">
+                  {weekText(timeline.week)}
+                  {plan!.style === "flexible" && " · 彈性"}
+                  {timeline.thisWeek && ` · ${timeline.week.range}`}
+                </span>
               </span>
               {hasWhy && (
-                <button type="button" className="link-button" aria-expanded={why} aria-controls="plan-why" onClick={() => setWhy(!why)}>
+                <DisclosureButton open={why} onToggle={() => setWhy(!why)} controls="plan-why">
                   為什麼這樣排
-                </button>
+                </DisclosureButton>
               )}
             </div>
-            {timeline.thisWeek && <p className="small muted plan-range">{timeline.week.range}</p>}
             {why && <Why current={current!} next={next} />}
             {error && <div className="notice error">{error}</div>}
-            {changeNote && <div className="notice ok small">{changeNote}</div>}
+            {changeNote && <div className="notice ok">{changeNote}</div>}
             {timeline.earlier.length > 0 && <Earlier t={timeline} extras={current!.extras} onChange={onChange} />}
             <Timeline t={timeline} today={today} onChange={onChange} />
           </>
         ) : (
           <>
-            <div className="row between">
+            <div className="card-head">
               <h2>訓練計畫</h2>
               {planDraft === null && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
             </div>
@@ -509,7 +598,7 @@ export function PlanView() {
             ) : (
               <>
                 <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
-                <div className="row">
+                <div className="actions">
                   <button
                     className="primary"
                     disabled={!planDraft.trim()}
@@ -522,7 +611,7 @@ export function PlanView() {
                   >
                     儲存為本週計畫
                   </button>
-                  <button onClick={() => setPlanDraft(null)}>取消</button>
+                  <button className="text" onClick={() => setPlanDraft(null)}>取消</button>
                 </div>
               </>
             )}

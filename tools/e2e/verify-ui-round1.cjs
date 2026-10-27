@@ -15,21 +15,14 @@ async function setup(page) {
   const tab = (label) => E2E.go(page, label);
   await page.goto(URL);
   await page.locator("nav.tabbar button").first().waitFor();
-  await tab("設定");
   // 時區設成和模擬服務一樣，「今天」才對得上
-  await page.getByLabel("時區").fill("Asia/Taipei");
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
-  await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+  await E2E.setupMock(page, { mock: E2E.MOCK, timeZone: "Asia/Taipei" });
   // 天氣：教練動態多一則需要留意的提醒
+  await E2E.settings(page, "天氣");
   const weather = page.locator("#weather");
   await weather.getByLabel("台灣的縣市").selectOption({ label: "台北市" });
   await weather.getByText("目前：台北市").waitFor();
+  await page.locator("#side-panel .back-button").click();
   await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
   await tab("對話");
@@ -148,7 +141,7 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
 
         if (full) {
           step = "Enter：賽事名稱送出、不換行；備註換行";
-          await tab("計畫與賽事");
+          await tab("計畫");
           const card = page.locator("#races");
           await card.getByRole("button", { name: "新增賽事" }).click();
           await card.getByLabel("日期").fill(shift(mockToday, 60));
@@ -167,7 +160,7 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
           c.notesKept = (await card.locator(".list li").filter({ hasText: "健康路跑嘉年華" }).first().innerText()).includes("第一行");
 
           step = "Enter：記住的事";
-          await tab("選手資料");
+          await tab("選手");
           const memories = page.locator(".memories");
           await memories.getByLabel("新增記住的事").fill("貼上\n的兩行");
           c.pasteNewlineToSpace = (await memories.getByLabel("新增記住的事").inputValue()) === "貼上 的兩行";
@@ -177,7 +170,7 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
           c.goalIsAutogrow = (await page.getByLabel("長期目標").evaluate((el) => el.tagName)) === "TEXTAREA";
 
           step = "時間戳：昨天、今年更早、不同年（測試模式的模擬日期）";
-          await tab("設定");
+          await E2E.settings(page, "測試模式");
           // 啟用後頁面重新載入、回到對話頁，改用測試資料庫（沒有剛才的對話）
           await Promise.all([page.waitForEvent("load"), page.getByRole("button", { name: "啟用測試模式" }).click()]);
           await page.locator("nav.tabbar button").first().waitFor();
@@ -186,7 +179,7 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
           const label = async () => page.locator(".msg.user", { hasText: "測試模式的第一句" }).locator(".msg-time").innerText();
           c.todayFormat = /^\d{2}:\d{2}$/.test(await label());
           const setDate = async (date) => {
-            await tab("設定");
+            await E2E.settings(page, "測試模式");
             await page.getByLabel("模擬日期").fill(date);
             await page.getByRole("button", { name: "套用" }).click();
             await page.getByText(`模擬日期改為 ${date}。`).waitFor();

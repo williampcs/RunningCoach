@@ -38,7 +38,14 @@ export interface AppState {
   /** 「新裝置加入」的提醒點了查看時遞增：設定頁的同步區塊捲到畫面上（規格 12.27） */
   devicesFocus: number;
   showDevices(): void;
+  /** 打開設定，直接到某一項（設定的第一層是清單，點進去才是欄位，規格 12.28） */
+  openSettings(section?: SettingsSection): void;
+  /** 畫面下方的小提示（存好了、同步完成），三秒後消失 */
+  toast(text: string): void;
 }
+
+/** 設定的各項（第一層清單的每一列） */
+export type SettingsSection = "ai" | "records" | "weather" | "sync" | "lock" | "data" | "testmode" | "reset" | "status";
 
 export type Tab = "chat" | "report" | "history" | "plan" | "profile";
 /** 蓋在目前畫面上的面板（規格 12.17）：關閉後回到打開前的樣子 */

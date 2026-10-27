@@ -146,6 +146,7 @@ export {
   type SessionView,
   type StepIntensity,
   type StepRow,
+  type StructureSegment,
 } from "./plan";
 export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";

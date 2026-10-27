@@ -10,7 +10,8 @@ import { AccumulationView } from "./Accumulation";
 import { FirstSync } from "./FirstSync";
 import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
-import { dayText, IntensityBar, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
+import { dayText, IntensityBar, kmText, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
+import { EffortPicker, SportIcon } from "../ui";
 
 const HISTORY_DAYS = 30;
 
@@ -75,16 +76,18 @@ export function HistoryView() {
     return (
       <li key={`ride-${a.intervals_id}`} className={`ride${expanded ? " open" : ""}`} data-sport="ride">
         <button className="run-row" aria-expanded={expanded} onClick={toggleRide}>
-          <span className="run-date">{dayText(a.date, today)}</span>
+          <span className="list-row-icon">
+            <SportIcon sport="ride" />
+          </span>
           <span className="run-main">
             {expanded ? (
-              <strong>🚴 {card.plan ? (card.plan.title.includes(card.plan.kindLabel) ? card.plan.title : `${card.plan.kindLabel}：${card.plan.title}`) : "騎車"}</strong>
+              <strong>{card.plan ? (card.plan.title.includes(card.plan.kindLabel) ? card.plan.title : `${card.plan.kindLabel}：${card.plan.title}`) : "騎車"}</strong>
             ) : (
-              <>
-                <strong>🚴 {Math.round(a.duration_min ?? 0)} 分鐘</strong>
-                <span className="muted small">{a.distance_km ? `${a.distance_km} km` : "騎車"}</span>
-              </>
+              <strong>{Math.round(a.duration_min ?? 0)} 分鐘</strong>
             )}
+            <span className="muted small run-date">
+              {[dayText(a.date, today), !expanded && a.distance_km ? `${kmText(a.distance_km)} km` : null].filter(Boolean).join(" · ")}
+            </span>
           </span>
           <span className="run-tags">
             <PlanBadge card={card} />
@@ -96,29 +99,26 @@ export function HistoryView() {
           <RideCardView card={card}>
             {rideEditing?.id === a.intervals_id ? (
               <div className="backfill">
+                <h3>
+                  體感 <span className="muted">{rideEditing.effort}/10</span>
+                </h3>
+                <EffortPicker value={rideEditing.effort} onChange={(effort) => setRideEditing({ ...rideEditing, effort })} />
                 <label>
-                  <span>
-                    體感強度：<strong>{rideEditing.effort}</strong> / 10
-                  </span>
-                  <input type="range" min={1} max={10} value={rideEditing.effort} onChange={(e) => setRideEditing({ ...rideEditing, effort: Number(e.target.value) })} />
-                </label>
-                <label>
-                  主觀感受
+                  一句話的感受
                   <AutoGrowTextarea value={rideEditing.notes} placeholder="例如：爬坡腿很酸，最後一組撐不住" onChange={(e) => setRideEditing({ ...rideEditing, notes: e.target.value })} />
                 </label>
-                <div className="row">
+                <div className="actions">
                   <button className="primary" disabled={saving} onClick={() => void saveRideFeedback()}>
                     {saving ? "儲存中…" : "儲存體感"}
                   </button>
-                  <button disabled={saving} onClick={() => setRideEditing(null)}>
+                  <button className="text" disabled={saving} onClick={() => setRideEditing(null)}>
                     取消
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="row">
+              <div className="actions">
                 <button
-                  className="small"
                   disabled={rideEditing !== null || editing !== null}
                   onClick={() => setRideEditing({ id: a.intervals_id, effort: a.perceived_effort ?? 5, notes: a.subjective_notes ?? "" })}
                 >
@@ -159,31 +159,23 @@ export function HistoryView() {
     if (editing?.id === w.id) {
       return (
         <div className="backfill">
+          <h3>
+            體感 <span className="muted">{editing.effort}/10</span>
+          </h3>
+          <EffortPicker value={editing.effort} onChange={(effort) => setEditing({ ...editing, effort })} />
           <label>
-            <span>
-              體感強度：<strong>{editing.effort}</strong> / 10
-            </span>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              value={editing.effort}
-              onChange={(e) => setEditing({ ...editing, effort: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            主觀感受
+            一句話的感受
             <AutoGrowTextarea
               value={editing.notes}
               placeholder="例如：最後兩公里很喘，腿還好"
               onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
             />
           </label>
-          <div className="row">
+          <div className="actions">
             <button className="primary" disabled={saving} onClick={() => void saveBackfill()}>
               {saving ? "儲存並分析中…" : "儲存並重新分析"}
             </button>
-            <button disabled={saving} onClick={() => setEditing(null)}>
+            <button className="text" disabled={saving} onClick={() => setEditing(null)}>
               取消
             </button>
           </div>
@@ -192,9 +184,9 @@ export function HistoryView() {
     }
     return (
       <>
-        <div className="row">
+        <div className="actions">
           <button
-            className="small"
+            className={backfilled?.workout.id === w.id ? "" : w.perceived_effort == null ? "primary" : ""}
             disabled={editing !== null}
             onClick={() => {
               setEditing({ id: w.id, effort: w.perceived_effort ?? 5, notes: w.subjective_notes ?? "" });
@@ -207,7 +199,7 @@ export function HistoryView() {
             <>
               <span className="muted small">已合併 {w.duplicate_count} 筆重複的紀錄</span>
               <button
-                className="link small"
+                className="text"
                 onClick={() =>
                   void coach.splitDuplicates(w.id).then(() => {
                     setMessage({ kind: "ok", text: `已拆開 ${w.date} 的紀錄，之後會分開計算。` });
@@ -221,7 +213,7 @@ export function HistoryView() {
           )}
           {backfilled?.workout.id === w.id && (
             <button
-              className="small primary"
+              className="primary"
               onClick={() =>
                 goTo(
                   "chat",
@@ -251,7 +243,6 @@ export function HistoryView() {
         <h2>
           最近 {HISTORY_DAYS} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
         </h2>
-        <p className="muted small">點一趟看數據、強度與教練的分析；也可以在這裡補填或修改體感。</p>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
         {cards?.length === 0 &&
@@ -277,17 +268,13 @@ export function HistoryView() {
               ...before.map(rideRow),
               <li key={w.id} className={expanded ? "open" : ""}>
                 <button className="run-row" aria-expanded={expanded} onClick={() => toggle(w.id)}>
-                  <span className="run-date">{dayText(w.date, today)}</span>
+                  <span className="list-row-icon">
+                    <SportIcon sport="run" />
+                  </span>
                   {/* 點開時數字與橫條在卡片上，列上只留課與標記 */}
                   <span className="run-main">
-                    {expanded ? (
-                      <strong>{card.plan ? `${card.plan.kindLabel}：${card.plan.title}` : "跑步"}</strong>
-                    ) : (
-                      <>
-                        <strong>{w.distance_km ?? "?"} km</strong>
-                        <span className="muted small">{w.avg_pace ?? ""}</span>
-                      </>
-                    )}
+                    {expanded ? <strong>{card.plan ? `${card.plan.kindLabel}：${card.plan.title}` : "跑步"}</strong> : <strong>{kmText(w.distance_km)} km</strong>}
+                    <span className="muted small run-date">{[dayText(w.date, today), !expanded ? w.avg_pace : null].filter(Boolean).join(" · ")}</span>
                   </span>
                   <span className="run-tags">
                     <PlanBadge card={card} />

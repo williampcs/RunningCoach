@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, type Memory } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { InfoTip } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 
@@ -39,11 +40,12 @@ export function MemoriesCard() {
   const full = (items?.length ?? 0) >= MEMORY_MAX_ITEMS;
   return (
     <section className="card memories">
-      <h2>記住的事</h2>
-      <p className="small muted">
-        教練每次對話都會看到這裡的每一條。在對話裡按訊息下方的「記住」，或跟教練說「幫我記住…」都會加到這裡；教練自己記下的也會在回覆裡告訴你。最多{" "}
-        {MEMORY_MAX_ITEMS} 條。
-      </p>
+      <div className="card-head">
+        <h2>記住的事</h2>
+        <InfoTip label="記住的事的說明">
+          教練每次對話都會看到這裡的每一條。在對話裡按訊息下方的「記住」，或跟教練說「幫我記住…」都會加到這裡；教練自己記下的也會在回覆裡告訴你。最多 {MEMORY_MAX_ITEMS} 條。
+        </InfoTip>
+      </div>
       {items?.length === 0 && <p className="muted small">還沒有。例如：「週三晚上要接小孩，不能練」「鞋子跑到 600 公里要換」。</p>}
       <ul className="memory-list">
         {items?.map((m) => (
@@ -63,11 +65,11 @@ export function MemoriesCard() {
                   aria-label="修改記住的事"
                   onChange={(e) => setEditing({ id: m.id, text: e.target.value })}
                 />
-                <div className="row">
+                <div className="actions">
                   <button type="submit" className="primary" disabled={!editing.text.trim()}>
                     儲存
                   </button>
-                  <button type="button" onClick={() => setEditing(null)}>
+                  <button className="text" type="button" onClick={() => setEditing(null)}>
                     取消
                   </button>
                 </div>
@@ -79,10 +81,10 @@ export function MemoriesCard() {
                   {m.source === "coach" ? "教練記的" : "我記的"}・{dateText(m.updated_at)}
                 </span>
                 <span className="memory-actions">
-                  <button className="link small" onClick={() => setEditing({ id: m.id, text: m.content })}>
+                  <button className="text" onClick={() => setEditing({ id: m.id, text: m.content })}>
                     修改
                   </button>
-                  <button className="link small danger" onClick={() => confirm(`刪掉這一條？教練之後不會再看到：\n${m.content}`) && void act(() => coach.db.deleteMemory(m.id))}>
+                  <button className="text danger" onClick={() => confirm(`刪掉這一條？教練之後不會再看到：\n${m.content}`) && void act(() => coach.db.deleteMemory(m.id))}>
                     刪除
                   </button>
                 </span>
@@ -127,10 +129,12 @@ export function ConversationSummaryCard() {
 
   return (
     <section className="card">
-      <h2>對話摘要</h2>
-      <p className="small muted">
-        對話多了之後，較早的部分會整理成這段重點，教練每次都會看到；原文仍保留在對話頁。這段會在下次整理時改寫，要確定記得的事請用上面的「記住的事」。
-      </p>
+      <div className="card-head">
+        <h2>對話摘要</h2>
+        <InfoTip label="對話摘要的說明">
+          對話多了之後，較早的部分會整理成這段重點，教練每次都會看到；原文仍保留在對話頁。這段會在下次整理時改寫，要確定記得的事請用上面的「記住的事」。
+        </InfoTip>
+      </div>
       {summary === null && <p className="muted small">還沒有。對話超過 20 則時會開始整理。</p>}
       {summary && (
         <>

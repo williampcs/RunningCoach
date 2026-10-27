@@ -116,19 +116,20 @@ async function serve(outDir) {
     });
     page.on("pageerror", (e) => problems.push(`[${name} ${step}] pageerror: ${e.message}`));
     page.on("dialog", (d) => void d.accept());
-    const tab = (label) => E2E.go(page, label);
-    const card = page.locator("section.card", { has: page.getByRole("heading", { name: "多裝置同步" }) });
+    // 設定的第一層是清單（規格 12.28）：「設定」直接進到「多裝置同步」
+    const tab = (label) => (label === "設定" ? E2E.settings(page, "多裝置同步") : E2E.go(page, label));
+    const card = page.locator('#side-panel .subpage[data-section="sync"] section.card');
     const d = { name, page, tab, card, context, url };
     return d;
   };
   const setup = async (d) => {
     await d.page.goto(d.url);
     await d.page.locator("nav.tabbar button").first().waitFor();
-    await d.tab("設定");
-    await d.page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-    await d.page.getByLabel("我了解並同意以上的資料流向").check();
+    await E2E.settings(d.page, "訓練紀錄");
+    await d.page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
     await d.page.getByRole("button", { name: "儲存設定" }).click();
     await d.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+    await d.tab("設定");
   };
   const syncNow = async (d) => {
     await d.tab("設定");
@@ -159,7 +160,7 @@ async function serve(outDir) {
     const recovery = (await A.card.locator(".recovery-code").innerText()).trim();
     await A.card.getByLabel("我已經把復原碼存好了").check();
     await A.card.getByRole("button", { name: "開始同步" }).click();
-    await A.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await A.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     const startedAt = Date.now();
     check.aListsItself = await waitNames(A, ["Mac · Edge"]);
     check.aThisDevice = (await rows(A).first().locator(".badge", { hasText: "這台" }).count()) === 1;
@@ -169,12 +170,12 @@ async function serve(outDir) {
     check.aRekeyDisabledInCooldown = await A.card.getByRole("button", { name: /只換金鑰/ }).isDisabled();
 
     step = "A 的資料";
-    await A.tab("選手資料");
+    await A.tab("選手");
     await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
     await A.page.waitForTimeout(300);
     await profileIntensity(A).selectOption("challenge");
     await A.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await A.page.locator(".notice.ok", { hasText: "已儲存" }).waitFor();
+    await A.page.locator(".toast", { hasText: "已儲存" }).waitFor();
     await syncNow(A);
 
     // --- B：配對加入（iPhone） ---
@@ -193,12 +194,12 @@ async function serve(outDir) {
     await A.card.getByRole("button", { name: "傳送" }).click();
     await A.card.getByText("已傳送").waitFor();
     await B.card.getByRole("button", { name: "另一台已傳送，加入" }).click({ timeout: 10000 });
-    await B.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await B.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     await A.card.getByRole("button", { name: "完成" }).click();
     check.bListsBoth = await waitNames(B, ["Mac · Edge", "iPhone · Safari"]);
     check.bThisDeviceIsItself = (await rows(B).filter({ hasText: "iPhone · Safari" }).locator(".badge", { hasText: "這台" }).count()) === 1;
     check.bCooldownNote = await B.card.locator(".cooldown-note").isVisible();
-    await B.tab("選手資料");
+    await B.tab("選手");
     await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
     check.bGotData = await profileIntensity(B)
       .evaluate((el) => new Promise((resolve) => {
@@ -228,7 +229,7 @@ async function serve(outDir) {
     await C.card.getByRole("button", { name: "用復原碼還原" }).click();
     await C.card.getByLabel("復原碼").fill(recovery);
     await C.card.getByRole("button", { name: "還原" }).click();
-    await C.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await C.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     check.cListsThree = await waitNames(C, ["Mac · Edge", "iPhone · Safari", "Windows · Edge"]);
     // 冷卻期：C 剛加入，不能移除別台、不能換金鑰
     check.cRemoveDisabled = await rows(C).filter({ hasText: "Mac · Edge" }).getByRole("button", { name: "移除" }).isDisabled();
@@ -278,15 +279,15 @@ async function serve(outDir) {
     await syncNow(B);
     check.bStillSyncing = !(await B.card.locator(".notice.error").count());
     check.bListAfterRemove = await waitNames(B, ["Mac · Edge", "我的 iPhone"]);
-    await B.tab("選手資料");
+    await B.tab("選手");
     await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
     await B.page.waitForTimeout(300);
     await profileIntensity(B).selectOption("easy");
     await B.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await B.page.locator(".notice.ok", { hasText: "已儲存" }).waitFor();
+    await B.page.locator(".toast", { hasText: "已儲存" }).waitFor();
     await syncNow(B);
     await syncNow(A);
-    await A.tab("選手資料");
+    await A.tab("選手");
     await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
     check.bChangeReachesA = await profileIntensity(A).evaluate((el) => new Promise((resolve) => {
       const start = Date.now();
@@ -302,14 +303,15 @@ async function serve(outDir) {
     check.cShowsRemoved = /這台已從多裝置同步移除/.test(removedText) && /復原碼可能已經外流/.test(removedText);
     await C.page.screenshot({ path: `${E2E.OUT}/devices-C-removed.png` });
     // 只清金鑰：資料留著（選手資料還在）、API key 與同步金鑰清掉、這台的裝置金鑰刪掉
-    await C.tab("選手資料");
+    await C.tab("選手");
     await C.page.locator("section.training-values").waitFor({ timeout: 10000 });
     await C.page.waitForTimeout(500);
     const kept = await profileIntensity(C).inputValue();
     check.cDataKept = kept === "challenge";
     if (!check.cDataKept) console.log(`  C 的強度：${JSON.stringify(kept)}`);
+    await E2E.settings(C.page, "訓練紀錄");
+    check.cApiKeyCleared = (await C.page.getByLabel("API key", { exact: true }).inputValue()) === "";
     await C.tab("設定");
-    check.cApiKeyCleared = (await C.page.getByLabel("API key", { exact: true }).last().inputValue()) === "";
     check.cSyncKeyCleared = await C.card.getByRole("button", { name: "用這台的資料重新開始同步" }).isVisible();
     check.cIdentityDeleted = await C.page.evaluate(
       () =>
@@ -343,7 +345,7 @@ async function serve(outDir) {
     check.cRestartNewCode = restartCode !== recovery && restartCode !== newRecovery;
     await C.card.getByLabel("我已經把復原碼存好了").check();
     await C.card.getByRole("button", { name: "開始同步" }).click();
-    await C.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await C.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     check.cRestartedAlone = await waitNames(C, ["Windows · Edge"]);
     await C.page.reload();
     await C.page.locator("nav.tabbar button").first().waitFor();
@@ -358,7 +360,7 @@ async function serve(outDir) {
     await removedBanner.getByRole("button", { name: "清除這台的資料" }).click();
     await C.page.waitForLoadState("load");
     await C.page.locator("nav.tabbar button").first().waitFor();
-    await C.tab("選手資料");
+    await C.tab("選手");
     await C.page.waitForTimeout(500);
     check.cClearRemovesData = (await profileIntensity(C).count()) === 0 || (await profileIntensity(C).inputValue()) !== "challenge";
     check.cClearRemovesBanner = (await C.page.locator(".removed-banner").count()) === 0;
@@ -369,7 +371,7 @@ async function serve(outDir) {
     await D.card.getByRole("button", { name: "用復原碼還原" }).click();
     await D.card.getByLabel("復原碼").fill(newRecovery);
     await D.card.getByRole("button", { name: "還原" }).click();
-    await D.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await D.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     check.dRestoredWithNewCode = await waitNames(D, ["Mac · Edge", "我的 iPhone", "iPhone · Safari"]);
     check.dInCooldown = await D.card.locator(".cooldown-note").isVisible();
     await D.card.locator(".device-list").scrollIntoViewIfNeeded();
@@ -415,7 +417,7 @@ async function serve(outDir) {
     await off.card.getByRole("button", { name: "這是第一台：開始同步" }).click();
     await off.card.getByLabel("我已經把復原碼存好了").check();
     await off.card.getByRole("button", { name: "開始同步" }).click();
-    await off.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await off.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     check.offNoDeviceList = (await off.card.locator(".device-list").count()) === 0;
     check.offNoDevicesFeature = !(await off.page.getByText("裝置清單與移除").count());
   } catch (e) {

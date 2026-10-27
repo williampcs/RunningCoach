@@ -4,11 +4,12 @@
  * 全部依本機資料的固定規則產生，不呼叫模型：沒有費用、打開就看得到。
  * 內容只有這一份；之後的通知（推播、LINE、Discord）只負責提醒使用者來看，不另外產生內容。
  */
-import { addDays, daysBetween, weekdayName } from "./dates";
+import { addDays, daysBetween, shortDateLabel, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
 import { activityLabel, STRENGTH_TYPES } from "./activity-labels";
 import { featureOn } from "./features";
+import { distanceText } from "./training-values";
 import { isHardOther, QUALITY_KINDS, RIDE_QUALITY_KINDS } from "./plan";
 import { athleteSports, sportOfType } from "./sports";
 import { activePlan, type ActivePlan } from "./planning";
@@ -38,6 +39,12 @@ export interface FeedItem {
   actions: FeedAction[];
   /** 資料來源的標示（天氣：Open-Meteo 的授權要求） */
   credit?: { label: string; href: string };
+  /** 一行一項（今天的課：每堂課一行，前面是運動的圖示，規格 12.28） */
+  lines?: { sport: "run" | "ride" | "strength" | "swim" | "other"; text: string }[];
+  /** 右邊的數字（賽事的倒數，例：12 天） */
+  badge?: string;
+  /** 數字的標籤（天氣：體感 36°C、露點 24°C、降雨 70%）；標題不帶括號裡的數字 */
+  tags?: string[];
 }
 
 /** 連續幾天沒跑才提醒 */
@@ -93,14 +100,13 @@ function crossItems(active: ActivePlan, today: string): FeedItem[] {
         : stillToday
           ? `今天${VERB_LABELS.has(label) ? `${label}了` : `做了${label}`}，課表上還有「${stillToday.title}」`
           : `${day}有一趟課表外的${label}`,
+      // 看板只放摘要（規格 12.28）：數字加一句
       detail:
         `${facts}${hard ? "，強度不低" : ""}。` +
-        (heavy || hard ? "接下來的強度課可能要延後或減量；" : "") +
-        (replaced ? "取代掉的課不必補。" : stillToday ? "今天還要照課表跑，或改成休息、輕鬆一點？" : "") +
-        "要請教練依這趟調整接下來的課嗎？",
+        (heavy || hard ? "接下來的強度課可能要延後或減量。" : replaced ? "取代掉的課不必補。" : "可以請教練依這趟調整。"),
       actions: [
         ask(
-          "請教練調整接下來的課",
+          "請教練調整",
           `${day}（${a.date}）我${replaced ? `沒有跑「${replaced.title}」，改做了` : "做了課表外的"}${label}：${facts}。` +
             (stillToday ? `今天課表上還有「${stillToday.title}」。` : "") +
             "請依這趟調整這週接下來的課。",
@@ -118,26 +124,47 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
   if (!active?.plan.week_start) return [];
   const items: FeedItem[] = [];
   const yesterday = addDays(today, -1);
+  // 今天還沒做的課合成一列，只放摘要（時間或距離、目標）；步驟與替代留在課表頁（規格 12.28）
+  const todo = active.sessions.filter(
+    (s) => s.date === today && s.status !== "skipped" && s.kind !== "rest" && (!s.result || s.result.outcome === "pending"),
+  );
+  if (todo.length) {
+    const amount = (s: (typeof todo)[number]) => s.brief[0] ?? null;
+    const name = (s: (typeof todo)[number]) => {
+      const a = amount(s);
+      if (!a || s.title.includes(a)) return s.title;
+      // 課名已經有數字（例：20 分鐘 T）時，時間放在括號裡，不連在一起讀
+      return /\d/.test(s.title) ? `${s.title}（${a}）` : `${s.title} ${a}`;
+    };
+    const targets = [...new Set(todo.map((s) => s.target).filter((t): t is string => !!t))];
+    // 「想改輕鬆一點」只給跑步與騎車的課（肌力等沒有強度可以降）
+    const easier = todo.filter((s) => s.isRun || s.sport === "ride");
+    const sportOf = (s: (typeof todo)[number]) =>
+      s.kind === "strength" ? "strength" : s.sport === "ride" || s.sport === "swim" ? s.sport : s.isRun ? "run" : "other";
+    items.push({
+      id: `plan-today-${todo.map((s) => s.id).join("-")}`,
+      kind: "plan",
+      tone: "info",
+      title: "今天的課",
+      detail: targets.length ? targets.join(" · ") : undefined,
+      lines: todo.map((s) => ({ sport: sportOf(s), text: name(s) })),
+      actions: [
+        { type: "plan" },
+        ...(easier.length ? [ask("想改輕鬆一點", `今天的${easier.map((s) => s.title).join("、")}我想改輕鬆一點，可以怎麼調整？`)] : []),
+      ],
+    });
+  }
   for (const s of active.sessions) {
     const r = s.result;
     if (s.date === today && s.status !== "skipped" && s.kind !== "rest") {
-      if (!r || r.outcome === "pending") {
-        items.push({
-          id: `plan-today-${s.id}`,
-          kind: "plan",
-          tone: "info",
-          title: `今天：${s.kindLabel}「${s.title}」`,
-          detail: [s.steps, s.fallback && `狀況不好時：${s.fallback}`].filter(Boolean).join("。"),
-          actions: [{ type: "plan" }, ask("想改輕鬆一點", `今天的${s.title}我想改輕鬆一點，可以怎麼調整？`)],
-        });
-      } else if (r.outcome === "different") {
+      if (r?.outcome === "different") {
         items.push({
           id: `plan-different-${s.id}`,
           kind: "plan",
           tone: "info",
           title: "今天跑的和課表不同",
           detail: `${r.reasons.join("、")}。不算失敗；要調整這週剩下的課嗎？`,
-          actions: [ask("調整這週剩下的課", `今天的${s.title}我跑得不一樣（${r.reasons.join("、")}），這週剩下的課要怎麼調整？`), { type: "plan" }],
+          actions: [ask("請教練調整", `今天的${s.title}我跑得不一樣（${r.reasons.join("、")}），這週剩下的課要怎麼調整？`), { type: "plan" }],
         });
       }
     }
@@ -147,7 +174,7 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
         kind: "plan",
         tone: "info",
         title: `昨天的${s.title}${RIDE_QUALITY_KINDS.has(s.kind) ? "沒騎" : "沒跑"}`,
-        detail: "跳過即可，不要補，也不要把強度課擠在一起；照課表繼續。",
+        detail: "跳過即可，不要補，照課表繼續。",
         actions: [{ type: "plan" }],
       });
     }
@@ -161,7 +188,7 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
       kind: "plan",
       tone: "info",
       title: today > weekEnd ? "這週還沒有課表" : "下週的課表要排了嗎？",
-      detail: "教練會參考這週實際跑的與體感，再排下週。",
+      detail: "教練會參考這週實際跑的與體感。",
       actions: [ask("請教練排課表", today > weekEnd ? "幫我排這週的課表" : "幫我排下週的課表")],
     });
   }
@@ -209,13 +236,10 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `checkin-${today}`,
       kind: "checkin",
       tone: "info",
-      title: "今天身體感覺如何？",
+      title: "今天身體如何？",
       detail: recovery.watchFlags.length
-        ? `${watchSays}${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你自己的感覺。`
-        : recovery.latest
-          ? "花 10 秒回報精神、痠痛與睡眠，教練會以你的感受為主，而不只看手錶。"
-          : // 沒有手錶的恢復資料（例如只用 iPhone）：不提手錶
-            "花 10 秒回報精神、痠痛與睡眠，教練會依你的感受調整建議。",
+        ? `${watchSays}${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你的感覺。`
+        : "花 10 秒回報精神、痠痛與睡眠。",
       actions: [{ type: "checkin" }],
     });
   } else {
@@ -231,7 +255,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
           `${self.join("、")}。` +
           (recovery.mismatch === "self_worse" ? "手錶數據看起來正常，但以你的感受為主。" : watch.length ? `${watchSays.replace("顯示", "也顯示")}${watch.join("、")}。` : ""),
         actions: [
-          ask("問教練怎麼調整", `我今天的狀況是${describeCheckin(recovery.checkin)}，今天的訓練該怎麼調整？`),
+          ask("問教練調整", `我今天的狀況是${describeCheckin(recovery.checkin)}，今天的訓練該怎麼調整？`),
           { type: "checkin" },
         ],
       });
@@ -276,7 +300,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
         kind: "duplicate",
         tone: "info",
         title: `${day}的兩筆跑步看起來是同一趟`,
-        detail: `${describe(a)}，和 ${describe(b)}。可能是手錶與手機都上傳了，或手動新增時重複了；合併後只算一次，之後可以再拆開。`,
+        detail: `${describe(a)} 和 ${describe(b)}；合併後只算一次，之後可以再拆開。`,
         actions: [
           { type: "merge", keepId: keep.id, dupId: dup.id },
           { type: "distinct", aId: Math.min(a.id, b.id), bId: Math.max(a.id, b.id) },
@@ -294,7 +318,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "report",
       tone: "info",
       title: `${latest.date === today ? "今天" : "昨天"}的 ${km(latest.distance_km ?? 0)} 還沒回報感受`,
-      detail: "補上體感，教練的分析會更準。",
+      detail: "補上體感，分析會更準。",
       actions: [{ type: "report", workoutId: latest.id }],
     });
   }
@@ -306,8 +330,8 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `report-ride-${latestRide.intervals_id}`,
       kind: "report",
       tone: "info",
-      title: `${latestRide.date === today ? "今天" : "昨天"}的騎車（${Math.round(latestRide.duration_min ?? 0)} 分鐘）還沒回報感受`,
-      detail: "補上體感，教練判斷這堂課的難度會更準。",
+      title: `${latestRide.date === today ? "今天" : "昨天"}的騎車還沒回報感受`,
+      detail: `${Math.round(latestRide.duration_min ?? 0)} 分鐘 · 補上體感，分析會更準。`,
       actions: [{ type: "report", intervalsId: latestRide.intervals_id }],
     });
   }
@@ -318,7 +342,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "pending",
       tone: "info",
       title: "今天的跑後感受已暫存，等手錶同步",
-      detail: "手錶同步到 Intervals.icu 後，按同步就會合併。",
+      detail: "手錶同步後按同步就會合併。",
       actions: [{ type: "sync" }],
     });
   }
@@ -330,12 +354,11 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `race-${race.id}`,
       kind: "race",
       tone: left <= 7 ? "warn" : "info",
-      title: left === 0 ? `今天是${race.name}，加油！` : `距離${race.name}還有 ${left} 天`,
-      detail: `${race.date}，${race.distance_km} km${race.target_time ? `，目標 ${race.target_time}` : ""}`,
-      actions:
-        left <= 7 && left > 0
-          ? [ask("安排賽前這幾天", `${race.name}還有 ${left} 天，幫我安排賽前這幾天的訓練、睡眠與補給。`)]
-          : [{ type: "plan" }],
+      title: left === 0 ? `今天是${race.name}，加油！` : race.name,
+      detail: [shortDateLabel(race.date), distanceText(race.distance_km * 1000), race.target_time && `目標 ${race.target_time}`].filter(Boolean).join(" · "),
+      badge: left === 0 ? undefined : `${left} 天`,
+      // 倒數只是提醒，不放按鈕；賽前一週才請教練安排
+      actions: left <= 7 && left > 0 ? [ask("排賽前幾天", `${race.name}還有 ${left} 天，幫我安排賽前這幾天的訓練、睡眠與補給。`)] : [],
     });
   }
   for (const race of pastRaces) {
@@ -344,7 +367,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "race",
       tone: "info",
       title: `${race.name}的成績還沒記錄`,
-      detail: `${race.date}，${daysBetween(race.date, today)} 天前`,
+      detail: `${shortDateLabel(race.date)} · ${daysBetween(race.date, today)} 天前`,
       actions: [ask("回報成績", `${race.name}跑完了，成績是 `)],
     });
   }
@@ -378,7 +401,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "volume",
       tone: "warn",
       title: `近 7 天跑了 ${km(recentKm)}，比前三週平均多 ${pct}%`,
-      detail: "跑量一下增加太多容易受傷，留意恢復。",
+      detail: "增加太多容易受傷，留意恢復。",
       actions: [ask("問教練", `我近 7 天跑了 ${km(recentKm)}，比前三週的平均（每週 ${km(priorKm)}）多 ${pct}%，需要調整嗎？`)],
     });
   }
@@ -392,7 +415,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
         kind: "gap",
         tone: "info",
         title: `已經 ${gap} 天沒騎車了`,
-        detail: "休息也是訓練的一部分。想恢復節奏的話，可以請教練安排。",
+        detail: "想恢復節奏，可以請教練安排。",
         actions: [ask("聊聊恢復節奏", `我已經 ${gap} 天沒騎車了，想慢慢恢復，該怎麼開始？`), { type: "sync" }],
       });
     }
@@ -404,7 +427,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
         kind: "gap",
         tone: "info",
         title: `已經 ${gap} 天沒跑了`,
-        detail: "休息也是訓練的一部分。想恢復節奏的話，可以請教練安排。",
+        detail: "想恢復節奏，可以請教練安排。",
         actions: [ask("聊聊恢復節奏", `我已經 ${gap} 天沒跑了，想慢慢恢復，該怎麼開始？`), { type: "sync" }],
       });
     }
@@ -418,8 +441,9 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       kind: "weather",
       tone: notice.tone,
       title: notice.title,
+      tags: notice.tags,
       detail: notice.detail,
-      actions: [ask("請教練調整今天的課", `${notice.title}，我今天的訓練要怎麼調整？`)],
+      actions: [ask("請教練調整", `${notice.summary}，我今天的訓練要怎麼調整？`)],
       credit: { ...WEATHER_CREDIT },
     });
   }

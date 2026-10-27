@@ -2,6 +2,7 @@ import { athleteSports, PREFERENCE_OPTIONS, REGION_CHOICES, SPORT_CHOICES, SPORT
 import { useEffect, useRef, useState } from "react";
 
 import { errorText, useApp } from "../app-context";
+import { SportIcon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
@@ -164,7 +165,7 @@ function MultisportPreferences({ form, setForm }: { form: Form; setForm: (form: 
             </label>
           ))}
         </div>
-        <p className="small muted">沒選的話，教練當成只跑步。選了騎車，教練會排單車的課；只選騎車也可以。</p>
+        <p className="field-note">沒選的話當成只跑步；只選騎車也可以。</p>
       </fieldset>
       <fieldset className="wide pref-common">
         <legend>共通的設定</legend>
@@ -181,13 +182,13 @@ function MultisportPreferences({ form, setForm }: { form: Form; setForm: (form: 
           ))}
         </div>
         {Object.keys(primaryChoices).length > 1 && (
-          <p className="small muted">主要運動拿大部分的時間與強度課；賽事快到時，那項會暫時變成主要。每週的分配由程式依這些設定算，教練照著排。</p>
+          <p className="field-note">主要運動拿大部分的時間與強度課；賽事快到時，那項會暫時變成主要。</p>
         )}
       </fieldset>
       {SPORT_CARDS.filter((card) => sports.includes(card.sport)).map((card) => (
         <fieldset key={card.sport} className={`wide sport-card`} data-sport={card.sport}>
           <legend>
-            {card.sport === "ride" ? "🚴 " : "🏃 "}
+            <SportIcon sport={card.sport} />
             {SPORT_LABELS[card.sport]}
           </legend>
           <div className="grid">
@@ -214,10 +215,10 @@ function MultisportPreferences({ form, setForm }: { form: Form; setForm: (form: 
 }
 
 export function ProfileView() {
-  const { coach, revision, touch } = useApp();
+  const { coach, revision, touch, toast } = useApp();
   const [saved, setSaved] = useState<Record<string, string>>({});
   const [form, setForm] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // 重新讀取（例如別台同步過來）時，保留這裡改到一半、還沒儲存的欄位，其他的換成最新的
   const latest = useRef({ saved, form });
@@ -242,10 +243,11 @@ export function ProfileView() {
         if (value) await coach.db.setProfileKey(key, value);
         else await coach.db.deleteProfileKey(key);
       }
-      setMessage({ kind: "ok", text: "已儲存。這些資料只存在這台裝置，對話時會提供給教練。" });
+      setError(null);
+      toast("已儲存。對話時會提供給教練。");
       touch();
     } catch (e) {
-      setMessage({ kind: "error", text: errorText(e) });
+      setError(errorText(e));
     }
   }
 
@@ -263,7 +265,7 @@ export function ProfileView() {
         {GROUPS.map((group) => (
           <section className="card" key={group.title}>
             <h2>{group.title}</h2>
-            {group.note && <p className="small muted">{group.note}</p>}
+            {group.note && <p className="field-note">{group.note}</p>}
             <div className="grid">
               {group.title === "訓練偏好" && featureEnabled("multisport") && <MultisportPreferences form={form} setForm={setForm} />}
               {/* 多運動開著時，訓練偏好的欄位都在上面的共通設定與各項運動的卡裡 */}
@@ -298,10 +300,12 @@ export function ProfileView() {
             </div>
           </section>
         ))}
-        {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
-        <button type="submit" className="primary" disabled={changed.length === 0}>
-          儲存選手資料
-        </button>
+        {error && <p className="field-error">{error}</p>}
+        <div className="actions">
+          <button type="submit" className="primary" disabled={changed.length === 0}>
+            儲存選手資料
+          </button>
+        </div>
       </form>
       <MemoriesCard />
       <ConversationSummaryCard />

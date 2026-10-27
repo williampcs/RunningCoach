@@ -170,11 +170,41 @@ describe("課表與實際進到教練", () => {
     expect(results[1]).toContain("跑了不一樣的課、沒跑的課都不是失敗");
 
     const feed = await coach.feed();
-    expect(feed.find((i) => i.title === "今天：輕鬆跑「輕鬆跑」")).toBeTruthy();
+    // 看板只放摘要：時間與目標，步驟留在課表頁（規格 12.28）
+    const today = feed.find((i) => i.kind === "plan" && i.title === "今天的課");
+    expect(today?.lines).toEqual([{ sport: "run", text: "輕鬆跑 40 分鐘" }]);
+    expect(today?.detail).toBe("能聊天的強度（體感 2–4/10）");
+    expect(today?.actions.map((a) => (a.type === "ask" ? a.label : a.type))).toEqual(["plan", "想改輕鬆一點"]);
 
     // 排在今天以前的課：先退回
     const again = await makeCoach([toolTurn("save_training_plan", { ...plan, accept_warnings: false }), turn({ text: "好" })]);
     await again.coach.chat("排課表");
     expect(again.provider.calls[1]!.toolResults![0]!.content).toContain("10-08 的課排在今天以前");
+  });
+
+  it("同一天的課合成一列；肌力沒有「想改輕鬆一點」", async () => {
+    const both = {
+      ...plan,
+      sessions: [
+        plan.sessions[1],
+        { date: "2026-10-10", kind: "strength", title: "肌力", steps: [{ duration_min: 20 }], purpose: "預防受傷", success: "做完" },
+      ],
+    };
+    const { coach } = await makeCoach([toolTurn("save_training_plan", both), turn({ text: "好" })]);
+    await coach.chat("排課表");
+    const today = (await coach.feed()).filter((i) => i.kind === "plan" && i.title === "今天的課");
+    expect(today).toHaveLength(1);
+    expect(today[0]!.lines).toEqual([
+      { sport: "run", text: "輕鬆跑 40 分鐘" },
+      { sport: "strength", text: "肌力 20 分鐘" },
+    ]);
+    expect(today[0]!.actions.filter((a) => a.type === "ask")).toHaveLength(1);
+
+    const strengthOnly = { ...plan, sessions: [both.sessions[1]] };
+    const other = await makeCoach([toolTurn("save_training_plan", strengthOnly), turn({ text: "好" })]);
+    await other.coach.chat("排課表");
+    const item = (await other.coach.feed()).find((i) => i.kind === "plan" && i.title === "今天的課");
+    expect(item?.lines?.map((l) => l.text)).toEqual(["肌力 20 分鐘"]);
+    expect(item?.actions).toEqual([{ type: "plan" }]);
   });
 });

@@ -184,7 +184,7 @@ const viewports = {
     await E2E.go(page, "設定");
     check.canonicalNoMovedCard = (await page.locator("#side-panel .card.moved").count()) === 0;
     // 正式版沒有測試模式（功能開關 testmode，規格 12.25）：設定頁看不到卡片；之前開過測試模式的瀏覽器回到正式的資料庫，存著的設定不刪
-    check.productionNoTestModeCard = (await page.locator("#side-panel h2", { hasText: "測試模式" }).count()) === 0;
+    check.productionNoTestModeCard = (await page.locator("#side-panel .settings-list").getByRole("button", { name: "測試模式" }).count()) === 0;
     const testKey = "running-coach.test-mode.v1";
     await page.evaluate((key) => localStorage.setItem(key, JSON.stringify({ enabled: true, spec: null, custom: [], today: "2026-01-01" })), testKey);
     await page.reload();
@@ -219,7 +219,7 @@ const viewports = {
         const settingsText = await page.locator("#side-panel").innerText();
         check[`${tag}.settingsVersion`] = settingsText.includes(`v${version} Staging（`);
         check[`${tag}.noMovedCard`] = (await page.locator("#side-panel .card.moved").count()) === 0;
-        check[`${tag}.testModeCard`] = (await page.locator("#side-panel h2", { hasText: "測試模式" }).count()) === 1;
+        check[`${tag}.testModeCard`] = (await page.locator("#side-panel .settings-list").getByRole("button", { name: "測試模式" }).count()) === 1;
         check[`${tag}.noHorizontalScroll`] = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
         await context.close();
       } catch (e) {
