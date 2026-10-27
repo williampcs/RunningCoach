@@ -19,7 +19,7 @@ import { featureEnabled } from "../environment";
 import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
-import { RunCardView } from "./RunCard";
+import { kmText, RunCardView } from "./RunCard";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -213,10 +213,10 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                       </span>
                       <span className="list-row-sub">
                         {isOther(c)
-                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${c.activity.distance_km} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null]
+                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${kmText(c.activity.distance_km)} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null]
                               .filter(Boolean)
                               .join(" · ")
-                          : [`${c.activity.distance_km ?? "?"} km`, `${c.activity.duration_min ?? "?"} 分`, c.activity.avg_pace].filter(Boolean).join(" · ")}
+                          : [`${kmText(c.activity.distance_km)} km`, `${c.activity.duration_min == null ? "?" : Math.round(c.activity.duration_min)} 分`, c.activity.avg_pace].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {selected === key && <Icon as={CircleCheck} className="icon choice-check" />}

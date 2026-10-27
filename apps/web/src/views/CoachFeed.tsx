@@ -321,7 +321,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                     ))}
                   </ul>
                 )}
-                {item.detail && <span className="feed-sub">{item.detail}</span>}
+                {item.detail && (
+                  <span className="feed-sub" title={item.detail}>
+                    {item.detail}
+                  </span>
+                )}
                 {item.credit && (
                   <a className="credit" href={item.credit.href} target="_blank" rel="noreferrer">
                     {item.credit.label}

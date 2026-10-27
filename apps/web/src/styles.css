@@ -336,6 +336,7 @@ a {
   .tabbar button {
     flex: none;
     flex-direction: row;
+    justify-content: flex-start;
     gap: var(--sp-3);
     min-height: var(--touch);
     padding: 0 var(--sp-3);
@@ -1491,9 +1492,15 @@ span.quote {
   line-height: 1.4;
 }
 
+/* 摘要最多兩行（說明兩行以內；完整的在滑鼠移上去的提示） */
 .feed-sub {
   font-size: var(--fs-aux);
   color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 /* 資料來源的標示放在自己一行 */
