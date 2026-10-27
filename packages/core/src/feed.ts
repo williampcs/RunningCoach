@@ -234,7 +234,7 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `checkin-${today}`,
       kind: "checkin",
       tone: "info",
-      title: "今天身體感覺如何？",
+      title: "今天身體如何？",
       detail: recovery.watchFlags.length
         ? `${watchSays}${recovery.watchFlags.join("、")}，但手錶不一定準，先說說你的感覺。`
         : "花 10 秒回報精神、痠痛與睡眠。",

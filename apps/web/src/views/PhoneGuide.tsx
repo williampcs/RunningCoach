@@ -1,6 +1,6 @@
 import { NO_RUNS_HINT } from "@running-coach/core";
 
-import { Disclosure, stripEmoji } from "../ui";
+import { Disclosure, EmojiText } from "../ui";
 import type { Notice } from "../use-sync";
 
 /** 沒有 Garmin 等手錶、只用 iPhone 或 Apple Watch 時，把跑步送進 Intervals.icu 的方式 */
@@ -44,7 +44,9 @@ export function SyncNotice({ message }: { message: Notice | null }) {
   if (!syncNoticeShown(message)) return null;
   return (
     <div className={`notice ${message.kind === "error" ? "error" : "warn"}`}>
-      {stripEmoji(message.text)}
+      <span>
+        <EmojiText text={message.text} />
+      </span>
       {message.text.includes(NO_RUNS_HINT) && <PhoneGuide />}
     </div>
   );

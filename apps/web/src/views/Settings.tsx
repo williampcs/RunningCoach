@@ -220,7 +220,17 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const sync = useSync();
 
   useEffect(() => {
-    void coach.status().then((s) => setStatus(stripEmoji(formatStatus(s, coach.describeModels(), coach.settings))));
+    // 核心的狀態（和 Discord 共用）：第一行的標題已經是這一項的標題；🟢🟡 改成字
+    void coach.status().then((s) =>
+      setStatus(
+        stripEmoji(
+          formatStatus(s, coach.describeModels(), coach.settings)
+            .replace(/^.*\n+/, "")
+            .replace(/🟡 (.*)$/m, "$1（接近上限）")
+            .replace(/🟢 /, ""),
+        ),
+      ),
+    );
     void coach.db.countWorkouts().then(setWorkouts);
   }, [coach, settings, revision]);
 
@@ -635,9 +645,10 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   }
 
   // 第一層：清單，每一列是圖示、名稱與一行副標，右邊是狀態（好的狀態是綠色）
-  const providerName = PROVIDER_LABELS[settings.provider].replace(/（(.*)）/, "").replace("其他 OpenAI 相容服務", "相容服務");
+  const providerName = { anthropic: "Claude", openai: "OpenAI", gemini: "Gemini", "openai-compatible": "相容服務" }[settings.provider];
   const rowSub: Record<SettingsSection, string> = {
-    ai: settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`,
+    // 一眼看得到在用哪個服務與模型（例：Claude · 自己的 key · opus-5-5）
+    ai: [settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`, settings.models.chat.trim().replace(/^claude-/, "")].filter(Boolean).join(" · "),
     records: "Intervals.icu",
     weather: settings.weather?.label ?? "還沒設定",
     sync: "電腦、手機之間",

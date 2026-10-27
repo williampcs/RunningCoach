@@ -7,7 +7,10 @@ import { useId, useState, type ReactNode } from "react";
 import {
   Activity,
   Bike,
+  ChartColumn,
   ChevronRight,
+  CircleAlert,
+  CircleCheck,
   Dumbbell,
   Flag,
   Footprints,
@@ -180,7 +183,26 @@ export function EffortPicker({ value, onChange, label = "體感" }: { value: num
   );
 }
 
-/** 核心給的文字（和 Discord 共用）開頭的 emoji：網頁版顯示時去掉，用圖示表示 */
+/** 核心給的文字（和 Discord 共用）開頭的 emoji 換成的線條圖示：成功、失敗、統計 */
+const LEAD_ICONS: [RegExp, LucideIcon][] = [
+  [/^✅/u, CircleCheck],
+  [/^(❌|⚠️?)/u, CircleAlert],
+  [/^📊/u, ChartColumn],
+];
+
+/** 開頭有 emoji 的文字：換成對應的線條圖示，後面接去掉 emoji 的字 */
+export function EmojiText({ text, size = 18 }: { text: string; size?: number }) {
+  const shape = LEAD_ICONS.find(([re]) => re.test(text.trim()))?.[1];
+  return (
+    <>
+      {shape && <Icon as={shape} size={size} />}
+      {shape ? " " : ""}
+      {stripEmoji(text)}
+    </>
+  );
+}
+
+/** 核心給的文字（和 Discord 共用）裡的 emoji：網頁版顯示時去掉（開頭的用 EmojiText 換成圖示） */
 export function stripEmoji(text: string): string {
   return text.replace(/^(?:\p{Extended_Pictographic}️?\s*)+/u, "").replace(/\p{Extended_Pictographic}️?\s?/gu, "");
 }

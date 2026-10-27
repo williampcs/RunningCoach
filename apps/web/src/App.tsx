@@ -15,7 +15,7 @@ import {
 import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settings as SettingsIcon, SquarePen, User, X, type LucideIcon } from "lucide-react";
 
 import { AppContext, errorText, type AppState, type Panel, type SettingsSection, type Tab } from "./app-context";
-import { Icon, ICON_TAB } from "./ui";
+import { EmojiText, Icon, ICON_TAB } from "./ui";
 import { HelpView } from "./views/Help";
 import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
 import { MovedBanner } from "./views/Moved";
@@ -554,7 +554,7 @@ export function App() {
         <div className="toasts" aria-live="polite">
           {toasts.map((t) => (
             <div key={t.id} className="toast" role="status">
-              {t.text}
+              <EmojiText text={t.text} />
             </div>
           ))}
         </div>

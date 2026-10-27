@@ -3,7 +3,6 @@ import { useCallback, useState } from "react";
 import type { ImportProgress } from "@running-coach/core";
 
 import { errorText, useApp } from "./app-context";
-import { stripEmoji } from "./ui";
 
 export interface Notice {
   kind: "ok" | "error";
@@ -27,7 +26,7 @@ export function useSync() {
       // 剛同步進來的跑步若有別台寫的體感，這時才對得上
       await syncDevices();
       setMessage({ kind: text.startsWith("❌") ? "error" : "ok", text });
-      if (!text.startsWith("❌")) toast(stripEmoji(text));
+      if (!text.startsWith("❌")) toast(text);
       touch();
     } catch (e) {
       setMessage({ kind: "error", text: errorText(e) });
@@ -59,10 +58,10 @@ export function useSync() {
         const unavailable = result.unavailable > 0 ? `另有 ${result.unavailable} 筆是從 Strava 匯入 Intervals.icu 的，拿不到內容。` : "";
         const all = `${text.replace(/[。.]?\s*$/, "。")}更早的紀錄：匯入 ${result.added} 趟${result.earliest ? `，最早的一趟是 ${result.earliest}` : ""}（不產生分析）。${unavailable}`;
         setMessage({ kind: "ok", text: all });
-        toast(stripEmoji(all));
+        toast(all);
       } else {
         setMessage({ kind: "ok", text });
-        toast(stripEmoji(text));
+        toast(text);
       }
       touch();
     } catch (e) {

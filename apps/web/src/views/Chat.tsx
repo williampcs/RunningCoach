@@ -13,7 +13,7 @@ import {
 import { Archive, X } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
-import { Icon, stripEmoji } from "../ui";
+import { EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
@@ -194,7 +194,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       setFooter("");
       try {
         const { stats } = await coach.chat(content, onEvent, { replyTo: reply });
-        setFooter(stripEmoji(formatTokenFooter(stats)));
+        setFooter(formatTokenFooter(stats));
       } catch (e) {
         setError(errorText(e));
       } finally {
@@ -374,7 +374,11 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           ))}
         {error && <div className="notice error">沒有收到回覆：{error}</div>}
         {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
-        {footer && sending === null && <div className="muted small footer">{footer}</div>}
+        {footer && sending === null && (
+          <div className="muted small footer">
+            <EmojiText text={footer} size={14} />
+          </div>
+        )}
         <div ref={bottom} />
       </div>
       {llmProblem ? (
