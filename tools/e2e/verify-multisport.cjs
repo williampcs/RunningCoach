@@ -321,7 +321,8 @@ async function cyclingFlow(browser, { width, height, scheme }, check, problems) 
     const vo2 = card.locator('.plan-session[data-sport="ride"]', { hasText: "5 × 4 分鐘" }).first();
     await openSession(vo2);
     const vo2Text = await vo2.innerText();
-    const endurance = card.locator('.plan-session[data-sport="ride"]', { hasText: "耐力騎" }).first();
+    // 用課名找（別堂課的「細節」裡也可能寫到耐力騎）
+    const endurance = card.locator('.plan-session[data-sport="ride"]').filter({ has: page.locator(".plan-session-name", { hasText: /^耐力騎$/ }) }).first();
     await openSession(endurance);
     if (first) {
       check.planTopRide = /騎車 3 次/.test(top) && top.includes("km");
@@ -348,7 +349,7 @@ async function cyclingFlow(browser, { width, height, scheme }, check, problems) 
     if (first) {
       check.rideReported = saved;
       await tab("計畫");
-      const again = page.locator('section.plan-card .plan-session[data-sport="ride"]', { hasText: "耐力騎" }).first();
+      const again = page.locator('section.plan-card .plan-session[data-sport="ride"]').filter({ has: page.locator(".plan-session-name", { hasText: /^耐力騎$/ }) }).first();
       await again.waitFor({ timeout: 10000 });
       await openSession(again);
       check.rideRpeInPlan = await until(async () => (await again.innerText()).includes("體感 4"));
