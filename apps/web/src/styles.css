@@ -2593,9 +2593,14 @@ button.link.danger {
   min-width: 0;
 }
 
-.new-device-banner,
-.removed-banner {
+.new-device-banner {
   flex-wrap: wrap;
+}
+
+.removed-banner {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 /* 記住的事 */

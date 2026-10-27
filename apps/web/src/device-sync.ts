@@ -29,7 +29,7 @@ import type { AppSettings } from "./settings";
 /** 資料變動後等多久才同步：連續操作時合併成一次 */
 const DEBOUNCE_MS = 4_000;
 /** 這台看過哪些裝置（提醒新裝置加入用）；只存裝置 id */
-const SEEN_KEY = "zone2mate.sync.seen-devices";
+export const SEEN_KEY = "zone2mate.sync.seen-devices";
 
 export interface DeviceSyncState {
   /** 有同步服務、而且不在測試模式 */
@@ -171,6 +171,8 @@ export function useDeviceSync(
       if (result.received > 0) touch();
     } catch (e) {
       if (e instanceof SyncRemovedError) {
+        // 這台對舊空間的同步狀態也清掉（之後重新開始同步時從頭來）
+        await engine.forget().catch(() => undefined);
         removedRef.current();
         return;
       }

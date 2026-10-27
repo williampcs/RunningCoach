@@ -19,9 +19,9 @@ import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
-import { buildProvider, clearSettings, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
-import { NewDevicesBanner, RemovedBanner, removedHere, REMOVED_KEY } from "./views/DeviceAlerts";
+import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
   clockOffsetMs,
   loadTestMode,
@@ -290,31 +290,31 @@ export function App() {
     settingsRef.current = next;
     setSettings(next);
   }, []);
-  // 這台已從同步移除（證明對得上）：清掉這台的全部資料（資料庫、設定與 API key、這台的裝置金鑰），重新載入後說明
-  const dbRef = useRef(db);
-  dbRef.current = db;
-  const wipeRemoved = useCallback(() => {
+  // 這台已從同步移除（聲明與證明都對得上，規格 12.27）：清掉同步金鑰、API key 與這台的裝置金鑰；
+  // 訓練資料、選手資料、對話留著，由使用者決定要清除、匯出，或用這台的資料重新開始同步
+  const onRemoved = useCallback(() => {
     void (async () => {
+      const current = settingsRef.current;
+      const next: AppSettings = {
+        ...current,
+        apiKey: "",
+        proxy: { ...current.proxy, token: "" },
+        intervals: { ...current.intervals, apiKey: "" },
+        sync: { ...current.sync, key: "" },
+      };
       try {
-        await dbRef.current?.reset();
-      } finally {
-        clearSettings();
-        try {
-          localStorage.clear();
-        } catch {
-          // 讀不到 localStorage 時沒有東西要清
-        }
-        await deleteDeviceIdentity();
-        try {
-          sessionStorage.setItem(REMOVED_KEY, "1");
-        } catch {
-          // 記不住就不顯示說明，資料一樣清掉了
-        }
-        location.reload();
+        await saveSettings(next);
+      } catch {
+        // 密碼鎖沒解開時存不了：連加密的憑證一起刪掉
+        forgetLockedSecrets();
+        saveSettings({ ...next }).catch(() => undefined);
       }
+      await deleteDeviceIdentity();
+      markRemoved();
+      location.reload();
     })();
   }, []);
-  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch, saveSyncKey, wipeRemoved);
+  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch, saveSyncKey, onRemoved);
   // 新裝置加入的提醒點「查看」：打開設定並捲到多裝置同步
   const [devicesFocus, setDevicesFocus] = useState(0);
   const [removed, setRemoved] = useState(removedHere);

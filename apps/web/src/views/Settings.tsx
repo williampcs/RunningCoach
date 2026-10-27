@@ -6,6 +6,7 @@ import { errorText, useApp } from "../app-context";
 import { featureEnabled } from "../environment";
 import { Markdown } from "../Markdown";
 import { useSync } from "../use-sync";
+import { clearRemoved } from "./DeviceAlerts";
 import { DeviceSyncCard } from "./DeviceSync";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
@@ -263,7 +264,10 @@ export function SettingsView() {
       if (syncing && keep === "stop") await updateSettings({ ...settings, sync: { ...settings.sync, key: "" } });
       await db.reset();
       resetGettingStarted();
-      if (keep === null) clearSettings();
+      if (keep === null) {
+        clearSettings();
+        clearRemoved();
+      }
       // 重新載入，讓 Coach 與各頁的狀態（進行中的對話壓縮、未送出的內容）一併回到初始
       location.reload();
     } catch (e) {

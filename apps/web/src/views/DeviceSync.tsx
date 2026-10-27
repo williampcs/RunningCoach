@@ -27,7 +27,7 @@ import {
 import { errorText, useApp } from "../app-context";
 import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "../device-identity";
 import { checkPassword, lockEnabled } from "../settings";
-import { deviceName, deviceTime } from "./DeviceAlerts";
+import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
 import { PrivacyLink } from "./PrivacyLink";
 
 interface Slot {
@@ -584,7 +584,7 @@ function DeviceList({
         </p>
       )}
       <p className="small muted">
-        移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的資料。只有照規矩的 App 會清；已經被下載的資料收不回來。
+        移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。已經被下載的資料收不回來。
       </p>
       <div className="row">
         <button disabled={busy || wait > 0} onClick={onRekey}>
@@ -785,6 +785,8 @@ export function DeviceSyncCard() {
             disabled={!saved}
             onClick={() =>
               void saveKey(newRoot).then(() => {
+                // 被移除的這台用自己的資料重新開始：不再顯示「已移除」
+                clearRemoved();
                 setMode("idle");
                 setNewRoot(null);
                 setMessage({ kind: "ok", text: "已開啟同步。要加入另一台時，在那台按「加入已經在同步的裝置」。" });
@@ -847,6 +849,13 @@ export function DeviceSyncCard() {
         {linkCode && (mode === "add" || mode === "confirmAdd") && (
           <div className="notice warn">這台還沒開啟同步，無法把同步加到另一台。請用已經在同步的那台掃 QR code。</div>
         )}
+        {removedHere() && (
+          <div className="notice warn removed-note">
+            <span>
+              這台已經被你的另一台從同步移除，這台的資料還在。如果不是你移除的，你的復原碼可能已經外流：按「用這台的資料重新開始同步」會產生新的同步空間與新的復原碼（舊的都不能用了），你的其他裝置再重新加入。
+            </span>
+          </div>
+        )}
         <p className="small">
           在電腦、手機之間同步你的選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓；API key 不同步，每台各自填。
         </p>
@@ -856,7 +865,7 @@ export function DeviceSyncCard() {
         </p>
         <div className="row">
           <button className="primary" disabled={busy} onClick={() => void begin()}>
-            這是第一台：開始同步
+            {removedHere() ? "用這台的資料重新開始同步" : "這是第一台：開始同步"}
           </button>
           <button onClick={() => setMode("join")}>加入已經在同步的裝置</button>
           <button className="link" onClick={() => setMode("restore")}>
@@ -912,7 +921,7 @@ export function DeviceSyncCard() {
         ) : mode === "confirmRemove" && target ? (
           <ConfirmIdentity
             purpose="remove"
-            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的資料（對話、紀錄、設定與 API key）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來。`}
+            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來。`}
             onConfirmed={() => void rekey(target)}
             onCancel={() => {
               setMode("idle");

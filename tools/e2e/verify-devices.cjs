@@ -296,12 +296,21 @@ async function serve(outDir) {
 
     step = "C 被移除";
     await C.page.reload();
-    await C.page.locator(".removed-banner").waitFor({ timeout: 20000 });
-    check.cShowsRemoved = /這台已從多裝置同步移除/.test(await C.page.locator(".removed-banner").innerText());
+    const removedBanner = C.page.locator(".removed-banner");
+    await removedBanner.waitFor({ timeout: 20000 });
+    const removedText = await removedBanner.innerText();
+    check.cShowsRemoved = /這台已從多裝置同步移除/.test(removedText) && /復原碼可能已經外流/.test(removedText);
     await C.page.screenshot({ path: `${E2E.OUT}/devices-C-removed.png` });
+    // 只清金鑰：資料留著（選手資料還在）、API key 與同步金鑰清掉、這台的裝置金鑰刪掉
+    await C.tab("選手資料");
+    await C.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await C.page.waitForTimeout(500);
+    const kept = await profileIntensity(C).inputValue();
+    check.cDataKept = kept === "challenge";
+    if (!check.cDataKept) console.log(`  C 的強度：${JSON.stringify(kept)}`);
     await C.tab("設定");
-    check.cSyncKeyCleared = await C.card.getByRole("button", { name: "這是第一台：開始同步" }).isVisible();
-    check.cSettingsCleared = (await C.page.getByLabel("API key", { exact: true }).last().inputValue()) === "";
+    check.cApiKeyCleared = (await C.page.getByLabel("API key", { exact: true }).last().inputValue()) === "";
+    check.cSyncKeyCleared = await C.card.getByRole("button", { name: "用這台的資料重新開始同步" }).isVisible();
     check.cIdentityDeleted = await C.page.evaluate(
       () =>
         new Promise((resolve) => {
@@ -314,6 +323,11 @@ async function serve(outDir) {
           r.onerror = () => resolve(true);
         }),
     );
+    // 匯出（關掉設定面板，提醒在頁面上方）
+    await C.tab("對話");
+    const download = C.page.waitForEvent("download", { timeout: 10000 });
+    await removedBanner.getByRole("button", { name: "匯出" }).click();
+    check.cExport = /\.db$/.test((await download).suggestedFilename());
 
     step = "C 用舊的復原碼";
     await setup(C);
@@ -321,6 +335,33 @@ async function serve(outDir) {
     await C.card.getByLabel("復原碼").fill(recovery);
     await C.card.getByRole("button", { name: "還原" }).click();
     check.oldRecoveryRejected = await C.card.getByText(/這組復原碼已經換掉了/).waitFor({ timeout: 10000 }).then(() => true, () => false);
+    await C.card.getByRole("button", { name: "取消" }).click();
+
+    step = "C 用這台的資料重新開始同步";
+    await C.card.getByRole("button", { name: "用這台的資料重新開始同步" }).click();
+    const restartCode = (await C.card.locator(".recovery-code").innerText({ timeout: 10000 })).trim();
+    check.cRestartNewCode = restartCode !== recovery && restartCode !== newRecovery;
+    await C.card.getByLabel("我已經把復原碼存好了").check();
+    await C.card.getByRole("button", { name: "開始同步" }).click();
+    await C.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    check.cRestartedAlone = await waitNames(C, ["Windows · Edge"]);
+    await C.page.reload();
+    await C.page.locator("nav.tabbar button").first().waitFor();
+    check.cBannerGoneAfterRestart = (await C.page.locator(".removed-banner").count()) === 0;
+
+    step = "清除這台的資料";
+    // 再模擬一次「已被移除」的狀態，按「清除這台的資料」
+    await C.page.evaluate(() => localStorage.setItem("zone2mate.sync.removed", "1"));
+    await C.page.reload();
+    await removedBanner.waitFor({ timeout: 10000 });
+    await C.tab("對話");
+    await removedBanner.getByRole("button", { name: "清除這台的資料" }).click();
+    await C.page.waitForLoadState("load");
+    await C.page.locator("nav.tabbar button").first().waitFor();
+    await C.tab("選手資料");
+    await C.page.waitForTimeout(500);
+    check.cClearRemovesData = (await profileIntensity(C).count()) === 0 || (await profileIntensity(C).inputValue()) !== "challenge";
+    check.cClearRemovesBanner = (await C.page.locator(".removed-banner").count()) === 0;
 
     step = "D 用新的復原碼";
     const D = await device("D", { mobile: true, ua: UA.iphone, scheme: "dark" });
