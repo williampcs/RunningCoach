@@ -2,7 +2,7 @@
  * 同步服務的儲存（規格 12.10）：每個同步空間只存加密後的紀錄，以及配對時暫放的公開金鑰與加密的金鑰.
  * 伺服器沒有解密用的金鑰；憑證只存雜湊；不存 IP 或任何請求的紀錄.
  */
-import type { SqlDriver } from "@running-coach/core";
+import type { SqlDriver, SqlValue } from "@running-coach/core";
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS spaces (
@@ -29,7 +29,69 @@ const SCHEMA = `
     box         TEXT,
     expires_at  INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS space_modes (
+    space         TEXT PRIMARY KEY,
+    devices_at    INTEGER NOT NULL,
+    legacy_until  INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS devices (
+    space         TEXT NOT NULL,
+    id            TEXT NOT NULL,
+    sign_pub      TEXT NOT NULL,
+    box_pub       TEXT NOT NULL,
+    label         TEXT NOT NULL,
+    joined_at     INTEGER NOT NULL,
+    last_seen_at  INTEGER NOT NULL,
+    legacy        INTEGER NOT NULL DEFAULT 0,
+    removed_at    INTEGER,
+    proof         TEXT,
+    box           TEXT,
+    PRIMARY KEY (space, id)
+  );
+  CREATE TABLE IF NOT EXISTS moves (
+    space     TEXT PRIMARY KEY,
+    moved_to  TEXT NOT NULL,
+    moved_at  INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sig_nonces (
+    nonce       TEXT PRIMARY KEY,
+    expires_at  INTEGER NOT NULL
+  );
 `;
+
+/** D1 的 batch 是一個交易；沒有 batch 的（Node 的 SQLite）用 BEGIN／COMMIT */
+export interface SyncSqlDriver extends SqlDriver {
+  batch?(statements: { sql: string; params: SqlValue[] }[]): Promise<void>;
+}
+
+/** 同步空間的裝置模式（規格 12.27）：devicesAt 起只接受登記過的裝置；legacyUntil 前用舊憑證登記的算「升級前就在同步」 */
+export interface SpaceMode {
+  devicesAt: number;
+  legacyUntil: number;
+}
+
+export interface DeviceRow {
+  id: string;
+  signPub: string;
+  boxPub: string;
+  /** 以同步金鑰加密的名稱與平台，伺服器看不到 */
+  label: string;
+  joinedAt: number;
+  lastSeenAt: number;
+  legacy: boolean;
+  removedAt: number | null;
+  /** 移除的那台留下的證明（舊同步金鑰的 HMAC），被移除的裝置用來確認不是伺服器亂說 */
+  proof: string | null;
+  /** 換金鑰後，給這台的新同步金鑰（加密的） */
+  box: string | null;
+}
+
+export interface RekeyPlan {
+  newSpace: string;
+  tokenHash: string;
+  keep: { id: string; label: string; box: string }[];
+  remove: { id: string; proof: string }[];
+}
 
 export interface SyncRecord {
   id: string;
@@ -49,9 +111,22 @@ export interface PairSlot {
 
 export class SyncStore {
   constructor(
-    private readonly driver: SqlDriver,
-    private readonly now: () => Date = () => new Date(),
+    private readonly driver: SyncSqlDriver,
+    readonly now: () => Date = () => new Date(),
   ) {}
+
+  /** 全部成功或全部不做 */
+  private async batch(statements: { sql: string; params: SqlValue[] }[]): Promise<void> {
+    if (this.driver.batch) return this.driver.batch(statements);
+    await this.driver.exec("BEGIN");
+    try {
+      for (const s of statements) await this.driver.run(s.sql, s.params);
+      await this.driver.exec("COMMIT");
+    } catch (e) {
+      await this.driver.exec("ROLLBACK");
+      throw e;
+    }
+  }
 
   init(): Promise<void> {
     return this.driver.exec(SCHEMA);
@@ -78,8 +153,120 @@ export class SyncStore {
   }
 
   async deleteSpace(space: string): Promise<void> {
-    await this.driver.run("DELETE FROM records WHERE space=?", [space]);
-    await this.driver.run("DELETE FROM spaces WHERE id=?", [space]);
+    await this.batch(
+      ["DELETE FROM records WHERE space=?", "DELETE FROM devices WHERE space=?", "DELETE FROM space_modes WHERE space=?", "DELETE FROM moves WHERE space=?", "DELETE FROM spaces WHERE id=?"].map(
+        (sql) => ({ sql, params: [space] }),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // 裝置（規格 12.27）
+  // -------------------------------------------------------------------------
+
+  async spaceMode(space: string): Promise<SpaceMode | null> {
+    const row = (await this.driver.all("SELECT devices_at, legacy_until FROM space_modes WHERE space=?", [space]))[0];
+    return row ? { devicesAt: Number(row.devices_at), legacyUntil: Number(row.legacy_until) } : null;
+  }
+
+  /** 已經是裝置模式時不變 */
+  async setSpaceMode(space: string, mode: SpaceMode): Promise<void> {
+    await this.driver.run("INSERT INTO space_modes (space, devices_at, legacy_until) VALUES (?, ?, ?) ON CONFLICT(space) DO NOTHING", [
+      space,
+      mode.devicesAt,
+      mode.legacyUntil,
+    ]);
+  }
+
+  /** 換過金鑰的空間：搬到哪裡 */
+  async movedTo(space: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT moved_to FROM moves WHERE space=?", [space]))[0];
+    return row ? String(row.moved_to) : null;
+  }
+
+  private static device(r: Record<string, unknown>): DeviceRow {
+    const text = (v: unknown) => (v === null || v === undefined ? null : String(v));
+    return {
+      id: String(r.id),
+      signPub: String(r.sign_pub),
+      boxPub: String(r.box_pub),
+      label: String(r.label),
+      joinedAt: Number(r.joined_at),
+      lastSeenAt: Number(r.last_seen_at),
+      legacy: Number(r.legacy) === 1,
+      removedAt: r.removed_at === null || r.removed_at === undefined ? null : Number(r.removed_at),
+      proof: text(r.proof),
+      box: text(r.box),
+    };
+  }
+
+  async devices(space: string): Promise<DeviceRow[]> {
+    const rows = await this.driver.all("SELECT * FROM devices WHERE space=? ORDER BY joined_at, id", [space]);
+    return rows.map((r) => SyncStore.device(r));
+  }
+
+  async device(space: string, id: string): Promise<DeviceRow | null> {
+    const row = (await this.driver.all("SELECT * FROM devices WHERE space=? AND id=?", [space, id]))[0];
+    return row ? SyncStore.device(row) : null;
+  }
+
+  /** 回傳是否新增（同一個 id 已經存在時不動） */
+  async addDevice(space: string, d: { id: string; signPub: string; boxPub: string; label: string; legacy: boolean }): Promise<boolean> {
+    const now = this.now().getTime();
+    const result = await this.driver.run(
+      "INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(space, id) DO NOTHING",
+      [space, d.id, d.signPub, d.boxPub, d.label, now, now, d.legacy ? 1 : 0],
+    );
+    return result.changes > 0;
+  }
+
+  /** 最後同步的時間：一分鐘內只寫一次 */
+  async touchDevice(space: string, id: string): Promise<void> {
+    const now = this.now().getTime();
+    await this.driver.run("UPDATE devices SET last_seen_at=? WHERE space=? AND id=? AND last_seen_at<?", [now, space, id, now - 60_000]);
+  }
+
+  async setLabel(space: string, id: string, label: string): Promise<boolean> {
+    return (await this.driver.run("UPDATE devices SET label=? WHERE space=? AND id=? AND removed_at IS NULL", [label, space, id])).changes > 0;
+  }
+
+  /** 這台自己停止同步 */
+  async deleteDevice(space: string, id: string): Promise<void> {
+    await this.driver.run("DELETE FROM devices WHERE space=? AND id=?", [space, id]);
+  }
+
+  /** 簽章的一次性亂數：用過的回傳 false. 過期的偶爾清掉 */
+  async useNonce(nonce: string, expiresAt: number): Promise<boolean> {
+    const now = this.now().getTime();
+    if (Math.random() < 0.02) await this.driver.run("DELETE FROM sig_nonces WHERE expires_at<?", [now]);
+    const result = await this.driver.run("INSERT INTO sig_nonces (nonce, expires_at) VALUES (?, ?) ON CONFLICT(nonce) DO NOTHING", [nonce, expiresAt]);
+    return result.changes > 0;
+  }
+
+  /**
+   * 換金鑰（一個交易）：建立新的空間、留下的裝置搬過去（加入時間不變）、給留下的每台存一份加密的新同步金鑰、
+   * 標記移除的、刪掉舊空間的紀錄. 舊空間只留裝置與「搬到哪裡」. 舊空間已經搬過、新空間已經存在時整個失敗
+   */
+  async rekey(space: string, plan: RekeyPlan): Promise<void> {
+    const now = this.now().getTime();
+    const stamp = this.now().toISOString();
+    await this.batch([
+      { sql: "INSERT INTO moves (space, moved_to, moved_at) VALUES (?, ?, ?)", params: [space, plan.newSpace, now] },
+      { sql: "INSERT INTO spaces (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)", params: [plan.newSpace, plan.tokenHash, stamp, stamp] },
+      { sql: "INSERT INTO space_modes (space, devices_at, legacy_until) VALUES (?, ?, ?)", params: [plan.newSpace, now, now] },
+      ...plan.keep.flatMap((k) => [
+        {
+          sql:
+            "INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy)" +
+            " SELECT ?, id, sign_pub, box_pub, ?, joined_at, last_seen_at, legacy FROM devices WHERE space=? AND id=? AND removed_at IS NULL",
+          params: [plan.newSpace, k.label, space, k.id],
+        },
+        { sql: "UPDATE devices SET box=? WHERE space=? AND id=?", params: [k.box, space, k.id] },
+      ]),
+      ...plan.remove.map((r) => ({ sql: "UPDATE devices SET removed_at=?, proof=? WHERE space=? AND id=?", params: [now, r.proof, space, r.id] as SqlValue[] })),
+      { sql: "DELETE FROM records WHERE space=?", params: [space] },
+      { sql: "UPDATE spaces SET bytes=0, updated_at=? WHERE id=?", params: [stamp, space] },
+    ]);
   }
 
   /** since 之後（不含）的紀錄，依序號排序 */

@@ -19,7 +19,9 @@ import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
-import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { buildProvider, clearSettings, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { deleteDeviceIdentity } from "./device-identity";
+import { NewDevicesBanner, RemovedBanner, removedHere, REMOVED_KEY } from "./views/DeviceAlerts";
 import {
   clockOffsetMs,
   loadTestMode,
@@ -279,7 +281,43 @@ export function App() {
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
   const newVersion = useNewVersion(BUILD.commit);
-  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch);
+  // 別台換了金鑰：同步引擎取得新的同步金鑰後存進設定（規格 12.27）
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const saveSyncKey = useCallback(async (key: string) => {
+    const next = { ...settingsRef.current, sync: { ...settingsRef.current.sync, key } };
+    await saveSettings(next);
+    settingsRef.current = next;
+    setSettings(next);
+  }, []);
+  // 這台已從同步移除（證明對得上）：清掉這台的全部資料（資料庫、設定與 API key、這台的裝置金鑰），重新載入後說明
+  const dbRef = useRef(db);
+  dbRef.current = db;
+  const wipeRemoved = useCallback(() => {
+    void (async () => {
+      try {
+        await dbRef.current?.reset();
+      } finally {
+        clearSettings();
+        try {
+          localStorage.clear();
+        } catch {
+          // 讀不到 localStorage 時沒有東西要清
+        }
+        await deleteDeviceIdentity();
+        try {
+          sessionStorage.setItem(REMOVED_KEY, "1");
+        } catch {
+          // 記不住就不顯示說明，資料一樣清掉了
+        }
+        location.reload();
+      }
+    })();
+  }, []);
+  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch, saveSyncKey, wipeRemoved);
+  // 新裝置加入的提醒點「查看」：打開設定並捲到多裝置同步
+  const [devicesFocus, setDevicesFocus] = useState(0);
+  const [removed, setRemoved] = useState(removedHere);
 
   const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
 
@@ -353,8 +391,13 @@ export function App() {
       deviceSync,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
+      devicesFocus,
+      showDevices() {
+        setDevicesFocus((n) => n + 1);
+        openPanel("settings");
+      },
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab, devicesFocus]);
 
   // 從配對連結打開：直接打開設定，到同步區塊
   useEffect(() => {
@@ -409,7 +452,7 @@ export function App() {
             <span aria-hidden="true">⚙️</span>
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit) && (
+        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0) && (
           <div className="notices" inert={!!panel}>
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
@@ -424,6 +467,8 @@ export function App() {
             )}
             <MovedBanner />
             <StagingBanner />
+            {removed && <RemovedBanner onDismiss={() => setRemoved(false)} />}
+            <NewDevicesBanner />
             {!state.db.persistent && (
               <div className="notice warn">
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。

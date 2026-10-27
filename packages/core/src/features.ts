@@ -12,6 +12,8 @@ export const FEATURES = {
   multisport: "多運動",
   /** 測試模式（假的跑步紀錄、另一個資料庫、模擬日期，規格 6.1）：開發與 staging 用，正式版關著（規格 12.25） */
   testmode: "測試模式",
+  /** 多裝置同步的裝置清單、移除某台與換金鑰（規格 12.27）：每台自己的金鑰，既有的同步空間在這台第一次同步時升級 */
+  devices: "裝置清單與移除",
 } as const;
 
 export type Feature = keyof typeof FEATURES;

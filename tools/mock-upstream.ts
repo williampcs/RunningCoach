@@ -513,7 +513,13 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: { inpu
 // 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空
 const syncStore = new SyncStore(openNodeSqlite(":memory:"));
 await syncStore.init();
-const syncHandle = createSyncHandler({ store: syncStore, allowedOrigins: ["*"] });
+// 冷卻期（規格 12.27）預設和正式的一樣 24 小時；E2E 用 MOCK_SYNC_COOLDOWN_MS 縮短
+const syncCooldown = Number(process.env.MOCK_SYNC_COOLDOWN_MS);
+const syncHandle = createSyncHandler({
+  store: syncStore,
+  allowedOrigins: ["*"],
+  cooldownMs: Number.isFinite(syncCooldown) && syncCooldown >= 0 && process.env.MOCK_SYNC_COOLDOWN_MS ? syncCooldown : undefined,
+});
 
 function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   const chunks: Buffer[] = [];

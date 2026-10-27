@@ -1,8 +1,8 @@
 /** Cloudflare Workers 進入點 — 加密後的紀錄存在 D1. 不記錄任何請求（wrangler 設定也關閉觀測日誌）. */
-import type { Row, SqlDriver, SqlValue } from "@running-coach/core";
+import type { Row, SqlValue } from "@running-coach/core";
 
 import { createSyncHandler } from "./handler";
-import { SyncStore } from "./store";
+import { SyncStore, type SyncSqlDriver } from "./store";
 
 interface Env {
   DB: D1Database;
@@ -10,7 +10,7 @@ interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
-function d1Driver(db: D1Database): SqlDriver {
+function d1Driver(db: D1Database): SyncSqlDriver {
   return {
     async exec(sql) {
       const statements = sql
@@ -25,6 +25,10 @@ function d1Driver(db: D1Database): SqlDriver {
     },
     async all(sql, params: SqlValue[] = []) {
       return (await db.prepare(sql).bind(...params).all<Row>()).results;
+    },
+    // D1 的 batch 是一個交易：其中一個敘述失敗時全部不做
+    async batch(statements) {
+      await db.batch(statements.map((s) => db.prepare(s.sql).bind(...s.params)));
     },
   };
 }
