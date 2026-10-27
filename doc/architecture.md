@@ -84,7 +84,7 @@ flowchart LR
 flowchart TB
   coach["coach.ts<br/>Coach：外殼唯一要用的入口"]
   subgraph talk["對話"]
-    context["context.ts<br/>組系統提示與對話（五層）"]
+    context["context.ts<br/>組系統提示（不常變的在前）與對話（五層）"]
     tools["tools.ts<br/>教練能用的工具與執行"]
     llm["llm/<br/>各家 AI 的轉接、價格"]
     summarizer["summarizer.ts<br/>舊對話整理成摘要"]
@@ -142,6 +142,14 @@ sequenceDiagram
   C-->>W: 回覆、用量、參考了哪些資料
   C->>C: 對話太長時在背景整理成摘要
 ```
+
+**Prompt Caching**（規格 12.23 第 2 點）：API 沒有狀態，工具迴圈的每一輪都要重送整段請求（工具清單 → 系統提示 → 對話），快取讓重複的開頭只收約一成。
+
+- 系統提示分成兩段（`context.ts` 的 `buildSystemParts`）：不常變的在前（角色、教練方法、工具與回覆的規則，只依設定、功能開關與選手練的運動決定），每天或每次會變的在後（今天日期、選手資料、記住的事、賽事與距今天數、身體狀況、手錶資料、天氣）。
+- Claude（`llm/anthropic.ts`）：不常變的那段結尾放明確的快取斷點（工具清單在它前面，一起快取），請求上另外加 `cache_control`（自動快取，斷點跟著對話與工具迴圈往後移）。TTL 是預設的 5 分鐘。單次生成（跑後摘要、整理對話）不加。
+- OpenRouter 上的 Claude（`llm/openai-compatible.ts`，網址是 openrouter.ai、模型是 `anthropic/…`）：系統訊息分成兩個內容區塊，同樣的斷點與請求上的 `cache_control`；用量讀 `cache_write_tokens`。OpenAI、Gemini 自動快取，不帶標記。
+- 會讓快取失效的：工具清單（同一個設定下內容與順序固定）、不常變的那段（不放日期、時間、選手資料），有單元測試檢查（`packages/core/test/prompt-cache.test.ts`）。工具的結果在同一則回覆的每一輪都要重送，所以盡量精簡（例：`get_recent_workouts` 7 天以前的 AI 摘要只帶結論）。
+- 頁尾分開顯示快取的讀與寫，金額依各自的單價算（`llm/pricing.ts`）。模擬上游也依快取標記回傳快取的用量（E2E `verify-cache`）。
 
 ## 資料：存在哪裡
 

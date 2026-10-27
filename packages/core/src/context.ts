@@ -1,7 +1,7 @@
 /**
  * Context Manager — 組合送入模型的五層 Context.
  *
- * 層1 — System Prompt（日期時區 + 選手資料 + 動態注入近期賽事）
+ * 層1 — System Prompt（不常變的角色、教練方法與規則在前；日期時區、選手資料、近期賽事等會變的在後）
  * 層2 — 訓練歷史摘要（由 get_recent_workouts tool 按需載入）
  * 層3 — 當前訓練計畫（由 get_training_plan tool 按需載入）
  * 層4 — 對話摘要（summaries 最新一筆，對話壓縮後產生）
@@ -13,12 +13,12 @@ import { featureOn } from "./features";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
-import type { ChatMessage } from "./llm";
+import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { guideTopics } from "./app-guide";
 import { athleteSports, SPORT_LABELS } from "./sports";
-import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings } from "./types";
+import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings, Sport } from "./types";
 
 /** get_recent_workouts tool 的預設查詢天數 */
 export const RECENT_WORKOUT_DAYS = 14;
@@ -37,7 +37,7 @@ export interface LayerChars {
 }
 
 export interface ApiContext {
-  system: string;
+  system: SystemPrompt;
   messages: ChatMessage[];
   /** 各層字元數，供 token 用量估算 */
   layerChars: LayerChars;
@@ -99,31 +99,127 @@ export class ContextManager {
   // 層1：System Prompt
   // ---------------------------------------------------------------------------
 
+  /** 系統提示的全文：不常變的一段在前，會變的在後（見 buildSystemParts） */
+  async buildSystemPrompt(extra: ContextExtra = {}): Promise<string> {
+    return joinSystemPrompt(await this.buildSystemParts(extra));
+  }
+
   /**
+   * 系統提示分成兩段（規格 12.23 第 2 點，Prompt Caching）：
+   * - stable：角色、教練方法、工具與回覆的規則。只依設定、功能開關與選手練的運動決定，不放日期、時間或選手的資料：
+   *   供應商在它的結尾放快取斷點，同一個設定下每次一個位元組都不變。
+   * - dynamic：每天或每次會變的（今天日期、選手資料、記住的事、賽事與距今天數、身體狀況、手錶資料、天氣）。
+   *
    * extra.weather：今天的約略天氣（todayWeatherLine）；null 是設定了天氣但這次取不到，undefined 是沒有設定.
    * 這裡只拿到天氣的文字，不知道選手在哪裡
    */
-  async buildSystemPrompt(extra: ContextExtra = {}): Promise<string> {
+  async buildSystemParts(extra: ContextExtra = {}): Promise<SystemPrompt> {
+    const profile = await this.db.getProfile();
+    const multisport = featureOn(this.settings, "multisport");
+    // 多運動：教練的角色不限跑步，依選手練的運動（規格 12.24 的第 3 階段）
+    const sports = athleteSports(profile);
+    return {
+      stable: this.stablePrompt(multisport, sports),
+      dynamic: await this.dynamicPrompt(profile, multisport, sports, extra),
+    };
+  }
+
+  /** 不常變的一段：這裡不可以用到日期、時間或資料庫裡的資料（選手練的運動除外） */
+  private stablePrompt(multisport: boolean, sports: Sport[]): string {
+    const role = multisport
+      ? `你是一位專業的耐力運動教練（這位選手練的運動：${sports.map((s) => SPORT_LABELS[s]).join("、")}）。`
+      : "你是一位專業跑步教練。";
+    return [
+      role,
+      // 沒有傳送時間時，模型會把前幾天訊息裡的「今天」「明天」當成今天說的
+      "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
+        "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
+      "",
+      multisport ? "請根據選手資料給予個人化的訓練建議，只排選手有練的運動。回應使用繁體中文。" : "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
+      "",
+      coachingMethod({ multisport, sports }),
+      "",
+      "【訓練歷史載入時機】",
+      "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
+      "・進行跑後回饋分析（save_workout 後）",
+      "・討論訓練狀態、疲勞程度、體能趨勢",
+      "・使用者詢問過去訓練內容或表現",
+      "get_training_plan — 以下情況請主動呼叫：",
+      "・制定、調整或審視訓練計畫",
+      "・需要確認本週計畫安排或訓練目標時",
+      "・與當前計畫進行對比分析時",
+      "get_training_values — 以下情況請主動呼叫：",
+      "・制定或調整課表，或給配速、心率目標時",
+      "・討論訓練強度、強度分配（80/20）、跑量或負荷時",
+      "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上三個 tool。",
+      // 每多一輪工具呼叫，整段對話就要再送一次
+      "需要好幾樣資料時（例如排課表要訓練歷史、課表與訓練數值），在同一輪一起呼叫，不要一個一個等結果再呼叫下一個。",
+      "",
+      "【排課表】",
+      "排課前先看選手的訓練偏好（目標、強度、每週次數、每次最多多久、固定或彈性）；沒有的先問，" +
+        `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
+        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整，並說明改了什麼。" +
+        "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
+      "",
+      "【數值與依據】",
+      "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算。" +
+        "給建議時附上一兩個依據（工具給的數字、選手回報的感受、賽事日期），例如「這週已跑 42 km，比前三週平均多 25%」。" +
+        "依據是推算、可能低估或資料不完整時，要跟選手說，並說明怎麼讓數值更準（例如回報比賽成績、做一次計時跑、在 Intervals.icu 設定閾值）。" +
+        "缺的資料不要猜：沒有心率時改看配速與體感。要改之前的建議或課表時，先說之前怎麼安排、這次為什麼改。",
+      "",
+      "【跑後回報】",
+      "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +
+        "先呼叫 fetch_latest_activity 取得客觀數據。",
+      "只是詢問訓練、心率或傷痛等問題，沒有回報這次跑步時，不需要呼叫。",
+      "取得 Intervals.icu 資料後：",
+      "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
+      "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
+        (this.settings.shell === "web"
+          ? `並告知使用者等手錶上傳到 Intervals.icu 後，到「${multisport ? "運動回報" : "跑後回報"}」按「同步最近 14 天」完成合併`
+          : "並告知使用者手錶同步後輸入 /sync 完成合併"),
+      ...(multisport
+        ? [
+            "・回報的是騎車等跑步以外的運動時，不要用 fetch_latest_activity 與 save_workout（那是跑步的）：用 save_activity_feedback 記下那趟的體感與感受" +
+              (this.settings.shell === "web" ? "；選手也可以在「運動回報」自己填" : "") +
+              "，再依那趟的數據（get_recent_workouts 的其他運動）給回饋。",
+          ]
+        : []),
+      "",
+      "【App 的使用方式】",
+      `選手問 App 怎麼用（某個分頁、按鈕、設定、同步或資料存在哪裡）時，先用 get_app_help 查，不要憑印象回答；只回答選手問的部分，${
+        this.settings.shell === "web" ? "最後附上工具給的說明頁連結。" : "需要時說明網頁版的做法不同。"
+      }可查的主題：${guideTopics(this.settings.shell, this.settings.features)}`,
+      "",
+      `選手說「記住…」，或提到長期有效、而選手資料欄位放不下的事（固定的行程限制、裝備、身體的習慣反應、喜歡或不喜歡的課）時，用 remember 記成一句話，並在回覆裡說「已記下：…」。` +
+        "內容變了用 remember 帶 replace_id 改寫；過時的用 forget 刪掉並說明。" +
+        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、傷病、偏好用 update_athlete_profile）。" +
+        `最多 ${MEMORY_MAX_ITEMS} 條，滿了先和選手商量刪哪些。`,
+      "選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時，用 search_conversations 依日期或關鍵字找；「昨天」「上週」先依今天的日期換算成日期。",
+      "選手的訊息開頭有「（回覆…）」時，表示他在回覆那一則；需要更多前後文時，用 search_conversations 查那一天的對話。",
+      "",
+      "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看下面的清單就說沒有。" +
+        "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
+        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
+    ].join("\n");
+  }
+
+  /** 每天或每次會變的一段 */
+  private async dynamicPrompt(
+    profile: Record<string, string>,
+    multisport: boolean,
+    sports: Sport[],
+    extra: ContextExtra,
+  ): Promise<string> {
     const { timeZone } = this.settings;
     const now = this.now();
     const today = localDate(now, timeZone);
     const year = Number(today.slice(0, 4));
 
-    const profile = await this.db.getProfile();
-    const multisport = featureOn(this.settings, "multisport");
-    // 多運動：教練的角色不限跑步，依選手練的運動（規格 12.24 的第 3 階段）
-    const sports = athleteSports(profile);
-    const role = multisport
-      ? `你是一位專業的耐力運動教練（這位選手練的運動：${sports.map((s) => SPORT_LABELS[s]).join("、")}），以下是選手資料：`
-      : "你是一位專業跑步教練，以下是選手資料：";
     const lines = [
       `今天日期：${today}（${weekdayName(today)}）` +
         `｜時區：${timeZone}（${utcOffsetLabel(now, timeZone)}）｜以星期一為一週的第一天`,
-      // 沒有傳送時間時，模型會把前幾天訊息裡的「今天」「明天」當成今天說的
-      "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
-        "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
       "",
-      role,
+      "以下是選手資料：",
       "",
     ];
 
@@ -186,14 +282,6 @@ export class ContextManager {
     } else {
       lines.push("（還沒有）");
     }
-    lines.push(
-      `選手說「記住…」，或提到長期有效、而選手資料欄位放不下的事（固定的行程限制、裝備、身體的習慣反應、喜歡或不喜歡的課）時，用 remember 記成一句話，並在回覆裡說「已記下：…」。` +
-        "內容變了用 remember 帶 replace_id 改寫；過時的用 forget 刪掉並說明。" +
-        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、傷病、偏好用 update_athlete_profile）。" +
-        `最多 ${MEMORY_MAX_ITEMS} 條，滿了先和選手商量刪哪些。`,
-      "選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時，用 search_conversations 依日期或關鍵字找；「昨天」「上週」先依今天的日期換算成日期。",
-      "選手的訊息開頭有「（回覆…）」時，表示他在回覆那一則；需要更多前後文時，用 search_conversations 查那一天的對話。",
-    );
 
     // 動態注入近期賽事（距今 N 天內）
     const races = await this.db.getUpcomingRaces(this.settings.raceLookaheadDays);
@@ -218,11 +306,6 @@ export class ContextManager {
         );
       }
     }
-    lines.push(
-      "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看上面的清單就說沒有。" +
-        "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
-        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
-    );
 
     // 最近兩天的其他運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞
     const recentOthers = await this.db.getOtherActivities(1);
@@ -250,62 +333,6 @@ export class ContextManager {
     }
 
     lines.push("", ...weatherLines(extra.weather, this.settings.shell));
-
-    lines.push(
-      "",
-      multisport ? "請根據選手資料給予個人化的訓練建議，只排選手有練的運動。回應使用繁體中文。" : "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
-      "",
-      coachingMethod({ multisport, sports }),
-      "",
-      "【訓練歷史載入時機】",
-      "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
-      "・進行跑後回饋分析（save_workout 後）",
-      "・討論訓練狀態、疲勞程度、體能趨勢",
-      "・使用者詢問過去訓練內容或表現",
-      "get_training_plan — 以下情況請主動呼叫：",
-      "・制定、調整或審視訓練計畫",
-      "・需要確認本週計畫安排或訓練目標時",
-      "・與當前計畫進行對比分析時",
-      "get_training_values — 以下情況請主動呼叫：",
-      "・制定或調整課表，或給配速、心率目標時",
-      "・討論訓練強度、強度分配（80/20）、跑量或負荷時",
-      "一般閒聊、賽事管理、個人資料更新等情況不需要呼叫以上三個 tool。",
-      "",
-      "【排課表】",
-      "排課前先看選手的訓練偏好（目標、強度、每週次數、每次最多多久、固定或彈性）；沒有的先問，" +
-        `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
-        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整，並說明改了什麼。" +
-        "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
-      "",
-      "【數值與依據】",
-      "課表與建議中的配速與心率一律用 get_training_values 的數值，不要自己推算。" +
-        "給建議時附上一兩個依據（工具給的數字、選手回報的感受、賽事日期），例如「這週已跑 42 km，比前三週平均多 25%」。" +
-        "依據是推算、可能低估或資料不完整時，要跟選手說，並說明怎麼讓數值更準（例如回報比賽成績、做一次計時跑、在 Intervals.icu 設定閾值）。" +
-        "缺的資料不要猜：沒有心率時改看配速與體感。要改之前的建議或課表時，先說之前怎麼安排、這次為什麼改。",
-      "",
-      "【跑後回報】",
-      "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +
-        "先呼叫 fetch_latest_activity 取得客觀數據。",
-      "只是詢問訓練、心率或傷痛等問題，沒有回報這次跑步時，不需要呼叫。",
-      "取得 Intervals.icu 資料後：",
-      "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
-      "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
-        (this.settings.shell === "web"
-          ? `並告知使用者等手錶上傳到 Intervals.icu 後，到「${multisport ? "運動回報" : "跑後回報"}」按「同步最近 14 天」完成合併`
-          : "並告知使用者手錶同步後輸入 /sync 完成合併"),
-      ...(multisport
-        ? [
-            "・回報的是騎車等跑步以外的運動時，不要用 fetch_latest_activity 與 save_workout（那是跑步的）：用 save_activity_feedback 記下那趟的體感與感受" +
-              (this.settings.shell === "web" ? "；選手也可以在「運動回報」自己填" : "") +
-              "，再依那趟的數據（get_recent_workouts 的其他運動）給回饋。",
-          ]
-        : []),
-      "",
-      "【App 的使用方式】",
-      `選手問 App 怎麼用（某個分頁、按鈕、設定、同步或資料存在哪裡）時，先用 get_app_help 查，不要憑印象回答；只回答選手問的部分，${
-        this.settings.shell === "web" ? "最後附上工具給的說明頁連結。" : "需要時說明網頁版的做法不同。"
-      }可查的主題：${guideTopics(this.settings.shell, this.settings.features)}`,
-    );
     return lines.join("\n");
   }
 
@@ -338,9 +365,9 @@ export class ContextManager {
   }
 
   async getContextForApi(extra: ContextExtra = {}): Promise<ApiContext> {
-    const system = await this.buildSystemPrompt(extra);
+    const system = await this.buildSystemParts(extra);
     const messages: ChatMessage[] = [];
-    const layerChars: LayerChars = { layer1: system.length, layer4: 0, layer5: 0 };
+    const layerChars: LayerChars = { layer1: joinSystemPrompt(system).length, layer4: 0, layer5: 0 };
 
     // 已壓縮的對話會從 DB 刪除，因此帶入全部剩餘對話即可與層4摘要無縫銜接；
     // 若只取最近 KEEP 筆，KEEP~MAX 之間的訊息會既不在視窗也不在摘要中。

@@ -7,6 +7,7 @@
  */
 import type { Logger } from "../types";
 import {
+  joinSystemPrompt,
   LlmError,
   Usage,
   type ChatEvent,
@@ -15,6 +16,7 @@ import {
   type LlmProvider,
   type LlmResult,
   type Purpose,
+  type SystemPrompt,
   type ToolDef,
   type ToolResult,
   type Turn,
@@ -91,9 +93,10 @@ export class Llm {
    * 帶工具的多輪對話：模型要求呼叫工具時以 executeTool 執行，直到產生最終文字回應。
    * 最多 toolCallMaxRounds 輪；超過時禁止再呼叫工具，取得最終回應。
    * 提供 onEvent 時以串流方式呼叫模型，並回報進度（見 ChatEvent）。
+   * system 分成兩段（SystemPrompt）時，支援快取的供應商在不常變的那段結尾放快取斷點。
    */
   async runWithTools(
-    system: string,
+    system: string | SystemPrompt,
     messages: ChatMessage[],
     tools: ToolDef[],
     executeTool: (name: string, input: Record<string, unknown>) => Promise<string>,
@@ -102,7 +105,9 @@ export class Llm {
     const usage = new Usage();
     const session = this.config.provider.startChat({
       model: this.config.models.chat,
-      system,
+      ...(typeof system === "string"
+        ? { system }
+        : { system: joinSystemPrompt(system), systemStableChars: system.stable.length }),
       messages,
       tools,
       maxTokens: this.config.maxResponseTokens,

@@ -9,12 +9,15 @@
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
  *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
- *   GET  /_mock/requests                      最近送到模擬服務的模型請求與天氣查詢（E2E 檢查送出了什麼）
+ *   GET  /_mock/requests                      最近送到模擬服務的模型請求（與回傳的用量）、天氣查詢（E2E 檢查送出了什麼）
+ *
+ * 請求帶快取標記（cache_control）時模擬 Prompt Caching，回傳快取的讀與寫（見 cachedUsage）。
  *
  * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
  * 搭配方式見 README 的「本機開發」。
  */
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { openNodeSqlite } from "@running-coach/sqlite-node";
@@ -400,9 +403,73 @@ function pieces(text: string, size = 3): string[] {
   return out;
 }
 
-const estimateUsage = (body: { messages: unknown; system?: unknown }, content: Block[]) => ({
-  input: Math.round((JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length) / 2),
-  output: Math.round(JSON.stringify(content).length / 2),
+type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+/** 用量以字元數 / 2 估算；請求帶快取標記時另外算快取的讀與寫 */
+function estimateUsage(body: CacheableBody, content: Block[]): Usage {
+  const output = Math.round(JSON.stringify(content).length / 2);
+  const cached = cachedUsage(body);
+  if (cached) return { ...cached, output };
+  const input = Math.round((JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length) / 2);
+  return { input, output, cacheRead: 0, cacheWrite: 0 };
+}
+
+type CacheableBody = { messages: unknown[]; system?: unknown; tools?: unknown[]; cache_control?: unknown };
+const CACHE_TTL_MS = 5 * 60_000;
+/** 快取的前綴（雜湊）→ 到期時間 */
+const promptCache = new Map<string, number>();
+
+/**
+ * 模擬 Prompt Caching：只在請求上有 cache_control 時（Anthropic 的自動快取，或 OpenRouter 上 Claude 的寫法）。
+ * 依 tools → system → messages 的順序把請求接成一串；斷點是帶 cache_control 的系統提示區塊結尾與整段的結尾。
+ * 5 分鐘內在斷點寫過的最長前綴（任一區塊的邊界）算讀取，讀取到最後一個斷點之間算寫入，其餘照一般輸入；命中與寫入都重新計時。
+ */
+function cachedUsage(body: CacheableBody): Omit<Usage, "output"> | null {
+  if (!body.cache_control) return null;
+  const parts: { text: string; breakpoint: boolean }[] = [{ text: JSON.stringify(body.tools ?? []), breakpoint: false }];
+  const systemParts = (system: unknown) => {
+    if (typeof system === "string") parts.push({ text: system, breakpoint: false });
+    else if (Array.isArray(system)) {
+      for (const b of system as { text?: string; cache_control?: unknown }[]) parts.push({ text: b.text ?? "", breakpoint: Boolean(b.cache_control) });
+    }
+  };
+  systemParts(body.system);
+  for (const m of body.messages as { role: string; content: unknown }[]) {
+    if (m.role === "system") systemParts(m.content);
+    else parts.push({ text: JSON.stringify(m), breakpoint: false });
+  }
+  parts.at(-1)!.breakpoint = true;
+
+  const now = Date.now();
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  let prefix = "";
+  let read = 0;
+  const breakpoints: { key: string; chars: number }[] = [];
+  for (const part of parts) {
+    prefix += part.text;
+    const key = hash(prefix);
+    // 斷點往前找之前寫過的區塊邊界（真實的 API 往前找最多 20 個區塊）
+    if ((promptCache.get(key) ?? 0) > now) read = prefix.length;
+    if (part.breakpoint) breakpoints.push({ key, chars: prefix.length });
+  }
+  for (const { key } of breakpoints) promptCache.set(key, now + CACHE_TTL_MS);
+  const tokens = (chars: number) => Math.round(chars / 2);
+  const cacheRead = tokens(read);
+  const cacheWrite = tokens(breakpoints.at(-1)!.chars) - cacheRead;
+  return { input: tokens(prefix.length) - cacheRead - cacheWrite, cacheRead, cacheWrite };
+}
+
+const anthropicUsage = (u: Usage) => ({
+  input_tokens: u.input,
+  output_tokens: u.output,
+  ...(u.cacheRead || u.cacheWrite ? { cache_read_input_tokens: u.cacheRead, cache_creation_input_tokens: u.cacheWrite } : {}),
+});
+
+/** OpenAI 相容的用量：prompt_tokens 含快取；cache_write_tokens 只有帶快取標記時才有（同 OpenRouter） */
+const openAIUsage = (u: Usage) => ({
+  prompt_tokens: u.input + u.cacheRead + u.cacheWrite,
+  completion_tokens: u.output,
+  ...(u.cacheRead || u.cacheWrite ? { prompt_tokens_details: { cached_tokens: u.cacheRead, cache_write_tokens: u.cacheWrite } } : {}),
 });
 
 function readJson(req: IncomingMessage): Promise<any> {
@@ -420,7 +487,7 @@ function readJson(req: IncomingMessage): Promise<any> {
 }
 
 /** Anthropic 格式的串流：一段不回傳內容的思考，接著逐段送出文字與工具呼叫 */
-async function streamAnthropic(res: ServerResponse, model: string, content: Block[], usage: { input: number; output: number }) {
+async function streamAnthropic(res: ServerResponse, model: string, content: Block[], usage: Usage) {
   res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
   const send = (type: string, data: Record<string, unknown> = {}) =>
     res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
@@ -434,7 +501,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
       content: [],
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: usage.input, output_tokens: 1 },
+      usage: { ...anthropicUsage(usage), output_tokens: 1 },
     },
   });
   send("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
@@ -487,7 +554,7 @@ function toOpenAI(content: Block[]) {
   return { text, toolCalls, finishReason: toolCalls.length ? "tool_calls" : "stop" };
 }
 
-async function streamOpenAI(res: ServerResponse, content: Block[], usage: { input: number; output: number }, includeUsage: boolean) {
+async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage, includeUsage: boolean) {
   res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
   const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
@@ -505,7 +572,7 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: { inpu
     chunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
   }
   chunk({}, finishReason);
-  if (includeUsage) send({ id: "chatcmpl-mock", choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output } });
+  if (includeUsage) send({ id: "chatcmpl-mock", choices: [], usage: openAIUsage(usage) });
   res.write("data: [DONE]\n\n");
   res.end();
 }
@@ -572,7 +639,7 @@ function mockWeather(url: URL) {
 }
 
 /** E2E 用：最近的模型請求與天氣查詢 */
-const recent: { kind: "llm" | "weather"; body: unknown }[] = [];
+const recent: { kind: "llm" | "weather"; body: unknown; usage?: Usage }[] = [];
 function record(kind: "llm" | "weather", body: unknown) {
   recent.push({ kind, body });
   if (recent.length > 50) recent.shift();
@@ -659,6 +726,7 @@ createServer((req, res) => {
       record("llm", body);
       const content = reply(body);
       const usage = estimateUsage(body, content);
+      recent.at(-1)!.usage = usage;
       console.log(`${new Date().toISOString()} /v1/messages model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
       if (body.stream) return streamAnthropic(res, body.model, content, usage);
       await sleep(THINK_MS);
@@ -670,7 +738,7 @@ createServer((req, res) => {
         content,
         stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: usage.input, output_tokens: usage.output },
+        usage: anthropicUsage(usage),
       });
     }, () => send(400, { type: "error", error: { type: "invalid_request_error", message: "invalid JSON" } }));
     return;
@@ -680,6 +748,7 @@ createServer((req, res) => {
       record("llm", body);
       const content = reply(fromOpenAI(body));
       const usage = estimateUsage(body, content);
+      recent.at(-1)!.usage = usage;
       console.log(`${new Date().toISOString()} /v1/chat/completions model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
       if (body.stream) return streamOpenAI(res, content, usage, Boolean(body.stream_options?.include_usage));
       await sleep(THINK_MS);
@@ -695,7 +764,7 @@ createServer((req, res) => {
             message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
           },
         ],
-        usage: { prompt_tokens: usage.input, completion_tokens: usage.output },
+        usage: openAIUsage(usage),
       });
     }, () => send(400, { error: { message: "invalid JSON" } }));
     return;

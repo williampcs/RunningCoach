@@ -47,9 +47,26 @@ export interface Turn {
   usage: TurnUsage;
 }
 
+/**
+ * 系統提示的兩段（規格 12.23 第 2 點）：stable 是不常變的（角色、教練方法、規則），放在前面讓供應商快取；
+ * dynamic 是每天或每次會變的（日期、選手資料、天氣）
+ */
+export interface SystemPrompt {
+  stable: string;
+  dynamic: string;
+}
+
+/** 兩段接成全文；不支援分段的供應商送這個 */
+export function joinSystemPrompt(system: SystemPrompt): string {
+  return system.dynamic ? `${system.stable}\n\n${system.dynamic}` : system.stable;
+}
+
 export interface ChatRequest {
   model: string;
+  /** 系統提示的全文 */
   system?: string;
+  /** system 開頭這麼多字元是不常變的一段（SystemPrompt.stable）；支援快取的供應商在它的結尾放斷點 */
+  systemStableChars?: number;
   messages: ChatMessage[];
   tools?: ToolDef[];
   /** 含思考的總輸出上限 */

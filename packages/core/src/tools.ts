@@ -33,6 +33,10 @@ const RACE_ID_HINT =
 /** 恢復狀況的判讀要和前幾天比較，查詢時多取幾天的手錶資料 */
 const BASELINE_EXTRA_DAYS = 35;
 
+/** get_recent_workouts：最多查幾天；最近幾天的 AI 摘要全文帶入，更早的只帶第一行的結論（工具的結果在工具迴圈的每一輪都要重送） */
+const RECENT_WORKOUT_MAX_DAYS = 90;
+const FULL_SUMMARY_DAYS = 7;
+
 /** search_conversations 最多回傳幾則、每則帶入多少字 */
 const SEARCH_MAX = 20;
 const SEARCH_EXCERPT = 200;
@@ -289,7 +293,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       input_schema: {
         type: "object",
         properties: {
-          days: { type: "integer", description: `查詢天數，預設 ${RECENT_WORKOUT_DAYS}` },
+          days: { type: "integer", description: `查詢天數，預設 ${RECENT_WORKOUT_DAYS}，最多 ${RECENT_WORKOUT_MAX_DAYS}` },
         },
         required: [],
       },
@@ -696,7 +700,8 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "get_recent_workouts": {
-        const days = toInt(input.days ?? RECENT_WORKOUT_DAYS, "days");
+        const days = Math.min(RECENT_WORKOUT_MAX_DAYS, toInt(input.days ?? RECENT_WORKOUT_DAYS, "days"));
+        const fullFrom = addDays(today(), -(FULL_SUMMARY_DAYS - 1));
         const [workouts, others] = await Promise.all([db.getRecentWorkouts(days), db.getOtherActivities(days)]);
         if (!workouts.length && !others.length) return `最近 ${days} 天無訓練紀錄。`;
         const lines = [workouts.length ? `最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：` : `最近 ${days} 天沒有跑步。`];
@@ -706,7 +711,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             `\n【${w.date}】${w.distance_km}km｜${w.avg_pace ?? "?"}｜` +
               `${heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}${subj}`,
           );
-          if (w.summary) lines.push(`  AI摘要：${w.summary}`);
+          const summary = w.summary && (w.date >= fullFrom ? w.summary : w.summary.trim().split("\n")[0]);
+          if (summary) lines.push(`  AI摘要：${summary}`);
+        }
+        if (workouts.some((w) => w.date < fullFrom && w.summary)) {
+          lines.push("", `（${FULL_SUMMARY_DAYS} 天以前的 AI 摘要只列第一行的結論）`);
         }
         if (others.length) lines.push("", otherActivitiesText(others));
         return lines.join("\n");

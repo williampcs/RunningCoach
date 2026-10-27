@@ -38,6 +38,7 @@ export class AnthropicProvider implements LlmProvider {
     const client = this.client;
     const messages: Anthropic.MessageParam[] = request.messages.map((m) => ({ role: m.role, content: m.content }));
     const tools = request.tools as Anthropic.Tool[] | undefined;
+    const system = systemParam(request);
 
     return {
       async next(opts = {}): Promise<Turn> {
@@ -46,7 +47,10 @@ export class AnthropicProvider implements LlmProvider {
         const params: Anthropic.MessageCreateParamsNonStreaming = {
           model: request.model,
           max_tokens: request.maxTokens,
-          ...(request.system ? { system: request.system } : {}),
+          ...(system ? { system } : {}),
+          // 主對話（有系統提示）用請求層級的自動快取：斷點放在最後一個可快取的區塊，工具迴圈與對話越長自動往後移。
+          // TTL 用預設的 5 分鐘。單次生成（摘要、壓縮）不重送，快取只會多付寫入費用
+          ...(system ? { cache_control: { type: "ephemeral" as const } } : {}),
           messages,
           ...(tools?.length ? { tools } : {}),
           // 達最大輪數時保留 tools 但禁止再呼叫：對話中已有工具呼叫紀錄，且移除 tools 會讓快取失效
@@ -106,6 +110,21 @@ async function streamMessage(
     }
   }
   return stream.finalMessage();
+}
+
+/**
+ * 系統提示：有不常變的一段時分成兩個區塊，在第一個的結尾放明確的快取斷點（請求依 tools → system → messages 的順序比對，
+ * 工具清單在它前面，一起快取）；換日期、選手資料、天氣只影響斷點後面
+ */
+function systemParam(request: ChatRequest): string | Anthropic.TextBlockParam[] | undefined {
+  const { system, systemStableChars: stableChars } = request;
+  if (!system) return undefined;
+  if (stableChars === undefined) return system;
+  const dynamic = system.slice(stableChars).replace(/^\n+/, "");
+  return [
+    { type: "text", text: system.slice(0, stableChars), cache_control: { type: "ephemeral" } },
+    ...(dynamic ? [{ type: "text" as const, text: dynamic }] : []),
+  ];
 }
 
 function toToolResultBlocks(results: ToolResult[]): Anthropic.ToolResultBlockParam[] {

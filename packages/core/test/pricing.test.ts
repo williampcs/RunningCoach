@@ -72,6 +72,20 @@ describe("cost in usage and footer", () => {
     );
   });
 
+  it("prompt caching: the footer adds up cache reads and writes and prices them separately", async () => {
+    const llm = makeLlm("claude-sonnet-5-5", [
+      // 第一輪寫入快取，工具迴圈的第二輪讀到
+      { ...toolTurn("echo"), usage: { input: 0, cacheRead: 0, cacheWrite: 7000, output: 80 } },
+      turn({ text: "好", usage: { input: 0, cacheRead: 7000, cacheWrite: 150, output: 300 } }),
+    ]);
+    const result = await llm.runWithTools({ stable: "規則", dynamic: "今天" }, [{ role: "user", content: "hi" }], tools, async () => "ok");
+    // 7150×2.5 + 7000×0.1 + 380×10 = 22,375 → US$0.022375
+    expect(result.usage.costUsd).toBeCloseTo(0.022375, 10);
+    const footer = formatTokenFooter({ layerChars: { layer1: 100, layer4: 0, layer5: 0 }, userMsgChars: 2, usage: result.usage });
+    expect(footer).toMatch(/^📊 輸入 7,000（/);
+    expect(footer).toMatch(/\| 工具 1 輪，累計輸入 14,150 \| 快取 讀 7,000 寫 7,150 \| 約 US\$0\.022$/);
+  });
+
   it("shows no amount when the model has no known price", async () => {
     const llm = makeLlm("gpt-5", [turn({ text: "好", usage: usage(3000, 100) })]);
     const result = await llm.runWithTools("system", [{ role: "user", content: "hi" }], tools, async () => "ok");

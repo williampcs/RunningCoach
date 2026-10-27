@@ -379,7 +379,7 @@ describe("訓練數值、教練的角色與只練騎車的人", () => {
   it("開關關著時角色和原本一樣", async () => {
     const { coach, provider } = await setup({ pref_sports: "ride" }, {});
     await coach.chat("嗨");
-    expect(provider.calls[0]!.request.system!).toContain("你是一位專業跑步教練，以下是選手資料：");
+    expect(provider.calls[0]!.request.system!).toContain("你是一位專業跑步教練。");
     expect(provider.calls[0]!.request.system!).not.toContain("單車的教練方法");
   });
 
