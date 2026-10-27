@@ -24,7 +24,7 @@ import {
   type TimelineSession,
 } from "@running-coach/core";
 
-import { Check } from "lucide-react";
+import { Activity, Check, Gauge, HeartPulse, Repeat, Route, Timer, Zap, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
 import { Disclosure, DisclosureButton, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
@@ -163,7 +163,7 @@ function Structure({ segments }: { segments: StructureSegment[] }) {
         <div className="strip-labels">
           {phases.map((p, i) => (
             <span key={i} style={{ flexGrow: p.minutes, flexBasis: 0 }}>
-              {PHASE_NAMES[p.phase]}
+              {PHASE_NAMES[p.phase]} {Math.round(p.minutes)} 分
             </span>
           ))}
         </div>
@@ -172,10 +172,27 @@ function Structure({ segments }: { segments: StructureSegment[] }) {
   );
 }
 
-/** 標籤最多三個，不重複標題已經寫的 */
+/** 標籤的圖示：時間、距離、心率、配速、體感、功率、重複 */
+function chipIcon(text: string): LucideIcon | null {
+  if (/×/.test(text)) return Repeat;
+  if (/心率/.test(text)) return HeartPulse;
+  if (/體感/.test(text)) return Activity;
+  if (/功率|\bW\b/.test(text)) return Zap;
+  if (/\/km/.test(text)) return Gauge;
+  if (/km$/.test(text)) return Route;
+  if (/(分鐘|秒|小時|分)$/.test(text)) return Timer;
+  return null;
+}
+
+/** 標籤最多三個，不重複標題已經寫的；括號裡的說明留在「細節」 */
 function chipsOf(s: TimelineSession): string[] {
   const words = s.title.replace(/\s+/g, "");
-  return s.chips.filter((c) => !words.includes(c.replace(/\s+/g, ""))).slice(0, 3);
+  return s.chips
+    .filter((c) => !words.includes(c.replace(/\s+/g, "")))
+    // 數字的括號（心率的範圍）留著；文字的說明（短間歇看體感…）收進「細節」
+    .map((c) => c.replace(/（[^）]*[\u4e00-\u9fff，][^）]*）?$/u, "").replace(/(\d) 分鐘$/, "$1 分").trim())
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 /** 一堂課：今天（或下一堂）放大；其他天是小卡片，點了展開成同樣的內容 */
@@ -237,11 +254,15 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
         <>
           {chips.length > 0 && (
             <div className="chips">
-              {chips.map((c) => (
-                <span key={c} className="chip">
-                  {c}
-                </span>
-              ))}
+              {chips.map((c) => {
+                const icon = chipIcon(c);
+                return (
+                  <span key={c} className="chip">
+                    {icon && <Icon as={icon} size={ICON_CHIP} />}
+                    {c}
+                  </span>
+                );
+              })}
             </div>
           )}
           {s.structure.length > 0 && <Structure segments={s.structure} />}

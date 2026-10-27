@@ -162,7 +162,7 @@ export function EffortPicker({ value, onChange, label = "體感" }: { value: num
           <button
             key={n}
             type="button"
-            className={value !== null && n < value ? "effort-cell filled" : "effort-cell"}
+            className="effort-cell"
             aria-pressed={value === n}
             aria-label={`${label} ${n}`}
             onClick={() => onChange(n)}

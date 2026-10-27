@@ -30,24 +30,28 @@ let step = "start";
     });
     page.on("pageerror", (e) => problems.push(`[${name} ${step}] pageerror: ${e.message}`));
     page.on("dialog", (d) => void d.accept());
-    const tab = (label) => E2E.go(page, label);
-    const card = page.locator("section.card", { has: page.getByRole("heading", { name: "多裝置同步" }) });
+    // 設定的第一層是清單（規格 12.28）：「設定」直接進到「多裝置同步」
+    const tab = (label) => (label === "設定" ? E2E.settings(page, "多裝置同步") : E2E.go(page, label));
+    const card = page.locator('#side-panel .subpage[data-section="sync"] section.card');
     return { page, tab, card, context };
   };
   const setup = async (d, withLlm = true) => {
     await d.page.goto(URL);
     await d.page.locator("nav.tabbar button").first().waitFor();
-    await d.tab("設定");
-    if (withLlm) {
-      await d.page.getByLabel("供應商").selectOption("openai-compatible");
-      await d.page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-      await d.page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-      await d.page.getByLabel("主對話模型").fill("mock-model");
+    if (withLlm) await E2E.setupMock(d.page, { mock: E2E.MOCK });
+    else {
+      await E2E.settings(d.page, "訓練紀錄");
+      await d.page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
+      await d.page.getByRole("button", { name: "儲存設定" }).click();
+      await d.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
     }
-    await d.page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-    await d.page.getByLabel("我了解並同意以上的資料流向").check();
-    await d.page.getByRole("button", { name: "儲存設定" }).click();
-    await d.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+    await d.tab("設定");
+  };
+  // 同步的筆數收在 ⓘ「這次同步了什麼」裡
+  const syncCounts = async (d) => {
+    const info = d.card.getByRole("button", { name: "這次同步了什麼" });
+    if ((await info.getAttribute("aria-expanded")) !== "true") await info.click();
+    return d.card.locator(".info-pop");
   };
   // 模擬切到別的分頁、App 到背景（headless 的分頁不會自己變成 hidden）
   const background = (page) =>
@@ -64,20 +68,20 @@ let step = "start";
     step = "A 建立資料";
     const A = await device("A", false);
     await setup(A);
-    await A.tab("跑後回報");
+    await A.tab("回報");
     await A.page.getByRole("button", { name: /同步/ }).last().click();
-    await A.page.locator(".notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
+    await A.page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
     await A.page.locator("fieldset.choices .choice").first().click();
-    await A.page.locator('input[type="range"]').fill("7");
+    await A.page.getByRole("button", { name: "體感 7", exact: true }).click();
     await A.page.getByPlaceholder("例如：腿有點重").fill("A 寫的：後段有點喘");
-    await A.page.getByRole("button", { name: /^存到/ }).click();
+    await A.page.getByRole("button", { name: "存起來" }).click();
     await A.page.locator(".report-result .run-card").waitFor({ timeout: 30000 });
-    await A.tab("選手資料");
+    await A.tab("選手");
     await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
     await A.page.waitForTimeout(300);
     await field(A.page, "強度", "select").selectOption("challenge");
     await A.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await A.page.locator(".notice.ok", { hasText: "已儲存" }).waitFor();
+    await A.page.locator(".toast", { hasText: "已儲存" }).waitFor();
     await A.tab("對話");
     await A.page.getByPlaceholder("輸入訊息…").fill("幫我排下週的課表");
     await A.page.getByRole("button", { name: "送出" }).click();
@@ -91,8 +95,8 @@ let step = "start";
     check.mustConfirmSaved = await A.card.getByRole("button", { name: "開始同步" }).isDisabled();
     await A.card.getByLabel("我已經把復原碼存好了").check();
     await A.card.getByRole("button", { name: "開始同步" }).click();
-    await A.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
-    check.aSent = /送出 \d{2,}/.test(await A.card.innerText());
+    await A.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
+    check.aSent = /送出 \d{2,}/.test(await (await syncCounts(A)).innerText());
     await A.page.screenshot({ path: `${E2E.OUT}/devsync-A-on.png` });
 
     // --- B：用配對碼加入（手機） ---
@@ -126,14 +130,14 @@ let step = "start";
     await A.card.getByRole("button", { name: "傳送" }).click();
     await A.card.getByText("已傳送").waitFor();
     await B.card.getByRole("button", { name: "另一台已傳送，加入" }).click({ timeout: 10000 });
-    await B.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await B.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     await B.page.screenshot({ path: `${E2E.OUT}/devsync-B-on.png` });
     await A.card.getByRole("button", { name: "完成" }).click();
 
     step = "B 的資料";
-    await B.tab("計畫與賽事");
+    await B.tab("計畫");
     check.bPlan = await B.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
-    await B.tab("選手資料");
+    await B.tab("選手");
     await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
     check.bProfile = await (async () => {
       for (let i = 0; i < 25; i++) {
@@ -145,9 +149,9 @@ let step = "start";
     await B.tab("對話");
     check.bChat = await B.page.locator(".bubble.user", { hasText: "幫我排下週的課表" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
     // B 從 Intervals.icu 同步：那趟跑步帶上 A 寫的體感與分析
-    await B.tab("跑後回報");
+    await B.tab("回報");
     await B.page.getByRole("button", { name: /同步/ }).last().click();
-    await B.page.locator(".notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
+    await B.page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
     await B.tab("紀錄");
     const first = B.page.locator("ul.runs > li").first();
     await first.locator(".run-row").click();
@@ -156,11 +160,11 @@ let step = "start";
     check.bRunNotes = runText.includes("體感 7/10") && runText.includes("A 寫的：後段有點喘");
 
     step = "之後的修改";
-    await B.tab("選手資料");
+    await B.tab("選手");
     await B.page.locator("section.training-values").waitFor();
     await field(B.page, "強度", "select").selectOption("easy");
     await B.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await B.page.locator(".notice.ok", { hasText: "已儲存" }).waitFor();
+    await B.page.locator(".toast", { hasText: "已儲存" }).waitFor();
     await B.tab("設定");
     await B.page.waitForTimeout(1000);
     await B.card.getByRole("button", { name: "立即同步裝置" }).click({ timeout: 10000 });
@@ -168,7 +172,7 @@ let step = "start";
     await A.tab("設定");
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
     await A.page.waitForTimeout(1500);
-    await A.tab("選手資料");
+    await A.tab("選手");
     await A.page.locator("section.training-values").waitFor();
     check.editReachesA = await (async () => {
       for (let i = 0; i < 25; i++) {
@@ -208,9 +212,9 @@ let step = "start";
     await A.card.getByLabel("新裝置上顯示的六位數字").fill(cNumbers.replace(" ", ""));
     await A.card.getByRole("button", { name: "傳送" }).click();
     await C.card.getByRole("button", { name: "另一台已傳送，加入" }).click({ timeout: 10000 });
-    await C.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await C.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     await A.card.getByRole("button", { name: "完成" }).click();
-    await C.tab("計畫與賽事");
+    await C.tab("計畫");
     check.cPlan = await C.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
 
     // --- A：顯示復原碼（沒有密碼鎖）：先警告；離開畫面就收起，下次要再確認 ---
@@ -268,7 +272,7 @@ let step = "start";
     check.badCodeRejected = await D.card.locator(".notice.error", { hasText: "復原碼不對" }).waitFor({ timeout: 5000 }).then(() => true, () => false);
     await D.card.getByLabel("復原碼").fill(recovery.toLowerCase().replace(/-/g, " "));
     await D.card.getByRole("button", { name: "還原" }).click();
-    await D.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
+    await D.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     await D.tab("對話");
     check.dChat = await D.page.locator(".bubble.user", { hasText: "幫我排下週的課表" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
 
@@ -281,15 +285,16 @@ let step = "start";
     await E.card.getByRole("button", { name: "用復原碼還原" }).click();
     await E.card.getByLabel("復原碼").fill(recovery);
     await E.card.getByRole("button", { name: "還原" }).click();
-    await E.card.getByText(/上次同步：\d/).waitFor({ timeout: 15000 });
-    await E.page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-    await E.page.getByLabel("我了解並同意以上的資料流向").check();
+    await E.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
+    await E2E.settings(E.page, "訓練紀錄");
+    await E.page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
     await E.page.getByRole("button", { name: "儲存設定" }).click();
     await E.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+    await E.tab("設定");
     check.eStillSyncing = await E.card.getByText("已開啟").waitFor({ timeout: 5000 }).then(() => true, () => false);
     check.eKeyKept = await E.page.evaluate(() => (JSON.parse(localStorage.getItem("running-coach.settings.v1") || "{}").sync?.key ?? "") !== "");
     // E 改的資料傳到 A
-    await E.tab("選手資料");
+    await E.tab("選手");
     await E.page.getByLabel("長期目標").fill("E 改的目標");
     // 別台同步過來、頁面重新讀取時，改到一半的欄位不能被蓋掉
     await E.page.waitForTimeout(6000);
@@ -297,20 +302,21 @@ let step = "start";
     await E.page.getByRole("button", { name: "儲存選手資料" }).click();
     await E.tab("設定");
     await E.card.getByRole("button", { name: "立即同步裝置" }).click();
-    await E.card.getByText(/送出 [1-9]/).waitFor({ timeout: 15000 }).catch(() => undefined);
+    await (await syncCounts(E)).getByText(/送出 [1-9]/).waitFor({ timeout: 15000 }).catch(() => undefined);
     await A.tab("設定");
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
-    await A.tab("選手資料");
+    await A.tab("選手");
     check.eChangeReachesA = await A.page.waitForFunction(() => [...document.querySelectorAll("input, textarea")].some((i) => i.value === "E 改的目標"), null, { timeout: 15000 }).then(() => true, () => false);
 
     // --- D 開了密碼鎖：顯示復原碼與新增裝置都要再輸入密碼，錯的不顯示 ---
     step = "D 密碼鎖";
-    await D.tab("設定");
-    const lockCard = D.page.locator("section.card", { has: D.page.getByRole("heading", { name: "保護 API key" }) });
+    await E2E.settings(D.page, "密碼鎖");
+    const lockCard = D.page.locator('#side-panel .subpage[data-section="lock"] section.card');
     await lockCard.getByLabel("密碼", { exact: true }).fill("correct horse");
     await lockCard.getByLabel("再輸入一次", { exact: true }).fill("correct horse");
     await lockCard.getByRole("button", { name: "啟用密碼鎖" }).click();
     await lockCard.getByRole("button", { name: "停用密碼鎖" }).waitFor({ timeout: 20000 });
+    await D.tab("設定");
     await D.card.getByRole("button", { name: "顯示復原碼" }).click();
     const pw = D.card.getByLabel(/再輸入一次密碼鎖的密碼/);
     check.lockAsksPassword = await pw.isVisible();
@@ -360,7 +366,8 @@ let step = "start";
     check.newRecoveryCode = newRecovery !== recovery;
     await B.card.getByLabel("我已經把復原碼存好了").check();
     await B.card.getByRole("button", { name: "開始同步" }).click();
-    check.bRestarted = await B.card.getByText(/送出 [1-9]/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    await B.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 }).catch(() => undefined);
+    check.bRestarted = await (await syncCounts(B)).getByText(/送出 [1-9]/).waitFor({ timeout: 15000 }).then(() => true, () => false);
     // C 還是舊的金鑰：也看到已刪除，按停止
     await C.tab("設定");
     await C.card.getByRole("button", { name: "立即同步裝置" }).click();
@@ -369,6 +376,7 @@ let step = "start";
 
     // 重置：清除這台、重新從雲端取回 → 資料回來；清除這台並停止同步 → 不再回來
     step = "停止與刪除：重置";
+    await E2E.settings(B.page, "重置");
     await B.page.getByRole("button", { name: "清除這台，重新從雲端取回" }).click();
     await B.page.waitForLoadState("load");
     await B.page.locator("nav.tabbar button").first().waitFor();
@@ -376,6 +384,7 @@ let step = "start";
     check.refetchBringsBack = await B.page.locator(".bubble.user", { hasText: "幫我排下週的課表" }).waitFor({ timeout: 20000 }).then(() => true, () => false);
     await B.tab("設定");
     check.refetchKeepsSync = await B.card.getByText("已開啟").waitFor({ timeout: 5000 }).then(() => true, () => false);
+    await E2E.settings(B.page, "重置");
     check.plainResetHidden = (await B.page.getByRole("button", { name: "清除資料，保留設定與 API key" }).count()) === 0;
     await B.page.getByRole("button", { name: "清除這台並停止同步" }).click();
     await B.page.waitForLoadState("load");

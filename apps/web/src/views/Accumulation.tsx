@@ -219,7 +219,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
       ) : (
         <div className="actions">
           <button onClick={() => void run()}>{result ? "再匯入一次" : "匯入完整歷史"}</button>
-          {!result && <InfoTip label="匯入完整歷史">把 Intervals.icu 上更早的跑步全部存進來：只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</InfoTip>}
+          {!result && <InfoTip label="匯入完整歷史的說明">把 Intervals.icu 上更早的跑步全部存進來：只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</InfoTip>}
         </div>
       )}
       {error && <div className="notice error">匯入失敗：{error}（再按一次會從頭重抓，已存的不會重複）</div>}

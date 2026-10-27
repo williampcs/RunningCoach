@@ -34,33 +34,45 @@ let step = "start";
       step = "設定";
       await page.goto(URL);
       await page.locator("nav.tabbar button").first().waitFor();
-      await E2E.go(page, "設定");
+      // 設定的「AI 教練」；模型名稱在「進階」（規格 12.28）
+      await E2E.settings(page, "AI 教練");
+      const openAdvanced = async () => {
+        const advanced = page.locator("#side-panel details.advanced");
+        if (!(await advanced.evaluate((d) => d.open))) await advanced.locator("summary").click();
+      };
       if (route === "anthropic") {
         await page.getByLabel("供應商").selectOption("anthropic");
-        await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
+        await page.getByLabel("API key", { exact: true }).fill("mock-key");
+        await openAdvanced();
         await page.getByLabel("主對話模型").fill("claude-sonnet-5-5");
       } else {
         await page.getByLabel("供應商").selectOption("openai-compatible");
-        await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
+        await page.getByLabel("API key", { exact: true }).fill("mock-key");
         await page.getByLabel("服務網址").fill("https://openrouter.ai/api/v1");
+        await openAdvanced();
         await page.getByLabel("主對話模型").fill("anthropic/claude-sonnet-5.5");
       }
-      await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
       await page.getByLabel("我了解並同意以上的資料流向").check();
+      await E2E.settings(page, "訓練紀錄");
+      await page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
       await page.getByRole("button", { name: "儲存設定" }).click();
       await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
 
       step = "對話";
       await E2E.go(page, "對話");
       const send = async (text) => {
-        const before = (await mockRequests()).length;
+        // 模擬上游只留最近 50 筆：用最後一筆對齊，不用索引
+        const prev = await mockRequests();
+        const lastSeen = prev.length ? JSON.stringify(prev.at(-1)) : null;
         const answered = await page.locator(".bubble.assistant:not(.muted):not(.streaming)").count();
         await page.getByLabel("訊息").fill(text);
         await page.getByLabel("訊息").press("Enter");
         await page.waitForFunction((n) => document.querySelectorAll(".bubble.assistant:not(.muted):not(.streaming)").length > n, answered, { timeout: 30000 });
         await page.locator(".footer").waitFor({ timeout: 10000 });
         // 跑後摘要等背景的請求不帶工具；只看主對話的
-        const calls = (await mockRequests()).slice(before).filter((r) => (r.body.tools ?? []).length > 0);
+        const now = await mockRequests();
+        const from = lastSeen ? now.map((r) => JSON.stringify(r)).lastIndexOf(lastSeen) + 1 : 0;
+        const calls = now.slice(from).filter((r) => (r.body.tools ?? []).length > 0);
         return { calls, footer: await page.locator(".footer").innerText() };
       };
       const first = await send("這週的課表怎麼樣？"); // 模擬上游會呼叫 get_training_plan，再回覆

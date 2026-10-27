@@ -20,7 +20,7 @@ import { shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem } fro
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
-import { Icon } from "../ui";
+import { Icon, SportIcon } from "../ui";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
 
@@ -282,7 +282,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
           </span>
           <span key={current.id} className={reducedMotion ? "feed-ticker" : "feed-ticker animate"}>
             <Icon as={ICONS[current.kind]} size={18} />
-            <span className="feed-summary-text">{current.title}</span>
+            <span className="feed-summary-text">{[current.title, current.badge ?? current.lines?.map((l) => l.text).join(" · ")].filter(Boolean).join(" · ")}</span>
           </span>
           <span className="feed-count">
             {visible.length > 1 ? `${index + 1}/${visible.length}` : ""}
@@ -311,6 +311,16 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
             <div className="feed-body">
               <div className="feed-text">
                 <span className="feed-title">{item.title}</span>
+                {item.lines && (
+                  <ul className="feed-lines">
+                    {item.lines.map((line, i) => (
+                      <li key={i}>
+                        <SportIcon sport={line.sport} size={16} />
+                        {line.text}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {item.detail && <span className="feed-sub">{item.detail}</span>}
                 {item.credit && (
                   <a className="credit" href={item.credit.href} target="_blank" rel="noreferrer">
@@ -322,10 +332,11 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                 <CheckinForm onDone={() => setCheckinOpen(false)} />
               ) : (
                 <div className="feed-actions">
+                  {/* 第一個是這一列的主要動作（今天的課是外框：課表頁才是做事的地方），其他是文字按鈕 */}
                   {item.actions.map((action, i) => (
                     <button
                       key={i}
-                      className={i === 0 && item.tone !== "ok" ? "primary" : ""}
+                      className={i > 0 ? "text" : item.tone === "ok" || item.kind === "plan" ? "" : "primary"}
                       disabled={(action.type === "ask" && llmProblem !== null) || (action.type === "sync" && sync.busy)}
                       onClick={() => runAction(action, item)}
                     >
@@ -335,6 +346,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                 </div>
               )}
             </div>
+            {item.badge && <span className="feed-badge">{item.badge}</span>}
             {dismissible(item) ? (
               <button
                 className="icon-button feed-dismiss"

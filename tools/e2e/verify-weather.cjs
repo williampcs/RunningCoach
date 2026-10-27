@@ -5,17 +5,8 @@ const { chromium } = E2E;
 const OUT = E2E.OUT;
 const URL = E2E.URL;
 
-async function setup(page, { intervals }) {
-  await E2E.go(page, "設定");
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  if (intervals) await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
-  await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
-}
+// 設定的第一層是清單（規格 12.28）：用 env.cjs 的 setupMock 進到「AI 教練」「訓練紀錄」填好
+const setup = (page, { intervals, timeZone = null }) => E2E.setupMock(page, { mock: E2E.MOCK, intervals, timeZone });
 
 async function newPage(browser, problems) {
   // 每次用新的 context：OPFS 與 localStorage 都是空的，等同第一次使用
@@ -37,11 +28,12 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   const page = await newPage(browser, problems);
   await setup(page, { intervals: true });
 
-  // 設定頁的天氣卡片：明確說只用來查天氣
+  // 設定的「天氣」：說明收在 ⓘ「這個城市只用來查天氣」裡（規格 12.28）
+  await E2E.settings(page, "天氣");
   const card = page.locator("#weather");
-  await card.scrollIntoViewIfNeeded();
   check.notSetYet = await card.getByText("還沒設定：教練不會參考天氣。").isVisible();
-  check.privacyNotice = await card.getByText("這個城市只用來查天氣").isVisible();
+  await card.getByRole("button", { name: "這個城市只用來查天氣" }).click();
+  check.privacyNotice = await card.getByText("不會給 AI 模型看").isVisible();
   check.separateFromLandmark = await card.getByText("「紀錄頁的里程碑」是分開的設定").isVisible();
   check.credit = (await card.getByRole("link", { name: "Weather data by Open-Meteo.com" }).getAttribute("href")) === "https://open-meteo.com/";
   const search = card.getByLabel("其他地方（用英文搜尋）");
@@ -75,7 +67,7 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   check.storedRounded = stored.label === "台北市" && stored.lat === 25 && stored.lon === 121.6;
 
   // 其他設定存檔不會蓋掉天氣
-  await page.getByRole("button", { name: "下一步：抓進你的跑步紀錄" }).count();
+  await page.locator("#side-panel .back-button").click();
   await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
 
@@ -107,10 +99,12 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   check.toolResultHasForecast = llm.some((t) => t.includes("天氣預報（Open-Meteo 的模型預報，約略"));
 
   // 改時區後存檔：天氣的城市還在
-  await E2E.go(page, "設定");
+  await E2E.settings(page, "訓練紀錄");
+  await page.locator("#side-panel details.advanced > summary").click();
   await page.getByLabel("時區").fill("Asia/Tokyo");
   await page.getByRole("button", { name: "儲存設定" }).click();
   await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+  await E2E.settings(page, "天氣");
   check.keptAfterSave = (await page.locator("#weather").innerText()).includes("目前：台北市");
 
   // 清除

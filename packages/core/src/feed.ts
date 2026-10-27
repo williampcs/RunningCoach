@@ -39,6 +39,10 @@ export interface FeedItem {
   actions: FeedAction[];
   /** 資料來源的標示（天氣：Open-Meteo 的授權要求） */
   credit?: { label: string; href: string };
+  /** 一行一項（今天的課：每堂課一行，前面是運動的圖示，規格 12.28） */
+  lines?: { sport: "run" | "ride" | "strength" | "swim" | "other"; text: string }[];
+  /** 右邊的數字（賽事的倒數，例：12 天） */
+  badge?: string;
 }
 
 /** 連續幾天沒跑才提醒 */
@@ -133,12 +137,15 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
     const targets = [...new Set(todo.map((s) => s.target).filter((t): t is string => !!t))];
     // 「想改輕鬆一點」只給跑步與騎車的課（肌力等沒有強度可以降）
     const easier = todo.filter((s) => s.isRun || s.sport === "ride");
+    const sportOf = (s: (typeof todo)[number]) =>
+      s.kind === "strength" ? "strength" : s.sport === "ride" || s.sport === "swim" ? s.sport : s.isRun ? "run" : "other";
     items.push({
       id: `plan-today-${todo.map((s) => s.id).join("-")}`,
       kind: "plan",
       tone: "info",
-      title: `今天：${todo.map(name).join(" · ")}`,
+      title: "今天的課",
       detail: targets.length ? targets.join(" · ") : undefined,
+      lines: todo.map((s) => ({ sport: sportOf(s), text: name(s) })),
       actions: [
         { type: "plan" },
         ...(easier.length ? [ask("想改輕鬆一點", `今天的${easier.map((s) => s.title).join("、")}我想改輕鬆一點，可以怎麼調整？`)] : []),
@@ -345,12 +352,11 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       id: `race-${race.id}`,
       kind: "race",
       tone: left <= 7 ? "warn" : "info",
-      title: left === 0 ? `今天是${race.name}，加油！` : `距離${race.name}還有 ${left} 天`,
+      title: left === 0 ? `今天是${race.name}，加油！` : race.name,
       detail: [shortDateLabel(race.date), distanceText(race.distance_km * 1000), race.target_time && `目標 ${race.target_time}`].filter(Boolean).join(" · "),
-      actions:
-        left <= 7 && left > 0
-          ? [ask("排賽前幾天", `${race.name}還有 ${left} 天，幫我安排賽前這幾天的訓練、睡眠與補給。`)]
-          : [{ type: "plan" }],
+      badge: left === 0 ? undefined : `${left} 天`,
+      // 倒數只是提醒，不放按鈕；賽前一週才請教練安排
+      actions: left <= 7 && left > 0 ? [ask("排賽前幾天", `${race.name}還有 ${left} 天，幫我安排賽前這幾天的訓練、睡眠與補給。`)] : [],
     });
   }
   for (const race of pastRaces) {

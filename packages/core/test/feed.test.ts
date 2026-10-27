@@ -81,10 +81,12 @@ describe("buildFeed", () => {
     await coach.db.addRace({ name: "秋季 10K", date: addDays(TODAY, 20), distance_km: 10 });
     await coach.db.addRace({ name: "夏季 5K", date: addDays(TODAY, -3), distance_km: 5 });
     const races = (await coach.feed()).filter((i) => i.kind === "race");
-    expect(races.map((r) => r.title)).toEqual(["距離城市半馬還有 5 天", "距離秋季 10K還有 20 天", "夏季 5K的成績還沒記錄"]);
+    // 標題是賽事的名稱，倒數在右邊（規格 12.28）
+    expect(races.map((r) => r.title)).toEqual(["城市半馬", "秋季 10K", "夏季 5K的成績還沒記錄"]);
+    expect(races.map((r) => r.badge)).toEqual(["5 天", "20 天", undefined]);
     expect(races[0]).toMatchObject({ tone: "warn", detail: `${shortDateLabel(addDays(TODAY, 5))} · 半馬 · 目標 1:55:00` });
     expect(races[0]!.actions[0]).toMatchObject({ type: "ask", label: "排賽前幾天" });
-    expect(races[1]!.actions).toEqual([{ type: "plan" }]);
+    expect(races[1]!.actions).toEqual([]);
   });
 
   it("shows today's line from the plan", async () => {

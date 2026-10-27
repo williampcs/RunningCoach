@@ -264,6 +264,7 @@ export function RacesCard() {
             <span className="list-row-title">{race.name}</span>
             <span className="list-row-sub">
               {[
+                featureEnabled("multisport") && race.sport === "ride" ? "騎車" : null,
                 shortDateLabel(race.date),
                 distanceText(race.distance_km * 1000),
                 `目標 ${race.target_time || "完賽"}`,

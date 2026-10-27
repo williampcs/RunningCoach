@@ -16,7 +16,7 @@ import {
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
-import { Check, Hourglass, RefreshCw } from "lucide-react";
+import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
 import { RunCardView } from "./RunCard";
@@ -179,7 +179,15 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
 
       {/* 標題就是問題；選一趟、點體感、一句話、存起來（規格 12.28） */}
       <section className="card report">
-        <h2 className="title">哪一趟？</h2>
+        <div className="card-head">
+          <h2 className="title">哪一趟？</h2>
+          {hasIntervals && (
+            <button className="text" disabled={busy || sync.busy} onClick={() => void sync.run()}>
+              <Icon as={RefreshCw} size={18} />
+              {sync.busy ? "同步中…" : "同步"}
+            </button>
+          )}
+        </div>
         {hasIntervals &&
           (choices === null ? (
             <p className="muted small">讀取最近的{multisport ? "運動" : "跑步"}…</p>
@@ -211,6 +219,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                           : [`${c.activity.distance_km ?? "?"} km`, `${c.activity.duration_min ?? "?"} 分`, c.activity.avg_pace].filter(Boolean).join(" · ")}
                       </span>
                     </span>
+                    {selected === key && <Icon as={CircleCheck} className="icon choice-check" />}
                   </label>
                 );
               })}
@@ -220,32 +229,23 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                   <Icon as={Hourglass} />
                 </span>
                 <span className="list-row-text">
-                  <span className="list-row-title">這一趟還沒同步</span>
-                  <span className="list-row-sub">先存起來，同步時配對到今天的跑步</span>
+                  <span className="list-row-title">還沒同步的這一趟</span>
+                  <span className="list-row-sub">先存，同步後自動配對到今天的跑步</span>
                 </span>
+                {selected === PENDING && <Icon as={CircleCheck} className="icon choice-check" />}
               </label>
             </fieldset>
           ))}
-        {hasIntervals && (
-          <div className="actions">
-            <button className="text" disabled={busy || sync.busy} onClick={() => void sync.run()}>
-              <Icon as={RefreshCw} size={18} />
-              {sync.busy ? "同步中…" : "同步最近 14 天"}
-            </button>
-          </div>
-        )}
         <SyncNotice message={sync.message} />
         <div className="section">
-          <h2>
-            體感 <span className="muted">{effort}/10</span>
-          </h2>
+          <h2>體感</h2>
           <EffortPicker value={effort} onChange={setEffort} />
         </div>
         <label>
           一句話的感受
           <AutoGrowTextarea value={notes} placeholder="例如：腿有點重，呼吸順" onChange={(e) => setNotes(e.target.value)} />
         </label>
-        <div className="actions">
+        <div className="actions full">
           <button className="primary" disabled={busy || sync.busy || !hasIntervals || selected === null} onClick={() => void submit()}>
             {busy ? "處理中…" : "存起來"}
           </button>

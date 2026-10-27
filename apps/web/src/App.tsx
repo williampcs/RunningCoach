@@ -12,7 +12,7 @@ import {
   type Logger,
 } from "@running-coach/core";
 
-import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settings as SettingsIcon, SquarePen, UserRound, X, type LucideIcon } from "lucide-react";
+import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settings as SettingsIcon, SquarePen, User, X, type LucideIcon } from "lucide-react";
 
 import { AppContext, errorText, type AppState, type Panel, type SettingsSection, type Tab } from "./app-context";
 import { Icon, ICON_TAB } from "./ui";
@@ -50,7 +50,7 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: "report", label: "回報", icon: SquarePen },
   { id: "history", label: "紀錄", icon: BookOpen },
   { id: "plan", label: "計畫", icon: CalendarDays },
-  { id: "profile", label: "選手", icon: UserRound },
+  { id: "profile", label: "選手", icon: User },
 ];
 /** 小提示留在畫面上多久 */
 const TOAST_MS = 3000;

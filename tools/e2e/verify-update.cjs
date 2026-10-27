@@ -94,15 +94,7 @@ const bannerShown = async (page, expected) => {
 
         step = "設定";
         // 對話的輸入框要設定好 AI 才出現
-        await E2E.go(page, "設定");
-        await page.getByLabel("時區").fill("Asia/Taipei");
-        await page.getByLabel("供應商").selectOption("openai-compatible");
-        await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-        await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-        await page.getByLabel("主對話模型").fill("mock-model");
-        await page.getByLabel("我了解並同意以上的資料流向").check();
-        await page.getByRole("button", { name: "儲存設定" }).click();
-        await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+        await E2E.setupMock(page, { mock: E2E.MOCK, intervals: false, timeZone: "Asia/Taipei" });
         await page.locator("#side-panel").getByRole("button", { name: "關閉設定" }).click();
         await page.locator(".getting-started").getByRole("button", { name: "先略過" }).click().catch(() => undefined);
 
@@ -192,7 +184,12 @@ const bannerShown = async (page, expected) => {
       try {
         await page.goto(E2E.URL);
         await page.locator("nav.tabbar button").first().waitFor();
+        // 設定的第一層：「資料」那一列右邊是狀態；點進去才是完整的說明（規格 12.28）
         await E2E.go(page, "設定");
+        const row = page.locator("#side-panel .settings-list").getByRole("button", { name: "資料", exact: true });
+        await row.locator(".list-row-end", { hasText: /\S/ }).waitFor({ timeout: 5000 });
+        check[`${tag}.protectionRow-${state}`] = (await row.locator(".list-row-end").innerText()).includes(state === "persisted" ? "已受保護" : "可能被清掉");
+        await E2E.settings(page, "資料");
         const note = page.locator(".storage-protection");
         await note.waitFor({ timeout: 5000 });
         check[`${tag}.protection-${state}`] = (await note.getAttribute("data-state")) === state && (await note.innerText()).includes(expectedText[state]);

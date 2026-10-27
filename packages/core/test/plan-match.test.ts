@@ -171,8 +171,8 @@ describe("課表與實際進到教練", () => {
 
     const feed = await coach.feed();
     // 看板只放摘要：時間與目標，步驟留在課表頁（規格 12.28）
-    const today = feed.find((i) => i.kind === "plan" && i.title.startsWith("今天："));
-    expect(today?.title).toBe("今天：輕鬆跑 40 分鐘");
+    const today = feed.find((i) => i.kind === "plan" && i.title === "今天的課");
+    expect(today?.lines).toEqual([{ sport: "run", text: "輕鬆跑 40 分鐘" }]);
     expect(today?.detail).toBe("能聊天的強度（體感 2–4/10）");
     expect(today?.actions.map((a) => (a.type === "ask" ? a.label : a.type))).toEqual(["plan", "想改輕鬆一點"]);
 
@@ -192,16 +192,19 @@ describe("課表與實際進到教練", () => {
     };
     const { coach } = await makeCoach([toolTurn("save_training_plan", both), turn({ text: "好" })]);
     await coach.chat("排課表");
-    const today = (await coach.feed()).filter((i) => i.kind === "plan" && i.title.startsWith("今天："));
+    const today = (await coach.feed()).filter((i) => i.kind === "plan" && i.title === "今天的課");
     expect(today).toHaveLength(1);
-    expect(today[0]!.title).toBe("今天：輕鬆跑 40 分鐘 · 肌力 20 分鐘");
+    expect(today[0]!.lines).toEqual([
+      { sport: "run", text: "輕鬆跑 40 分鐘" },
+      { sport: "strength", text: "肌力 20 分鐘" },
+    ]);
     expect(today[0]!.actions.filter((a) => a.type === "ask")).toHaveLength(1);
 
     const strengthOnly = { ...plan, sessions: [both.sessions[1]] };
     const other = await makeCoach([toolTurn("save_training_plan", strengthOnly), turn({ text: "好" })]);
     await other.coach.chat("排課表");
-    const item = (await other.coach.feed()).find((i) => i.kind === "plan" && i.title.startsWith("今天："));
-    expect(item?.title).toBe("今天：肌力 20 分鐘");
+    const item = (await other.coach.feed()).find((i) => i.kind === "plan" && i.title === "今天的課");
+    expect(item?.lines?.map((l) => l.text)).toEqual(["肌力 20 分鐘"]);
     expect(item?.actions).toEqual([{ type: "plan" }]);
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-import { Bot, ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RefreshCw, RotateCcw, Watch, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
 import { formatStatus, type Effort, type Purpose } from "@running-coach/core";
 
@@ -41,10 +41,10 @@ const MODEL_LABELS: Record<Purpose, string> = { chat: "主對話", summary: "跑
 
 /** 設定的第一層：每一項的圖示與名稱（規格 12.28） */
 const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
-  ai: { title: "AI 教練", icon: Bot },
+  ai: { title: "AI 教練", icon: Sparkles },
   records: { title: "訓練紀錄", icon: Watch },
   weather: { title: "天氣", icon: CloudSun },
-  sync: { title: "多裝置同步", icon: RefreshCw },
+  sync: { title: "多裝置同步", icon: Smartphone },
   lock: { title: "密碼鎖", icon: Lock },
   data: { title: "資料", icon: Database },
   testmode: { title: "測試模式", icon: FlaskConical },
@@ -634,17 +634,26 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     );
   }
 
-  // 第一層：清單，右邊是狀態
-  const rowStatus: Record<SettingsSection, string> = {
-    ai: llmProblem ? "還沒設定" : settings.llmMode === "proxy" ? "訂閱" : PROVIDER_LABELS[settings.provider].replace(/（.*）/, ""),
-    records: testMode.enabled ? "測試模式" : activitiesReady ? "已連接" : "還沒連接",
-    weather: settings.weather?.label ?? "沒設定",
-    sync: testMode.enabled ? "不同步" : deviceSync.enabled ? "已開啟" : "沒開",
-    lock: locked ? "已啟用" : "沒啟用",
-    data: protection ? PROTECTION_STATUS[protection] : db.persistent ? "" : "未持久化",
-    testmode: testMode.enabled ? "使用中" : "關閉",
-    reset: "",
-    status: "",
+  // 第一層：清單，每一列是圖示、名稱與一行副標，右邊是狀態（好的狀態是綠色）
+  const providerName = PROVIDER_LABELS[settings.provider].replace(/（(.*)）/, "").replace("其他 OpenAI 相容服務", "相容服務");
+  const rowSub: Record<SettingsSection, string> = {
+    ai: settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`,
+    records: "Intervals.icu",
+    weather: settings.weather?.label ?? "還沒設定",
+    sync: "電腦、手機之間",
+    lock: "保護 API key",
+    data: "匯出、匯入",
+    testmode: "假資料，正式資料不受影響",
+    reset: "清除這台的資料",
+    status: "模型與資料量",
+  };
+  const rowStatus: Partial<Record<SettingsSection, [string, boolean]>> = {
+    ai: llmProblem ? ["還沒設定", false] : ["可用", true],
+    records: testMode.enabled ? ["測試模式", false] : activitiesReady ? ["已連接", true] : ["還沒連接", false],
+    sync: testMode.enabled ? ["不同步", false] : deviceSync.enabled ? ["已開啟", true] : ["關", false],
+    lock: locked ? ["開", true] : ["關", false],
+    data: protection ? [PROTECTION_STATUS[protection], protection === "persisted"] : db.persistent ? undefined : ["未持久化", false],
+    testmode: testMode.enabled ? ["使用中", false] : ["關", false],
   };
   const order: SettingsSection[] = ["ai", "records", "weather", "sync", "lock", "data", ...(featureEnabled("testmode") ? (["testmode"] as const) : []), "reset", "status"];
 
@@ -659,7 +668,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
               <ListRow
                 icon={<Icon as={SECTIONS[id].icon} />}
                 title={SECTIONS[id].title}
-                end={rowStatus[id]}
+                sub={rowSub[id]}
+                end={rowStatus[id] && <span className={rowStatus[id]![1] ? "status ok" : "status"}>{rowStatus[id]![0]}</span>}
                 chevron
                 className={id === "reset" ? "danger" : ""}
                 label={SECTIONS[id].title}
