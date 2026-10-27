@@ -1035,9 +1035,9 @@ export function stepRows(session: SessionDraft, ctx: TargetContext): StepRow[] {
  * 主要的目標（強度課是強度配速，其他是第一個目標）、第一個重複組的摘要（例：4 × 20 秒）。
  * brief 是小卡片用的一兩個：強度課是距離或時間加配速，長跑是距離，其他是時間。
  */
-function sessionChips(session: SessionDraft, e: SessionEstimate, ctx: TargetContext): { chips: string[]; brief: string[] } {
+function sessionChips(session: SessionDraft, e: SessionEstimate, ctx: TargetContext): { chips: string[]; brief: string[]; target: string | null } {
   const flat = session.steps.flatMap((s) => (isRepeat(s) ? s.steps : [s]));
-  if (!flat.length) return { chips: [], brief: [] };
+  if (!flat.length) return { chips: [], brief: [], target: null };
   const run = !NON_RUN_KINDS.has(session.kind);
   const time = flat.some((s) => s.distance_km === undefined) || !run ? minutesText(e.minutes) : null;
   const km = run && flat.some((s) => s.distance_km !== undefined) ? `${round1(e.km)} km` : null;
@@ -1052,7 +1052,42 @@ function sessionChips(session: SessionDraft, e: SessionEstimate, ctx: TargetCont
   const repeat = block ? `${block.repeat} × ${lengthText(block.steps[0]!)}` : null;
   const chips = [time, km, target, repeat].filter((x): x is string => !!x);
   const brief = isQualityKind(session.kind) ? [km ?? time, target] : session.kind === "long" ? [km ?? time] : [time ?? km];
-  return { chips, brief: brief.filter((x): x is string => !!x) };
+  return { chips, brief: brief.filter((x): x is string => !!x), target };
+}
+
+/** 一段：強度、估計的分鐘數、在整堂課裡的位置（暖身、主課、緩和） */
+export interface StructureSegment {
+  intensity: StepIntensity;
+  minutes: number;
+  phase: "warmup" | "main" | "cooldown";
+}
+
+/**
+ * 整堂課的結構（課表頁的強度條，規格 12.28）：每一步一段（重複組展開），長度是估計的時間.
+ * 三步以上時第一步是暖身、最後一步是緩和；兩步時，輕鬆的那一步在前是暖身、在後是緩和
+ */
+export function sessionStructure(session: SessionDraft, ctx: TargetContext): StructureSegment[] {
+  const sport = sessionSport(session);
+  const top = session.steps;
+  const level = (step: PlanStep) =>
+    isRepeat(step) ? Math.max(...step.steps.map((s) => STEP_ORDER[intensityOf(s.target, session.kind)])) : STEP_ORDER[intensityOf(step.target, session.kind)];
+  const phaseOf = (i: number): StructureSegment["phase"] => {
+    if (top.length >= 3) return i === 0 ? "warmup" : i === top.length - 1 ? "cooldown" : "main";
+    if (top.length === 2) {
+      const [a, b] = [level(top[0]!), level(top[1]!)];
+      if (a < b) return i === 0 ? "warmup" : "main";
+      if (b < a) return i === 1 ? "cooldown" : "main";
+    }
+    return "main";
+  };
+  const out: StructureSegment[] = [];
+  top.forEach((step, i) => {
+    const phase = phaseOf(i);
+    const add = (s: Step) => out.push({ intensity: intensityOf(s.target, session.kind), minutes: stepEstimate(s, ctx, sport).minutes, phase });
+    if (isRepeat(step)) for (let n = 0; n < step.repeat; n++) step.steps.forEach(add);
+    else add(step);
+  });
+  return out.filter((seg) => seg.minutes > 0);
 }
 
 /** 種類與課名相同（或課名已經包含種類）時只寫課名；不同時另外附種類 */
@@ -1089,6 +1124,10 @@ export interface SessionView {
   rows: StepRow[];
   chips: string[];
   brief: string[];
+  /** 主要的目標（例：心率 ≤151、5:05–5:11/km）；看板的摘要用 */
+  target: string | null;
+  /** 整堂課的結構（課表頁的強度條） */
+  structure: StructureSegment[];
 }
 
 export function sessionView(
@@ -1120,6 +1159,7 @@ export function sessionView(
     doneAt: session.done_at ?? null,
     rows: stepRows(session, ctx),
     ...sessionChips(session, e, ctx),
+    structure: sessionStructure(session, ctx),
   };
 }
 

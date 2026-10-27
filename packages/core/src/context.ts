@@ -175,12 +175,12 @@ export class ContextManager {
       "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
       "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
         (this.settings.shell === "web"
-          ? `並告知使用者等手錶上傳到 Intervals.icu 後，到「${multisport ? "運動回報" : "跑後回報"}」按「同步最近 14 天」完成合併`
+          ? "並告知使用者等手錶上傳到 Intervals.icu 後，到「回報」按「同步最近 14 天」完成合併"
           : "並告知使用者手錶同步後輸入 /sync 完成合併"),
       ...(multisport
         ? [
             "・回報的是騎車等跑步以外的運動時，不要用 fetch_latest_activity 與 save_workout（那是跑步的）：用 save_activity_feedback 記下那趟的體感與感受" +
-              (this.settings.shell === "web" ? "；選手也可以在「運動回報」自己填" : "") +
+              (this.settings.shell === "web" ? "；選手也可以在「回報」自己填" : "") +
               "，再依那趟的數據（get_recent_workouts 的其他運動）給回饋。",
           ]
         : []),

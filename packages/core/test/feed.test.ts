@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addDays, type FeedItem, type WellnessDay } from "../src";
+import { addDays, shortDateLabel, type FeedItem, type WellnessDay } from "../src";
 import { activity, makeCoach } from "./helpers";
 
 const TODAY = "2026-10-10"; // 星期六
@@ -28,7 +28,7 @@ describe("buildFeed", () => {
       expect.objectContaining({ id: `checkin-${TODAY}`, kind: "checkin", tone: "info", actions: [{ type: "checkin" }] }),
     ]);
     // 沒有手錶的恢復資料（例如只用 iPhone）時不提手錶
-    expect(items[0]!.detail).toBe("花 10 秒回報精神、痠痛與睡眠，教練會依你的感受調整建議。");
+    expect(items[0]!.detail).toBe("花 10 秒回報精神、痠痛與睡眠。");
   });
 
   it("mentions what the watch says but asks for the runner's own feeling first", async () => {
@@ -82,8 +82,8 @@ describe("buildFeed", () => {
     await coach.db.addRace({ name: "夏季 5K", date: addDays(TODAY, -3), distance_km: 5 });
     const races = (await coach.feed()).filter((i) => i.kind === "race");
     expect(races.map((r) => r.title)).toEqual(["距離城市半馬還有 5 天", "距離秋季 10K還有 20 天", "夏季 5K的成績還沒記錄"]);
-    expect(races[0]).toMatchObject({ tone: "warn", detail: `${addDays(TODAY, 5)}，21.1 km，目標 1:55:00` });
-    expect(races[0]!.actions[0]).toMatchObject({ type: "ask", label: "安排賽前這幾天" });
+    expect(races[0]).toMatchObject({ tone: "warn", detail: `${shortDateLabel(addDays(TODAY, 5))} · 半馬 · 目標 1:55:00` });
+    expect(races[0]!.actions[0]).toMatchObject({ type: "ask", label: "排賽前幾天" });
     expect(races[1]!.actions).toEqual([{ type: "plan" }]);
   });
 

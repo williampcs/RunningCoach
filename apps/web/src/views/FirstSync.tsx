@@ -16,13 +16,13 @@ export function FirstSync({ sync, disabled = false }: { sync: ReturnType<typeof 
       <ul className="small muted first-sync">
         <li>
           {featureEnabled("multisport")
-            ? "「同步最近 14 天」：最近兩週的跑步、騎車等運動與恢復資料，每一趟跑步都產生一段教練的分析（花一點模型的費用）。"
-            : "「同步最近 14 天」：最近兩週的跑步與恢復資料，每一趟都產生一段教練的分析（花一點模型的費用）。"}
+            ? "「同步最近 14 天」：最近兩週的跑步、騎車與恢復資料，每一趟跑步都有教練的分析，花一點模型的費用。"
+            : "「同步最近 14 天」：最近兩週的跑步與恢復資料，每一趟都有教練的分析，花一點模型的費用。"}
         </li>
-        {canAll && <li>「匯入全部的紀錄」：先同步最近 14 天，再把更早的跑步全部存進來；更早的不產生分析、不花模型的費用，可能要一兩分鐘。</li>}
+        {canAll && <li>「匯入全部的紀錄」：再把更早的跑步全部存進來，不產生分析、不花費用，可能要一兩分鐘。</li>}
       </ul>
-      <div className="row wrap">
-        <button className="primary" disabled={disabled || sync.busy} onClick={() => void sync.run()}>
+      <div className="actions">
+        <button className={disabled ? "" : "primary"} disabled={disabled || sync.busy} onClick={() => void sync.run()}>
           {sync.busy && !sync.progress ? "同步中…" : "同步最近 14 天"}
         </button>
         {canAll && (

@@ -2,7 +2,10 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { athleteSports, SPORT_LABELS, type Sport } from "@running-coach/core";
 
+import { Check } from "lucide-react";
+
 import { useApp } from "../app-context";
+import { Icon, stripEmoji } from "../ui";
 import { featureEnabled } from "../environment";
 import { useSync } from "../use-sync";
 import { FirstSync } from "./FirstSync";
@@ -50,7 +53,7 @@ function Step({ n, done, title, children }: { n: number; done: boolean; title: s
     <li className={done ? "step done" : "step"}>
       <div className="step-head">
         <span className="step-mark" aria-hidden="true">
-          {done ? "✓" : n}
+          {done ? <Icon as={Check} size={16} /> : n}
         </span>
         <strong>{title}</strong>
         {done && <span className="muted small">完成</span>}
@@ -75,7 +78,7 @@ function SportsStep({ profile, onSaved }: { profile: Record<string, string>; onS
   };
   return (
     <>
-      <p className="small muted">教練只排你有練的運動。可以只選騎車；游泳、肌力等可以之後在選手資料加。</p>
+      <p className="small muted">教練只排你有練的運動；游泳、肌力等之後在選手資料加。</p>
       <fieldset className="choices row onboarding-sports" aria-label="你練哪些運動">
         {ONBOARDING_SPORTS.map((sport) => (
           <label key={sport} className="check">
@@ -93,7 +96,7 @@ function SportsStep({ profile, onSaved }: { profile: Record<string, string>; onS
 
 /** 新手引導：AI 模型 → Intervals.icu →（多運動：練哪些運動）→ 同步最近 14 天 → 選手資料。必要的步驟完成後自動隱藏 */
 export function GettingStarted() {
-  const { coach, settings, llmProblem, revision, goTo, activitiesReady, testMode, touch } = useApp();
+  const { coach, llmProblem, revision, goTo, openSettings, activitiesReady, testMode, touch } = useApp();
   const [counts, setCounts] = useState<{ workouts: number; others: number; profile: Record<string, string> } | null>(null);
   const [dismissed, setDismissed] = useState(readDismissed);
   const sync = useSync();
@@ -130,11 +133,11 @@ export function GettingStarted() {
     return (
       <section className="card getting-started">
         <h2>準備好了</h2>
-        <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>
+        <div className={`notice ${sync.message.kind}`}>{stripEmoji(sync.message.text)}</div>
         <p className="small">可以直接在下面和教練聊聊近況，或到「紀錄」看每次訓練的分析。</p>
-        <div className="row">
+        <div className="actions">
           <button onClick={() => goTo("history")}>查看訓練紀錄</button>
-          <button className="link" onClick={dismiss}>
+          <button className="text" onClick={dismiss}>
             知道了
           </button>
         </div>
@@ -144,19 +147,20 @@ export function GettingStarted() {
 
   return (
     <section className="card getting-started">
-      <div className="row between">
+      <div className="card-head">
         <h2>開始使用</h2>
-        <button className="link small" onClick={dismiss}>
+        <button className="text" onClick={dismiss}>
           先略過
         </button>
       </div>
       <ol className="steps">
         <Step n={1} done={llmReady} title="設定 AI 模型">
           <p className="small muted">
-            選擇 AI 供應商並填入你自己的 API key，費用由你的帳號支付。資料存在你的裝置上，對話直接送到你選的 AI 服務，見
-            <PrivacyLink />。
+            選 AI 供應商、填你自己的 API key，費用由你的帳號支付。資料存在你的裝置上，見 <PrivacyLink />。
           </p>
-          <button onClick={() => goTo("settings")}>前往設定</button>
+          <button className="primary" onClick={() => openSettings("ai")}>
+            前往設定
+          </button>
         </Step>
         <Step n={2} done={intervalsReady} title="連接 Intervals.icu">
           {testMode.enabled ? (
@@ -164,9 +168,11 @@ export function GettingStarted() {
           ) : (
             <>
               <p className="small muted">教練透過 Intervals.icu 讀取你手錶的{multisport ? "訓練" : "跑步"}紀錄。</p>
-              <IntervalsGuide where="設定頁的「Intervals.icu」區塊" />
+              <IntervalsGuide where="設定的「訓練紀錄」" />
               <PhoneGuide />
-              <button onClick={() => goTo("settings")}>前往設定</button>
+              <button className={llmReady ? "primary" : ""} onClick={() => openSettings("records")}>
+                前往設定
+              </button>
             </>
           )}
         </Step>
@@ -181,9 +187,7 @@ export function GettingStarted() {
           <FirstSync sync={sync} disabled={!llmReady || !intervalsReady} />
         </Step>
         <Step n={multisport ? 5 : 4} done={Object.keys(counts.profile).filter((k) => !multisport || k !== "pref_sports").length > 0} title="填寫選手資料（建議）">
-          <p className="small muted">
-            目標、個人最佳、最大心率等，教練的建議會更貼近你。已經跟其他 AI 聊過訓練的話，可以在選手資料頁「從其他 AI 帶入」。
-          </p>
+          <p className="small muted">目標、個人最佳、最大心率等，建議會更貼近你；也可以「從其他 AI 帶入」。</p>
           <button onClick={() => goTo("profile")}>前往選手資料</button>
         </Step>
       </ol>

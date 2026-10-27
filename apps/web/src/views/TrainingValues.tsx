@@ -10,6 +10,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { useApp } from "../app-context";
+import { InfoTip } from "../ui";
 
 const PREDICTIONS: [number, string][] = [
   [5000, "5 km"],
@@ -42,8 +43,10 @@ export function TrainingValuesCard() {
 
   return (
     <section className="card training-values">
-      <h2>訓練數值</h2>
-      <p className="small muted">由程式依你的資料計算，教練排課表時用這些數字；同步後更新。</p>
+      <div className="card-head">
+        <h2>訓練數值</h2>
+        <InfoTip label="訓練數值的說明">由程式依你的資料計算，教練排課表時用這些數字；同步後更新。</InfoTip>
+      </div>
 
       <h3>心率</h3>
       {hr ? (
@@ -132,9 +135,17 @@ export function TrainingValuesCard() {
             <span className="moderate" style={{ flexGrow: d.moderateSecs }} />
             <span className="high" style={{ flexGrow: d.highSecs }} />
           </div>
-          <p className="small">
-            低 {pct(d.lowSecs, total)}%｜中 {pct(d.moderateSecs, total)}%｜高 {pct(d.highSecs, total)}%
-            <span className="muted">（目標：低強度約 80%）</span>
+          <p className="small legend">
+            <span>
+              <span className="dot low" />低 {pct(d.lowSecs, total)}%
+            </span>
+            <span>
+              <span className="dot moderate" />中 {pct(d.moderateSecs, total)}%
+            </span>
+            <span>
+              <span className="dot high" />高 {pct(d.highSecs, total)}%
+            </span>
+            <span className="muted">目標：低強度約 80%</span>
           </p>
         </>
       ) : (
@@ -143,12 +154,15 @@ export function TrainingValuesCard() {
 
       {fitness && (
         <p className="small">
-          體能 {fitness.ctl.toFixed(1)}｜疲勞 {fitness.atl.toFixed(1)}｜狀態 {(fitness.ctl - fitness.atl).toFixed(1)}
-          <span className="muted">（Intervals.icu，{fitness.date}）</span>
+          體能 {fitness.ctl.toFixed(1)} · 疲勞 {fitness.atl.toFixed(1)} · 狀態 {(fitness.ctl - fitness.atl).toFixed(1)}
+          <span className="muted"> · Intervals.icu {fitness.date.slice(5).replace("-", "/")}</span>
         </p>
       )}
-      <p className="small muted">
-        最近 28 天 {coverage.runs} 次跑步：有心率 {coverage.withHr} 次、有區間時間 {coverage.withZones} 次、有回報體感 {coverage.rated} 次。缺的資料不補也不估。
+      <p className="small muted row">
+        <span>最近 28 天 {coverage.runs} 次跑步</span>
+        <InfoTip label="資料的完整度">
+          有心率 {coverage.withHr} 次、有區間時間 {coverage.withZones} 次、有回報體感 {coverage.rated} 次。缺的資料不補也不估。
+        </InfoTip>
       </p>
     </section>
   );

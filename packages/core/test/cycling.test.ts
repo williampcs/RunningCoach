@@ -475,13 +475,13 @@ describe("運動回報、賽事與多裝置同步", () => {
 });
 
 describe("使用說明的多運動", () => {
-  it("開關開著才有「跑步以外的運動」一段，跑後回報改叫運動回報；關著時和原本一樣", async () => {
+  it("開關開著才有「跑步以外的運動」一段；分頁的名稱開著與關著都是「回報」（規格 12.28）", async () => {
     const { appGuide } = await import("../src/app-guide");
     expect(appGuide("web").some((s) => s.id === "multisport")).toBe(false);
-    expect(appGuide("web").find((s) => s.id === "report")!.title).toBe("跑後回報");
+    expect(appGuide("web").find((s) => s.id === "report")!.title).toBe("回報");
     const on = appGuide("web", ["multisport"]);
     expect(on.find((s) => s.id === "multisport")!.body).toContain("只選騎車也可以");
-    expect(on.find((s) => s.id === "report")!.title).toBe("運動回報");
-    expect(on.find((s) => s.id === "sync")!.body).toContain("「運動回報」");
+    expect(on.find((s) => s.id === "report")!.title).toBe("回報");
+    expect(on.find((s) => s.id === "sync")!.body).toContain("「回報」");
   });
 });

@@ -21,13 +21,9 @@ export interface GuideSection {
   feature?: Feature;
 }
 
-/**
- * 這個外殼的說明；開關關著的功能的段落不列. 多運動開著時「跑後回報」分頁叫「運動回報」，說明跟著改
- */
+/** 這個外殼的說明；開關關著的功能的段落不列（分頁的名稱開關開著與關著都一樣，規格 12.28） */
 export function appGuide(shell: Shell, features: readonly string[] = []): GuideSection[] {
-  const sections = (shell === "web" ? WEB_GUIDE : DISCORD_GUIDE).filter((s) => !s.feature || features.includes(s.feature));
-  if (shell !== "web" || !features.includes("multisport")) return sections;
-  return sections.map((s) => ({ ...s, title: s.title.replace("跑後回報", "運動回報"), body: s.body.replaceAll("「跑後回報」", "「運動回報」") }));
+  return (shell === "web" ? WEB_GUIDE : DISCORD_GUIDE).filter((s) => !s.feature || features.includes(s.feature));
 }
 
 /** 依代號、標題、其他說法或內容找；代號完全相同的優先 */

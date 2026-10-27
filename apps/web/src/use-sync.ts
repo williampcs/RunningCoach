@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import type { ImportProgress } from "@running-coach/core";
 
 import { errorText, useApp } from "./app-context";
+import { stripEmoji } from "./ui";
 
 export interface Notice {
   kind: "ok" | "error";
@@ -11,7 +12,7 @@ export interface Notice {
 
 /** 從 Intervals.icu 同步最近 14 天的訓練（新手引導、設定頁、跑後回報共用）；第一次也可以選匯入全部的紀錄 */
 export function useSync() {
-  const { coach, touch, deviceSync } = useApp();
+  const { coach, touch, deviceSync, toast } = useApp();
   const syncDevices = deviceSync.run;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Notice | null>(null);
@@ -26,13 +27,14 @@ export function useSync() {
       // 剛同步進來的跑步若有別台寫的體感，這時才對得上
       await syncDevices();
       setMessage({ kind: text.startsWith("❌") ? "error" : "ok", text });
+      if (!text.startsWith("❌")) toast(stripEmoji(text));
       touch();
     } catch (e) {
       setMessage({ kind: "error", text: errorText(e) });
     } finally {
       setBusy(false);
     }
-  }, [coach, touch, syncDevices]);
+  }, [coach, touch, syncDevices, toast]);
 
   /**
    * 第一次抓紀錄時選「全部」：先同步最近 14 天（有分析、有恢復資料），再匯入更早的（不產生分析）.
@@ -55,12 +57,12 @@ export function useSync() {
         await syncDevices();
         // 最近 14 天的剛同步過，匯入時算「原本就有」；新增的就是更早的
         const unavailable = result.unavailable > 0 ? `另有 ${result.unavailable} 筆是從 Strava 匯入 Intervals.icu 的，拿不到內容。` : "";
-        setMessage({
-          kind: "ok",
-          text: `${text.replace(/[。.]?\s*$/, "。")}更早的紀錄：匯入 ${result.added} 趟${result.earliest ? `，最早的一趟是 ${result.earliest}` : ""}（不產生分析）。${unavailable}`,
-        });
+        const all = `${text.replace(/[。.]?\s*$/, "。")}更早的紀錄：匯入 ${result.added} 趟${result.earliest ? `，最早的一趟是 ${result.earliest}` : ""}（不產生分析）。${unavailable}`;
+        setMessage({ kind: "ok", text: all });
+        toast(stripEmoji(all));
       } else {
         setMessage({ kind: "ok", text });
+        toast(stripEmoji(text));
       }
       touch();
     } catch (e) {
@@ -69,7 +71,7 @@ export function useSync() {
       setProgress(null);
       setBusy(false);
     }
-  }, [coach, touch, syncDevices]);
+  }, [coach, touch, syncDevices, toast]);
 
   return { busy, message, run, runAll, progress };
 }

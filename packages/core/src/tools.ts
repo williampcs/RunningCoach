@@ -399,7 +399,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "remember",
       description:
-        "記下一件要長期記住的事（每次對話都會帶給你，選手在「選手資料」頁看得到、改得了）。" +
+        "記下一件要長期記住的事（每次對話都會帶給你，選手在「選手」頁看得到、改得了）。" +
         "選手說「記住…」，或提到長期有效、選手資料欄位放不下的事時呼叫；記完要在回覆裡說「已記下：…」。" +
         "給 replace_id 時改寫那一條。",
       input_schema: {
@@ -886,7 +886,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           lines.push(
             "",
             "看起來重複的（同一天、距離相近）：" + dups.map((g) => g.map((r) => `[${r.id}]`).join("、")).join("；"),
-            "你不能刪除賽事；請選手在「計畫與賽事」頁的賽事上按「刪除」刪掉多的那筆。",
+            "你不能刪除賽事；請選手在「計畫」頁的賽事上按「刪除」刪掉多的那筆。",
           );
         }
         return lines.join("\n");

@@ -25,6 +25,7 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { InfoTip } from "../ui";
 import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "../device-identity";
 import { checkPassword, lockEnabled } from "../settings";
 import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
@@ -156,7 +157,7 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
         <button className="primary" disabled={!box || !confirm || Boolean(error)} onClick={() => void accept()}>
           {box ? "另一台已傳送，加入" : confirm ? "等另一台輸入數字…" : "等另一台…"}
         </button>
-        <button onClick={() => void cancel()}>取消</button>
+        <button className="text" onClick={() => void cancel()}>取消</button>
       </div>
     </div>
   );
@@ -315,7 +316,7 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
             <button className="primary" disabled={busy || slot.length !== 8} onClick={() => void start()}>
               {busy ? "等新裝置回應…" : fromLink ? "是我的裝置，繼續" : "下一步"}
             </button>
-            <button onClick={onClose}>取消</button>
+            <button className="text" onClick={onClose}>取消</button>
           </div>
           {!busy && <AutoHideNote {...autoHide} />}
         </>
@@ -337,7 +338,7 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
             <button className="primary" disabled={busy || stopped || typed.replace(/\D/g, "").length !== 6} onClick={() => void send()}>
               傳送
             </button>
-            <button onClick={onClose}>取消</button>
+            <button className="text" onClick={onClose}>取消</button>
           </div>
         </>
       )}
@@ -440,11 +441,11 @@ function ConfirmIdentity({
             {text.password}
             <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
-          <div className="row">
+          <div className="actions">
             <button className="primary" type="submit" disabled={busy || !password}>
               {busy ? "確認中…" : "確認"}
             </button>
-            <button type="button" onClick={onCancel}>
+            <button type="button" className="text" onClick={onCancel}>
               取消
             </button>
           </div>
@@ -454,14 +455,16 @@ function ConfirmIdentity({
           <div className="notice warn">
             <span>
               {text.noLock}
-              建議先到上面的「保護 API key」設定密碼鎖，之後{text.then}前要輸入密碼。
+              建議先設定「密碼鎖」，之後{text.then}前要輸入密碼。
             </span>
           </div>
-          <div className="row">
+          <div className="actions">
             <button className="primary" onClick={onConfirmed}>
               {text.go}
             </button>
-            <button onClick={onCancel}>取消</button>
+            <button className="text" onClick={onCancel}>
+              取消
+            </button>
           </div>
         </>
       )}
@@ -517,7 +520,7 @@ function DeviceList({
   }
 
   return (
-    <div className="device-list">
+    <div className="device-list section">
       <h3>已同步的裝置</h3>
       <ul>
         {devices.devices.map((d) => (
@@ -534,7 +537,7 @@ function DeviceList({
                 <button className="primary" type="submit">
                   儲存
                 </button>
-                <button type="button" onClick={() => setEditing(null)}>
+                <button type="button" className="text" onClick={() => setEditing(null)}>
                   取消
                 </button>
               </form>
@@ -550,10 +553,10 @@ function DeviceList({
             </div>
             {!d.label && <div className="small muted">這台的資料解不開（可能被改過）。換金鑰時會一起移除。</div>}
             {editing !== d.id && (
-              <div className="row">
+              <div className="actions">
                 {d.label && (
                   <button
-                    className="link"
+                    className="text"
                     onClick={() => {
                       setName(d.label?.name ?? "");
                       setEditing(d.id);
@@ -563,12 +566,12 @@ function DeviceList({
                   </button>
                 )}
                 {!d.self && (
-                  <button className="link danger" disabled={busy || wait > 0} onClick={() => onRemove(d)}>
+                  <button className="text danger" disabled={busy || wait > 0} onClick={() => onRemove(d)}>
                     移除
                   </button>
                 )}
                 {fresh.has(d.id) && (
-                  <button className="link" onClick={() => deviceSync.acknowledge([d.id])}>
+                  <button className="text" onClick={() => deviceSync.acknowledge([d.id])}>
                     是我的
                   </button>
                 )}
@@ -583,13 +586,13 @@ function DeviceList({
           這台加入還不到 24 小時，{waitText(wait)}後才能移除別台或換金鑰。這是為了防止拿到復原碼的人加入後馬上把你的裝置移除：你原本的裝置可以先移除它，它卻不能先移除你。
         </p>
       )}
-      <p className="small muted">
-        移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。已經被下載的資料收不回來。
-      </p>
-      <div className="row">
-        <button disabled={busy || wait > 0} onClick={onRekey}>
-          只換金鑰（懷疑復原碼外流）
+      <div className="actions">
+        <button className="text" disabled={busy || wait > 0} onClick={onRekey}>
+          只換金鑰
         </button>
+        <InfoTip label="移除與換金鑰">
+          移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。懷疑復原碼外流時按「只換金鑰」。已經被下載的資料收不回來。
+        </InfoTip>
       </div>
     </div>
   );
@@ -602,7 +605,7 @@ function rekeyError(e: unknown, what: string): string {
 }
 
 /** 設定頁的多裝置同步（規格 12.10） */
-export function DeviceSyncCard() {
+export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const { settings, updateSettings, deviceSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
     "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
@@ -820,7 +823,7 @@ export function DeviceSyncCard() {
           <button className="primary" disabled={busy || !restoreText.trim()} onClick={() => void restore()}>
             {busy ? "確認中…" : "還原"}
           </button>
-          <button onClick={() => setMode("idle")}>取消</button>
+          <button className="text" onClick={() => setMode("idle")}>取消</button>
         </div>
       </div>
     );
@@ -856,19 +859,24 @@ export function DeviceSyncCard() {
             </span>
           </div>
         )}
-        <p className="small">
-          在電腦、手機之間同步你的選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓；API key 不同步，每台各自填。
+        <p className="row">
+          <span>在電腦、手機之間同步選手資料、賽事、課表、自評與對話。</span>
+          <InfoTip label="同步哪些資料">
+            <ul>
+              <li>同步選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓；API key 不同步，每台各自填。</li>
+              <li>
+                資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。同步服務存了什麼見
+                <PrivacyLink />。
+              </li>
+            </ul>
+          </InfoTip>
         </p>
-        <p className="muted small">
-          資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。同步服務存了什麼見
-          <PrivacyLink />。
-        </p>
-        <div className="row">
+        <div className="actions">
           <button className="primary" disabled={busy} onClick={() => void begin()}>
             {removedHere() ? "用這台的資料重新開始同步" : "這是第一台：開始同步"}
           </button>
           <button onClick={() => setMode("join")}>加入已經在同步的裝置</button>
-          <button className="link" onClick={() => setMode("restore")}>
+          <button className="text" onClick={() => setMode("restore")}>
             用復原碼還原
           </button>
         </div>
@@ -878,19 +886,23 @@ export function DeviceSyncCard() {
     const last = deviceSync.last;
     body = (
       <>
-        <p>
-          <span className="badge achieved">已開啟</span> 上次同步：{timeText(deviceSync.lastAt)}
+        <p className="row">
+          <span className="badge achieved">已開啟</span>
+          <span>上次同步 {timeText(deviceSync.lastAt)}</span>
           {last && (
-            <span className="muted small">
-              （共同步 {last.total} 筆；這次收到 {last.received}、送出 {last.sent}
-              {last.pending ? `；${last.pending} 筆等這台同步到對應的跑步` : ""}）
-            </span>
+            <InfoTip label="這次同步了什麼">
+              共同步 {last.total} 筆；這次收到 {last.received}、送出 {last.sent}
+              {last.pending ? `；${last.pending} 筆等這台同步到對應的跑步` : ""}。
+            </InfoTip>
           )}
         </p>
         {deviceSync.error && <div className="notice error">同步失敗：{deviceSync.error}</div>}
         {!lockEnabled() && mode !== "confirmAdd" && mode !== "confirmCode" && mode !== "confirmRemove" && mode !== "confirmRekey" && (
-          <div className="notice warn">
-            建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡，能用這個瀏覽器的人就讀得到。
+          <div className="notice warn inline">
+            <span>沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器。</span>
+            <button className="text" onClick={onLock}>
+              設定密碼鎖
+            </button>
           </div>
         )}
         {mode === "newCode" ? (
@@ -997,7 +1009,7 @@ export function DeviceSyncCard() {
                 }}
               />
             )}
-            <div className="row wrap">
+            <div className="actions">
               <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
                 {deviceSync.busy ? "同步中…" : "立即同步裝置"}
               </button>
@@ -1017,10 +1029,12 @@ export function DeviceSyncCard() {
               >
                 顯示復原碼
               </button>
-              <button className="link" onClick={() => void stopHere()}>
+            </div>
+            <div className="actions">
+              <button className="text" onClick={() => void stopHere()}>
                 停止這台的同步
               </button>
-              <button className="link danger" disabled={busy} onClick={() => void deleteRemote()}>
+              <button className="text danger" disabled={busy} onClick={() => void deleteRemote()}>
                 刪除雲端的資料
               </button>
             </div>
@@ -1032,7 +1046,6 @@ export function DeviceSyncCard() {
 
   return (
     <section className="card" ref={card}>
-      <h2>多裝置同步</h2>
       {body}
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
     </section>
