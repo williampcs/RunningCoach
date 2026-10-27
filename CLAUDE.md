@@ -82,6 +82,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 - `doc/running-coach-spec2_0.md`：v2 規格。第 9 節是進度、下一步與接手須知；第 11 節是待決定事項；第 12 節是各主題的討論與決定。
 - `doc/known-issues.md`：決策與問題紀錄（KI 編號），新的決策接續編號寫在這裡。
 - `doc/architecture.md`：架構說明：組成、技術、核心的分層、資料存在哪裡、schema 與資料的關聯、同步、部署。程式有大改時一起更新。
+- `doc/design-guidelines.md`：介面的設計準則（字級、顏色、圖示、元件、文字、檢查清單）。改畫面時照這份，最後用它的檢查清單過一遍。
 - `tools/e2e/README.md`：網頁實測的做法與腳本。
 - `doc/running-coach-spec1_4.md`：v1 規格。
 
