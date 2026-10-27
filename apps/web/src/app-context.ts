@@ -35,6 +35,9 @@ export interface AppState {
   /** 從配對連結（#pair=配對碼）打開時的配對碼；設定頁的同步區塊用完後清掉 */
   pairFromLink: string | null;
   clearPairFromLink(): void;
+  /** 「新裝置加入」的提醒點了查看時遞增：設定頁的同步區塊捲到畫面上（規格 12.27） */
+  devicesFocus: number;
+  showDevices(): void;
 }
 
 export type Tab = "chat" | "report" | "history" | "plan" | "profile";

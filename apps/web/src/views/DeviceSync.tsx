@@ -15,13 +15,19 @@ import {
   parseRecoveryCode,
   recoveryCode,
   sealRoot,
+  SyncApiError,
+  SyncCooldownError,
   SyncEngine,
   toBase64url,
   type PairSecrets,
+  type SyncDevice,
+  type SyncDevices,
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "../device-identity";
 import { checkPassword, lockEnabled } from "../settings";
+import { deviceName, deviceTime } from "./DeviceAlerts";
 import { PrivacyLink } from "./PrivacyLink";
 
 interface Slot {
@@ -348,26 +354,71 @@ function AddDeviceFlow({ initialCode, onClose }: { initialCode: string; onClose:
   );
 }
 
+type ConfirmPurpose = "code" | "add" | "remove" | "rekey";
+
+const CONFIRM_TEXT: Record<ConfirmPurpose, { password: string; wrong: string; noLock: string; go: string; then: string }> = {
+  code: {
+    password: "再輸入一次密碼鎖的密碼，才顯示復原碼",
+    wrong: "不顯示復原碼",
+    noLock: "這台沒有設定密碼鎖，拿到這台的人都能看到復原碼。",
+    go: "我了解，顯示",
+    then: "顯示復原碼",
+  },
+  add: {
+    password: "再輸入一次密碼鎖的密碼，才開始配對",
+    wrong: "不能新增裝置",
+    noLock: "這台沒有設定密碼鎖，拿到這台的人都能把同步加到他的裝置。",
+    go: "我了解，繼續",
+    then: "新增裝置",
+  },
+  remove: {
+    password: "再輸入一次密碼鎖的密碼，才移除",
+    wrong: "不移除",
+    noLock: "這台沒有設定密碼鎖，拿到這台的人都能移除你的其他裝置。",
+    go: "移除並換金鑰",
+    then: "移除裝置",
+  },
+  rekey: {
+    password: "再輸入一次密碼鎖的密碼，才換金鑰",
+    wrong: "不換金鑰",
+    noLock: "這台沒有設定密碼鎖，拿到這台的人都能換掉同步金鑰。",
+    go: "換金鑰",
+    then: "換金鑰",
+  },
+};
+
 /**
- * 顯示復原碼、新增裝置前再確認身分（規格 12.26）：開了密碼鎖要再輸入一次密碼；
- * 沒開的先說明風險、建議開密碼鎖，按「我了解」才繼續
+ * 顯示復原碼、新增裝置、移除裝置、換金鑰前再確認身分（規格 12.26、12.27）：開了密碼鎖要再輸入一次密碼；
+ * 沒開的先說明風險、建議開密碼鎖，按確認才繼續
  */
-function ConfirmIdentity({ purpose, onConfirmed, onCancel }: { purpose: "code" | "add"; onConfirmed: () => void; onCancel: () => void }) {
+function ConfirmIdentity({
+  purpose,
+  risk: customRisk,
+  onConfirmed,
+  onCancel,
+}: {
+  purpose: ConfirmPurpose;
+  risk?: string;
+  onConfirmed: () => void;
+  onCancel: () => void;
+}) {
   const locked = lockEnabled();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const text = CONFIRM_TEXT[purpose];
   const risk =
-    purpose === "code"
+    customRisk ??
+    (purpose === "code"
       ? "看得到復原碼的人可以在他的裝置還原，之後一直同步到你的資料。"
-      : "把同步加到另一台後，那台會一直同步到你的資料。只有在你自己的另一台裝置正顯示配對碼時才繼續。";
+      : "把同步加到另一台後，那台會一直同步到你的資料。只有在你自己的另一台裝置正顯示配對碼時才繼續。");
 
   async function check() {
     setBusy(true);
     setError(null);
     try {
       if (await checkPassword(password)) onConfirmed();
-      else setError(`密碼不正確，${purpose === "code" ? "不顯示復原碼" : "不能新增裝置"}。`);
+      else setError(`密碼不正確，${text.wrong}。`);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -386,7 +437,7 @@ function ConfirmIdentity({ purpose, onConfirmed, onCancel }: { purpose: "code" |
           }}
         >
           <label>
-            {purpose === "code" ? "再輸入一次密碼鎖的密碼，才顯示復原碼" : "再輸入一次密碼鎖的密碼，才開始配對"}
+            {text.password}
             <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </label>
           <div className="row">
@@ -402,13 +453,13 @@ function ConfirmIdentity({ purpose, onConfirmed, onCancel }: { purpose: "code" |
         <>
           <div className="notice warn">
             <span>
-              {purpose === "code" ? "這台沒有設定密碼鎖，拿到這台的人都能看到復原碼。" : "這台沒有設定密碼鎖，拿到這台的人都能把同步加到他的裝置。"}
-              建議先到上面的「保護 API key」設定密碼鎖，之後{purpose === "code" ? "顯示復原碼" : "新增裝置"}前要輸入密碼。
+              {text.noLock}
+              建議先到上面的「保護 API key」設定密碼鎖，之後{text.then}前要輸入密碼。
             </span>
           </div>
           <div className="row">
             <button className="primary" onClick={onConfirmed}>
-              {purpose === "code" ? "我了解，顯示" : "我了解，繼續"}
+              {text.go}
             </button>
             <button onClick={onCancel}>取消</button>
           </div>
@@ -419,12 +470,145 @@ function ConfirmIdentity({ purpose, onConfirmed, onCancel }: { purpose: "code" |
   );
 }
 
+/** 冷卻期還剩多久，例：「3 小時 20 分」 */
+function waitText(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} 小時${minutes % 60 ? ` ${minutes % 60} 分` : ""}` : `${minutes} 分`;
+}
+
+/** 還在冷卻期時的剩餘時間（毫秒）；沒有限制時是 0 */
+function cooldownLeft(devices: SyncDevices | null): number {
+  return devices ? Math.max(0, devices.cooldownUntil - devices.serverTime) : 0;
+}
+
+/**
+ * 裝置清單（規格 12.27）：每台的名稱、加入與最後同步的時間、「這台」；改名、移除、換金鑰.
+ * 最後同步的時間是伺服器記的，不靠各台自己寫
+ */
+function DeviceList({
+  devices,
+  busy,
+  onRemove,
+  onRekey,
+}: {
+  devices: SyncDevices;
+  busy: boolean;
+  onRemove: (device: SyncDevice) => void;
+  onRekey: () => void;
+}) {
+  const { deviceSync } = useApp();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const wait = cooldownLeft(devices);
+  const fresh = new Set(deviceSync.newDevices.map((d) => d.id));
+
+  async function rename(device: SyncDevice) {
+    setError(null);
+    try {
+      deviceSync.setDevices(
+        await deviceSync.engine!.renameDevice(device.id, { name: name.trim() || defaultDeviceLabel().name, platform: device.label?.platform ?? "" }),
+      );
+      setEditing(null);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  return (
+    <div className="device-list">
+      <h3>已同步的裝置</h3>
+      <ul>
+        {devices.devices.map((d) => (
+          <li key={d.id} className={fresh.has(d.id) ? "device fresh" : "device"} data-device={d.id}>
+            {editing === d.id ? (
+              <form
+                className="row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void rename(d);
+                }}
+              >
+                <input aria-label="裝置名稱" value={name} maxLength={40} autoFocus onChange={(e) => setName(e.target.value)} />
+                <button className="primary" type="submit">
+                  儲存
+                </button>
+                <button type="button" onClick={() => setEditing(null)}>
+                  取消
+                </button>
+              </form>
+            ) : (
+              <div className="device-head">
+                <strong className="device-name">{deviceName(d)}</strong>
+                {d.self && <span className="badge achieved">這台</span>}
+                {fresh.has(d.id) && <span className="badge warn">新加入</span>}
+              </div>
+            )}
+            <div className="small muted">
+              {d.legacy ? "升級前就在同步" : `加入 ${deviceTime(d.joinedAt)}`} · 最後同步 {deviceTime(d.lastSeenAt)}
+            </div>
+            {!d.label && <div className="small muted">這台的資料解不開（可能被改過）。換金鑰時會一起移除。</div>}
+            {editing !== d.id && (
+              <div className="row">
+                {d.label && (
+                  <button
+                    className="link"
+                    onClick={() => {
+                      setName(d.label?.name ?? "");
+                      setEditing(d.id);
+                    }}
+                  >
+                    改名
+                  </button>
+                )}
+                {!d.self && (
+                  <button className="link danger" disabled={busy || wait > 0} onClick={() => onRemove(d)}>
+                    移除
+                  </button>
+                )}
+                {fresh.has(d.id) && (
+                  <button className="link" onClick={() => deviceSync.acknowledge([d.id])}>
+                    是我的
+                  </button>
+                )}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <div className="notice error">{error}</div>}
+      {wait > 0 && (
+        <p className="small notice info cooldown-note">
+          這台加入還不到 24 小時，{waitText(wait)}後才能移除別台或換金鑰。這是為了防止拿到復原碼的人加入後馬上把你的裝置移除：你原本的裝置可以先移除它，它卻不能先移除你。
+        </p>
+      )}
+      <p className="small muted">
+        移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的資料。只有照規矩的 App 會清；已經被下載的資料收不回來。
+      </p>
+      <div className="row">
+        <button disabled={busy || wait > 0} onClick={onRekey}>
+          只換金鑰（懷疑復原碼外流）
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function rekeyError(e: unknown, what: string): string {
+  if (e instanceof SyncCooldownError) return `這台加入還不到 24 小時，還不能${what}（${e.until ? `${deviceTime(e.until)} 之後可以` : "請稍後再試"}）。`;
+  if (e instanceof SyncApiError && (e.state === "devices_changed" || e.state === "rekey_conflict")) return `${what}失敗：裝置清單剛剛變了（可能另一台也在換金鑰），請再試一次。`;
+  return `${what}失敗：${errorText(e)}`;
+}
+
 /** 設定頁的多裝置同步（規格 12.10） */
 export function DeviceSyncCard() {
-  const { settings, updateSettings, deviceSync, testMode, pairFromLink, clearPairFromLink, coach } = useApp();
+  const { settings, updateSettings, deviceSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
-    "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode"
+    "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
   >("idle");
+  /** 要移除的那台（規格 12.27） */
+  const [target, setTarget] = useState<SyncDevice | null>(null);
   const [linkCode, setLinkCode] = useState("");
   const [code, setCode] = useState<string | null>(null);
   const [newRoot, setNewRoot] = useState<Uint8Array | null>(null);
@@ -442,6 +626,11 @@ export function DeviceSyncCard() {
     clearPairFromLink();
     card.current?.scrollIntoView({ block: "start" });
   }, [pairFromLink, clearPairFromLink]);
+
+  // 新裝置加入的提醒點了「查看與移除」：捲到這裡
+  useEffect(() => {
+    if (devicesFocus > 0) card.current?.scrollIntoView({ block: "start" });
+  }, [devicesFocus]);
 
   // 顯示中的復原碼：切到別的分頁、App 到背景就收起，下次要再確認（關閉設定面板時這張卡整個移除）
   useEffect(() => {
@@ -472,7 +661,11 @@ export function DeviceSyncCard() {
     setMessage(null);
     try {
       const root = newRootKey();
-      await new SyncEngine(coach.db, deviceSync.api!, root).ensureSpace();
+      // 裝置模式：新的空間一開始就只接受登記過的裝置，並登記這台
+      const device = deviceSync.devicesMode
+        ? { identity: await loadDeviceIdentity(), label: () => defaultDeviceLabel(), onRootChanged: async () => undefined }
+        : null;
+      await new SyncEngine(coach.db, deviceSync.api!, root, undefined, device).ensureSpace();
       setNewRoot(root);
       setCode(await recoveryCode(root));
       setMode("start");
@@ -491,8 +684,11 @@ export function DeviceSyncCard() {
       if (!root) throw new Error("復原碼不對：請檢查有沒有少字或打錯。");
       const keys = await deriveKeys(root);
       // 先確認雲端有這組資料，不要用打錯的碼建立一個空的同步空間
-      await deviceSync.api!.request("GET", `/v1/spaces/${keys.space}/changes?since=0&limit=1`, undefined, keys.token).catch((e: { status?: number }) => {
-        throw new Error(e.status === 404 ? "雲端找不到這組復原碼的資料（可能已經刪除）。" : errorText(e));
+      // （已經是裝置模式的空間回「要用登記過的裝置」也表示存在，這台下次同步時登記）
+      await deviceSync.api!.request("GET", `/v1/spaces/${keys.space}/changes?since=0&limit=1`, undefined, keys.token).catch((e: unknown) => {
+        if (e instanceof SyncApiError && e.state === "devices_required") return;
+        if (e instanceof SyncApiError && e.status === 410) throw new Error("這組復原碼已經換掉了（另一台換過金鑰）。請用新的復原碼，或用配對加入。");
+        throw new Error(e instanceof SyncApiError && e.status === 404 ? "雲端找不到這組復原碼的資料（可能已經刪除）。" : errorText(e));
       });
       await saveKey(root);
       setMode("idle");
@@ -506,7 +702,11 @@ export function DeviceSyncCard() {
 
   async function stopHere(ask = true) {
     if (ask && !confirm("停止這台的同步？這台的資料保留，雲端與其他裝置不受影響；之後可以用配對或復原碼再加入。")) return;
-    await deviceSync.engine?.forget();
+    // 裝置模式：從裝置清單移除自己，這台的裝置金鑰也刪掉（下次加入是新的裝置）
+    if (deviceSync.devicesMode) {
+      await deviceSync.engine?.leave();
+      await deleteDeviceIdentity();
+    } else await deviceSync.engine?.forget();
     await saveKey(null);
     setMode("idle");
     setMessage({ kind: "ok", text: "這台已停止同步。" });
@@ -524,13 +724,34 @@ export function DeviceSyncCard() {
     setBusy(true);
     try {
       await deviceSync.engine?.deleteRemote();
+      if (deviceSync.devicesMode) await deleteDeviceIdentity();
       await saveKey(null);
       setMode("idle");
       setMessage({ kind: "ok", text: "雲端的同步資料已刪除。其他裝置請到設定頁停止同步。" });
     } catch (e) {
-      setMessage({ kind: "error", text: errorText(e) });
+      setMessage({ kind: "error", text: rekeyError(e, "刪除雲端的資料") });
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** 移除某台並換金鑰，或只換金鑰（規格 12.27）；成功後顯示新的復原碼 */
+  async function rekey(remove: SyncDevice | null) {
+    setBusy(true);
+    setMode("idle");
+    setMessage(null);
+    try {
+      const root = await deviceSync.engine!.rekey(remove ? [remove.id] : []);
+      setCode(await recoveryCode(root));
+      setSaved(false);
+      setMode("newCode");
+      void deviceSync.run();
+    } catch (e) {
+      setMode("idle");
+      setMessage({ kind: "error", text: rekeyError(e, remove ? "移除" : "換金鑰") });
+    } finally {
+      setBusy(false);
+      setTarget(null);
     }
   }
 
@@ -655,12 +876,54 @@ export function DeviceSyncCard() {
           )}
         </p>
         {deviceSync.error && <div className="notice error">同步失敗：{deviceSync.error}</div>}
-        {!lockEnabled() && mode !== "confirmAdd" && mode !== "confirmCode" && (
+        {!lockEnabled() && mode !== "confirmAdd" && mode !== "confirmCode" && mode !== "confirmRemove" && mode !== "confirmRekey" && (
           <div className="notice warn">
             建議到上面的「保護 API key」設定密碼鎖：沒有密碼鎖時，同步金鑰和 API key 以明文存在這個瀏覽器裡，能用這個瀏覽器的人就讀得到。
           </div>
         )}
-        {mode === "confirmAdd" || mode === "confirmCode" ? (
+        {mode === "newCode" ? (
+          <div className="pairing new-code">
+            <div className="notice ok">
+              <span>
+                已換金鑰。這是<strong>新的復原碼</strong>，舊的已經失效。留下的裝置下次同步會自動換過去，不用重新配對。請把新的存好（截圖、印出來或存進密碼管理器），取代舊的。
+              </span>
+            </div>
+            <code className="recovery-code">{code}</code>
+            <label className="check">
+              <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
+              我已經把新的復原碼存好了
+            </label>
+            <div className="row">
+              <button
+                className="primary"
+                disabled={!saved}
+                onClick={() => {
+                  setMode("idle");
+                  setCode(null);
+                }}
+              >
+                完成
+              </button>
+            </div>
+          </div>
+        ) : mode === "confirmRemove" && target ? (
+          <ConfirmIdentity
+            purpose="remove"
+            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的資料（對話、紀錄、設定與 API key）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來。`}
+            onConfirmed={() => void rekey(target)}
+            onCancel={() => {
+              setMode("idle");
+              setTarget(null);
+            }}
+          />
+        ) : mode === "confirmRekey" ? (
+          <ConfirmIdentity
+            purpose="rekey"
+            risk="換一把新的同步金鑰與復原碼：舊的復原碼失效，拿著舊復原碼的人之後連不上；所有裝置都留著，下次同步自動換過去，不用重新配對。已經被同步走的資料收不回來。"
+            onConfirmed={() => void rekey(null)}
+            onCancel={() => setMode("idle")}
+          />
+        ) : mode === "confirmAdd" || mode === "confirmCode" ? (
           <ConfirmIdentity
             purpose={mode === "confirmAdd" ? "add" : "code"}
             onConfirmed={() => (mode === "confirmAdd" ? setMode("add") : void showCode())}
@@ -685,9 +948,13 @@ export function DeviceSyncCard() {
             </p>
             <code className="recovery-code">{code}</code>
             <AutoHideNote {...codeAutoHide} />
-            <p className="muted small">
-              懷疑復原碼外流：目前的做法是按「刪除雲端的資料」，再用這台「這是第一台：開始同步」產生新的金鑰與復原碼，其他裝置停止同步後重新配對加入；舊的復原碼就不能用了（已經被同步走的資料收不回來）。
-            </p>
+            {deviceSync.devicesMode ? (
+              <p className="muted small">懷疑復原碼外流：按裝置清單下面的「只換金鑰」，舊的復原碼就失效，其他裝置自動換過去（已經被同步走的資料收不回來）。</p>
+            ) : (
+              <p className="muted small">
+                懷疑復原碼外流：目前的做法是按「刪除雲端的資料」，再用這台「這是第一台：開始同步」產生新的金鑰與復原碼，其他裝置停止同步後重新配對加入；舊的復原碼就不能用了（已經被同步走的資料收不回來）。
+              </p>
+            )}
             <div className="row">
               <button
                 onClick={() => {
@@ -700,33 +967,52 @@ export function DeviceSyncCard() {
             </div>
           </div>
         ) : (
-          <div className="row wrap">
-            <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
-              {deviceSync.busy ? "同步中…" : "立即同步裝置"}
-            </button>
-            <button
-              onClick={() => {
-                setMessage(null);
-                setMode("confirmAdd");
-              }}
-            >
-              新增裝置
-            </button>
-            <button
-              onClick={() => {
-                setMessage(null);
-                setMode("confirmCode");
-              }}
-            >
-              顯示復原碼
-            </button>
-            <button className="link" onClick={() => void stopHere()}>
-              停止這台的同步
-            </button>
-            <button className="link danger" disabled={busy} onClick={() => void deleteRemote()}>
-              刪除雲端的資料
-            </button>
-          </div>
+          <>
+            {busy && <p className="muted small">{target ? "移除並換金鑰中…" : "處理中…"}</p>}
+            {deviceSync.devicesMode && deviceSync.devices && (
+              <DeviceList
+                devices={deviceSync.devices}
+                busy={busy || deviceSync.busy}
+                onRemove={(d) => {
+                  setMessage(null);
+                  setTarget(d);
+                  setMode("confirmRemove");
+                }}
+                onRekey={() => {
+                  setMessage(null);
+                  setTarget(null);
+                  setMode("confirmRekey");
+                }}
+              />
+            )}
+            <div className="row wrap">
+              <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
+                {deviceSync.busy ? "同步中…" : "立即同步裝置"}
+              </button>
+              <button
+                onClick={() => {
+                  setMessage(null);
+                  setMode("confirmAdd");
+                }}
+              >
+                新增裝置
+              </button>
+              <button
+                onClick={() => {
+                  setMessage(null);
+                  setMode("confirmCode");
+                }}
+              >
+                顯示復原碼
+              </button>
+              <button className="link" onClick={() => void stopHere()}>
+                停止這台的同步
+              </button>
+              <button className="link danger" disabled={busy} onClick={() => void deleteRemote()}>
+                刪除雲端的資料
+              </button>
+            </div>
+          </>
         )}
       </>
     );

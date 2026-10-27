@@ -2542,6 +2542,62 @@ button.link.danger {
   color: var(--danger-text);
 }
 
+/* 多裝置同步的裝置清單（規格 12.27） */
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.device-list h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.device-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-list li.device {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.device-list li.device.fresh {
+  border-color: #f59e0b;
+}
+
+.device-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.device-list li.device .row {
+  gap: 12px;
+}
+
+.device-list li.device form.row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.new-device-banner,
+.removed-banner {
+  flex-wrap: wrap;
+}
+
 /* 記住的事 */
 .memory-list {
   list-style: none;

@@ -36,6 +36,12 @@ export interface SyncKeys {
   token: string;
   encrypt: Key;
   ids: Key;
+  /** 裝置紀錄（名稱、平台與公開金鑰）的加密金鑰（規格 12.27）：伺服器改不了裝置清單裡的金鑰 */
+  label: Key;
+  /** 換金鑰時，把新的同步金鑰加密給每台的金鑰要混進這個值：伺服器不知道舊的同步金鑰，假造不出新的金鑰 */
+  rekey: Uint8Array;
+  /** 「已被移除」的證明（HMAC）：伺服器假造不出來，不能騙一台清掉自己的資料 */
+  remove: Key;
 }
 
 export function newRootKey(): Uint8Array {
@@ -47,12 +53,23 @@ export async function deriveKeys(root: Uint8Array): Promise<SyncKeys> {
   const base = await crypto.subtle.importKey("raw", root as Uint8Array<ArrayBuffer>, "HKDF", false, ["deriveBits"]);
   const bits = async (info: string, bytes: number) =>
     new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: SALT, info: encoder.encode(info) }, base, bytes * 8));
-  const [space, token, encryptBits, idBits] = await Promise.all([bits("space", 16), bits("auth", 32), bits("encrypt", 32), bits("ids", 32)]);
+  const [space, token, encryptBits, idBits, labelBits, rekey, removeBits] = await Promise.all([
+    bits("space", 16),
+    bits("auth", 32),
+    bits("encrypt", 32),
+    bits("ids", 32),
+    bits("device-label", 32),
+    bits("rekey", 32),
+    bits("remove", 32),
+  ]);
   return {
     space: hex(space),
     token: toBase64url(token),
     encrypt: await crypto.subtle.importKey("raw", encryptBits as Uint8Array<ArrayBuffer>, "AES-GCM", false, ["encrypt", "decrypt"]),
     ids: await crypto.subtle.importKey("raw", idBits as Uint8Array<ArrayBuffer>, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]),
+    label: await crypto.subtle.importKey("raw", labelBits as Uint8Array<ArrayBuffer>, "AES-GCM", false, ["encrypt", "decrypt"]),
+    rekey,
+    remove: await crypto.subtle.importKey("raw", removeBits as Uint8Array<ArrayBuffer>, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
   };
 }
 
