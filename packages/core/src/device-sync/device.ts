@@ -225,3 +225,47 @@ export async function verifyRemovalProof(keys: SyncKeys, deviceId: string, proof
   if (typeof proof !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(proof)) return false;
   return crypto.subtle.verify("HMAC", keys.remove, fromBase64url(proof) as Uint8Array<ArrayBuffer>, removalMessage(keys.space, deviceId));
 }
+
+// ---------------------------------------------------------------------------
+// 換金鑰的聲明：換金鑰的那台用自己的簽章金鑰簽「舊空間、新空間、留下與移除的裝置、每份新金鑰的雜湊」.
+// 收到「已搬家」或「已被移除」的裝置，只接受本機記得（驗證過的）裝置簽的、而且簽的那台沒有被移除.
+// 光有舊的同步金鑰（例如外流的復原碼）加上伺服器配合，假造不出來
+// ---------------------------------------------------------------------------
+
+export interface RekeyStatement {
+  v: 1;
+  /** 舊空間 */
+  from: string;
+  /** 新空間 */
+  to: string;
+  keep: string[];
+  remove: string[];
+  /** 給每台留下的裝置的新金鑰（加密的）的 SHA-256 */
+  boxes: Record<string, string>;
+}
+
+const statementMessage = (statement: string) => encoder.encode(`zone2mate-rekey-v1\n${statement}`);
+
+export const boxHash = async (box: string) => toBase64url(await sha256(encoder.encode(box)));
+
+export async function signStatement(identity: DeviceIdentity, statement: RekeyStatement): Promise<{ statement: string; signature: string }> {
+  const text = JSON.stringify(statement);
+  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, identity.signKey, statementMessage(text)));
+  return { statement: text, signature: toBase64url(signature) };
+}
+
+/** 簽章對得上這把公開金鑰時回傳聲明的內容，否則是 null */
+export async function verifyStatement(signPub: string, statement: unknown, signature: unknown): Promise<RekeyStatement | null> {
+  if (typeof statement !== "string" || typeof signature !== "string" || statement.length > 20_000) return null;
+  try {
+    const key = await crypto.subtle.importKey("raw", fromBase64url(signPub) as Uint8Array<ArrayBuffer>, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, fromBase64url(signature) as Uint8Array<ArrayBuffer>, statementMessage(statement));
+    if (!ok) return null;
+    const value = JSON.parse(statement) as RekeyStatement;
+    if (value.v !== 1 || typeof value.from !== "string" || typeof value.to !== "string") return null;
+    if (!Array.isArray(value.keep) || !Array.isArray(value.remove) || !value.boxes || typeof value.boxes !== "object") return null;
+    return value;
+  } catch {
+    return null;
+  }
+}

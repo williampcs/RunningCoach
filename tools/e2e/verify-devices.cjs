@@ -31,6 +31,15 @@ const UA = {
 
 let step = "start";
 
+/** 停掉自己開的程序（整個程序群組） */
+function stop(child) {
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill();
+  }
+}
+
 async function waitFor(url) {
   for (let i = 0; i < 80; i++) {
     try {
@@ -47,6 +56,8 @@ async function startMock() {
   const child = spawn("npx", ["tsx", "tools/mock-upstream.ts"], {
     cwd: ROOT,
     stdio: "ignore",
+    // 自己一個程序群組：結束時連 npx 底下的 tsx 一起停（不然下次跑時舊的模擬上游還佔著埠）
+    detached: true,
     env: { ...process.env, MOCK_PORT: String(MOCK_PORT), MOCK_SYNC_COOLDOWN_MS: String(COOLDOWN_MS) },
   });
   await waitFor(`${MOCK}/sync/v1/pair/AAAAAAAA`);
@@ -70,7 +81,7 @@ function build() {
 }
 
 async function serve(outDir) {
-  const child = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort", "--outDir", outDir], { cwd: WEB, stdio: "ignore" });
+  const child = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort", "--outDir", outDir], { cwd: WEB, stdio: "ignore", detached: true });
   await waitFor(URL);
   return child;
 }
@@ -85,7 +96,7 @@ async function serve(outDir) {
     children.push(await serve(build()));
   } catch (e) {
     console.error(`FAILED at [${step}]:`, e.message);
-    for (const c of children) c.kill();
+    for (const c of children) stop(c);
     process.exit(1);
   }
   const browser = await chromium.launch();
@@ -261,6 +272,7 @@ async function serve(outDir) {
     await A.card.getByLabel("我已經把新的復原碼存好了").check();
     await A.card.getByRole("button", { name: "完成" }).click();
     check.aListAfterRemove = await waitNames(A, ["Mac · Edge", "我的 iPhone"]);
+    const removedAt = Date.now();
 
     step = "B 不用重新配對";
     await syncNow(B);
@@ -323,7 +335,15 @@ async function serve(outDir) {
     await D.page.screenshot({ path: `${E2E.OUT}/devices-D-mobile-dark.png` });
 
     step = "只換金鑰";
+    // A 畫面上的清單還沒有 D：換金鑰時發現清單變了就停止，清單更新後再試
     await A.tab("設定");
+    await A.card.getByRole("button", { name: /只換金鑰/ }).click();
+    await A.card.getByRole("button", { name: "換金鑰", exact: true }).click();
+    check.staleListStops = await A.card.getByText(/裝置清單剛剛變了/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    check.listRefreshedAfterStop = await waitNames(A, ["Mac · Edge", "我的 iPhone", "iPhone · Safari"]);
+    // 剛換過金鑰的空間一分鐘內不能再換
+    const sinceRemove = Date.now() - removedAt;
+    if (sinceRemove < 62_000) await A.page.waitForTimeout(62_000 - sinceRemove);
     await A.card.getByRole("button", { name: /只換金鑰/ }).click();
     check.rekeyExplains = /舊的復原碼失效.*不用重新配對/.test(await A.card.locator(".confirm-identity").innerText());
     await A.card.getByRole("button", { name: "換金鑰", exact: true }).click();
@@ -359,9 +379,13 @@ async function serve(outDir) {
     check.offNoDevicesFeature = !(await off.page.getByText("裝置清單與移除").count());
   } catch (e) {
     problems.push(`FAILED at [${step}]: ${e.message.split("\n")[0]}`);
+    for (const ctx of browser.contexts()) for (const p of ctx.pages()) {
+      const errors = await p.locator(".notice.error").allInnerTexts().catch(() => []);
+      if (errors.length) problems.push(`畫面上的錯誤：${errors.join(" / ")}`);
+    }
   } finally {
     await browser.close();
-    for (const c of children) c.kill();
+    for (const c of children) stop(c);
   }
   for (const [k, v] of Object.entries(check)) console.log(`${v ? "OK  " : "FAIL"} ${k}`);
   for (const p of problems) console.log(`PROBLEM ${p}`);

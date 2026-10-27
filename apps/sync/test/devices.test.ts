@@ -14,7 +14,7 @@ import {
 } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
-import { sealLabel, signRequest } from "../../../packages/core/src/device-sync/device";
+import { boxHash, removalProof, sealLabel, sealRekeyBox, signRequest, signStatement } from "../../../packages/core/src/device-sync/device";
 
 import { createSyncHandler } from "../src/handler";
 import { SyncStore } from "../src/store";
@@ -185,6 +185,9 @@ describe("裝置清單與移除某台（規格 12.27）", () => {
     const first = await a.engine.rekey();
     await b.engine.sync();
     expect(b.root).toEqual(first);
+    // 剛換過的空間一分鐘內不能再換
+    await expect(b.engine.rekey()).rejects.toMatchObject({ status: 429 });
+    advance(2 * 60_000);
     const second = await b.engine.rekey();
     expect(second).not.toEqual(first);
     // C 一直離線：回來時跟著兩次搬家換到最新的空間，刪除也套用
@@ -210,7 +213,8 @@ describe("裝置清單與移除某台（規格 12.27）", () => {
     const a = await device("A", root);
     const ra = await a.engine.sync();
     expect(ra.devices!.devices[0]).toMatchObject({ legacy: true });
-    expect(ra.devices!.cooldownUntil).toBe(0);
+    // 升級前就在同步的也有冷卻期（拿到復原碼的人也可能在升級的那幾天登記）
+    expect(ra.devices!.cooldownUntil).toBe(serverNow.getTime() + 24 * HOUR);
     // 舊版的用戶端之後只能登記，不能讀寫
     await expect(old2.engine.sync()).rejects.toMatchObject({ status: 403 });
 
@@ -223,7 +227,6 @@ describe("裝置清單與移除某台（規格 12.27）", () => {
     expect(rc.devices!.devices.find((d) => d.self)).toMatchObject({ legacy: false });
     expect(rc.devices!.cooldownUntil).toBe(serverNow.getTime() + 24 * HOUR);
     expect((await c.db.getProfile()).pref_intensity).toBe("easy");
-    // 升級前就在同步的不受冷卻期限制
     await a.engine.rekey([c.identity.id]);
     await expect(c.engine.sync()).rejects.toBeInstanceOf(SyncRemovedError);
   });
@@ -377,10 +380,103 @@ describe("伺服器不受信任", () => {
     await a.engine.sync();
     const keys = await deriveKeys(root);
     const fake = await deriveKeys(newRootKey());
-    await serverDriver.run("INSERT INTO moves (space, moved_to, moved_at) VALUES (?, ?, 0)", [keys.space, fake.space]);
+    await serverDriver.run("INSERT INTO moves (space, moved_to, moved_at, signer, statement, signature) VALUES (?, ?, 0, ?, '{}', 'AAAA')", [
+      keys.space,
+      fake.space,
+      a.identity.id,
+    ]);
     await serverDriver.run("UPDATE devices SET box=? WHERE id=?", [`${a.identity.boxPub}.AAAAAAAAAAAAAAAA.AAAA`, a.identity.id]);
-    await expect(a.engine.sync()).rejects.toThrow(/解不開|格式/);
+    await expect(a.engine.sync()).rejects.toThrow(/無法確認/);
     expect(a.root).toEqual(root);
     expect(SyncApiError).toBeDefined();
+  });
+
+  it("拿到舊同步金鑰（復原碼外流）的人加上伺服器：沒有這台記得的裝置的簽章，假造不出搬家，也騙不了這台清資料", async () => {
+    const root = newRootKey();
+    const a = await device("A", root);
+    await a.engine.ensureSpace();
+    await a.engine.sync();
+    const keys = await deriveKeys(root);
+    const attacker = await newDeviceIdentity();
+    const newRoot = newRootKey();
+    const newKeys = await deriveKeys(newRoot);
+    // 攻擊者知道舊同步金鑰：給 A 的新金鑰、移除的證明都算得出來；但聲明只能用自己的金鑰簽
+    const box = await sealRekeyBox(keys, newRoot, newKeys.space, a.identity);
+    const signed = await signStatement(attacker, {
+      v: 1,
+      from: keys.space,
+      to: newKeys.space,
+      keep: [attacker.id, a.identity.id],
+      remove: [],
+      boxes: { [a.identity.id]: await boxHash(box) },
+    });
+    await serverDriver.run("INSERT INTO moves (space, moved_to, moved_at, signer, statement, signature) VALUES (?, ?, 0, ?, ?, ?)", [
+      keys.space,
+      newKeys.space,
+      attacker.id,
+      signed.statement,
+      signed.signature,
+    ]);
+    await serverDriver.run("UPDATE devices SET box=? WHERE id=?", [box, a.identity.id]);
+    await expect(a.engine.sync()).rejects.toThrow(/無法確認/);
+    expect(a.root).toEqual(root);
+
+    // 同樣假造「已被移除」：證明對得上，但聲明不是 A 記得的裝置簽的
+    const removal = await signStatement(attacker, { v: 1, from: keys.space, to: newKeys.space, keep: [attacker.id], remove: [a.identity.id], boxes: {} });
+    await serverDriver.run("UPDATE moves SET statement=?, signature=?", [removal.statement, removal.signature]);
+    await serverDriver.run("UPDATE devices SET removed_at=1, proof=? WHERE id=?", [await removalProof(keys, a.identity.id), a.identity.id]);
+    const error = await a.engine.sync().catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(SyncRemovedError);
+  });
+
+  it("換金鑰在送出之前斷掉：什麼都沒換，舊的照常同步，剛建立的新空間刪掉", async () => {
+    const root = newRootKey();
+    const a = await device("A", root);
+    await a.engine.ensureSpace();
+    await a.db.setProfileKey("pref_intensity", "moderate");
+    await a.engine.sync();
+    const b = await device("B", root);
+    await b.engine.sync();
+    advance(25 * HOUR);
+    // 送出換金鑰的那一下斷線
+    const flaky = new SyncApi("http://sync.test", (input, init) => {
+      const request = new Request(input as string, init);
+      if (request.url.endsWith("/rekey")) return Promise.reject(new Error("斷線"));
+      return handle(request);
+    });
+    const broken = new SyncEngine(a.db, flaky, Uint8Array.from(root), () => serverNow, {
+      identity: a.identity,
+      label: () => ({ name: "A", platform: "test" }),
+      onRootChanged: async () => {
+        throw new Error("不應該換");
+      },
+    });
+    await expect(broken.rekey()).rejects.toThrow(/連不上/);
+    const oldSpace = (await deriveKeys(root)).space;
+    expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM records WHERE space=?", [oldSpace]))[0]!.n)).toBeGreaterThan(0);
+    expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM spaces"))[0]!.n)).toBe(1);
+    await b.db.setProfileKey("pref_intensity", "hard");
+    await b.engine.sync();
+    await a.engine.sync();
+    expect((await a.db.getProfile()).pref_intensity).toBe("hard");
+    // 重新來過就成功
+    await a.engine.rekey();
+    await b.engine.sync();
+    expect(b.root).toEqual(a.root);
+  });
+
+  it("換金鑰時只移除使用者選的；清單和使用者看到的不同就停止", async () => {
+    const root = newRootKey();
+    const a = await device("A", root);
+    await a.engine.ensureSpace();
+    const b = await device("B", root);
+    await b.engine.sync();
+    advance(25 * HOUR);
+    const seenByUser = [a.identity.id];
+    await expect(a.engine.rekey([], seenByUser)).rejects.toMatchObject({ state: "devices_changed" });
+    expect(a.root).toEqual(root);
+    await a.engine.rekey([], [a.identity.id, b.identity.id]);
+    await b.engine.sync();
+    expect(b.root).toEqual(a.root);
   });
 });

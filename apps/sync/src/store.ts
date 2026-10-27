@@ -49,9 +49,12 @@ const SCHEMA = `
     PRIMARY KEY (space, id)
   );
   CREATE TABLE IF NOT EXISTS moves (
-    space     TEXT PRIMARY KEY,
-    moved_to  TEXT NOT NULL,
-    moved_at  INTEGER NOT NULL
+    space      TEXT PRIMARY KEY,
+    moved_to   TEXT NOT NULL,
+    moved_at   INTEGER NOT NULL,
+    signer     TEXT NOT NULL,
+    statement  TEXT NOT NULL,
+    signature  TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS sig_nonces (
     nonce       TEXT PRIMARY KEY,
@@ -88,9 +91,21 @@ export interface DeviceRow {
 
 export interface RekeyPlan {
   newSpace: string;
-  tokenHash: string;
+  /** 換金鑰的那台：它已經先建立新的空間、登記自己、把資料送過去 */
+  caller: string;
   keep: { id: string; label: string; box: string }[];
-  remove: { id: string; proof: string }[];
+  remove: { id: string; proof: string | null }[];
+  /** 換金鑰的那台簽的聲明（舊空間、新空間、留下與移除的裝置、每份新金鑰的雜湊），收到的裝置用來確認 */
+  statement: string;
+  signature: string;
+}
+
+/** 換過金鑰的空間：搬到哪裡、誰換的、簽過的聲明 */
+export interface MoveRow {
+  movedTo: string;
+  signer: string;
+  statement: string;
+  signature: string;
 }
 
 export interface SyncRecord {
@@ -152,7 +167,18 @@ export class SyncStore {
     return result.changes > 0;
   }
 
+  /** 刪除空間；換金鑰之前的舊空間（只剩「搬到哪裡」與裝置紀錄）也一起刪掉 */
   async deleteSpace(space: string): Promise<void> {
+    let target = space;
+    for (let hop = 0; hop < 50; hop++) {
+      const before = (await this.driver.all("SELECT space FROM moves WHERE moved_to=?", [target]))[0];
+      await this.deleteOne(target);
+      if (!before) return;
+      target = String(before.space);
+    }
+  }
+
+  private async deleteOne(space: string): Promise<void> {
     await this.batch(
       ["DELETE FROM records WHERE space=?", "DELETE FROM devices WHERE space=?", "DELETE FROM space_modes WHERE space=?", "DELETE FROM moves WHERE space=?", "DELETE FROM spaces WHERE id=?"].map(
         (sql) => ({ sql, params: [space] }),
@@ -180,8 +206,24 @@ export class SyncStore {
 
   /** 換過金鑰的空間：搬到哪裡 */
   async movedTo(space: string): Promise<string | null> {
-    const row = (await this.driver.all("SELECT moved_to FROM moves WHERE space=?", [space]))[0];
-    return row ? String(row.moved_to) : null;
+    return (await this.move(space))?.movedTo ?? null;
+  }
+
+  async move(space: string): Promise<MoveRow | null> {
+    const row = (await this.driver.all("SELECT moved_to, signer, statement, signature FROM moves WHERE space=?", [space]))[0];
+    return row ? { movedTo: String(row.moved_to), signer: String(row.signer), statement: String(row.statement), signature: String(row.signature) } : null;
+  }
+
+  /** 這個空間是換金鑰搬進來的：搬進來的時間（毫秒）；不是的話 null */
+  async movedInAt(space: string): Promise<number | null> {
+    const row = (await this.driver.all("SELECT MAX(moved_at) AS t FROM moves WHERE moved_to=?", [space]))[0];
+    return row?.t === null || row?.t === undefined ? null : Number(row.t);
+  }
+
+  /** 空間建立的時間（毫秒） */
+  async spaceCreatedAt(space: string): Promise<number | null> {
+    const row = (await this.driver.all("SELECT created_at FROM spaces WHERE id=?", [space]))[0];
+    return row ? Date.parse(String(row.created_at)) : null;
   }
 
   private static device(r: Record<string, unknown>): DeviceRow {
@@ -244,16 +286,19 @@ export class SyncStore {
   }
 
   /**
-   * 換金鑰（一個交易）：建立新的空間、留下的裝置搬過去（加入時間不變）、給留下的每台存一份加密的新同步金鑰、
-   * 標記移除的、刪掉舊空間的紀錄. 舊空間只留裝置與「搬到哪裡」. 舊空間已經搬過、新空間已經存在時整個失敗
+   * 換金鑰（一個交易）. 新的空間由換金鑰的那台先建立、登記自己、把重新加密的資料送過去；這裡才把
+   * 留下的裝置搬過去（加入時間不變；換金鑰的那台在新空間的那一列換成舊空間的）、給留下的每台存一份加密的新同步金鑰、
+   * 標記移除的、刪掉舊空間的紀錄. 舊空間只留裝置與「搬到哪裡」. 舊空間已經搬過時整個失敗
    */
   async rekey(space: string, plan: RekeyPlan): Promise<void> {
     const now = this.now().getTime();
     const stamp = this.now().toISOString();
     await this.batch([
-      { sql: "INSERT INTO moves (space, moved_to, moved_at) VALUES (?, ?, ?)", params: [space, plan.newSpace, now] },
-      { sql: "INSERT INTO spaces (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?)", params: [plan.newSpace, plan.tokenHash, stamp, stamp] },
-      { sql: "INSERT INTO space_modes (space, devices_at, legacy_until) VALUES (?, ?, ?)", params: [plan.newSpace, now, now] },
+      {
+        sql: "INSERT INTO moves (space, moved_to, moved_at, signer, statement, signature) VALUES (?, ?, ?, ?, ?, ?)",
+        params: [space, plan.newSpace, now, plan.caller, plan.statement, plan.signature],
+      },
+      { sql: "DELETE FROM devices WHERE space=?", params: [plan.newSpace] },
       ...plan.keep.flatMap((k) => [
         {
           sql:
@@ -277,7 +322,8 @@ export class SyncStore {
 
   /** 全部同步空間的數量與大小：限制整個服務的用量 */
   async totals(): Promise<{ spaces: number; bytes: number }> {
-    const row = (await this.driver.all("SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS b FROM spaces"))[0];
+    // 換過金鑰的舊空間（只剩很小的紀錄）不算進空間的數量
+    const row = (await this.driver.all("SELECT (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) AS n, COALESCE(SUM(bytes), 0) AS b FROM spaces"))[0];
     return { spaces: Number(row?.n ?? 0), bytes: Number(row?.b ?? 0) };
   }
 

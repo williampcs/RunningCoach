@@ -10,15 +10,19 @@ import type { Db } from "../db";
 import { nowIso } from "../dates";
 import { deriveKeys, newRootKey, open, recordId, seal, type SyncKeys } from "./crypto";
 import {
+  boxHash,
   openLabel,
   openRekeyBox,
   removalProof,
   sealLabel,
   sealRekeyBox,
   signRequest,
+  signStatement,
   verifyRemovalProof,
+  verifyStatement,
   type DeviceIdentity,
   type DeviceLabel,
+  type RekeyStatement,
 } from "./device";
 import { applyEntity, hashOf, isAttached, isKnown, modifiedOf, snapshot, type EntityData, type Snapshot, type Sql } from "./entities";
 
@@ -42,6 +46,7 @@ const ERROR_TEXT: Record<number, string> = {
   409: "配對碼已經被使用、順序不對或已經過期",
   410: "同步金鑰已經換了，或這台已從同步移除",
   413: "同步的資料超過上限",
+  429: "剛換過金鑰，請等一分鐘再試",
   503: "同步服務暫時無法使用（可能已滿），請稍後再試",
 };
 
@@ -273,13 +278,54 @@ export class SyncEngine {
 
   /** 取得裝置清單；這台還沒登記在這個空間時先登記（既有的空間在新版第一次同步時自動升級） */
   private async fetchDevices(keys: SyncKeys): Promise<RawDevices> {
+    let raw: RawDevices;
     try {
-      this.rawDevices = await this.api.request<RawDevices>("GET", `/v1/spaces/${keys.space}/devices`, undefined, this.auth(keys));
-      return this.rawDevices;
+      raw = await this.api.request<RawDevices>("GET", `/v1/spaces/${keys.space}/devices`, undefined, this.auth(keys));
     } catch (e) {
-      if (e instanceof SyncApiError && e.state === "unknown_device") return this.register(keys);
-      throw e;
+      if (!(e instanceof SyncApiError && e.state === "unknown_device")) throw e;
+      raw = await this.register(keys);
     }
+    this.rawDevices = raw;
+    await this.remember(keys, raw);
+    return raw;
+  }
+
+  /**
+   * 記住驗證過的裝置（裝置紀錄用同步金鑰解得開，公開金鑰和紀錄綁在一起）：id → 簽章的公開金鑰.
+   * 收到「已搬家」「已被移除」時，只接受這裡記得的裝置簽的聲明. 同一個 id 換了公開金鑰的不採用
+   */
+  private async remember(keys: SyncKeys, raw: RawDevices): Promise<void> {
+    const known = await this.knownDevices();
+    let changed = false;
+    for (const d of raw.devices) {
+      if (known[d.id] || !(await openLabel(keys, d, d.label))) continue;
+      known[d.id] = d.signPub;
+      changed = true;
+    }
+    if (changed) await this.db.syncTransaction((sql) => setMeta(sql, "known_devices", JSON.stringify(known)));
+  }
+
+  private async knownDevices(): Promise<Record<string, string>> {
+    const text = await this.db.syncTransaction((sql) => getMeta(sql, "known_devices"));
+    const known: Record<string, string> = {};
+    try {
+      Object.assign(known, JSON.parse(text ?? "{}") as Record<string, string>);
+    } catch {
+      // 壞掉就重新記
+    }
+    if (this.device) known[this.device.identity.id] = this.device.identity.signPub;
+    return known;
+  }
+
+  /** 「已搬家」「已被移除」附的聲明：本機記得的裝置簽的、從這個空間換出去、簽的那台沒有被移除 */
+  private async checkStatement(e: SyncApiError, from: string): Promise<RekeyStatement | null> {
+    const signer = e.detail.signer;
+    if (typeof signer !== "string") return null;
+    const pub = (await this.knownDevices())[signer];
+    if (!pub) return null;
+    const statement = await verifyStatement(pub, e.detail.statement, e.detail.signature);
+    if (!statement || statement.from !== from || statement.remove.includes(signer) || !statement.keep.includes(signer)) return null;
+    return statement;
   }
 
   private async devicesView(keys: SyncKeys, raw: RawDevices): Promise<SyncDevices> {
@@ -307,49 +353,89 @@ export class SyncEngine {
   }
 
   /**
-   * 換金鑰（規格 12.27），同時移除 remove 列出的裝置（只換金鑰時是空的）：
+   * 換金鑰（規格 12.27），同時移除 remove 列出的裝置（只換金鑰時是空的）. expected 是使用者確認時看到的裝置 id：
+   * 現在的清單和它不同（中間有裝置加入或被換掉）就停止，請使用者重新確認.
    * 1. 先同步，取回雲端所有的紀錄（解密後放在記憶體）
-   * 2. 產生新的同步金鑰；留下的每台各加密一份（解不開裝置紀錄的也一起移除），移除的附上證明
-   * 3. 伺服器在一個交易裡建立新的空間、搬過留下的裝置、刪掉舊空間的紀錄（冷卻期由伺服器檢查）
-   * 4. 這台改用新的金鑰，把剛才取回的紀錄用新金鑰重新加密送到新的空間，再同步一次
+   * 2. 產生新的同步金鑰，建立新的空間、登記這台、把剛才的紀錄用新金鑰重新加密送過去（版本號不變）
+   * 3. 給留下的每台加密一份新金鑰、移除的附證明，簽一份聲明，送出換金鑰：伺服器在一個交易裡搬過留下的裝置、
+   *    刪掉舊空間的紀錄（冷卻期由伺服器檢查）. 在這之前斷掉的話什麼都沒換，重新來過就好
+   * 4. 這台改用新的金鑰，再同步一次
+   * 解不開裝置紀錄的（伺服器塞的、或不是用這組同步金鑰登記的）不給新金鑰，也不算它的移除證明.
    * 回傳新的同步金鑰（已經用 onRootChanged 存起來），App 顯示新的復原碼
    */
-  async rekey(remove: string[] = []): Promise<Uint8Array> {
+  async rekey(remove: string[] = [], expected?: string[]): Promise<Uint8Array> {
     if (!this.device) throw new Error("換金鑰要開啟裝置清單");
-    const device = this.device;
+    const { identity } = this.device;
     await this.sync();
-    for (let attempt = 0; ; attempt++) {
-      const keys = await this.keys;
-      const raw = await this.fetchDevices(keys);
-      if (raw.serverTime < raw.cooldownUntil) throw new SyncCooldownError(raw.cooldownUntil);
-      // 雲端所有的紀錄（含這台還沒有對應跑步的、這個版本不認得的、刪除的標記）：換到新的空間時原樣帶過去
-      const { remote } = await this.fetchRemote(keys, 0);
-      const newRoot = newRootKey();
-      const newKeys = await deriveKeys(newRoot);
-      const keep: { id: string; label: string; box: string }[] = [];
-      const removed: { id: string; proof: string }[] = [];
-      for (const d of raw.devices) {
-        const label = await openLabel(keys, d, d.label);
-        if (d.id !== device.identity.id && (remove.includes(d.id) || !label)) removed.push({ id: d.id, proof: await removalProof(keys, d.id) });
-        else
-          keep.push({
-            id: d.id,
-            label: await sealLabel(newKeys, d, label ?? device.label()),
-            box: await sealRekeyBox(keys, newRoot, newKeys.space, d),
-          });
-      }
-      try {
-        await this.api.request("POST", `/v1/spaces/${keys.space}/rekey`, { space: newKeys.space, token: newKeys.token, keep, remove: removed }, this.auth(keys));
-      } catch (e) {
-        // 中間有新裝置加入：重新取清單再試一次
-        if (attempt === 0 && e instanceof SyncApiError && e.state === "devices_changed") continue;
-        throw this.cooldownOf(e) ?? e;
-      }
-      await this.switchTo(newRoot, newKeys);
-      await this.copyInto(newKeys, remote);
-      await this.sync();
-      return newRoot;
+    const keys = await this.keys;
+    const raw = await this.fetchDevices(keys);
+    if (raw.serverTime < raw.cooldownUntil) throw new SyncCooldownError(raw.cooldownUntil);
+    const ids = raw.devices.map((d) => d.id);
+    if (new Set(ids).size !== ids.length) throw new Error("裝置清單不對（同一台出現兩次），停止換金鑰。");
+    const self = raw.devices.find((d) => d.id === identity.id);
+    if (!self || self.signPub !== identity.signPub || self.boxPub !== identity.boxPub) throw new Error("裝置清單裡這台的金鑰不對，停止換金鑰。");
+    if (expected && (expected.length !== ids.length || expected.some((id) => !ids.includes(id)))) {
+      throw new SyncApiError(409, "裝置清單剛剛變了，請重新確認後再試", { state: "devices_changed" });
     }
+    if (remove.some((id) => !ids.includes(id) || id === identity.id)) throw new Error("要移除的裝置不在清單裡");
+    const { remote } = await this.fetchRemote(keys, 0);
+
+    const newRoot = newRootKey();
+    const newKeys = await deriveKeys(newRoot);
+    // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）
+    await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1`, undefined, newKeys.token);
+    const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
+    await this.api.request(
+      "POST",
+      `/v1/spaces/${newKeys.space}/devices`,
+      { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
+      { device: identity, token: newKeys.token },
+    );
+    const copied = await this.copyInto(newKeys, remote);
+
+    const keep: { id: string; label: string; box: string }[] = [];
+    const removed: { id: string; proof: string | null }[] = [];
+    for (const d of raw.devices) {
+      if (d.id === identity.id) {
+        keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, newRoot, newKeys.space, identity) });
+        continue;
+      }
+      if (remove.includes(d.id)) {
+        removed.push({ id: d.id, proof: await removalProof(keys, d.id) });
+        continue;
+      }
+      const label = await openLabel(keys, d, d.label);
+      if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, d) });
+      else removed.push({ id: d.id, proof: null });
+    }
+    const boxes: Record<string, string> = {};
+    for (const k of keep) boxes[k.id] = await boxHash(k.box);
+    const signed = await signStatement(identity, {
+      v: 1,
+      from: keys.space,
+      to: newKeys.space,
+      keep: keep.map((k) => k.id),
+      remove: removed.map((r) => r.id),
+      boxes,
+    });
+    try {
+      await this.api.request(
+        "POST",
+        `/v1/spaces/${keys.space}/rekey`,
+        { space: newKeys.space, token: newKeys.token, keep, remove: removed, ...signed },
+        this.auth(keys),
+      );
+    } catch (e) {
+      // 沒有換成：刪掉剛建立的新空間（只有這台知道它），舊的照舊
+      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, this.auth(newKeys)).catch(() => undefined);
+      throw this.cooldownOf(e) ?? e;
+    }
+    await this.switchTo(newRoot, newKeys);
+    await this.db.syncTransaction(async (sql) => {
+      for (const c of copied) await saveState(sql, c.name, c.hash, c.seq, c.v);
+    });
+    await this.sync();
+    return newRoot;
   }
 
   /** 改用新的同步金鑰：存起來、清掉這台對舊空間的同步狀態（暫存的別台資料留著） */
@@ -360,13 +446,17 @@ export class SyncEngine {
     this.rawDevices = null;
     await this.db.syncTransaction(async (sql) => {
       await sql.run("DELETE FROM sync_state");
-      await sql.run("DELETE FROM sync_meta WHERE k<>'last_sync'");
+      await sql.run("DELETE FROM sync_meta WHERE k NOT IN ('last_sync', 'known_devices')");
       await setMeta(sql, "space", keys.space);
     });
   }
 
-  /** 把舊空間的紀錄用新的金鑰重新加密送到新的空間（版本號不變）；別台已經先送了同一筆的就以它的為準 */
-  private async copyInto(keys: SyncKeys, remote: Map<string, { env: Envelope; seq: number }>): Promise<void> {
+  /** 把舊空間的紀錄用新的金鑰重新加密送到新的空間（版本號不變）；回傳每一筆在新空間的狀態，換過去之後才記 */
+  private async copyInto(
+    keys: SyncKeys,
+    remote: Map<string, { env: Envelope; seq: number }>,
+  ): Promise<{ name: string; hash: string; seq: number; v: number }[]> {
+    const copied: { name: string; hash: string; seq: number; v: number }[] = [];
     const all = [...remote.values()].sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
     for (let i = 0; i < all.length; i += PUSH_BATCH) {
       const batch = all.slice(i, i + PUSH_BATCH);
@@ -383,13 +473,12 @@ export class SyncEngine {
         this.auth(keys),
       );
       const seqById = new Map(response.applied.map((a) => [a.id, a.seq]));
-      await this.db.syncTransaction(async (sql) => {
-        for (const [index, { env }] of batch.entries()) {
-          const seq = seqById.get(items[index]!.id);
-          if (seq !== undefined) await saveState(sql, env.k, env.d ? await hashOf(env.d) : DELETED, seq, env.v);
-        }
-      });
+      for (const [index, { env }] of batch.entries()) {
+        const seq = seqById.get(items[index]!.id);
+        if (seq !== undefined) copied.push({ name: env.k, hash: env.d ? await hashOf(env.d) : DELETED, seq, v: env.v });
+      }
     }
+    return copied;
   }
 
   /**
@@ -401,6 +490,11 @@ export class SyncEngine {
     const newSpace = e.detail.space;
     const box = e.detail.box;
     if (typeof newSpace !== "string" || typeof box !== "string") throw new Error("同步金鑰已經換了，但伺服器沒有給這台新的金鑰。請用配對或新的復原碼重新加入。");
+    // 換金鑰的聲明：要是這台記得的裝置簽的，而且這台在留下的名單、給這台的新金鑰就是簽過的那一份
+    const statement = await this.checkStatement(e, oldKeys.space);
+    if (!statement || statement.to !== newSpace || !statement.keep.includes(this.device!.identity.id) || statement.boxes[this.device!.identity.id] !== (await boxHash(box))) {
+      throw new Error("同步金鑰已經換了，但無法確認是你的哪一台換的（這台不認得換金鑰的那台，或內容不對）。這台的資料保留；請用配對或新的復原碼重新加入。");
+    }
     let root: Uint8Array;
     try {
       root = await openRekeyBox(oldKeys, this.device!.identity, newSpace, box);
@@ -412,10 +506,20 @@ export class SyncEngine {
     await this.switchTo(root, keys);
   }
 
-  /** 伺服器說這台已被移除：證明要用同步金鑰才算得出來，對得上才清資料（伺服器不能騙這台清掉資料） */
+  /**
+   * 伺服器說這台已被移除：要有本機記得的裝置簽的聲明（這台在移除的名單、簽的那台沒有被移除），
+   * 加上用舊同步金鑰算的證明，都對得上才清資料（伺服器、或只拿到復原碼的人騙不了這台清掉資料）
+   */
   private async checkRemoved(e: SyncApiError): Promise<never> {
     const keys = await this.keys;
-    if (this.device && (await verifyRemovalProof(keys, this.device.identity.id, e.detail.proof))) throw new SyncRemovedError();
+    const statement = await this.checkStatement(e, keys.space);
+    if (
+      this.device &&
+      statement?.remove.includes(this.device.identity.id) &&
+      (await verifyRemovalProof(keys, this.device.identity.id, e.detail.proof))
+    ) {
+      throw new SyncRemovedError();
+    }
     throw new Error("同步服務說這台已被移除，但無法確認；這台的資料保留。");
   }
 

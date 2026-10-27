@@ -7,7 +7,7 @@
  *   沒有登記過裝置的空間照舊（舊版的用戶端）
  * 不記錄 IP、標頭或內容；回應不快取.
  */
-import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature } from "@running-coach/core/device";
+import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
 
 import type { DeviceRow, SyncStore } from "./store";
 
@@ -166,9 +166,10 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       const device = await store.device(space, deviceId);
       if (!device) throw new HttpError(403, "這台沒有登記在這個同步空間", { state: "unknown_device" });
       await checkSignature(request, url, text, deviceId, device.signPub);
-      const movedTo = await store.movedTo(space);
-      if (device.removedAt !== null) throw new HttpError(410, "這台已從同步移除", { state: "removed", proof: device.proof });
-      if (movedTo !== null) throw new HttpError(410, "同步金鑰已經換了", { state: "moved", space: movedTo, box: device.box });
+      const move = await store.move(space);
+      const signed = move ? { signer: move.signer, statement: move.statement, signature: move.signature } : {};
+      if (device.removedAt !== null) throw new HttpError(410, "這台已從同步移除", { state: "removed", proof: device.proof, ...signed });
+      if (move !== null) throw new HttpError(410, "同步金鑰已經換了", { state: "moved", space: move.movedTo, box: device.box, ...signed });
       await store.touchDevice(space, deviceId);
       return { kind: "device", device };
     }
@@ -179,8 +180,9 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   }
 
   /** 加入未滿冷卻期的裝置不能移除別台、換金鑰、刪除雲端的資料 */
+  // 升級前就在同步的也一樣：拿到復原碼的人也可能在升級的那幾天登記（「升級前就在同步」只是清單上的標示）
   function cooldownUntil(device: DeviceRow): number {
-    return device.legacy ? 0 : device.joinedAt + cooldownMs;
+    return device.joinedAt + cooldownMs;
   }
 
   function requireCooldown(caller: Caller): void {
@@ -233,9 +235,16 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     return deviceList(space, added);
   }
 
+  /**
+   * 換金鑰. 換金鑰的那台先建立新的空間（裝置模式）、在新空間登記自己、把重新加密的資料送過去，最後才呼叫這裡：
+   * 中途斷掉時什麼都沒換，下次重新來過. 檢查冷卻期、清單完整、簽過的聲明和這次的內容一致
+   */
   async function rekey(space: string, caller: Caller, text: string) {
     if (caller.kind !== "device") throw new HttpError(403, "換金鑰要用登記過的裝置", { state: "devices_required" });
     requireCooldown(caller);
+    // 剛換過金鑰的空間一分鐘內不能再換（不讓一台一直換、把服務的空間佔滿）
+    const movedIn = await store.movedInAt(space);
+    if (movedIn !== null && nowMs() - movedIn < 60_000) throw new HttpError(429, "剛換過金鑰，請等一分鐘再試", { state: "too_soon" });
     const body = parseJson(text);
     const newSpace = body.space;
     const token = body.token;
@@ -253,22 +262,40 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     }
     for (const r of remove) {
       if (typeof r?.id !== "string" || !active.has(r.id) || seen.has(r.id)) throw new HttpError(400, "移除的裝置不對");
-      if (!isKey(r.proof, 100)) throw new HttpError(400, "移除的證明格式不對");
+      if (r.proof !== null && !isKey(r.proof, 100)) throw new HttpError(400, "移除的證明格式不對");
       seen.add(r.id);
     }
     // 每台都要說清楚是留下還是移除：清單是舊的（中間有新裝置加入）就重來，不會默默漏掉
     if (seen.size !== active.size) throw new HttpError(409, "裝置清單已經變了，請重新整理再試", { state: "devices_changed" });
     if (!seen.has(caller.device.id) || remove.some((r) => r.id === caller.device.id)) throw new HttpError(400, "換金鑰的這台要留下");
-    if ((await store.totals()).spaces >= limits.spaces) throw new HttpError(503, "同步服務已滿");
+    // 聲明要是這台簽的、內容和這次的一致（用戶端還會再檢查一次，這裡先擋掉亂送的）
+    const statement = await verifyStatement(caller.device.signPub, body.statement, body.signature);
+    const sameIds = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+    if (
+      !statement ||
+      statement.from !== space ||
+      statement.to !== newSpace ||
+      !sameIds(statement.keep, keep.map((k) => String(k.id))) ||
+      !sameIds(statement.remove, remove.map((r) => String(r.id)))
+    ) {
+      throw new HttpError(400, "換金鑰的聲明不對");
+    }
+    // 新的空間：要是這台先建立的（憑證對得上、還沒搬過、裡面只有這台）
+    const stored = await store.spaceToken(newSpace);
+    if (stored === null) throw new HttpError(400, "新的同步空間還沒建立");
+    if (stored !== (await sha256Hex(token)) || (await store.movedTo(newSpace)) !== null) throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
+    if ((await store.devices(newSpace)).some((d) => d.id !== caller.device.id)) throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
     try {
       await store.rekey(space, {
         newSpace,
-        tokenHash: await sha256Hex(token),
+        caller: caller.device.id,
         keep: keep.map((k) => ({ id: String(k.id), label: String(k.label), box: String(k.box) })),
-        remove: remove.map((r) => ({ id: String(r.id), proof: String(r.proof) })),
+        remove: remove.map((r) => ({ id: String(r.id), proof: r.proof === null ? null : String(r.proof) })),
+        statement: String(body.statement),
+        signature: String(body.signature),
       });
     } catch {
-      // 同時有另一台在換金鑰，或新的空間 id 已經存在
+      // 同時有另一台在換金鑰
       throw new HttpError(409, "換金鑰失敗：可能另一台剛換過，請重新整理再試", { state: "rekey_conflict" });
     }
     return { space: newSpace };
@@ -308,7 +335,11 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
 
       const caller = await authenticate(request, url, space, text);
       if (parts.length === 3 && method === "DELETE") {
-        requireCooldown(caller);
+        // 換金鑰沒有完成時，換金鑰的那台刪掉它剛建立、只有它自己的新空間：不受冷卻期限制
+        const created = await store.spaceCreatedAt(space);
+        const others = (await store.devices(space)).filter((d) => caller.kind !== "device" || d.id !== caller.device.id);
+        const abandoned = caller.kind === "device" && others.length === 0 && created !== null && nowMs() - created < 3600_000;
+        if (!abandoned) requireCooldown(caller);
         await store.deleteSpace(space);
         return { deleted: true };
       }
