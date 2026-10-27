@@ -597,7 +597,7 @@ function DeviceList({
 
 function rekeyError(e: unknown, what: string): string {
   if (e instanceof SyncCooldownError) return `這台加入還不到 24 小時，還不能${what}（${e.until ? `${deviceTime(e.until)} 之後可以` : "請稍後再試"}）。`;
-  if (e instanceof SyncApiError && (e.state === "devices_changed" || e.state === "rekey_conflict")) return `${what}失敗：裝置清單剛剛變了（可能另一台也在換金鑰），請再試一次。`;
+  if (e instanceof SyncApiError && (e.state === "devices_changed" || e.state === "rekey_conflict")) return `${what}失敗：裝置清單剛剛變了（有裝置加入，或另一台也在換金鑰）。請看一下下面最新的清單，再試一次。`;
   return `${what}失敗：${errorText(e)}`;
 }
 
@@ -741,7 +741,8 @@ export function DeviceSyncCard() {
     setMode("idle");
     setMessage(null);
     try {
-      const root = await deviceSync.engine!.rekey(remove ? [remove.id] : []);
+      // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
+      const root = await deviceSync.engine!.rekey(remove ? [remove.id] : [], deviceSync.devices?.devices.map((d) => d.id));
       setCode(await recoveryCode(root));
       setSaved(false);
       setMode("newCode");
@@ -749,6 +750,8 @@ export function DeviceSyncCard() {
     } catch (e) {
       setMode("idle");
       setMessage({ kind: "error", text: rekeyError(e, remove ? "移除" : "換金鑰") });
+      // 清單變了：重新取一次，讓使用者看到現在有哪些裝置再決定
+      void deviceSync.run();
     } finally {
       setBusy(false);
       setTarget(null);
