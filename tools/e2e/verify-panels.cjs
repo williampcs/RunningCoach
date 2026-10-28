@@ -187,6 +187,8 @@ const focusIn = (page, selector) => page.evaluate((s) => !!document.activeElemen
         step = "說明連結";
         await page.getByLabel("訊息").fill("");
         await send(page, "多裝置同步怎麼用？");
+        // 模擬的回覆照抄工具的結果（開頭是「## 多裝置同步」）：小標以下是收起的（12.30），先展開
+        for (const summary of await page.locator(".msg.assistant").last().locator("details.reply-section:not([open]) > summary").all()) await summary.click();
         await page.locator(".msg.assistant").last().locator("a", { hasText: "看完整說明" }).first().click();
         await panel(page).locator("section.help-section.target").waitFor({ timeout: 5000 });
         check[`${tag}.helpLinkOpensPanel`] =
