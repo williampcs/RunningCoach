@@ -34,6 +34,9 @@ let step = "start";
       await page.getByLabel("訊息").press("Enter");
       // 存好的回覆（不是串流中的）才有「參考了」
       check[`${tag}.coachUsedHelp`] = await page.locator(".msg.assistant .sources", { hasText: "App 的使用說明" }).last().waitFor({ timeout: 20000 }).then(() => true, () => false);
+      // 回覆有小標時，連結可能收在某一段裡（規格 12.30）：先把收起的段落打開
+      const closed = page.locator(".msg.assistant").last().locator(".reply-section:not([open]) > summary");
+      while (await closed.count()) await closed.first().click();
       const link = page.locator(".msg.assistant").last().locator("a", { hasText: "看完整說明" }).first();
       await link.click();
       step = "跳到那一段";

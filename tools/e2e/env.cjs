@@ -75,9 +75,37 @@ async function setupMock(page, { mock, intervals = true, timeZone = null } = {})
   await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
 }
 
+/**
+ * 選手頁（規格 12.30）：第一層是「我的數字」＋五列，點進去才是欄位。進到某一列（例：「目標」「身體」「練什麼、怎麼練」）；
+ * 沒給 row 時回到第一層。在下一層時先按左上角的返回（每項運動那一層要按兩次）
+ */
+async function profile(page, row) {
+  await go(page, "選手");
+  const back = page.locator(".profile-subpage .back-button");
+  for (let i = 0; i < 3 && (await back.count()); i++) await back.first().click();
+  await page.locator(".profile-list").waitFor({ timeout: 10000 });
+  if (!row) return;
+  await page.locator(".profile-list").getByRole("button", { name: row, exact: true }).click();
+  await page.locator(".profile-subpage .title", { hasText: row }).waitFor();
+}
+
+/** 選手資料改了就存：做完 action（填欄位、選選單）後離開欄位，等畫面下方出現新的「已儲存」 */
+async function profileSave(page, action) {
+  // 只算「已儲存」（「設定已儲存在這個瀏覽器。」不算）
+  const saved = () => page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).count();
+  const before = await saved();
+  if (action) await action();
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page
+    .waitForFunction((n) => [...document.querySelectorAll(".toast")].filter((t) => t.textContent.trim() === "已儲存").length > n, before, { timeout: 5000 })
+    .catch(() => undefined);
+}
+
 module.exports = {
   go,
   settings,
+  profile,
+  profileSave,
   setupMock,
   chromium: loadPlaywright().chromium,
   /** vite preview 的網址 */

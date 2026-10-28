@@ -170,12 +170,11 @@ async function serve(outDir) {
     check.aRekeyDisabledInCooldown = await A.card.getByRole("button", { name: /只換金鑰/ }).isDisabled();
 
     step = "A 的資料";
-    await A.tab("選手");
-    await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(A.page, "練什麼、怎麼練");
     await A.page.waitForTimeout(300);
     await profileIntensity(A).selectOption("challenge");
-    await A.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await A.page.locator(".toast", { hasText: "已儲存" }).waitFor();
+    await E2E.profileSave(A.page);
+    await A.page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor();
     await syncNow(A);
 
     // --- B：配對加入（iPhone） ---
@@ -199,8 +198,7 @@ async function serve(outDir) {
     check.bListsBoth = await waitNames(B, ["Mac · Edge", "iPhone · Safari"]);
     check.bThisDeviceIsItself = (await rows(B).filter({ hasText: "iPhone · Safari" }).locator(".badge", { hasText: "這台" }).count()) === 1;
     check.bCooldownNote = await B.card.locator(".cooldown-note").isVisible();
-    await B.tab("選手");
-    await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(B.page, "練什麼、怎麼練");
     check.bGotData = await profileIntensity(B)
       .evaluate((el) => new Promise((resolve) => {
         const start = Date.now();
@@ -279,16 +277,14 @@ async function serve(outDir) {
     await syncNow(B);
     check.bStillSyncing = !(await B.card.locator(".notice.error").count());
     check.bListAfterRemove = await waitNames(B, ["Mac · Edge", "我的 iPhone"]);
-    await B.tab("選手");
-    await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(B.page, "練什麼、怎麼練");
     await B.page.waitForTimeout(300);
     await profileIntensity(B).selectOption("easy");
-    await B.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await B.page.locator(".toast", { hasText: "已儲存" }).waitFor();
+    await E2E.profileSave(B.page);
+    await B.page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor();
     await syncNow(B);
     await syncNow(A);
-    await A.tab("選手");
-    await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(A.page, "練什麼、怎麼練");
     check.bChangeReachesA = await profileIntensity(A).evaluate((el) => new Promise((resolve) => {
       const start = Date.now();
       const tick = () => (el.value === "easy" ? resolve(true) : Date.now() - start > 8000 ? resolve(false) : setTimeout(tick, 200));
@@ -303,8 +299,7 @@ async function serve(outDir) {
     check.cShowsRemoved = /這台已從多裝置同步移除/.test(removedText) && /復原碼可能已經外流/.test(removedText);
     await C.page.screenshot({ path: `${E2E.OUT}/devices-C-removed.png` });
     // 只清金鑰：資料留著（選手資料還在）、API key 與同步金鑰清掉、這台的裝置金鑰刪掉
-    await C.tab("選手");
-    await C.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(C.page, "練什麼、怎麼練");
     await C.page.waitForTimeout(500);
     const kept = await profileIntensity(C).inputValue();
     check.cDataKept = kept === "challenge";
@@ -360,7 +355,7 @@ async function serve(outDir) {
     await removedBanner.getByRole("button", { name: "清除這台的資料" }).click();
     await C.page.waitForLoadState("load");
     await C.page.locator("nav.tabbar button").first().waitFor();
-    await C.tab("選手");
+    await E2E.profile(C.page, "練什麼、怎麼練");
     await C.page.waitForTimeout(500);
     check.cClearRemovesData = (await profileIntensity(C).count()) === 0 || (await profileIntensity(C).inputValue()) !== "challenge";
     check.cClearRemovesBanner = (await C.page.locator(".removed-banner").count()) === 0;

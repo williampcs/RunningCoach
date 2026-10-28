@@ -69,7 +69,7 @@ let failPage = null;
   check.trackFourStations =
     (await journey.locator(".journey-stations li").count()) === 4 &&
     (await journey.locator(".journey-stations li").first().innerText()).startsWith("起點") &&
-    /^在起點和一場全馬之間，這一段跑了 \d+ 成$/.test(await journey.getAttribute("aria-label"));
+    /^在起點和一場全馬之間，這一段跑了 \d+ 成$/.test(await journey.locator(".journey-body").getAttribute("aria-label"));
   check.trackFirstPassedOnly = (await journey.locator(".journey-stop.passed").count()) === 1;
   check.collapsedByDefault = (await page.locator("ul.runs .run-card").count()) === 0;
   const older = rows.nth(1);
@@ -126,7 +126,7 @@ let failPage = null;
   // 匯入之後跑得遠：軌道往前移過，選手不在軌道的第一站（除了一開始都在中段或後段）
   {
     const stops = await totalsCard.locator(".journey-stop").evaluateAll((els) => els.map((e) => e.classList.contains("passed")));
-    const label = await totalsCard.locator(".journey").getAttribute("aria-label");
+    const label = await totalsCard.locator(".journey-body").getAttribute("aria-label");
     console.log("TRACK", label, stops.join(","));
     check.trackMoved = stops.length === 4 && stops[0] && stops[1] && !(await totalsCard.locator(".journey-stations li").first().innerText()).startsWith("起點");
   }

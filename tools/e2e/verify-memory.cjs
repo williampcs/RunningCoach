@@ -38,7 +38,7 @@ let step = "start";
       };
       for (let i = 1; i <= 12; i++) await send(`第 ${i} 個問題`);
       // 壓縮在背景：等摘要出現
-      await tab("選手");
+      await E2E.profile(page, "教練記得的事");
       c.summaryShown = await page.locator(".summary-text", { hasText: "模擬摘要" }).waitFor({ timeout: 20000 }).then(() => true, () => false);
 
       step = "動態載入與分隔線";
@@ -90,7 +90,7 @@ let step = "start";
       c.searchSource = await page.locator(".bubble.assistant .sources", { hasText: "較早的對話" }).last().isVisible();
 
       step = "選手資料頁：記住的事";
-      await tab("選手");
+      await E2E.profile(page, "教練記得的事");
       const card = page.locator("section.memories");
       await card.locator(".memory-list li").nth(1).waitFor();
       c.listed = (await card.locator(".memory-text").allInnerTexts()).join("|") === "週三晚上要接小孩，不能練|鞋子跑到 600 公里要換";
@@ -109,7 +109,7 @@ let step = "start";
       step = "重新整理後還在";
       await page.reload();
       await page.locator("nav.tabbar button").first().waitFor();
-      await tab("選手");
+      await E2E.profile(page, "教練記得的事");
       await page.locator("section.memories .memory-text").nth(1).waitFor({ timeout: 5000 }).catch(() => undefined);
       c.persisted = (await page.locator("section.memories .memory-text").count()) === 2;
       c.noOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);

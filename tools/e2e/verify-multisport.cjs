@@ -109,29 +109,32 @@ async function flow(browser, { width, height, scheme }, check, problems) {
     await page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
 
     step = "練哪些運動";
-    await tab("選手");
-    await page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(page, "練什麼、怎麼練");
     await page.waitForTimeout(300);
     const picker = page.locator("fieldset.sports-picker");
-    // 每項運動一張卡，勾了才出現（規格 12.26 第 4 點）；沒勾任何運動時只有跑步的卡（當成只跑步）
-    const rideFieldset = page.locator('fieldset.sport-card[data-sport="ride"]');
-    if (first) check.rideCardHiddenBefore = (await rideFieldset.count()) === 0 && (await page.locator('fieldset.sport-card[data-sport="run"]').count()) === 1;
-    for (const name of ["跑步", "騎車", "肌力訓練"]) await picker.getByLabel(name, { exact: true }).check();
-    if (first) check.rideCardShown = (await rideFieldset.count()) === 1 && (await page.locator("fieldset.pref-common").getByLabel("主要運動").count()) === 1;
-    await page.getByLabel("騎車的目標").selectOption("distance");
+    // 每項運動一列，勾了才出現、點進去是那項的欄位（規格 12.26 第 4 點、12.30）；沒勾任何運動時只有跑步（當成只跑步）
+    const sportRow = (name) => page.locator(".sport-rows").getByRole("button", { name, exact: true });
+    if (first) check.rideCardHiddenBefore = (await sportRow("騎車").count()) === 0 && (await sportRow("跑步").count()) === 1;
+    for (const name of ["跑步", "騎車", "肌力訓練"]) await E2E.profileSave(page, () => picker.getByLabel(name, { exact: true }).check());
+    if (first) check.rideCardShown = (await sportRow("騎車").count()) === 1 && (await page.getByLabel("主要運動").count()) === 1;
     if (first) check.goalFields = (await page.getByLabel("肌力訓練的目標").count()) === 1 && (await page.getByLabel("游泳的目標").count()) === 0;
-    await page.getByLabel("跑步的強度").selectOption("moderate");
-    await page.getByRole("button", { name: "儲存選手資料" }).click();
-    await page.locator(".toast", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
     await picker.screenshot({ path: `${E2E.OUT}/multisport-${tag}-profile.png` });
+    await sportRow("騎車").click();
+    await E2E.profileSave(page, () => page.getByLabel("騎車的目標").selectOption("distance"));
+    await page.locator(".profile-subpage .back-button").click();
+    await sportRow("跑步").click();
+    await E2E.profileSave(page, () => page.getByLabel("跑步的強度").selectOption("moderate"));
+    await page.locator(".profile-subpage .back-button").click();
     if (first) {
-      // 重新讀取後還在
+      // 重新讀取後還在；每項運動那一列的摘要寫著填了什麼
       await tab("計畫");
-      await tab("選手");
-      await page.locator("section.training-values").waitFor({ timeout: 10000 });
+      await E2E.profile(page, "練什麼、怎麼練");
       check.sportsSaved =
         (await until(async () => (await picker.getByLabel("騎車", { exact: true }).isChecked()) && !(await picker.getByLabel("游泳", { exact: true }).isChecked()))) &&
-        (await page.getByLabel("騎車的目標").inputValue()) === "distance";
+        (await sportRow("騎車").innerText()).includes("距離");
+      await sportRow("騎車").click();
+      check.sportsSaved = check.sportsSaved && (await page.getByLabel("騎車的目標").inputValue()) === "distance";
+      await page.locator(".profile-subpage .back-button").click();
     }
 
     step = "請教練排這週的課表";
@@ -147,7 +150,8 @@ async function flow(browser, { width, height, scheme }, check, problems) {
     step = "課表頁：騎車的目標";
     await tab("計畫");
     const card = page.locator("section.plan-card");
-    await card.locator(".plan-session").first().waitFor({ timeout: 10000 });
+    // 第一堂可能收在「這週稍早」裡（看不到）：等它出現在頁面上就好
+    await card.locator(".plan-session").first().waitFor({ state: "attached", timeout: 10000 });
     // 週日時週六的課已經在「這週稍早」
     const earlier = card.locator("details.plan-earlier");
     if (await earlier.count()) await earlier.locator("summary").click();
@@ -215,7 +219,7 @@ async function flow(browser, { width, height, scheme }, check, problems) {
     }
     await context.close();
   } catch (e) {
-    problems.push(`[${tag} ${step}] ${e.message.split("\n")[0]}`);
+    problems.push(`[${tag} ${step}] ${e.message.split("\n").slice(0, 4).join(" | ")}`);
     await page.screenshot({ path: `${E2E.OUT}/multisport-${tag}-FAILED.png` }).catch(() => {});
     await context.close();
   }
@@ -271,19 +275,21 @@ async function cyclingFlow(browser, { width, height, scheme }, check, problems) 
     await page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
 
     step = "單車：練跑步與騎車";
-    await tab("選手");
-    await page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(page, "練什麼、怎麼練");
     await page.waitForTimeout(300);
     const picker = page.locator("fieldset.sports-picker");
-    for (const name of ["跑步", "騎車"]) await picker.getByLabel(name, { exact: true }).check();
-    await page.getByLabel("跑步的強度").selectOption("moderate");
-    await page.getByLabel("騎車的強度").selectOption("moderate");
-    await page.getByLabel("主要運動").selectOption("run");
-    await page.getByLabel("每週騎幾小時").fill("3");
-    await page.getByRole("button", { name: "儲存選手資料" }).click();
-    await page.locator(".toast", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
-    await page.locator("fieldset.pref-common").screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-common.png` });
-    await page.locator('fieldset.sport-card[data-sport="ride"]').screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-ride.png` });
+    const sportRow = (name) => page.locator(".sport-rows").getByRole("button", { name, exact: true });
+    for (const name of ["跑步", "騎車"]) await E2E.profileSave(page, () => picker.getByLabel(name, { exact: true }).check());
+    await E2E.profileSave(page, () => page.getByLabel("主要運動").selectOption("run"));
+    await page.locator(".profile-subpage section.card").screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-common.png` });
+    await sportRow("跑步").click();
+    await E2E.profileSave(page, () => page.getByLabel("跑步的強度").selectOption("moderate"));
+    await page.locator(".profile-subpage .back-button").click();
+    await sportRow("騎車").click();
+    await E2E.profileSave(page, () => page.getByLabel("騎車的強度").selectOption("moderate"));
+    await E2E.profileSave(page, () => page.getByLabel("每週騎幾小時").fill("3"));
+    await page.locator(".profile-subpage section.card").screenshot({ path: `${E2E.OUT}/cycling-${tag}-pref-ride.png` });
+    await page.locator(".profile-subpage .back-button").click();
 
     if (first) {
       step = "單車：教練看到的額度";
@@ -437,16 +443,17 @@ async function rideOnlyFlow(browser, check, problems) {
     const top = page.locator("section.plan-card .plan-week");
     await top.waitFor({ timeout: 10000 });
     check.rideOnlyPlan = /騎車 3 次/.test(await top.innerText()) && !(await top.innerText()).includes("跑步");
-    await E2E.go(page, "選手");
+    await E2E.profile(page, "練什麼、怎麼練");
     await page.locator("fieldset.sports-picker").waitFor({ timeout: 10000 });
-    // 選手資料讀進來之前當成只跑步：等跑步的卡消失
-    for (let i = 0; i < 25 && (await page.locator('fieldset.sport-card[data-sport="run"]').count()) > 0; i++) await page.waitForTimeout(200);
+    const sportRow = (name) => page.locator(".sport-rows").getByRole("button", { name, exact: true });
+    // 選手資料讀進來之前當成只跑步：等跑步那一列消失
+    for (let i = 0; i < 25 && (await sportRow("跑步").count()) > 0; i++) await page.waitForTimeout(200);
     check.rideOnlyCards =
-      (await page.locator('fieldset.sport-card[data-sport="run"]').count()) === 0 &&
-      (await page.locator('fieldset.sport-card[data-sport="ride"]').count()) === 1 &&
+      (await sportRow("跑步").count()) === 0 &&
+      (await sportRow("騎車").count()) === 1 &&
       (await page.getByLabel("長跑日").count()) === 0 &&
       (await page.getByLabel("主要運動").count()) === 0;
-    await page.locator('fieldset.sport-card[data-sport="ride"]').screenshot({ path: `${E2E.OUT}/cycling-ride-only-profile.png` });
+    await page.locator(".profile-subpage section.card").screenshot({ path: `${E2E.OUT}/cycling-ride-only-profile.png` });
     await E2E.go(page, "對話");
     check.rideOnlyNoRunGap = (await page.locator(".feed-item", { hasText: "天沒跑了" }).count()) === 0;
   } catch (e) {
@@ -469,8 +476,7 @@ async function offFlow(browser, check, problems) {
     // 一般的建置開著 testmode（測試模式，E2E 用），沒有多運動
     check.offNoFeatures = !(await page.locator(".features-on").innerText().catch(() => "")).includes("多運動");
     step = "關著：選手資料";
-    await E2E.go(page, "選手");
-    await page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(page, "練什麼、怎麼練");
     check.offNoPicker = (await page.locator("fieldset.sports-picker").count()) === 0 && (await page.getByText("其他會做的運動").count()) === 1;
     step = "關著：對話";
     await E2E.go(page, "對話");

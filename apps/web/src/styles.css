@@ -2470,6 +2470,23 @@ button.run-row {
   gap: var(--sp-1);
 }
 
+/* 軌道上方：左邊是出發點，右邊切換里程碑的組（規格 12.30） */
+.journey-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 32px;
+}
+
+label.region-picker > select {
+  width: auto;
+  min-height: 32px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-aux);
+  color: var(--accent);
+}
+
 /* 軌道從第一欄的中間畫到最後一欄的中間（--cols 欄） */
 .journey-track {
   padding: var(--sp-6) calc(50% / var(--cols)) 0;
@@ -2959,6 +2976,83 @@ button.run-row {
   .panel-backdrop.leaving {
     animation: none;
   }
+}
+
+/* 選手頁（規格 12.30 第 1 點）：我的數字＋五列＋下一層 */
+button.my-numbers-head {
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--muted);
+  font-weight: inherit;
+  white-space: normal;
+}
+
+.my-numbers-head .list-row-title {
+  color: var(--text);
+}
+
+.my-numbers-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.my-numbers-values > span {
+  flex: 1 1 72px;
+  display: flex;
+  flex-direction: column;
+}
+
+.my-numbers-values .num {
+  font-size: var(--fs-num);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+}
+
+.list-row-sub .not-filled {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+button.text.import-button {
+  align-self: flex-start;
+  padding: 0;
+  gap: var(--sp-1);
+}
+
+.card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* 計畫頁的賽事卡片裡打開的「從其他 AI 帶入」：不再多一層卡片的框 */
+.card .card.import {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: none;
+}
+
+.sport-rows {
+  border-top: 1px solid var(--border);
+}
+
+.sport-rows > li + li {
+  border-top: 1px solid var(--border);
 }
 
 /* 設定：第一層是清單，點進去是那一項的欄位 */

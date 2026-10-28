@@ -213,7 +213,17 @@ const PAGES = [
     },
   },
   { id: "plan", open: (page) => E2E.go(page, "計畫") },
-  { id: "profile", open: (page) => E2E.go(page, "選手") },
+  { id: "profile", open: (page) => E2E.profile(page) },
+  // 選手頁的下一層（規格 12.30）
+  ...["目標", "練什麼、怎麼練", "個人最佳", "身體", "教練記得的事"].map((name) => ({ id: `profile-${name}`, open: (page) => E2E.profile(page, name) })),
+  {
+    id: "profile-我的數字",
+    open: async (page) => {
+      await E2E.profile(page);
+      await page.getByRole("button", { name: /^我的數字/ }).click();
+      await page.locator(".profile-subpage .title", { hasText: "我的數字" }).waitFor();
+    },
+  },
   {
     id: "settings",
     open: async (page) => {
@@ -284,6 +294,7 @@ const PAGES = [
         }
       } catch (e) {
         problems.push(`[${flag} ${step}] ${e.message.split("\n")[0]}`);
+        await page.screenshot({ path: path.join(E2E.OUT, `design-${flag}-FAILED.png`) }).catch(() => undefined);
         check[`${flag}.completed`] = false;
       }
       await context.close();

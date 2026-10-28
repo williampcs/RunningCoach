@@ -17,9 +17,12 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
-import { Disclosure, SportIcon } from "../ui";
+import { Import } from "lucide-react";
+
+import { Disclosure, Icon, SportIcon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
+import { ImportFromAi } from "./ImportFromAi";
 
 interface RaceForm {
   id: number | null;
@@ -68,6 +71,8 @@ export function RacesCard() {
   const { coach, revision, touch } = useApp();
   const [races, setRaces] = useState<Race[]>([]);
   const [form, setForm] = useState<RaceForm | null>(null);
+  // 從其他 AI 帶入（賽事是它帶入的範圍之一；確認畫面照舊列出全部，規格 12.30）
+  const [importing, setImporting] = useState(false);
   const [resultFor, setResultFor] = useState<ResultForm | null>(null);
   const [dnsFor, setDnsFor] = useState<{
     id: number;
@@ -168,8 +173,17 @@ export function RacesCard() {
     <section className="card" id="races">
       <div className="card-head">
         <h2>賽事</h2>
-        {form === null && <button onClick={() => setForm(EMPTY_RACE)}>新增賽事</button>}
+        {form === null && !importing && (
+          <span className="card-head-actions">
+            <button className="text import-button" onClick={() => setImporting(true)}>
+              <Icon as={Import} size={18} />
+              從其他 AI 帶入
+            </button>
+            <button onClick={() => setForm(EMPTY_RACE)}>新增賽事</button>
+          </span>
+        )}
       </div>
+      {importing && <ImportFromAi startOpen onClose={() => setImporting(false)} />}
       {error && <div className="notice error">{error}</div>}
       {dups.length > 0 && (
         <div className="notice warn small">

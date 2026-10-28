@@ -160,13 +160,14 @@ const boxHeight = (locator) => locator.evaluate((el) => el.getBoundingClientRect
           c.notesKept = (await card.locator(".list li").filter({ hasText: "健康路跑嘉年華" }).first().innerText()).includes("第一行");
 
           step = "Enter：記住的事";
-          await tab("選手");
+          await E2E.profile(page, "教練記得的事");
           const memories = page.locator(".memories");
           await memories.getByLabel("新增記住的事").fill("貼上\n的兩行");
           c.pasteNewlineToSpace = (await memories.getByLabel("新增記住的事").inputValue()) === "貼上 的兩行";
           await memories.getByLabel("新增記住的事").press("Enter");
           await memories.locator(".memory-text", { hasText: "貼上 的兩行" }).waitFor({ timeout: 5000 });
           c.memoryEnterSubmits = true;
+          await E2E.profile(page, "目標");
           c.goalIsAutogrow = (await page.getByLabel("長期目標").evaluate((el) => el.tagName)) === "TEXTAREA";
 
           step = "時間戳：昨天、今年更早、不同年（測試模式的模擬日期）";

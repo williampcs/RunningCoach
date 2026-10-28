@@ -64,15 +64,14 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   await page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
 
   step = "訓練偏好";
-  await tab("選手");
-  // 選手資料讀取完成前改的值，會被讀回來的資料蓋掉：等訓練數值卡片出現（同一時間讀取）
-  await page.locator("section.training-values").waitFor({ timeout: 10000 });
+  // 選手頁的「練什麼、怎麼練」（規格 12.30）：改了就存；節奏收在「更多」
+  await E2E.profile(page, "練什麼、怎麼練");
   await page.waitForTimeout(300);
-  await field("強度", "select").selectOption("moderate");
-  await field("節奏", "select").selectOption("fixed");
-  await field("每週最多幾次", "input").fill("4");
-  await page.getByRole("button", { name: "儲存選手資料" }).click();
-  await page.locator(".toast", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
+  await E2E.profileSave(page, () => field("強度", "select").selectOption("moderate"));
+  await page.locator(".profile-more > summary").click();
+  await E2E.profileSave(page, () => field("節奏", "select").selectOption("fixed"));
+  await E2E.profileSave(page, () => field("每週最多幾次", "input").fill("4"));
+  await page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor({ timeout: 5000 });
 
   step = "賽事";
   // 下週六的半馬排在時間軸的那天；40 天後的接在最後面；比完的不放
@@ -247,7 +246,7 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   await sessions.first().waitFor({ timeout: 10000 });
   check.persisted = await until(async () => (await t.locator(".badge").innerText()) === "改用替代");
   check.prefsPersisted = await (async () => {
-    await tab("選手");
+    await E2E.profile(page, "練什麼、怎麼練");
     // 選手資料是非同步讀取的：等值出現
     for (let i = 0; i < 25; i++) {
       if ((await field("強度", "select").inputValue()) === "moderate" && (await field("每週最多幾次", "input").inputValue()) === "4") return true;

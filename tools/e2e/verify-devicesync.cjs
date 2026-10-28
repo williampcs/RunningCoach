@@ -76,12 +76,11 @@ let step = "start";
     await A.page.getByPlaceholder("例如：腿有點重").fill("A 寫的：後段有點喘");
     await A.page.getByRole("button", { name: "存起來" }).click();
     await A.page.locator(".report-result .run-card").waitFor({ timeout: 30000 });
-    await A.tab("選手");
-    await A.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(A.page, "練什麼、怎麼練");
     await A.page.waitForTimeout(300);
     await field(A.page, "強度", "select").selectOption("challenge");
-    await A.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await A.page.locator(".toast", { hasText: "已儲存" }).waitFor();
+    await E2E.profileSave(A.page);
+    await A.page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor();
     await A.tab("對話");
     await A.page.getByPlaceholder("輸入訊息…").fill("幫我排下週的課表");
     await A.page.getByRole("button", { name: "送出" }).click();
@@ -137,8 +136,7 @@ let step = "start";
     step = "B 的資料";
     await B.tab("計畫");
     check.bPlan = await B.page.locator(".plan-session", { hasText: "4×1 km 閾值" }).first().waitFor({ timeout: 10000 }).then(() => true, () => false);
-    await B.tab("選手");
-    await B.page.locator("section.training-values").waitFor({ timeout: 10000 });
+    await E2E.profile(B.page, "練什麼、怎麼練");
     check.bProfile = await (async () => {
       for (let i = 0; i < 25; i++) {
         if ((await field(B.page, "強度", "select").inputValue()) === "challenge") return true;
@@ -160,11 +158,10 @@ let step = "start";
     check.bRunNotes = runText.includes("體感 7/10") && runText.includes("A 寫的：後段有點喘");
 
     step = "之後的修改";
-    await B.tab("選手");
-    await B.page.locator("section.training-values").waitFor();
+    await E2E.profile(B.page, "練什麼、怎麼練");
     await field(B.page, "強度", "select").selectOption("easy");
-    await B.page.getByRole("button", { name: "儲存選手資料" }).click();
-    await B.page.locator(".toast", { hasText: "已儲存" }).waitFor();
+    await E2E.profileSave(B.page);
+    await B.page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor();
     await B.tab("設定");
     await B.page.waitForTimeout(1000);
     await B.card.getByRole("button", { name: "立即同步裝置" }).click({ timeout: 10000 });
@@ -172,8 +169,7 @@ let step = "start";
     await A.tab("設定");
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
     await A.page.waitForTimeout(1500);
-    await A.tab("選手");
-    await A.page.locator("section.training-values").waitFor();
+    await E2E.profile(A.page, "練什麼、怎麼練");
     check.editReachesA = await (async () => {
       for (let i = 0; i < 25; i++) {
         if ((await field(A.page, "強度", "select").inputValue()) === "easy") return true;
@@ -294,18 +290,18 @@ let step = "start";
     check.eStillSyncing = await E.card.getByText("已開啟").waitFor({ timeout: 5000 }).then(() => true, () => false);
     check.eKeyKept = await E.page.evaluate(() => (JSON.parse(localStorage.getItem("running-coach.settings.v1") || "{}").sync?.key ?? "") !== "");
     // E 改的資料傳到 A
-    await E.tab("選手");
+    await E2E.profile(E.page, "目標");
     await E.page.getByLabel("長期目標").fill("E 改的目標");
     // 別台同步過來、頁面重新讀取時，改到一半的欄位不能被蓋掉
     await E.page.waitForTimeout(6000);
     check.eEditKept = (await E.page.getByLabel("長期目標").inputValue()) === "E 改的目標";
-    await E.page.getByRole("button", { name: "儲存選手資料" }).click();
+    await E2E.profileSave(E.page);
     await E.tab("設定");
     await E.card.getByRole("button", { name: "立即同步裝置" }).click();
     await (await syncCounts(E)).getByText(/送出 [1-9]/).waitFor({ timeout: 15000 }).catch(() => undefined);
     await A.tab("設定");
     await A.card.getByRole("button", { name: "立即同步裝置" }).click();
-    await A.tab("選手");
+    await E2E.profile(A.page, "目標");
     check.eChangeReachesA = await A.page.waitForFunction(() => [...document.querySelectorAll("input, textarea")].some((i) => i.value === "E 改的目標"), null, { timeout: 15000 }).then(() => true, () => false);
 
     // --- D 開了密碼鎖：顯示復原碼與新增裝置都要再輸入密碼，錯的不顯示 ---

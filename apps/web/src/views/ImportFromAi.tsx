@@ -34,10 +34,11 @@ const distanceText = (km: number) =>
 /**
  * 從其他 AI 服務帶入（規格 6.5）：使用者貼上原本的服務整理好的內容，模型擷取成建議值，逐項確認後寫入.
  * 原文只在這個元件的狀態裡，不寫入資料庫；帶入、取消或離開這頁就會丟掉。
+ * startOpen：直接從貼上的步驟開始（選手頁的下一層、計畫頁的賽事）；帶入或取消後呼叫 onClose
  */
-export function ImportFromAi() {
-  const { coach, llmProblem, touch, goTo } = useApp();
-  const [open, setOpen] = useState(false);
+export function ImportFromAi({ startOpen = false, onClose }: { startOpen?: boolean; onClose?: () => void } = {}) {
+  const { coach, llmProblem, touch, goTo, toast } = useApp();
+  const [open, setOpen] = useState(startOpen);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -49,6 +50,7 @@ export function ImportFromAi() {
     setText("");
     setReview(null);
     setCopied(false);
+    onClose?.();
   }
 
   async function copyPrompt() {
@@ -93,8 +95,11 @@ export function ImportFromAi() {
         result.races > 0 && `賽事 ${result.races} 場`,
         result.plan && "本週課表",
       ].filter(Boolean);
+      const done = `已帶入${parts.join("、")}。原本貼上的內容已丟棄。`;
+      // 帶入後回到打開它的地方時，結果用畫面下方的小提示說
+      if (onClose) toast(done);
+      else setMessage({ kind: "ok", text: done });
       close();
-      setMessage({ kind: "ok", text: `已帶入${parts.join("、")}。原本貼上的內容已丟棄。` });
       touch();
     } catch (e) {
       setMessage({ kind: "error", text: `帶入失敗：${errorText(e)}` });

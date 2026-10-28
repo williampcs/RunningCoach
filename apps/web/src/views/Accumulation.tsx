@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
@@ -76,6 +76,38 @@ const stationKm = (p: { km: number; approx: boolean }) =>
  * 四站的軌道（規格 12.29）：等距排，過了的站打勾，跑者停在現在的位置（這一段的進度照公里數算）.
  * 走完軌道的最後一站整組往前移兩站，除了一開始都在中段或後段
  */
+/**
+ * 紀錄頁的里程碑用哪一組（原本在選手頁，規格 12.30 第 1 點搬到這裡）：軌道上方直接切換.
+ * 選手資料的 region：空的是通用、auto 是依時區自動判斷、TW 是台灣
+ */
+function RegionPicker() {
+  const { coach, revision, touch, toast } = useApp();
+  const [value, setValue] = useState<string | null>(null);
+  useEffect(() => {
+    void coach.db.getProfile().then((p) => setValue(p.region ?? ""));
+  }, [coach, revision]);
+  if (value === null) return null;
+  const change = async (next: string) => {
+    setValue(next);
+    if (next) await coach.db.setProfileKey("region", next);
+    else await coach.db.deleteProfileKey("region");
+    toast("已儲存");
+    touch();
+  };
+  return (
+    <label className="region-picker">
+      <select aria-label="紀錄頁的里程碑" value={value} onChange={(e) => void change(e.target.value)}>
+        <option value="">通用</option>
+        {Object.entries(REGION_CHOICES).map(([v, text]) => (
+          <option key={v} value={v}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Journey({ totals }: { totals: Accumulation }) {
   const mounted = useMounted();
   const { stations, at, fraction, origin } = totals.track;
@@ -88,36 +120,43 @@ function Journey({ totals }: { totals: Accumulation }) {
     ? `在${here.name}和${ahead.name}之間，這一段跑了 ${Math.round(fraction * 10)} 成`
     : `已經到了${here.name}`;
   return (
-    <div className="journey" role="img" aria-label={label}>
-      {origin && (
+    <div className="journey">
+      <div className="journey-head">
         <span className="journey-origin small muted">
-          <Icon as={MapPin} size={14} /> {origin}
+          {origin && (
+            <>
+              <Icon as={MapPin} size={14} /> {origin}
+            </>
+          )}
         </span>
-      )}
-      {/* 軌道從第一欄的中間畫到最後一欄的中間，站點和下面的字對齊 */}
-      <div className="journey-track" style={{ "--cols": stations.length } as CSSProperties}>
-        <div className="journey-line">
-          <div className="journey-fill" style={{ width: mounted ? `${pos * 100}%` : "0%" }} />
-          {stations.map((s, i) => (
-            <span key={s.name} className={s.passed ? "journey-stop passed" : "journey-stop"} style={{ left: `${(i / last) * 100}%` }}>
-              {s.passed && <Icon as={Check} size={12} />}
-            </span>
-          ))}
-          <span className="journey-runner" style={{ left: mounted ? `${pos * 100}%` : "0%" }}>
-            <SportIcon sport="run" size={18} />
-          </span>
-        </div>
+        <RegionPicker />
       </div>
-      <ol className="journey-stations" style={{ "--cols": stations.length } as CSSProperties}>
-        {stations.map((s) => (
-          <li key={s.name} className={s.passed ? "passed" : ""}>
-            <span className="journey-name" title={s.name}>
-              {s.short}
+      <div className="journey-body" role="img" aria-label={label}>
+        {/* 軌道從第一欄的中間畫到最後一欄的中間，站點和下面的字對齊 */}
+        <div className="journey-track" style={{ "--cols": stations.length } as CSSProperties}>
+          <div className="journey-line">
+            <div className="journey-fill" style={{ width: mounted ? `${pos * 100}%` : "0%" }} />
+            {stations.map((s, i) => (
+              <span key={s.name} className={s.passed ? "journey-stop passed" : "journey-stop"} style={{ left: `${(i / last) * 100}%` }}>
+                {s.passed && <Icon as={Check} size={12} />}
+              </span>
+            ))}
+            <span className="journey-runner" style={{ left: mounted ? `${pos * 100}%` : "0%" }}>
+              <SportIcon sport="run" size={18} />
             </span>
-            {s.km > 0 && <span className="small muted">{stationKm(s)}</span>}
-          </li>
-        ))}
-      </ol>
+          </div>
+        </div>
+        <ol className="journey-stations" style={{ "--cols": stations.length } as CSSProperties}>
+          {stations.map((s) => (
+            <li key={s.name} className={s.passed ? "passed" : ""}>
+              <span className="journey-name" title={s.name}>
+                {s.short}
+              </span>
+              {s.km > 0 && <span className="small muted">{stationKm(s)}</span>}
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }
@@ -307,7 +346,7 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
   };
   return (
     <p className="region-hint small muted">
-      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在「選手」改。
+      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在軌道右上方改。
       <button
         className="text"
         onClick={() =>
