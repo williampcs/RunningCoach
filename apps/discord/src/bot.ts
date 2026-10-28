@@ -8,7 +8,7 @@ import {
   type Message,
 } from "discord.js";
 
-import { formatStatus, type Coach, type Logger, type UsageStats } from "@running-coach/core";
+import { detectRedFlags, formatStatus, redFlagAdvice, type Coach, type Logger, type UsageStats } from "@running-coach/core";
 
 import { helpText, replyParts } from "./messages";
 import { VERSION_LABEL } from "./version";
@@ -66,6 +66,13 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
     if (!message.content || message.content.startsWith("/")) return;
     const channel = message.channel;
     if (!channel.isSendable()) return;
+
+    // 就醫提示（規格 12.33）：訊息有紅旗的字詞時，不等教練回覆先送出，由程式比對、不靠模型
+    const flags = detectRedFlags(message.content);
+    if (flags.length) {
+      const advice = redFlagAdvice(flags);
+      await channel.send(`**${advice.title}**\n${advice.detail}`);
+    }
 
     // 輸入中的提示約 10 秒就會消失，模型回應期間持續補送
     const sendTyping = () => void channel.sendTyping().catch(() => undefined);

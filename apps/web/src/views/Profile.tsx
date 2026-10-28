@@ -2,10 +2,13 @@ import {
   athleteSports,
   computeTrainingValues,
   formatPace,
+  INJURY_STATUS_LABELS,
+  injuryName,
   PREFERENCE_OPTIONS,
   SPORT_CHOICES,
   SPORT_LABELS,
   sportGoalKey,
+  type Injury,
   type Sport,
   type TrainingValues,
 } from "@running-coach/core";
@@ -18,6 +21,7 @@ import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
+import { InjuriesCard } from "./Injuries";
 import { TrainingValuesCard } from "./TrainingValues";
 
 interface Field {
@@ -54,7 +58,7 @@ const BODY_FIELDS: Field[] = [
   { key: "body_fat_pct", label: "體脂（%）" },
   { key: "max_hr", label: "最大心率（實測）", placeholder: "未填則以 220 − 年齡推算" },
   { key: "resting_hr", label: "靜息心率" },
-  { key: "injuries", label: "傷病注意", placeholder: "例如：右膝舊傷", wide: true, long: true },
+  { key: "injuries", label: "舊傷與長期要注意的", placeholder: "例如：右膝舊傷；現在會痛的記在上面的傷病紀錄", wide: true, long: true },
 ];
 
 /** 只跑步時的訓練偏好；不常改的收在「更多」 */
@@ -288,6 +292,7 @@ export function ProfileView() {
   // 從哪一頁打開「從其他 AI 帶入」：帶入或取消後回到那裡
   const [importFrom, setImportFrom] = useState<Page | null>(null);
   const [memory, setMemory] = useState<{ count: number; summary: string | null }>({ count: 0, summary: null });
+  const [injuries, setInjuries] = useState<Injury[]>([]);
   const multisport = featureEnabled("multisport");
 
   // 重新讀取（例如別台同步過來）時，保留這裡改到一半、還沒存的欄位，其他的換成最新的
@@ -303,6 +308,7 @@ export function ProfileView() {
     void Promise.all([coach.db.getMemories(), coach.db.getLatestSummary()]).then(([items, summary]) =>
       setMemory({ count: items.length, summary: summary?.created_at ?? null }),
     );
+    void coach.db.getInjuries().then(setInjuries);
   }, [coach, revision]);
 
   // 改了就存（規格 12.30 第 1 點）：一次存一個欄位，存好有小提示
@@ -363,6 +369,8 @@ export function ProfileView() {
     const fields = { goal: GOAL_FIELDS, pb: PB_FIELDS, body: BODY_FIELDS }[page];
     return (
       <Subpage page={page} back={back} backLabel="選手">
+        {/* 身體：最上面是傷病紀錄（規格 12.33） */}
+        {page === "body" && <InjuriesCard />}
         <section className="card">
           <ImportButton onClick={() => openImport(page)} />
           <Fields fields={fields} {...fieldProps} />
@@ -421,6 +429,7 @@ export function ProfileView() {
         ]),
     pb: join(PB_FIELDS.map((f) => saved[f.key] && `${f.label} ${saved[f.key]}`)),
     body: join([
+      injuries.length > 0 && injuries.map((i) => `${injuryName(i)}${INJURY_STATUS_LABELS[i.status]}`).join("、"),
       saved.max_hr && `最大心率 ${saved.max_hr}`,
       saved.injuries,
       !saved.max_hr && !saved.injuries && BODY_FIELDS.some((f) => saved[f.key]) && `已填 ${BODY_FIELDS.filter((f) => saved[f.key]).length} 項`,

@@ -3,9 +3,10 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
-import { changeSession, editSessionFromTool, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { activePlan, changeSession, editSessionFromTool, nextPlan, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, injuryLine, PAIN_WHEN_LABELS, parseInjurySports, type InjurySide, type InjuryStatus, type PainWhen } from "./injuries";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
-import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
+import { MEMORY_MAX_CHARS, type Db, type InjuryInput, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { activityLabel, otherActivitiesText } from "./activity-labels";
 import { sportOfType, SPORT_LABELS } from "./sports";
@@ -511,6 +512,51 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       },
     },
     {
+      name: "record_injury",
+      description:
+        "記下一個新的傷或疼痛（傷病紀錄，選手在「選手 → 身體」看得到、改得了）。選手提到疼痛或受傷時，先照【傷病的處理】問完固定的問題，" +
+        "再跟選手確認要記下來（說出部位、哪一側、會痛的運動）後呼叫；記完要在回覆裡說「已記下：…」。同一個部位已經有紀錄時用 update_injury，不要重複新增。" +
+        "檢查器會依這份紀錄擋掉會痛的運動的強度課與長課。不寫病名、不做診斷。",
+      input_schema: {
+        type: "object",
+        properties: {
+          area: { type: "string", description: "部位，用選手的說法，例：膝蓋、小腿、足底、下背" },
+          side: { type: "string", enum: Object.keys(INJURY_SIDE_LABELS), description: "left 左、right 右、both 兩側、none 不分（例：下背）" },
+          started_on: { type: "string", description: "什麼時候開始 YYYY-MM-DD（約略即可）" },
+          sports: {
+            type: "array",
+            items: { type: "string", enum: ["run", "ride", "swim", "strength", "other"] },
+            description: "哪些運動會痛；不知道時不要給（當成全部的運動都會痛）",
+          },
+          score: { type: "integer", description: "這次問到的疼痛分數 0–10（選填）" },
+          score_when: { type: "string", enum: Object.keys(PAIN_WHEN_LABELS), description: "分數是什麼時候：during 運動中、after 運動後、morning 隔天早上、rest 休息或夜裡" },
+          red_flag: { type: "boolean", description: "有需要就醫的警訊（骨頭壓痛、腫脹、休息或夜裡也痛、無法正常走路、越來越痛等）時 true：所有運動都先不排" },
+          notes: { type: "string", description: "選手的原話或補充（不寫病名）" },
+        },
+        required: ["area", "side"],
+      },
+    },
+    {
+      name: "update_injury",
+      description:
+        "更新傷病紀錄：記一次疼痛的分數、狀態（active 進行中、improving 好轉中、resolved 好了）、會痛的運動、紅旗等，只傳要改的欄位。" +
+        "選手回報傷處的分數、說好多了或好了時呼叫（標成好了之前先跟選手確認）。紅旗只有在選手說醫師看過、可以運動時才取消。" +
+        "injury_id 是系統提示【傷病紀錄】裡的 [id]。",
+      input_schema: {
+        type: "object",
+        properties: {
+          injury_id: { type: "integer", description: "【傷病紀錄】裡的 [id]" },
+          score: { type: "integer", description: "疼痛分數 0–10" },
+          score_when: { type: "string", enum: Object.keys(PAIN_WHEN_LABELS), description: "分數是什麼時候：during 運動中、after 運動後、morning 隔天早上、rest 休息或夜裡" },
+          status: { type: "string", enum: Object.keys(INJURY_STATUS_LABELS), description: "active 進行中、improving 好轉中、resolved 好了" },
+          sports: { type: "array", items: { type: "string", enum: ["run", "ride", "swim", "strength", "other"] }, description: "哪些運動會痛（整個換掉）" },
+          red_flag: { type: "boolean", description: "有需要就醫的警訊時 true；選手說醫師看過、可以運動時 false" },
+          notes: { type: "string", description: "補充（不寫病名）" },
+        },
+        required: ["injury_id"],
+      },
+    },
+    {
       name: "forget",
       description: "刪掉一條已經過時或選手要你忘記的「記住的事」；刪完要在回覆裡說明。",
       input_schema: {
@@ -748,6 +794,49 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
 
+  /** 傷病紀錄的欄位（record_injury、update_injury）：只取有給的 */
+  function injuryFields(input: Record<string, unknown>): InjuryInput {
+    const fields: InjuryInput = {};
+    if (input.area !== undefined) fields.area = str(input.area);
+    if (input.side !== undefined) {
+      if (!(String(input.side) in INJURY_SIDE_LABELS)) throw new Error(`side 要是 ${Object.keys(INJURY_SIDE_LABELS).join("、")}`);
+      fields.side = input.side as InjurySide;
+    }
+    if (input.started_on !== undefined && input.started_on !== null && input.started_on !== "") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.started_on))) throw new Error(`started_on 格式要是 YYYY-MM-DD：${String(input.started_on)}`);
+      fields.started_on = String(input.started_on);
+    }
+    if (input.status !== undefined) {
+      if (!(String(input.status) in INJURY_STATUS_LABELS)) throw new Error(`status 要是 ${Object.keys(INJURY_STATUS_LABELS).join("、")}`);
+      fields.status = input.status as InjuryStatus;
+    }
+    if (input.sports !== undefined) {
+      if (!Array.isArray(input.sports)) throw new Error("sports 要是陣列");
+      fields.sports = parseInjurySports(input.sports.map(String).join(","));
+    }
+    if (input.red_flag !== undefined) fields.red_flag = input.red_flag === true;
+    if (input.notes !== undefined) fields.notes = str(input.notes);
+    return fields;
+  }
+
+  async function scoreFrom(id: number, input: Record<string, unknown>): Promise<void> {
+    if (input.score === undefined || input.score === null) return;
+    const when = String(input.score_when ?? "") in PAIN_WHEN_LABELS ? (input.score_when as PainWhen) : "checkin";
+    await db.addInjuryScore(id, { date: today(), score: toInt(input.score, "score"), when });
+  }
+
+  /** 記下或更新傷病後：課表上現在因為傷病不能做的課，請教練調整 */
+  async function injuryPlanNote(): Promise<string> {
+    const plans = [await activePlan(db, today()), await nextPlan(db, today())];
+    const held = plans.flatMap((p) => p?.sessions.filter((x) => x.injuryHold) ?? []);
+    if (!held.length) return "";
+    return (
+      "\n\n課表上因為傷病現在不能做的課（要調整，並告訴選手）：\n" +
+      held.map((x) => `・session_id=${x.id} ${x.when}「${x.title}」：${x.injuryHold}`).join("\n") +
+      "\n用 update_planned_session 跳過或改用替代，或用 edit_planned_session 改成不痛的運動、很輕鬆的課。"
+    );
+  }
+
   async function execute(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
       case "fetch_latest_activity":
@@ -952,6 +1041,25 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         }
         const id = await db.addMemory(content, "coach");
         return `已記下（id=${id}）：${content.trim()}`;
+      }
+
+      case "record_injury": {
+        const area = str(input.area).trim();
+        if (!area) throw new Error("缺少 area（部位）");
+        const fields = injuryFields(input);
+        const id = await db.addInjury({ ...fields, area });
+        await scoreFrom(id, input);
+        const injury = (await db.getInjury(id))!;
+        return `已記下傷病（id=${id}）：${injuryLine(injury, today())}${await injuryPlanNote()}`;
+      }
+
+      case "update_injury": {
+        const id = toInt(input.injury_id, "injury_id");
+        const fields = injuryFields(input);
+        if (!(await db.updateInjury(id, fields))) throw new Error(`找不到 id=${id} 的傷病紀錄`);
+        await scoreFrom(id, input);
+        const injury = (await db.getInjury(id))!;
+        return `已更新傷病（id=${id}）：${injuryLine(injury, today())}${await injuryPlanNote()}`;
       }
 
       case "forget": {

@@ -1,11 +1,11 @@
 /**
  * 同步哪些資料、每一筆在各裝置上叫什麼名字（規格 12.10）.
  *
- * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、對話與對話摘要，以及跑步上的體感、
+ * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、傷病紀錄、對話與對話摘要，以及跑步上的體感、
  * 教練的分析與「不是同一趟」、其他運動（騎車等）的體感. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
  * API key 與設定不在資料庫裡，不同步.
  *
- * 名稱：選手資料用欄位名、自評用日期、賽事、課表與記住的事用 sync_id（同步時補上的隨機 id）、
+ * 名稱：選手資料用欄位名、自評用日期、賽事、課表、記住的事與傷病紀錄用 sync_id（同步時補上的隨機 id）、
  * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id.
  */
 import type { SqlDriver, SqlValue } from "../types";
@@ -17,7 +17,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd|af|as):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -56,6 +56,8 @@ const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "
 const SESSION_OPTIONAL_COLS = ["sport", "done_at", "edited_at"] as const;
 const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as const;
 const MEMORY_COLS = ["content", "source", "created_at", "updated_at"] as const;
+/** 傷病紀錄（schema 17，規格 12.33）：疼痛的分數在 scores（JSON）裡，一個傷一筆 */
+const INJURY_COLS = ["area", "side", "started_on", "status", "sports", "red_flag", "notes", "scores", "created_at", "updated_at"] as const;
 
 const pick = (row: Record<string, SqlValue>, cols: readonly string[]): EntityData => Object.fromEntries(cols.map((c) => [c, row[c] ?? null]));
 
@@ -105,7 +107,7 @@ async function mergeDuplicates(sql: Sql): Promise<void> {
 
 /** 這台目前的資料；先替還沒有 sync_id 的賽事與課表補上，合併重複的 */
 export async function snapshot(sql: Sql): Promise<Snapshot> {
-  for (const table of ["races", "training_plans", "planned_sessions", "memories"]) {
+  for (const table of ["races", "training_plans", "planned_sessions", "memories", "injuries"]) {
     await sql.run(`UPDATE ${table} SET sync_id = lower(hex(randomblob(16))) WHERE sync_id IS NULL`);
   }
   await mergeDuplicates(sql);
@@ -128,6 +130,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   }
   for (const r of await sql.all("SELECT * FROM daily_checkins")) data.set(`ck:${r.date}`, pick(r, CHECKIN_COLS));
   for (const r of await sql.all("SELECT * FROM memories")) data.set(`m:${r.sync_id}`, pick(r, MEMORY_COLS));
+  for (const r of await sql.all("SELECT * FROM injuries")) data.set(`in:${r.sync_id}`, pick(r, INJURY_COLS));
   for (const r of await sql.all("SELECT id, role, content, timestamp, sources, archived, reply_to FROM conversations")) {
     const entity: EntityData = { role: r.role ?? null, content: r.content ?? null, timestamp: r.timestamp ?? null, sources: r.sources ?? null };
     // 只在有值時才放：之前版本同步過的對話內容不變，不必全部重送
@@ -261,6 +264,10 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
     case "m":
       if (!data) await sql.run("DELETE FROM memories WHERE sync_id=?", [id]);
       else await upsert(sql, "memories", id, pick(data, MEMORY_COLS));
+      return "applied";
+    case "in":
+      if (!data) await sql.run("DELETE FROM injuries WHERE sync_id=?", [id]);
+      else await upsert(sql, "injuries", id, pick(data, INJURY_COLS));
       return "applied";
     case "cs":
       if (!data) {

@@ -193,6 +193,25 @@ export function EffortPicker({ value, onChange, label = "體感" }: { value: num
   );
 }
 
+/** 疼痛的分數 0–10（傷病，規格 12.33）：和體感同一種格子，多一格 0 */
+export function PainPicker({ value, onChange, label = "疼痛" }: { value: number | null; onChange: (n: number) => void; label?: string }) {
+  return (
+    <div className="effort-picker pain-picker" role="group" aria-label={`${label} 0–10`}>
+      <div className="effort-cells">
+        {Array.from({ length: 11 }, (_, n) => (
+          <button key={n} type="button" className="effort-cell" aria-pressed={value === n} aria-label={`${label} ${n}`} onClick={() => onChange(n)}>
+            {n}
+          </button>
+        ))}
+      </div>
+      <div className="effort-ends" aria-hidden="true">
+        <span>不痛</span>
+        <span>最痛</span>
+      </div>
+    </div>
+  );
+}
+
 /** 核心給的文字（和 Discord 共用）開頭的 emoji 換成的線條圖示：成功、失敗、統計 */
 const LEAD_ICONS: [RegExp, LucideIcon][] = [
   [/^✅/u, CircleCheck],

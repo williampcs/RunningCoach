@@ -12,6 +12,7 @@ import { coachingMethod } from "./coaching-method";
 import { featureOn } from "./features";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
+import { hardBlockReason, injuryLine, injuryName } from "./injuries";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
@@ -204,7 +205,8 @@ export class ContextManager {
       "",
       `選手說「記住…」，或提到長期有效、而選手資料欄位放不下的事（固定的行程限制、裝備、身體的習慣反應、喜歡或不喜歡的課）時，用 remember 記成一句話，並在回覆裡說「已記下：…」。` +
         "內容變了用 remember 帶 replace_id 改寫；過時的用 forget 刪掉並說明。" +
-        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、傷病、偏好用 update_athlete_profile）。" +
+        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、舊傷與長期要注意的、偏好用 update_athlete_profile）；" +
+        "現在會痛的傷用 record_injury 記在傷病紀錄。" +
         `最多 ${MEMORY_MAX_ITEMS} 條，滿了先和選手商量刪哪些。`,
       "選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時，用 search_conversations 依日期或關鍵字找；「昨天」「上週」先依今天的日期換算成日期。",
       "選手的訊息開頭有「（回覆…）」時，表示他在回覆那一則；需要更多前後文時，用 search_conversations 查那一天的對話。",
@@ -242,6 +244,16 @@ export class ContextManager {
     if (pbs.length) lines.push(`個人最佳：${pbs.join(" / ")}`);
 
     if (profile.injuries) lines.push(`傷病注意：${profile.injuries}`);
+    // 傷病紀錄（規格 12.33）：還沒好的；檢查器依它擋課
+    const injuries = await this.db.getInjuries();
+    if (injuries.length) {
+      lines.push(
+        "【傷病紀錄】（還沒好的；[id] 給 update_injury 用。照教練方法的「傷病的處理」：會痛的運動降量或停掉，不給治療與復健的動作）",
+        ...injuries.map((i) => `・${injuryLine(i, today)}`),
+      );
+      const stale = injuries.filter((i) => !i.red_flag && hardBlockReason(i, today)?.includes("沒有回報"));
+      if (stale.length) lines.push(`・${stale.map(injuryName).join("、")}最近沒有回報疼痛的分數：談到訓練時先問今天幾分，用 update_injury 記下。`);
+    }
     if (profile.weekly_km_target) lines.push(`每週目標里程：${profile.weekly_km_target}km`);
 
     // 生理資料

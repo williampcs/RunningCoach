@@ -17,6 +17,7 @@ import { errorText, useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { TermsShort } from "./TermsLink";
+import { checkRedFlags } from "../red-flag-alert";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
@@ -260,6 +261,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       const content = text.trim();
       if (!content || busy.current) return;
       busy.current = true;
+      // 有紅旗的字詞（胸痛、昏倒…）時，畫面上直接出現就醫提示，不等教練回覆（規格 12.33）
+      checkRedFlags(content);
       // 這次的兩則（訊息與回覆）也要留在畫面上
       setLimit((n) => n + 2);
       setSentCount((n) => n + 1);

@@ -14,6 +14,7 @@ import { isHardOther, QUALITY_KINDS, RIDE_QUALITY_KINDS } from "./plan";
 import { athleteSports, sportOfType } from "./sports";
 import { activePlan, type ActivePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
+import { injuryName, SCORE_STALE_DAYS } from "./injuries";
 import type { CoachSettings } from "./types";
 import { WEATHER_CREDIT, weatherNotice, type WeatherForecast, type WeatherHour } from "./weather";
 import { raceHours, raceWeatherSummary, raceWindowText } from "./race-weather";
@@ -28,12 +29,15 @@ export type FeedAction =
   | { type: "ask"; label: string; message: string }
   /** 兩筆看起來是同一趟：合併（dupId 併進 keepId）或標記不是同一趟 */
   | { type: "merge"; keepId: number; dupId: number }
-  | { type: "distinct"; aId: number; bId: number };
+  | { type: "distinct"; aId: number; bId: number }
+  /** 就醫提示的「我知道了」（規格 12.33） */
+  | { type: "ack" };
 
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross";
+  /** medical：就醫提示（網頁版依選手寫的文字加上，規格 12.33）；injury：傷病的分數 */
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross" | "medical" | "injury";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
@@ -144,17 +148,21 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
     const easier = todo.filter((s) => s.isRun || s.sport === "ride");
     const sportOf = (s: (typeof todo)[number]) =>
       s.kind === "strength" ? "strength" : s.sport === "ride" || s.sport === "swim" ? s.sport : s.isRun ? "run" : "other";
+    // 傷病（規格 12.33）：之後才記下的傷讓今天的課不能做時，那一行標「先不要做」，請教練調整
+    const held = todo.filter((s) => s.injuryHold);
     items.push({
       id: `plan-today-${todo.map((s) => s.id).join("-")}`,
       kind: "plan",
-      tone: "info",
+      tone: held.length ? "warn" : "info",
       title: "今天的課",
-      detail: targets.length ? targets.join(" · ") : undefined,
-      lines: todo.map((s) => ({ sport: sportOf(s), text: name(s) })),
-      actions: [
-        { type: "plan" },
-        ...(easier.length ? [ask("想改輕鬆一點", `今天的${easier.map((s) => s.title).join("、")}我想改輕鬆一點，可以怎麼調整？`)] : []),
-      ],
+      detail: held.length ? "有課因為傷病先不要做，請教練調整。" : targets.length ? targets.join(" · ") : undefined,
+      lines: todo.map((s) => ({ sport: sportOf(s), text: s.injuryHold ? `${name(s)}：先不要做` : name(s) })),
+      actions: held.length
+        ? [ask("請教練調整", `今天的${held.map((s) => s.title).join("、")}因為傷病先不要做，請幫我調整。`), { type: "plan" }]
+        : [
+            { type: "plan" },
+            ...(easier.length ? [ask("想改輕鬆一點", `今天的${easier.map((s) => s.title).join("、")}我想改輕鬆一點，可以怎麼調整？`)] : []),
+          ],
     });
   }
   for (const s of active.sessions) {
@@ -479,6 +487,22 @@ export async function buildFeed(
       actions: [ask("請教練調整", `${notice.summary}，我今天的訓練要怎麼調整？`)],
       credit: { ...WEATHER_CREDIT },
     });
+  }
+
+  // 傷病（規格 12.33）：自評過了、但還沒好的傷今天還沒有分數時，問今天幾分（還沒自評時，自評的表單裡就會問）
+  if (recovery.checkin) {
+    const unscored = (await db.getInjuries()).filter((i) => i.scores.at(-1)?.date !== today);
+    if (unscored.length) {
+      const names = unscored.map(injuryName).join("、");
+      items.push({
+        id: `injury-${today}`,
+        kind: "injury",
+        tone: "info",
+        title: `${names}今天幾分？`,
+        detail: `疼痛 0–10。超過 ${SCORE_STALE_DAYS} 天沒有回報時，會痛的運動先不排強度課與長課。`,
+        actions: [{ type: "checkin" }],
+      });
+    }
   }
 
   // 需要注意的排前面

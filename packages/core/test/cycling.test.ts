@@ -104,7 +104,7 @@ describe("單車的教練方法", () => {
     expect(planningRules({ multisport: true, sports: ["run"] })).not.toContain(CYCLING_RULES);
     // 跑步＋騎車：兩份都有
     expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_METHOD);
-    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v6】");
+    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v7】");
     expect(planningRules({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_RULES);
     // 只練騎車：不帶跑步的方法
     const rideOnly = coachingMethod({ multisport: true, sports: ["ride"] });

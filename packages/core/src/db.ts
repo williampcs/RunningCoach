@@ -1,6 +1,7 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
+import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
 import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
 import type {
@@ -37,8 +38,9 @@ import type {
  * 14：planned_sessions.edited_at（教練改過這堂課的內容，規格 12.31 第 1 點）
  * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
  * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
+ * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -240,6 +242,21 @@ const SCHEMA = `
     summary      TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   );
+  -- 傷病紀錄（規格 12.33）：疼痛的分數以 JSON 存在同一列（[{date, score, when}]），同步時一筆就是一個傷
+  CREATE TABLE IF NOT EXISTS injuries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_id     TEXT UNIQUE,
+    area        TEXT NOT NULL,
+    side        TEXT NOT NULL DEFAULT 'none',
+    started_on  TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',
+    sports      TEXT NOT NULL DEFAULT '',
+    red_flag    INTEGER NOT NULL DEFAULT 0,
+    notes       TEXT,
+    scores      TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     date             TEXT NOT NULL,
@@ -248,6 +265,47 @@ const SCHEMA = `
     created_at       TEXT NOT NULL
   );
 `;
+
+interface InjuryRow {
+  id: number;
+  area: string;
+  side: string;
+  started_on: string | null;
+  status: string;
+  sports: string;
+  red_flag: number;
+  notes: string | null;
+  scores: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 新增或修改傷病紀錄的欄位 */
+export interface InjuryInput {
+  area?: string;
+  side?: InjurySide;
+  started_on?: string | null;
+  status?: InjuryStatus;
+  sports?: Injury["sports"];
+  red_flag?: boolean;
+  notes?: string | null;
+}
+
+function injuryOf(row: InjuryRow): Injury {
+  return {
+    id: Number(row.id),
+    area: row.area,
+    side: (row.side in INJURY_SIDE_LABELS ? row.side : "none") as InjurySide,
+    started_on: row.started_on,
+    status: (row.status in INJURY_STATUS_LABELS ? row.status : "active") as InjuryStatus,
+    sports: parseInjurySports(row.sports),
+    red_flag: !!row.red_flag,
+    notes: row.notes,
+    scores: parsePainScores(row.scores),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
 
 const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport", "place_label", "place_lat", "place_lon", "start_time"] as const;
 /** 可以清掉（寫成 NULL）的欄位：地點與起跑時間；其他欄位傳 null 時不改 */
@@ -732,6 +790,71 @@ export class Db {
 
   async deleteMemory(id: number): Promise<boolean> {
     return (await this.run("DELETE FROM memories WHERE id=?", [id])).changes > 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // injuries（傷病紀錄，規格 12.33）
+  // ---------------------------------------------------------------------------
+
+  /** 傷病紀錄；沒好的在前，再依開始的先後 */
+  async getInjuries(options: { includeResolved?: boolean } = {}): Promise<Injury[]> {
+    const rows = await this.all<InjuryRow>(
+      `SELECT * FROM injuries${options.includeResolved ? "" : " WHERE status != 'resolved'"} ORDER BY status = 'resolved', COALESCE(started_on, created_at), id`,
+    );
+    return rows.map(injuryOf);
+  }
+
+  async getInjury(id: number): Promise<Injury | null> {
+    const row = await this.get<InjuryRow>("SELECT * FROM injuries WHERE id=?", [id]);
+    return row ? injuryOf(row) : null;
+  }
+
+  async addInjury(input: InjuryInput & { area: string }): Promise<number> {
+    const area = input.area.trim();
+    if (!area) throw new Error("缺少部位");
+    const stamp = this.stamp();
+    const { lastInsertRowid } = await this.run(
+      "INSERT INTO injuries (sync_id, area, side, started_on, status, sports, red_flag, notes, scores, created_at, updated_at)" +
+        " VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+      [area, input.side ?? "none", input.started_on ?? null, input.status ?? "active", (input.sports ?? []).join(","), input.red_flag ? 1 : 0, input.notes?.trim() || null, stamp, stamp],
+    );
+    return lastInsertRowid;
+  }
+
+  /** 只改傳入的欄位 */
+  async updateInjury(id: number, input: InjuryInput): Promise<boolean> {
+    const sets: string[] = [];
+    const values: (string | number | null)[] = [];
+    const set = (col: string, value: string | number | null) => {
+      sets.push(`${col}=?`);
+      values.push(value);
+    };
+    if (input.area !== undefined) {
+      if (!input.area.trim()) throw new Error("部位不能是空的");
+      set("area", input.area.trim());
+    }
+    if (input.side !== undefined) set("side", input.side);
+    if (input.started_on !== undefined) set("started_on", input.started_on);
+    if (input.status !== undefined) set("status", input.status);
+    if (input.sports !== undefined) set("sports", input.sports.join(","));
+    if (input.red_flag !== undefined) set("red_flag", input.red_flag ? 1 : 0);
+    if (input.notes !== undefined) set("notes", input.notes?.trim() || null);
+    if (!sets.length) return (await this.getInjury(id)) !== null;
+    set("updated_at", this.stamp());
+    return (await this.run(`UPDATE injuries SET ${sets.join(", ")} WHERE id=?`, [...values, id])).changes > 0;
+  }
+
+  /** 記一次疼痛的分數（0–10）；同一天、同一個時間點的蓋掉舊的 */
+  async addInjuryScore(id: number, score: PainScore): Promise<boolean> {
+    if (!Number.isInteger(score.score) || score.score < 0 || score.score > 10) throw new Error(`疼痛的分數要是 0–10 的整數：${score.score}`);
+    const injury = await this.getInjury(id);
+    if (!injury) return false;
+    await this.run("UPDATE injuries SET scores=?, updated_at=? WHERE id=?", [JSON.stringify(withScore(injury.scores, score)), this.stamp(), id]);
+    return true;
+  }
+
+  async deleteInjury(id: number): Promise<boolean> {
+    return (await this.run("DELETE FROM injuries WHERE id=?", [id])).changes > 0;
   }
 
   // ---------------------------------------------------------------------------

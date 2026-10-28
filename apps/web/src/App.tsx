@@ -22,6 +22,8 @@ import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment
 import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { TermsConfirm } from "./views/TermsConfirm";
+import { RedFlagBanner } from "./views/RedFlag";
+import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
@@ -139,6 +141,7 @@ export function App() {
   const [fatal, setFatal] = useState<string | null>(null);
   const [settings, setSettings] = useState(loadSettings);
   const [termsAtOpen] = useState(() => needsTermsConfirm(loadSettings()));
+  const redFlag = useRedFlagAlert();
   const [testMode, setTestMode] = useState(loadTestMode);
   // 從說明的連結打開：直接到使用說明頁的那一段
   const [helpTopic, setHelpTopic] = useState<{ id: string } | null>(() => {
@@ -487,8 +490,10 @@ export function App() {
             <Icon as={SettingsIcon} size={ICON_TAB} />
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0) && (
+        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0 || redFlag) && (
           <div className="notices" inert={!!panel}>
+            {/* 就醫提示（規格 12.33）：最上面，按「我知道了」才收起 */}
+            <RedFlagBanner />
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
               <div className="notice info update-banner" role="status">

@@ -94,7 +94,7 @@ flowchart TB
     tv["training-values.ts / sports.ts / coaching-method.ts<br/>配速、心率區間、VDOT；各運動的區間；跑步與單車的教練方法"]
     plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、多運動的每週額度"]
     races["races.ts<br/>賽事的規則"]
-    recovery["recovery.ts<br/>恢復狀況的判讀"]
+    recovery["recovery.ts / injuries.ts / red-flags.ts<br/>恢復狀況的判讀、傷病紀錄、就醫提示的字詞"]
     feed["feed.ts<br/>教練動態"]
     history["history.ts<br/>紀錄頁與累積"]
     weather["weather.ts、race-weather.ts<br/>天氣、比賽日的天氣"]
@@ -114,7 +114,7 @@ flowchart TB
 ```
 
 - **Coach** 是外殼唯一要用的入口：`chat()`、`sync()`、`reportRun()`、`feed()`、`activePlan()`、賽事的操作等。網頁版與 Discord 不直接碰規則。
-- **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼，都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
+- **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼、傷病時不能排的課、要不要出現就醫提示（`red-flags.ts` 比對選手寫的字），都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
 - **教練能做的事都是「工具」**（`tools.ts`）：例如查最近的訓練、存課表、記錄比賽成績。教練說要做某件事，就是呼叫工具；工具裡再套用和網頁按鈕一樣的規則，所以選手和教練能做的事一致。
 - **寫課表的工具開 strict**（規格 12.31 第 2 點）：`save_training_plan` 與 `edit_planned_session` 的 schema 寫完整（步驟與重複組放在 `$defs`），Claude 送 `strict: true`，模型的輸入一定符合格式；程式照樣用 `parseSessions` 驗證（strict 管不到的規則，例如距離或時間至少一個、重複 1–30 次）。strict 在一次請求裡有上限（20 個工具、選填參數合計 24 個、聯集 16 個），所以只開這兩個；API 不接受時轉接層拿掉 strict 再送一次。OpenAI 相容的供應商不送 strict，`$ref` 展開、拿掉 `additionalProperties`。
 
@@ -158,13 +158,13 @@ sequenceDiagram
 |---|---|---|
 | 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
 | API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
-| 教練動態「知道了」、收起等小狀態 | localStorage | 不會 |
+| 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 16 版）
+## 資料庫的 schema（目前是第 17 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -190,6 +190,7 @@ erDiagram
 - `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。
 - `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）；比賽地點 `place_label`、`place_lat`、`place_lon`（只用來查比賽日的天氣，座標四捨五入到 0.1°，不給教練看）與起跑時間 `start_time`（schema 15，規格 12.31）。
 - `memories`：記住的事（選手記的或教練記的）。
+- `injuries`：傷病紀錄（schema 17，規格 12.33）：部位 `area`、哪一側 `side`、開始日期、狀態（進行中、好轉中、好了）、會痛的運動 `sports`（逗號分隔，空的是不知道、當成全部）、紅旗 `red_flag`、備註，疼痛的分數 `scores`（JSON：`[{date, score, when}]`，同一天同一個時間點蓋掉舊的）。教練用 `record_injury`、`update_injury` 寫，選手在「選手 → 身體」改；檢查器依它擋課（`plan.ts` 的 `injuryWarnings`：會痛的運動在疼痛超過 3/10 或超過 3 天沒有分數時，強度課與長課不能存；有紅旗時所有課都不能存），已經排好的課算出「先不要做」（`planning.ts` 的 `injuryHolds`）。
 
 **訓練紀錄**
 - `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。
@@ -227,6 +228,7 @@ erDiagram
 | `pl:sync_id`、`ps:sync_id` | 一份課表、一堂課 |
 | `ck:日期` | 一天的自評 |
 | `m:sync_id` | 一則記住的事 |
+| `in:sync_id` | 一個傷（含疼痛的分數；schema 17，舊版不認得，不套用也不刪） |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
 | `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |

@@ -3528,3 +3528,48 @@ button.back-button {
   flex-direction: column;
   gap: var(--sp-3);
 }
+
+/* 疼痛的分數 0–10（傷病，規格 12.33）：體感的格子多一格 */
+.pain-picker .effort-cells {
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+}
+
+/* 就醫提示（規格 12.33）：畫面上方的一條 */
+.notice.red-flag .actions {
+  align-items: center;
+}
+
+/* 傷病紀錄（選手 → 身體） */
+.injury-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.injury-list > li + li {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-3);
+}
+
+.injury-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.injury-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.checkin .pain-question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}

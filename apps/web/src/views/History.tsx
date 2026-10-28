@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { checkRedFlags } from "../red-flag-alert";
 import type { Accumulation, RideAccumulation, RideCard, RunCard, WeekVolume, Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
@@ -62,6 +63,7 @@ export function HistoryView() {
     try {
       // 騎車：存了體感就重新產生分析（和跑步的「儲存並重新分析」一樣）
       const report = await coach.reportRun(rideEditing.effort, rideEditing.notes, { kind: "other", intervalsId: rideEditing.id });
+      checkRedFlags(rideEditing.notes);
       if (report.status === "other" && report.summary === null && multisport) setMessage({ kind: "error", text: "體感已存檔；這次沒有產生分析，可以稍後按「請教練分析」再試。" });
       setRideEditing(null);
       touch();
@@ -175,6 +177,7 @@ export function HistoryView() {
     setMessage(null);
     try {
       setBackfilled(await coach.addSubjective(editing.id, editing.effort, editing.notes));
+      checkRedFlags(editing.notes);
       setEditing(null);
       touch();
     } catch (e) {

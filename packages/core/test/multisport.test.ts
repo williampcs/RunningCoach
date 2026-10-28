@@ -89,7 +89,7 @@ describe("功能開關", () => {
     expect(JSON.stringify(buildTools(DEFAULT_SETTINGS))).toBe(off);
   });
 
-  it("關著時系統提示和原本一樣（v3）；開著時是 v6，有練的運動與目標", async () => {
+  it("關著時系統提示沒有多運動的部分（v7，傷病的處理開著關著都有）；開著時是 v7，有練的運動與目標", async () => {
     const profile = { pref_sports: "run,ride,strength", pref_goal_ride: "週末長騎" };
     const prompt = async (settings: Partial<CoachSettings>) => {
       const { coach, provider } = await makeCoach([turn({ text: "好" })], { settings });
@@ -98,10 +98,12 @@ describe("功能開關", () => {
       return provider.calls[0]!.request.system!;
     };
     const [offPrompt, onPrompt] = [await prompt({}), await prompt(MULTI)];
-    expect(offPrompt).toContain("【教練方法 v3】");
+    expect(offPrompt).toContain("【教練方法 v7】");
+    expect(offPrompt).toContain("傷病的處理（v7）");
     expect(offPrompt).not.toContain("練的運動");
     expect(offPrompt).not.toContain("交叉訓練的目標（v4）");
-    expect(onPrompt).toContain("【教練方法 v6】");
+    expect(onPrompt).toContain("【教練方法 v7】");
+    expect(onPrompt).toContain("傷病的處理（v7）");
     expect(onPrompt).toContain("練的運動：跑步、騎車、肌力訓練");
     expect(onPrompt).toContain("騎車：目標 週末長騎");
     expect(onPrompt).toContain("交叉訓練的目標（v4）");

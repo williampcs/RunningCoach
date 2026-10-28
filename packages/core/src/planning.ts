@@ -6,6 +6,7 @@ import type { Db } from "./db";
 import {
   checkPlan,
   EDITED_LABEL,
+  injuryWarnings,
   parseSessions,
   planMarkdown,
   QUALITY_KINDS,
@@ -115,7 +116,7 @@ const mondayOf = (date: string) => addDays(date, -weekdayIndex(date));
 const TARGET_SPORTS: Sport[] = ["ride", "swim"];
 
 async function contextFor(db: Db, today: string, weekStart: string, style: PlanStyle, options: PlanOptions = {}): Promise<CheckContext> {
-  const [values, profile, workouts, races, wellness, checkins, others, sportSettings] = await Promise.all([
+  const [values, profile, workouts, races, wellness, checkins, others, sportSettings, injuries] = await Promise.all([
     computeTrainingValues(db, today),
     db.getProfile(),
     db.getRecentWorkouts(70),
@@ -125,8 +126,10 @@ async function contextFor(db: Db, today: string, weekStart: string, style: PlanS
     // 單車的規則看最近四週的騎車（長騎的增幅、恢復週、賽前減量）；額度看最近 8 週
     db.getOtherActivities(70),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
+    db.getInjuries(),
   ]);
   return {
+    injuries,
     sports: Object.fromEntries(TARGET_SPORTS.map((sport) => [sport, sportTargets(sportSettings?.value, sport, today)])),
     multisport: options.multisport,
     // 練騎車的人：這週（排課的那週）的額度
@@ -150,6 +153,15 @@ function warningList(warnings: PlanWarning[]): string {
   return warnings.map((w, i) => `${i + 1}. ${w.message}`).join("\n");
 }
 
+/** 有不能保留的問題（傷病，規格 12.33）時的回覆：寫理由也不能存 */
+function blockedText(what: string, blocking: PlanWarning[], others: PlanWarning[]): string {
+  return (
+    `${what}：以下的課因為傷病不能排，寫理由也不能保留（安全規則）：\n${warningList(blocking)}\n\n` +
+    (others.length ? `其他問題：\n${warningList(others)}\n\n` : "") +
+    "請把這些課改成不痛的運動、很輕鬆的課或休息再存，並告訴選手原因；不要叫選手忍痛照課表練。"
+  );
+}
+
 /** save_training_plan：檢查後儲存；有問題且教練沒有寫理由時不存，把問題回給教練 */
 export async function savePlanFromTool(db: Db, today: string, input: Record<string, unknown>, options: PlanOptions = {}): Promise<string> {
   const style: PlanStyle = input.style === "flexible" ? "flexible" : "fixed";
@@ -169,6 +181,8 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
     });
   }
   const notesInput = typeof input.warning_notes === "string" ? input.warning_notes.trim() : "";
+  const blocking = warnings.filter((w) => w.blocking);
+  if (blocking.length) return blockedText("尚未儲存", blocking, warnings.filter((w) => !w.blocking));
   if (warnings.length && input.accept_warnings !== true) {
     return (
       `尚未儲存：檢查器發現以下問題（教練方法的規則）：\n${warningList(warnings)}\n\n` +
@@ -227,7 +241,7 @@ function sessionsText(sessions: PlannedSession[], ctx: TargetContext, match?: We
 export interface ActivePlan {
   plan: TrainingPlan;
   /** 結構化的課表才有；舊的文字課表是空的 */
-  sessions: (SessionView & { result: SessionResult | null })[];
+  sessions: (SessionView & { result: SessionResult | null; injuryHold: string | null })[];
   styleLabel: string | null;
   totalKm: number;
   /** 這週的跑步次數（不含跳過的、不是跑步的課） */
@@ -261,7 +275,8 @@ async function planView(db: Db, today: string, plan: TrainingPlan): Promise<Acti
   const ctx = await contextFor(db, today, plan.week_start, style);
   const planned = await db.getPlannedSessions(plan.id);
   const match = matchWeek(planned, ctx.workouts, ctx.others, plan.week_start, today, ctx);
-  const sessions = sortSessions(planned).map((s) => ({ ...sessionView(s, ctx), result: match.results.get(s.id) ?? null }));
+  const holds = injuryHolds(planned, ctx);
+  const sessions = sortSessions(planned).map((s) => ({ ...sessionView(s, ctx), result: match.results.get(s.id) ?? null, injuryHold: holds.get(s.id) ?? null }));
   const totalKm = Math.round(sessions.filter((s) => s.status !== "skipped").reduce((sum, s) => sum + s.km, 0) * 10) / 10;
   const runCount = sessions.filter((s) => s.isRun && s.status !== "skipped").length;
   const rides = sessions.filter((s) => RIDE_KINDS.has(s.kind) && s.status !== "skipped");
@@ -277,6 +292,17 @@ async function planView(db: Db, today: string, plan: TrainingPlan): Promise<Acti
     extras: extrasText(match),
     extraOthers: match.extraOthers,
   };
+}
+
+/**
+ * 傷病（規格 12.33）：已經排好的課裡，現在因為傷病不能排的（之後才記下傷病、疼痛變高、或太久沒回報分數）.
+ * 課表頁標「先不要做」、教練看到的課表也標出來，請教練調整；課不會自動改掉
+ */
+function injuryHolds(planned: PlannedSession[], ctx: CheckContext): Map<number, string> {
+  const counted = countedSessions(planned) as PlannedSession[];
+  const holds = new Map<number, string>();
+  for (const w of injuryWarnings(counted, ctx)) if (w.blocking && w.session !== undefined) holds.set(counted[w.session]!.id, w.message);
+  return holds;
 }
 
 const COACH_NOTE_MARK = "教練的理由：";
@@ -308,6 +334,15 @@ async function planText(db: Db, today: string, plan: TrainingPlan, heading: stri
   if (plan.reason) lines.push(`排課的原因：${plan.reason}`);
   if (plan.notes) lines.push(`檢查器的提醒與理由：${plan.notes}`);
   lines.push("", sessionsText(sessions, ctx, match));
+  const holds = injuryHolds(sessions, ctx);
+  if (holds.size) {
+    lines.push(
+      "",
+      `因為傷病現在不能做的課（要調整：用 update_planned_session 跳過或改用替代，或用 edit_planned_session 改成不痛的運動、很輕鬆的課）：\n${[...holds.entries()]
+        .map(([id, message]) => `・session_id=${id}：${message}`)
+        .join("\n")}`,
+    );
+  }
   const extras = extrasText(match);
   if (extras.length) lines.push("", `課表外的跑步（排課前已跑或額外多跑的，算進這週的跑量）：${extras.join("；")}`);
   if (options.multisport && match.extraOthers.length) {
@@ -381,7 +416,11 @@ export async function editSessionFromTool(db: Db, today: string, input: Record<s
   // 改之前就有的提醒（存課表時已經寫理由保留）不擋，只附在結果後面；擋的是這次改了才出現的
   const beforeRules = new Set(checkPlan(countedSessions(sessions), ctx).map((w) => w.rule));
   const after = checkPlan(countedSessions(edited), ctx);
-  const warnings = after.filter((w) => !beforeRules.has(w.rule));
+  // 傷病：改完的這一堂不能排的，不管之前有沒有都擋（寫理由也不能保留）
+  const editedIndex = countedSessions(edited).findIndex((s) => (s as PlannedSession).id === id);
+  const blocking = after.filter((w) => w.blocking && w.session === editedIndex);
+  if (blocking.length) return blockedText("尚未修改", blocking, []);
+  const warnings = after.filter((w) => !beforeRules.has(w.rule) && !w.blocking);
   const existing = after.filter((w) => beforeRules.has(w.rule));
   const notesInput = typeof input.warning_notes === "string" ? input.warning_notes.trim() : "";
   if (warnings.length && input.accept_warnings !== true) {
@@ -435,9 +474,17 @@ export async function changeSession(
       if (!session.fallback) throw new Error("這堂課沒有替代的課");
       await db.updatePlannedSession(id, { status: "fallback", note: reason });
       break;
-    case "restore":
+    case "restore": {
+      // 傷病：恢復後會是不能排的課時不恢復（規格 12.33）
+      const ctx = await contextFor(db, today, plan.week_start, style, options);
+      const restored = (await db.getPlannedSessions(plan.id)).map((s) => (s.id === id ? { ...s, status: "planned" as const, note: null } : s));
+      const counted = countedSessions(restored);
+      const index = counted.findIndex((s) => (s as PlannedSession).id === id);
+      const blocking = checkPlan(counted, ctx).filter((w) => w.blocking && w.session === index);
+      if (blocking.length) throw new Error(`這堂課因為傷病先不能恢復：${blocking.map((w) => w.message).join(" ")}`);
       await db.updatePlannedSession(id, { status: "planned", note: null });
       break;
+    }
     case "done":
       // 跑步的課以手錶的紀錄為準；回報只給沒有紀錄的（肌力、交叉訓練）
       if (session.kind !== "strength" && session.kind !== "cross") throw new Error("只有肌力與交叉訓練的課可以回報做完了；跑步以手錶的紀錄為準");

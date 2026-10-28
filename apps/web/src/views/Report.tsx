@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { checkRedFlags } from "../red-flag-alert";
 import {
   activityLabel,
   addDays,
@@ -153,6 +154,8 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     try {
       const target: ReportTarget = chosen?.target ?? { kind: "pending" };
       const saved = await coach.reportRun(effort, notes.trim(), target);
+      // 感受裡有紅旗的字詞時出現就醫提示（規格 12.33）
+      checkRedFlags(notes);
       setReport(saved);
       if (saved.status === "saved") toast("已存檔。");
       setSubmitted({ effort, notes: notes.trim() });

@@ -330,6 +330,11 @@ const toolUse = (name: string, input: Record<string, unknown> = {}): Block => ({
   input,
 });
 
+/** 傷病（規格 12.33）：選手說哪裡痛時，模擬的教練先問的固定問題 */
+const INJURY_QUESTIONS =
+  "（模擬回覆）先問清楚再建議：\n\n1. 哪一側？\n2. 什麼時候開始？\n3. 哪些運動會痛？\n4. 運動中、運動後、隔天早上各幾分（0–10）？\n" +
+  "5. 有沒有腫、按壓骨頭會不會痛？\n6. 跑姿有沒有改變？\n7. 越來越痛還是在好轉？\n8. 休息或夜裡也痛嗎？";
+
 /** 依對話內容決定模擬教練的下一步 */
 /** 模擬的長回覆：結論＋三個小標（程式碼區塊裡的 ## 不算小標） */
 const LONG_REPLY =
@@ -400,6 +405,14 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
       return [toolUse("save_pending_subjective", { date: today(), perceived_effort: 7, subjective_notes: "腿有點重" })];
     }
     return [{ type: "text", text: `（模擬回覆）工具回傳了：\n\n${lastText}\n\n**建議**：明天安排 40 分鐘輕鬆跑，心率維持在 Z2。` }];
+  }
+  // 傷病（規格 12.33）：先問固定的問題；選手回答後（有幾分）記進傷病紀錄
+  if (/膝蓋.*痛/.test(lastText) && !/\d+\s*分/.test(lastText)) return [{ type: "text", text: INJURY_QUESTIONS }];
+  if (/左膝.*\d+\s*分/.test(lastText)) {
+    const score = Number(/運動中\s*(\d+)\s*分|跑步中\s*(\d+)\s*分/.exec(lastText)?.slice(1).find(Boolean) ?? 5);
+    return [
+      toolUse("record_injury", { area: "膝蓋", side: "left", started_on: daysAgo(2), sports: ["run"], score, score_when: "during", notes: "（模擬）下樓梯會痛" }),
+    ];
   }
   const howTo = lastText.match(/([^\s\]？?]+?)(?:怎麼用|在哪裡)/);
   if (howTo) return [toolUse("get_app_help", { topic: howTo[1]! })];
