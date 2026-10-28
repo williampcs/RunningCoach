@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 
 import { addDays, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
-import { CalendarDays, Flag, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
+import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
 import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
@@ -68,33 +68,56 @@ function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { i
   );
 }
 
-/** 從已經超過的一站到下一站的路線，跑者停在現在的位置 */
+/** 一站的距離：用座標算的標「約」；短的路線寫到小數一位（全馬 42.2 km） */
+const stationKm = (p: { km: number; approx: boolean }) =>
+  `${p.approx ? "約 " : ""}${number(p.km, p.km < 100 && !Number.isInteger(p.km) ? 1 : 0)} km`;
+
+/**
+ * 四站的軌道（規格 12.29）：等距排，過了的站打勾，跑者停在現在的位置（這一段的進度照公里數算）.
+ * 走完軌道的最後一站整組往前移兩站，除了一開始都在中段或後段
+ */
 function Journey({ totals }: { totals: Accumulation }) {
   const mounted = useMounted();
-  if (!totals.next) return null;
-  const from = totals.passed?.km ?? 0;
-  const pct = Math.min(100, Math.max(2, ((totals.km - from) / (totals.next.km - from)) * 100));
+  const { stations, at, fraction, origin } = totals.track;
+  if (stations.length < 2) return null;
+  const last = stations.length - 1;
+  const pos = Math.min(1, (at + fraction) / last);
+  const here = stations[at]!;
+  const ahead = stations[at + 1];
+  const label = ahead
+    ? `在${here.name}和${ahead.name}之間，這一段跑了 ${Math.round(fraction * 10)} 成`
+    : `已經到了${here.name}`;
   return (
-    <div
-      className="journey"
-      role="img"
-      aria-label={`從${totals.passed ? placeText(totals.passed) : "起點"}往${placeText(totals.next)}，已經跑了這段的 ${Math.round(pct)}%`}
-    >
-      <div className="journey-track">
-        <div className="journey-fill" style={{ width: mounted ? `${pct}%` : "0%" }}>
-          <span className="journey-runner">
+    <div className="journey" role="img" aria-label={label}>
+      {origin && (
+        <span className="journey-origin small muted">
+          <Icon as={MapPin} size={14} /> 從{origin}出發
+        </span>
+      )}
+      {/* 軌道從第一欄的中間畫到最後一欄的中間，站點和下面的字對齊 */}
+      <div className="journey-track" style={{ "--cols": stations.length } as CSSProperties}>
+        <div className="journey-line">
+          <div className="journey-fill" style={{ width: mounted ? `${pos * 100}%` : "0%" }} />
+          {stations.map((s, i) => (
+            <span key={s.name} className={s.passed ? "journey-stop passed" : "journey-stop"} style={{ left: `${(i / last) * 100}%` }}>
+              {s.passed && <Icon as={Check} size={12} />}
+            </span>
+          ))}
+          <span className="journey-runner" style={{ left: mounted ? `${pos * 100}%` : "0%" }}>
             <SportIcon sport="run" size={18} />
           </span>
         </div>
       </div>
-      <div className="journey-ends small">
-        <span>
-          <Icon as={MapPin} size={14} /> {totals.passed ? placeText(totals.passed) : "起點"}
-        </span>
-        <span>
-          <Icon as={Flag} size={14} /> {placeText(totals.next)}
-        </span>
-      </div>
+      <ol className="journey-stations" style={{ "--cols": stations.length } as CSSProperties}>
+        {stations.map((s) => (
+          <li key={s.name} className={s.passed ? "passed" : ""}>
+            <span className="journey-name" title={s.name}>
+              {s.short}
+            </span>
+            {s.km > 0 && <span className="small muted">{stationKm(s)}</span>}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

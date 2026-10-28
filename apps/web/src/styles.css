@@ -2423,47 +2423,95 @@ button.run-row {
   margin-right: var(--sp-1);
 }
 
-/* 頁首的圖：路線、獎牌、台北 101、每一趟的格子；都從 0 長上來 */
+/* 頁首的圖：四站的軌道、獎牌、台北 101、每一趟的格子；都從 0 長上來 */
 .journey {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
   margin-top: var(--sp-3);
 }
 
+.journey-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* 軌道從第一欄的中間畫到最後一欄的中間（--cols 欄） */
 .journey-track {
+  padding: var(--sp-6) calc(50% / var(--cols)) 0;
+}
+
+.journey-line {
   position: relative;
-  height: 8px;
+  height: 6px;
   border-radius: var(--r-pill);
   background: var(--border);
-  margin-top: var(--sp-6);
 }
 
 .journey-fill {
-  position: relative;
   height: 100%;
   border-radius: var(--r-pill);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent));
+  background: var(--accent);
   transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.journey-stop {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+}
+
+.journey-stop.passed {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 .journey-runner {
   position: absolute;
-  right: -10px;
-  bottom: 6px;
+  bottom: 8px;
+  transform: translateX(-50%);
   color: var(--accent);
+  transition: left 1.2s cubic-bezier(0.22, 1, 0.36, 1);
   animation: bob 0.5s ease-in-out infinite alternate;
 }
 
-.journey-ends {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  color: var(--muted);
-  margin-top: var(--sp-1);
+/* 每站兩行：名稱、公里數 */
+.journey-stations {
+  list-style: none;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: var(--sp-1);
+  text-align: center;
 }
 
-.journey-ends > span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
+.journey-stations li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.journey-name {
+  font-size: var(--fs-aux);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-stations li.passed .journey-name {
+  color: var(--muted);
 }
 
 @keyframes bob {
@@ -2595,6 +2643,7 @@ button.run-row {
 
 @media (prefers-reduced-motion: reduce) {
   .journey-fill,
+  .journey-runner,
   .tower-clip {
     transition: none;
   }

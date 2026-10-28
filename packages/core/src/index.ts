@@ -39,15 +39,21 @@ export { buildFeed, type FeedAction, type FeedItem } from "./feed";
 export {
   accumulate,
   accumulateRides,
+  cityDistanceKm,
+  landmarks,
+  landmarkTrack,
   REGION_CHOICES,
   regionOf,
   REGIONS,
   splitSummary,
   type Accumulation,
+  type Landmark,
   type Region,
   type RideAccumulation,
   type RideCard,
   type RunCard,
+  type Track,
+  type TrackStation,
 } from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
 export {

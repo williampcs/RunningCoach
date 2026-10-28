@@ -64,6 +64,13 @@ let failPage = null;
   const totals = await page.locator("section.totals").innerText();
   console.log("TOTALS", totals.replace(/\s+/g, " "));
   check.totalsShown = /累積跑了\s*18(\.0)?\s*km/.test(totals) && totals.includes("跑了") && (await page.locator("section.totals .block").count()) === 2;
+  // 里程碑的軌道（規格 12.29）：四站、等距、每站兩行；18 km 在起點與全馬之間
+  const journey = page.locator("section.totals .journey");
+  check.trackFourStations =
+    (await journey.locator(".journey-stations li").count()) === 4 &&
+    (await journey.locator(".journey-stations li").first().innerText()).startsWith("起點") &&
+    /^在起點和一場全馬之間，這一段跑了 \d+ 成$/.test(await journey.getAttribute("aria-label"));
+  check.trackFirstPassedOnly = (await journey.locator(".journey-stop.passed").count()) === 1;
   check.collapsedByDefault = (await page.locator("ul.runs .run-card").count()) === 0;
   const older = rows.nth(1);
   const olderRow = await older.locator(".run-row").innerText();
@@ -116,6 +123,13 @@ let failPage = null;
   check.totalsGrew = /從 2024-01-05 起/.test(after) && (await totalsCard.locator(".block").count()) > 100;
   check.medalsAndTowers = (await totalsCard.locator(".medal").count()) > 0 && (await totalsCard.locator("svg.tower").count()) > 0;
   check.journey = (await totalsCard.locator(".journey-runner").count()) === 1;
+  // 匯入之後跑得遠：軌道往前移過，選手不在軌道的第一站（除了一開始都在中段或後段）
+  {
+    const stops = await totalsCard.locator(".journey-stop").evaluateAll((els) => els.map((e) => e.classList.contains("passed")));
+    const label = await totalsCard.locator(".journey").getAttribute("aria-label");
+    console.log("TRACK", label, stops.join(","));
+    check.trackMoved = stops.length === 4 && stops[0] && stops[1] && !(await totalsCard.locator(".journey-stations li").first().innerText()).startsWith("起點");
+  }
   check.importRerun = (await totalsCard.getByRole("button", { name: "再匯入一次" }).count()) === 1;
   await page.screenshot({ path: `${E2E.OUT}/history-${width}-${scheme}-4-imported.png` });
   // 重跑不重複

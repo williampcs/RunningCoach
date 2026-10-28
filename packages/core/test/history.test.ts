@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { accumulate, regionOf, splitSummary } from "../src/history";
+import { accumulate, cityDistanceKm, landmarks, landmarkTrack, regionOf, splitSummary } from "../src/history";
 import type { Workout } from "../src/types";
 import { activity, makeCoach, toolTurn, turn } from "./helpers";
 
@@ -76,15 +76,15 @@ describe("紀錄頁頁首的累積", () => {
     expect(a.climb).toEqual({ name: "台北 101", meters: 508, kind: "tower", count: 1.08 });
     expect(a.thisWeek).toEqual({ runs: 2, km: 20, minutes: 118 });
     expect(a.longest).toEqual({ km: 21.1, date: "2025-12-30" });
-    expect(a.passed).toEqual({ name: "台北到桃園", km: 40 });
-    expect(a.next).toEqual({ name: "台北到新竹", km: 70 });
+    expect(a.passed).toEqual({ name: "台北到楊梅", km: 45 });
+    expect(a.next).toEqual({ name: "台北到湖口", km: 54 });
     expect(a.blocks.map((b) => b.size)).toEqual([3, 0, 1, 2]);
 
     // 沒選所在地區：不依賴所在地的里程碑，爬升和聖母峰比
     const anywhere = accumulate(runs, "2026-10-10");
     expect(anywhere.region).toBe("");
     expect(anywhere.passed).toEqual({ name: "一場全馬", km: 42.195 });
-    expect(anywhere.next).toEqual({ name: "康瑞德超馬（南非）", km: 90 });
+    expect(anywhere.next).toEqual({ name: "雙洋超馬（南非）", km: 56 });
     expect(anywhere.climb).toEqual({ name: "聖母峰", meters: 8849, kind: "mountain", count: 0.06 });
   });
 
@@ -101,7 +101,66 @@ describe("紀錄頁頁首的累積", () => {
     expect(a.thisWeek).toBeNull();
     expect(a.thisYearKm).toBeNull();
     expect(a.passed).toBeNull();
-    expect(a.next).toEqual({ name: "台北到桃園", km: 40 });
+    expect(a.next).toEqual({ name: "台北到基隆", km: 20 });
     expect(accumulate([], "2026-10-10")).toMatchObject({ runs: 0, km: 0, since: null, thisWeek: null, longest: null });
+  });
+
+  it("里程碑切細：相鄰兩站不超過 1.4 倍（地球一圈之後照舊），由近到遠；城市間的距離用座標算", () => {
+    for (const region of ["", "TW"] as const) {
+      const places = landmarks(region);
+      for (let i = 1; i < places.length; i++) {
+        expect(places[i]!.km).toBeGreaterThan(places[i - 1]!.km);
+        if (places[i - 1]!.km < 40075) expect(places[i]!.km / places[i - 1]!.km).toBeLessThanOrEqual(1.4);
+      }
+    }
+    // 大圓距離（公里，四捨五入）
+    expect(cityDistanceKm("台北", "東京")).toBe(2095);
+    expect(cityDistanceKm("倫敦", "巴黎")).toBe(344);
+    expect(cityDistanceKm("台北", "台北")).toBe(0);
+    const tokyo = landmarks("TW").find((p) => p.short === "東京")!;
+    expect(tokyo).toEqual({ name: "台北到東京", short: "東京", km: 2095, approx: true });
+    expect(landmarks("TW").find((p) => p.short === "環島")).toEqual({ name: "環島一圈", short: "環島", km: 1000, approx: false });
+  });
+
+  it("四站的軌道：起點 A B C；過了 C 換成 B C D E；除了一開始都在中段或後段", () => {
+    const names = (t: ReturnType<typeof landmarkTrack>) => t.stations.map((s) => s.short);
+    // 0 km：起點、基隆、桃園、中壢，在起點
+    const zero = landmarkTrack(0, "TW");
+    expect(names(zero)).toEqual(["起點", "基隆", "桃園", "中壢"]);
+    expect(zero).toMatchObject({ origin: "台北", at: 0, fraction: 0 });
+    // 剛過 A（基隆 20）
+    const a = landmarkTrack(21, "TW");
+    expect(a.at).toBe(1);
+    expect(a.stations.map((s) => s.passed)).toEqual([true, true, false, false]);
+    expect(a.fraction).toBeCloseTo(1 / 7, 5);
+    // 在 B–C 之間（桃園 27–中壢 35）
+    const bc = landmarkTrack(31, "TW");
+    expect(names(bc)).toEqual(["起點", "基隆", "桃園", "中壢"]);
+    expect(bc).toMatchObject({ at: 2, fraction: 0.5 });
+    // 剛過 C（中壢 35）：往前移兩站
+    const c = landmarkTrack(35, "TW");
+    expect(names(c)).toEqual(["桃園", "中壢", "楊梅", "湖口"]);
+    expect(c.at).toBe(1);
+    // 過了 D（楊梅）還是同一組；過了 E（湖口）再移兩站
+    expect(names(landmarkTrack(50, "TW"))).toEqual(["桃園", "中壢", "楊梅", "湖口"]);
+    expect(landmarkTrack(50, "TW").at).toBe(2);
+    expect(names(landmarkTrack(55, "TW"))).toEqual(["楊梅", "湖口", "新竹", "竹南"]);
+    // 使用者的例子：1,060 km 在環島（1,000）與馬尼拉之間，不在軌道的前段
+    const user = landmarkTrack(1060, "TW");
+    expect(user.stations[user.at]!.short).toBe("環島");
+    expect(user.at).toBeGreaterThanOrEqual(1);
+    // 接近最後一站（地球一圈）：最後幾站
+    const end = landmarkTrack(40000, "TW");
+    expect(names(end)).toEqual(["地球半圈", "紐約來回", "四分之三圈", "地球一圈"]);
+    expect(end.at).toBe(2);
+    // 全部走完：停在最後一站
+    const done = landmarkTrack(50000, "TW");
+    expect(done).toMatchObject({ at: 3, fraction: 0 });
+    // 每個位置都在軌道上（除了一開始，不在前三分之一以前）
+    for (let km = 36; km < 40075; km += 37) {
+      const t = landmarkTrack(km, "TW");
+      expect(t.at).toBeGreaterThanOrEqual(1);
+    }
+    expect(landmarkTrack(100, "").origin).toBeNull();
   });
 });
