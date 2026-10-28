@@ -106,7 +106,8 @@ function inspect() {
     const text = b.innerText.replace(/\s+/g, "");
     if (!text) {
       const name = b.getAttribute("aria-label") ?? "";
-      if (!name || !ICON_ONLY.some((c) => b.classList.contains(c))) out.unnamed.push(b.outerHTML.slice(0, 80));
+      // 圖表的長條（點了看那週的數字，規格 12.31）不是圖示按鈕，但一樣要有名稱
+      if (!name || !(ICON_ONLY.some((c) => b.classList.contains(c)) || b.classList.contains("week-bar"))) out.unnamed.push(b.outerHTML.slice(0, 80));
     }
     const exempt = b.matches(".link, .disclosure-button, .info-button, .list-row, .run-row, .plan-session-head, .plan-race, .feed-summary, .quote, .choice, .help-toc button, .msg-actions button");
     const h = b.getBoundingClientRect().height;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Accumulation, RideAccumulation, RideCard, RunCard, Workout } from "@running-coach/core";
+import type { Accumulation, RideAccumulation, RideCard, RunCard, WeekVolume, Workout } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
@@ -12,8 +12,11 @@ import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
 import { dayText, IntensityBar, kmText, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
 import { EffortPicker, SportIcon } from "../ui";
+import { WeeklyVolumeCard } from "./WeeklyVolume";
 
 const HISTORY_DAYS = 30;
+/** 騎車的週趨勢看幾週（規格 12.31：8–12 週） */
+const WEEKLY_WEEKS = 10;
 
 /** 紀錄頁（規格 12.9）：每一趟一列，點開看卡片；補填或修改體感 */
 export function HistoryView() {
@@ -32,8 +35,11 @@ export function HistoryView() {
   const multisport = featureEnabled("multisport");
   const [rides, setRides] = useState<RideCard[]>([]);
   const [rideTotals, setRideTotals] = useState<RideAccumulation | null>(null);
+  const [weeks, setWeeks] = useState<WeekVolume[] | null>(null);
   const [openRides, setOpenRides] = useState<Set<string>>(new Set());
   const [rideEditing, setRideEditing] = useState<{ id: string; effort: number; notes: string } | null>(null);
+  // 正在產生分析的騎車（規格 12.31）
+  const [analyzing, setAnalyzing] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -42,6 +48,7 @@ export function HistoryView() {
     if (multisport) {
       void coach.rideCards(HISTORY_DAYS).then((c) => alive && setRides(c));
       void coach.rideAccumulation().then((a) => alive && setRideTotals(a));
+      void coach.weeklyVolume(WEEKLY_WEEKS).then((w) => alive && setWeeks(w));
     }
     return () => {
       alive = false;
@@ -53,13 +60,28 @@ export function HistoryView() {
     setSaving(true);
     setMessage(null);
     try {
-      await coach.reportRun(rideEditing.effort, rideEditing.notes, { kind: "other", intervalsId: rideEditing.id });
+      // 騎車：存了體感就重新產生分析（和跑步的「儲存並重新分析」一樣）
+      const report = await coach.reportRun(rideEditing.effort, rideEditing.notes, { kind: "other", intervalsId: rideEditing.id });
+      if (report.status === "other" && report.summary === null && multisport) setMessage({ kind: "error", text: "體感已存檔；這次沒有產生分析，可以稍後按「請教練分析」再試。" });
       setRideEditing(null);
       touch();
     } catch (e) {
       setMessage({ kind: "error", text: errorText(e) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function analyzeRide(id: string) {
+    setAnalyzing(id);
+    setMessage(null);
+    try {
+      await coach.analyzeRide(id);
+      touch();
+    } catch (e) {
+      setMessage({ kind: "error", text: `分析失敗：${errorText(e)}` });
+    } finally {
+      setAnalyzing(null);
     }
   }
 
@@ -109,7 +131,7 @@ export function HistoryView() {
                 </label>
                 <div className="actions">
                   <button className="primary" disabled={saving} onClick={() => void saveRideFeedback()}>
-                    {saving ? "儲存中…" : "儲存體感"}
+                    {saving ? "儲存並分析中…" : "儲存並重新分析"}
                   </button>
                   <button className="text" disabled={saving} onClick={() => setRideEditing(null)}>
                     取消
@@ -119,11 +141,18 @@ export function HistoryView() {
             ) : (
               <div className="actions">
                 <button
+                  className={a.perceived_effort == null ? "primary" : ""}
                   disabled={rideEditing !== null || editing !== null}
                   onClick={() => setRideEditing({ id: a.intervals_id, effort: a.perceived_effort ?? 5, notes: a.subjective_notes ?? "" })}
                 >
                   {a.perceived_effort != null ? "修改體感" : "補填體感"}
                 </button>
+                {/* 還沒有分析的騎車：請教練分析（用跑後摘要的模型，結果存在這張卡上） */}
+                {!a.summary && (
+                  <button disabled={analyzing !== null || rideEditing !== null} onClick={() => void analyzeRide(a.intervals_id)}>
+                    {analyzing === a.intervals_id ? "分析中…" : "請教練分析"}
+                  </button>
+                )}
               </div>
             )}
           </RideCardView>
@@ -239,6 +268,7 @@ export function HistoryView() {
     <>
       {totals && totals.runs > 0 && <AccumulationView totals={totals} today={today} onImported={touch} />}
       {multisport && rideTotals && rideTotals.rides > 0 && <RideTotals totals={rideTotals} />}
+      {multisport && rideTotals && rideTotals.rides > 0 && weeks && <WeeklyVolumeCard weeks={weeks} />}
       <section className="card">
         <h2>
           最近 {HISTORY_DAYS} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}

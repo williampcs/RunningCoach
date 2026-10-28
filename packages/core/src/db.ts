@@ -36,8 +36,9 @@ import type {
  * 13：races.sport（賽事的運動）與 activity_feedback（騎車等其他運動的體感與感受）（多運動的第 3 階段）
  * 14：planned_sessions.edited_at（教練改過這堂課的內容，規格 12.31 第 1 點）
  * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
+ * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
  */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -232,6 +233,12 @@ const SCHEMA = `
     perceived_effort INTEGER,
     subjective_notes TEXT,
     updated_at       TEXT NOT NULL
+  );
+  -- 騎車等其他運動的 AI 分析（騎後分析）：和體感一樣另外存，以 Intervals.icu 的活動 id 對應
+  CREATE TABLE IF NOT EXISTS activity_summaries (
+    intervals_id TEXT PRIMARY KEY,
+    summary      TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1274,8 +1281,8 @@ export class Db {
   /** 最近 N 天跑步以外的運動，新的在前 */
   getOtherActivities(days: number): Promise<OtherActivity[]> {
     return this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
-        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
       [addDays(this.clock.today(), -days)],
     );
   }
@@ -1289,8 +1296,8 @@ export class Db {
   /** 跑步以外的一筆運動（含回報的體感）；找不到時為 null */
   async getOtherActivity(intervalsId: string): Promise<OtherActivity | null> {
     const rows = await this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
-        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
       [intervalsId],
     );
     return rows[0] ?? null;
@@ -1306,6 +1313,19 @@ export class Db {
       "INSERT INTO activity_feedback (intervals_id, perceived_effort, subjective_notes, updated_at) VALUES (?, ?, ?, ?)" +
         " ON CONFLICT(intervals_id) DO UPDATE SET perceived_effort=excluded.perceived_effort, subjective_notes=excluded.subjective_notes, updated_at=excluded.updated_at",
       [intervalsId, perceivedEffort, subjectiveNotes, updatedAt],
+    );
+  }
+
+  /** 騎車等其他運動的 AI 分析（騎後分析）；null 是刪掉 */
+  async setActivitySummary(intervalsId: string, summary: string | null, updatedAt = this.stamp()): Promise<void> {
+    if (summary === null) {
+      await this.run("DELETE FROM activity_summaries WHERE intervals_id=?", [intervalsId]);
+      return;
+    }
+    await this.run(
+      "INSERT INTO activity_summaries (intervals_id, summary, updated_at) VALUES (?, ?, ?)" +
+        " ON CONFLICT(intervals_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
+      [intervalsId, summary, updatedAt],
     );
   }
 

@@ -57,6 +57,9 @@
   --warn-strong: #b45309;
   --error-bg: #fee2e2;
   --info-bg: #e0f2fe;
+  /* 跑步＋騎車的總量圖（規格 12.31）：運動不用強度的顏色，用兩種中性色（深的跑步、淺的騎車）＋圖示 */
+  --vol-run: #334155;
+  --vol-ride: #8190a5;
   /* 教練動態的看板 */
   --board: #e9eff6;
   --board-line: #d5deea;
@@ -92,6 +95,8 @@
     --info-bg: #0c3a55;
     --board: #16223a;
     --board-line: #263552;
+    --vol-run: #e2e8f0;
+    --vol-ride: #64748b;
   }
 }
 
@@ -1000,6 +1005,167 @@ button.info-button[aria-expanded="true"] {
 
 .dot.high {
   background: var(--int-high);
+}
+
+.dot.unknown {
+  background: var(--int-none);
+}
+
+.dot.vol-run {
+  background: var(--vol-run);
+}
+
+.dot.vol-ride {
+  background: var(--vol-ride);
+}
+
+/* 每週的長條（騎車的週趨勢，規格 12.31）：疊起來的每一段之間留 2px，頂端圓角 */
+.week-bars-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-1);
+  height: 120px;
+  border-bottom: 1px solid var(--border);
+}
+
+.week-bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.week-bar-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: 100%;
+  max-width: 28px;
+  min-height: 2px;
+}
+
+.week-bar-stack > span {
+  min-height: 2px;
+}
+
+.week-bar-stack > span:last-child {
+  border-radius: 4px 4px 0 0;
+}
+
+/* 選中的那週：長條下面一條主色的線（不調淡其他週：淡掉的中性色會和另一種中性色混淆） */
+.week-bar.selected::after {
+  content: "";
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  bottom: -5px;
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+.week-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.week-bar-stack .low {
+  background: var(--int-low);
+}
+
+.week-bar-stack .moderate {
+  background: var(--int-mid);
+}
+
+.week-bar-stack .high {
+  background: var(--int-high);
+}
+
+.week-bar-stack .unknown {
+  background: var(--int-none);
+}
+
+.week-bar-stack .vol-run {
+  background: var(--vol-run);
+}
+
+.week-bar-stack .vol-ride {
+  background: var(--vol-ride);
+}
+
+.week-bars-axis {
+  display: flex;
+  gap: var(--sp-1);
+  margin-top: 6px;
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+.week-bars-axis > span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.week-total-head {
+  margin-top: var(--sp-4);
+  align-items: center;
+}
+
+.week-total-head h3 {
+  margin: 0;
+}
+
+.week-detail {
+  margin: var(--sp-1) 0 0;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.segmented > button {
+  border: 0;
+  border-radius: 0;
+  min-height: var(--touch);
+  padding: 0 var(--sp-4);
+  background: none;
+}
+
+.segmented > button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.week-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-aux);
+}
+
+.week-table th,
+.week-table td {
+  padding: var(--sp-1) var(--sp-2);
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+
+.week-table th:first-child {
+  text-align: left;
 }
 
 .legend {

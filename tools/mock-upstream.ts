@@ -148,6 +148,10 @@ function activities() {
       moving_time: 5100,
       average_heartrate: 130,
       icu_training_load: 52,
+      // 訓練台：有踏頻與功率（騎車卡有資料才顯示踏頻、功率與標準化功率，規格 12.31）
+      average_cadence: 88,
+      icu_average_watts: 172,
+      icu_weighted_avg_watts: 181,
       lthr: RIDE_LTHR,
       icu_hr_zones: RIDE_HR_ZONES,
       icu_hr_zone_times: [2400, 2400, 300, 0, 0, 0, 0],
@@ -352,6 +356,16 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     return [{ type: "text", text: `整理如下：\n\n\`\`\`json\n${JSON.stringify(extraction, null, 2)}\n\`\`\`` }];
   }
 
+  // 騎後分析（規格 12.31）：提到有沒有功率，E2E 檢查功率有帶進去
+  if (!body.tools?.length && lastText.includes("騎車訓練")) {
+    const power = /平均功率：(\d+) W/.exec(lastText);
+    return [
+      {
+        type: "text",
+        text: `（模擬騎後分析）穩定的耐力騎，強度控制得不錯\n\n- 大多在低強度${power ? `\n- 平均功率 ${power[1]} W，出力平穩` : ""}\n- 明天可以安排輕鬆跑`,
+      },
+    ];
+  }
   // 沒有工具的單次生成（跑後摘要、對話壓縮）；真實模型常回 Markdown
   if (!body.tools?.length) {
     return [

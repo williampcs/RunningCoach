@@ -5,6 +5,7 @@ import {
   addDays,
   heartRateText,
   shortDateLabel,
+  splitSummary,
   type Activity,
   type OtherActivity,
   type ReportCandidate,
@@ -19,7 +20,7 @@ import { featureEnabled } from "../environment";
 import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
-import { kmText, RunCardView } from "./RunCard";
+import { kmText, RunCardView, SummaryView } from "./RunCard";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -280,6 +281,8 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
               <Icon as={Check} />
               已存到這趟{activityLabel(report.activity.type)}。
             </p>
+            {/* 騎車的分析（多運動，規格 12.31） */}
+            <SummaryView {...splitSummary(report.summary)} />
             <div className="actions">
               <button className="primary" onClick={() => goTo("chat", otherAnalysisRequest(report.activity, submitted?.effort ?? 5, submitted?.notes ?? ""))}>
                 請教練分析

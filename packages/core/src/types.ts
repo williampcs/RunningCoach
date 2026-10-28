@@ -77,6 +77,8 @@ export interface OtherActivity {
   /** 選手回報的體感（1–10）與感受（activity_feedback，多運動的「運動回報」，schema 13） */
   perceived_effort?: number | null;
   subjective_notes?: string | null;
+  /** 教練的分析（騎後分析，activity_summaries，schema 16）；還沒分析時為 null */
+  summary?: string | null;
 }
 
 /** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */

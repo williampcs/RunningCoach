@@ -26,6 +26,7 @@ import {
 } from "./races";
 import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
 import { racePlaceOf, raceWeatherForTool, raceWeatherUnavailable, type RaceWeatherSource } from "./race-weather";
+import { analyzeRide, weeklyVolumeOf, weeklyVolumeText } from "./ride-analysis";
 
 const RACE_ID_HINT =
   "race_id 為系統提示賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
@@ -64,7 +65,7 @@ const RIDE_KIND_LIST = ["ride_recovery", "ride_endurance", "ride_long", "ride_te
 const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
   name: "save_activity_feedback",
   description:
-    "記下一趟跑步以外的運動（騎車、游泳等，已從 Intervals.icu 同步）的體感與感受。選手回報騎完了、說了體感時呼叫；跑步用 save_workout。" +
+    "記下一趟跑步以外的運動（騎車、游泳等，已從 Intervals.icu 同步）的體感與感受；騎車會一併產生這趟的分析（回傳在結果裡）。選手回報騎完了、說了體感時呼叫；跑步用 save_workout。" +
     "不給 date 時是今天；那天有好幾趟時用 sport 指定，仍有好幾趟時記到最新的一趟。",
   input_schema: {
     type: "object",
@@ -857,7 +858,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "get_training_values": {
         const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
-        return formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
+        const text = formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
+        // 多運動：最近幾週的騎車量與趨勢（規格 12.31）
+        return multisport ? `${text}\n\n${weeklyVolumeText(await weeklyVolumeOf(db, today(), 9), today())}` : text;
       }
 
       case "get_recovery_status": {
@@ -1073,7 +1076,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           return `${date} 沒有同步到${SPORT_LABELS[sport as keyof typeof SPORT_LABELS] ?? "這項運動"}的紀錄（可能手錶還沒上傳到 Intervals.icu）。請選手同步後再回報，或之後在「運動回報」填。`;
         }
         await db.setActivityFeedback(found.intervals_id, effort, str(input.subjective_notes).trim() || null);
-        return `已記下 ${date} ${activityLabel(found.type)}（${Math.round(found.duration_min ?? 0)} 分鐘）的體感 ${effort}/10。`;
+        const saved = `已記下 ${date} ${activityLabel(found.type)}（${Math.round(found.duration_min ?? 0)} 分鐘）的體感 ${effort}/10。`;
+        if (sportOfType(found.type) !== "ride") return saved;
+        // 騎車：和跑步的 save_workout 一樣產生分析（規格 12.31）；失敗時體感照樣存著
+        try {
+          return `${saved}\n\n${await analyzeRide({ db, llm, weather, today: today() }, found.intervals_id)}`;
+        } catch (e) {
+          logger.warn(`Ride summary failed for ${found.intervals_id}: ${e instanceof Error ? e.message : String(e)}`);
+          return `${saved}（這次沒有產生分析）`;
+        }
       }
 
       case "update_planned_session": {

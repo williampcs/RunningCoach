@@ -17,7 +17,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd|af):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|w|ws|wd|af|as):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -163,6 +163,10 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   for (const r of await sql.all("SELECT intervals_id, perceived_effort, subjective_notes, updated_at FROM activity_feedback")) {
     data.set(`af:${r.intervals_id}`, { e: r.perceived_effort ?? null, n: r.subjective_notes ?? null, updated_at: r.updated_at ?? null });
   }
+  // 騎車等其他運動的分析（schema 16；舊版不認得，不套用也不刪）
+  for (const r of await sql.all("SELECT intervals_id, summary, updated_at FROM activity_summaries")) {
+    data.set(`as:${r.intervals_id}`, { s: r.summary ?? null, updated_at: r.updated_at ?? null });
+  }
   for (const r of await sql.all("SELECT a, b FROM workout_distinct")) {
     const [ka, kb] = [keyById.get(Number(r.a)), keyById.get(Number(r.b))];
     if (ka && kb) data.set(`wd:${[ka, kb].sort().join("|")}`, {});
@@ -294,6 +298,17 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
           "INSERT INTO activity_feedback (intervals_id, perceived_effort, subjective_notes, updated_at) VALUES (?, ?, ?, ?)" +
             " ON CONFLICT(intervals_id) DO UPDATE SET perceived_effort=excluded.perceived_effort, subjective_notes=excluded.subjective_notes, updated_at=excluded.updated_at",
           [id, data.e ?? null, data.n ?? null, data.updated_at ?? ""],
+        );
+      }
+      return "applied";
+    case "as":
+      // 分析存在 activity_summaries（不依賴這台有沒有那趟），不必暫存
+      if (!data) await sql.run("DELETE FROM activity_summaries WHERE intervals_id=?", [id]);
+      else {
+        await sql.run(
+          "INSERT INTO activity_summaries (intervals_id, summary, updated_at) VALUES (?, ?, ?)" +
+            " ON CONFLICT(intervals_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
+          [id, data.s ?? "", data.updated_at ?? ""],
         );
       }
       return "applied";

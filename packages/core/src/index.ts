@@ -70,6 +70,7 @@ export {
   type RaceOutcome,
 } from "./races";
 export { normalizeStartTime, placeFields } from "./races";
+export { rideMetrics, weeklyVolume, type RideMetrics, type WeekVolume } from "./ride-analysis";
 export {
   OpenMeteoRaceWeather,
   racePlaceOf,

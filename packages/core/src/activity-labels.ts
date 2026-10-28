@@ -35,7 +35,11 @@ export function otherActivitiesText(
     const parts = [a.duration_min != null ? `${Math.round(a.duration_min)} 分鐘` : null, a.distance_km ? `${a.distance_km} km` : null];
     if (a.training_load != null) parts.push(`負荷 ${a.training_load}`);
     if (a.avg_hr != null) parts.push(`心率 ${a.avg_hr}`);
+    if (a.perceived_effort != null) parts.push(`體感 ${a.perceived_effort}/10${a.subjective_notes ? `（${a.subjective_notes}）` : ""}`);
     lines.push(`- ${a.date} ${activityLabel(a.type)}：${parts.filter(Boolean).join("｜")}`);
+    // 騎後分析（規格 12.31）：只帶第一行的結論
+    const headline = a.summary?.trim().split("\n")[0];
+    if (headline) lines.push(`  分析：${headline}`);
   }
   return lines.join("\n");
 }

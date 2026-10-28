@@ -164,7 +164,7 @@ sequenceDiagram
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 15 版）
+## 資料庫的 schema（目前是第 16 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -179,6 +179,7 @@ erDiagram
   conversations ||--o| conversations : "reply_to：回覆哪一則（存摘錄）"
   pending_subjective }o--o| workouts : "同步時依日期配對"
   activity_feedback |o--o| other_activities : "intervals_id：騎車等的體感"
+  activity_summaries |o--o| other_activities : "intervals_id：騎後分析"
   races }o--o| other_activities : "result_activity = intervals_id：單車賽事當天那趟"
   daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
 ```
@@ -197,6 +198,7 @@ erDiagram
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
 - `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
+- `activity_summaries`：騎車的 AI 分析（騎後分析，schema 16，規格 12.31）。和體感一樣另外存、用 `intervals_id` 對應；用跑後摘要的模型，存了騎車的體感（回報、補填、教練的 `save_activity_feedback`）或按「請教練分析」時產生（`ride-analysis.ts`）。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
 - `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
@@ -228,6 +230,7 @@ erDiagram
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
 | `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
+| `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
 - `spaces`：同步空間與存取憑證的雜湊。
