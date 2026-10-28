@@ -139,7 +139,10 @@ function Steps({ rows }: { rows: StepRow[] }) {
   );
 }
 
-/** 整堂課的結構：一條強度條（長度是時間、顏色是強度），下面一行標暖身、主課、緩和 */
+/**
+ * 整堂課的結構：一條強度條（長度是時間、顏色是強度），下面一行標暖身、主課、緩和.
+ * 說明依序排、不照比例：很短的一段（例如緩和 10 分）照比例會被截掉，放不下時換行
+ */
 function Structure({ segments }: { segments: StructureSegment[] }) {
   if (!segments.length) return null;
   const phases: { phase: StructureSegment["phase"]; minutes: number }[] = [];
@@ -162,7 +165,7 @@ function Structure({ segments }: { segments: StructureSegment[] }) {
       {phases.length > 1 && (
         <div className="strip-labels">
           {phases.map((p, i) => (
-            <span key={i} style={{ flexGrow: p.minutes, flexBasis: 0 }}>
+            <span key={i}>
               {PHASE_NAMES[p.phase]} {Math.round(p.minutes)} 分
             </span>
           ))}

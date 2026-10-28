@@ -75,7 +75,7 @@ function inspect() {
   };
   // 內容（教練的回覆、使用說明的內文、跑後分析、匯入的課表、輸入框裡打的字）不算介面
   const CONTENT = ".bubble, .markdown, .summary-text, .run-summary, .import-plan, .recovery-code, .help-section, .quote";
-  const out = { emoji: [], sizes: {}, primary: [], unnamed: [], small: [], feedTitles: [], tabs: null, overflow: false };
+  const out = { emoji: [], sizes: {}, primary: [], unnamed: [], small: [], feedTitles: [], clipped: [], tabs: null, overflow: false };
 
   // 1. emoji：看得到的文字（不含內容）
   const emoji = /\p{Extended_Pictographic}/u;
@@ -114,6 +114,10 @@ function inspect() {
   }
 
   // 4b. 看板的標題不帶括號裡的數字（數字放標籤）
+  // 課卡強度條下面的說明（暖身、主課、緩和）：不可以被截掉或出現省略號
+  out.clipped = [...document.querySelectorAll(".strip-labels, .strip-labels > span")]
+    .filter((el) => el.getClientRects().length && (el.scrollWidth > el.clientWidth + 1 || getComputedStyle(el).textOverflow === "ellipsis"))
+    .map((el) => el.textContent);
   out.feedTitles = [...document.querySelectorAll(".feed-title")].map((t) => t.textContent).filter((t) => /（[^）]*\d/.test(t));
 
   // 5. 分頁：線條圖示＋兩個字
@@ -282,6 +286,8 @@ const PAGES = [
               r.tabs.map((t) => t.text).join(",") === TABS.join(",") && r.tabs.every((t) => t.svg);
             check[`${tag}.noOverflow`] = !r.overflow;
             check[`${tag}.feedTitlesNoNumbers`] = r.feedTitles.length === 0;
+            check[`${tag}.stripLabelsNotClipped`] = r.clipped.length === 0;
+            if (r.clipped.length) problems.push(`[${tag}] 強度條的說明被截掉：${r.clipped.join(" | ")}`);
             if (r.feedTitles.length) problems.push(`[${tag}] 看板的標題有括號裡的數字：${r.feedTitles.join(" | ")}`);
             if (r.emoji.length) problems.push(`[${tag}] emoji：${r.emoji.join(" | ")}`);
             if (sizes.length > 5) problems.push(`[${tag}] 字級 ${sizes.length} 種：${sizes.map((s) => `${s}（${r.sizes[s].slice(0, 2).join("、")}）`).join(" ")}`);

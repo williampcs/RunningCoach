@@ -2022,15 +2022,19 @@ button.plan-session-head {
 
 .strip-labels {
   display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--sp-2);
   font-size: var(--fs-aux);
   color: var(--muted);
 }
 
+/* 一段一個說明，中間用「·」隔開；放不下時整段換到下一行，不截斷 */
 .strip-labels > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.strip-labels > span + span::before {
+  content: "· ";
 }
 
 /* 步驟：一步一行（顏色點＋名稱＋目標＋長度） */
