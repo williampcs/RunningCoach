@@ -70,15 +70,18 @@ export function Disclosure({
   summary = "細節",
   className = "",
   open,
+  onToggle,
   children,
 }: {
   summary?: ReactNode;
   className?: string;
   open?: boolean;
+  /** 打開或收起之後（open 由外面控制時，用它記下選手點開的） */
+  onToggle?: (open: boolean) => void;
   children: ReactNode;
 }) {
   return (
-    <details className={`disclosure ${className}`.trim()} open={open}>
+    <details className={`disclosure ${className}`.trim()} open={open} onToggle={onToggle && ((e) => onToggle(e.currentTarget.open))}>
       <summary>
         <Icon as={ChevronRight} size={16} className="icon chev" />
         {summary}

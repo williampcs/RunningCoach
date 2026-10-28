@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   formatTokenFooter,
   MEMORY_MAX_CHARS,
   messageTimeLabel,
   REPLY_EXCERPT_CHARS,
+  splitReplySections,
   type ChatEvent,
   type ConversationRow,
   type ReplyRef,
@@ -13,7 +14,7 @@ import {
 import { Archive, X } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
-import { EmojiText, Icon } from "../ui";
+import { Disclosure, EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
@@ -60,6 +61,44 @@ function plainText(content: string): string {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** 小標裡的 Markdown 符號（粗體、程式碼）去掉，收起的那一列只寫字 */
+const headingText = (title: string) => title.replace(/(\*\*|__|`)/g, "");
+
+/**
+ * 教練的回覆（規格 12.30 第 2 點）：有小標（##）時，第一個小標之前的結論一直顯示，每個小標收成一列，加「全部展開」；
+ * 沒有小標的照舊整段。正在寫的回覆不經過這裡（整段顯示），寫完存進對話後才收起；選手點開的保持打開
+ */
+function CoachReply({ content }: { content: string }) {
+  const { lead, sections } = useMemo(() => splitReplySections(content), [content]);
+  // 沒有結論（一開始就是小標）時打開第一段，不讓整則回覆只剩幾個標題
+  const [open, setOpen] = useState<boolean[]>(() => sections.map((_, i) => i === 0 && !lead));
+  if (!sections.length) return <Markdown>{content}</Markdown>;
+  const allOpen = sections.every((_, i) => open[i]);
+  return (
+    <div className="coach-reply">
+      {lead && <Markdown>{lead}</Markdown>}
+      <div className="reply-sections">
+        {sections.map((s, i) => (
+          <Disclosure
+            key={i}
+            summary={headingText(s.title)}
+            className="reply-section"
+            open={open[i] ?? false}
+            onToggle={(now) => setOpen((o) => (o[i] === now ? o : sections.map((_, j) => (j === i ? now : (o[j] ?? false)))))}
+          >
+            <Markdown>{s.body}</Markdown>
+          </Disclosure>
+        ))}
+      </div>
+      {sections.length > 1 && (
+        <button type="button" className="text reply-toggle-all" onClick={() => setOpen(sections.map(() => !allOpen))}>
+          {allOpen ? "全部收起" : "全部展開"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 const excerpt = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
@@ -292,7 +331,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
             <div id={`msg-${m.id}`} className={`msg ${m.role}${m.archived ? " archived" : ""}`}>
               {m.reply_to && quote(m.reply_to, () => jumpTo(m.reply_to!))}
               <div className={`bubble ${m.role}`}>
-                {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
+                {m.role === "assistant" ? <CoachReply content={m.content} /> : m.content}
                 {m.sources?.length ? <p className="sources">參考了：{m.sources.join("、")}</p> : null}
               </div>
               <div className="msg-meta">

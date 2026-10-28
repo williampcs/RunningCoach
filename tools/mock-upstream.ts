@@ -308,6 +308,13 @@ const toolUse = (name: string, input: Record<string, unknown> = {}): Block => ({
 });
 
 /** 依對話內容決定模擬教練的下一步 */
+/** 模擬的長回覆：結論＋三個小標（程式碼區塊裡的 ## 不算小標） */
+const LONG_REPLY =
+  "（模擬回覆）**週四的閾值課縮短成 3 × 1.5 km，週末長跑照排**。這週量比平常多一成，先保留強度、少一組。\n\n" +
+  "## 這週的狀況\n這週跑了 32 km，比前三週平均多 12%；長跑後段的心率漂移有點大。\n\n" +
+  "## 週四的閾值課\n改成 3 × 1.5 km，組間慢跑 2 分鐘。\n\n```\n## 這行在程式碼區塊裡，不是小標\n```\n\n" +
+  "## 週末的長跑\n維持 16 km，前 10 km 控制在輕鬆跑的心率以下。";
+
 function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
   const last = body.messages.at(-1);
   const lastText = textOf(last);
@@ -374,6 +381,8 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/天氣|下雨/.test(lastText) && toolNames.includes("get_weather")) {
     return [toolUse("get_weather", { date: daysAgo(-1) })];
   }
+  // 長回覆（規格 12.30）：先一兩句結論、細節分小標；E2E 檢查小標以下收起、串流時全部展開
+  if (/長一點|詳細說明/.test(lastText)) return [{ type: "text", text: LONG_REPLY }];
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];
   return [

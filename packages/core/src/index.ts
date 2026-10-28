@@ -84,6 +84,7 @@ export {
   type WeatherPlace,
   type WeatherSource,
 } from "./weather";
+export { splitReplySections, type ReplySection, type ReplySections } from "./reply-sections";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {

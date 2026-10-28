@@ -1099,6 +1099,39 @@ button.info-button[aria-expanded="true"] {
   border-bottom-left-radius: var(--sp-1);
 }
 
+/* 教練的長回覆（規格 12.30）：結論一直顯示，每個小標收成一列，最後「全部展開」 */
+.coach-reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.reply-sections {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-1);
+}
+
+.reply-sections:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.reply-section > summary {
+  font-weight: 600;
+}
+
+.reply-section > .disclosure-body {
+  padding: 0 0 var(--sp-2) var(--sp-4);
+}
+
+button.text.reply-toggle-all {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0;
+}
+
 /* 一則訊息：引用、氣泡、動作 */
 .msg {
   display: flex;
