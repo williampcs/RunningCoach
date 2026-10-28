@@ -69,6 +69,15 @@ export {
   type DnsReason,
   type RaceOutcome,
 } from "./races";
+export { normalizeStartTime, placeFields } from "./races";
+export {
+  OpenMeteoRaceWeather,
+  racePlaceOf,
+  raceWeatherSummary,
+  RACE_FORECAST_DAYS,
+  type RacePlace,
+  type RaceWeatherSource,
+} from "./race-weather";
 export {
   OPEN_METEO_URLS,
   OpenMeteoWeather,

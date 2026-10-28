@@ -10,6 +10,7 @@ import {
   type NextOptions,
   type ToolResult,
   type Turn,
+  type RaceWeatherSource,
   type WeatherSource,
 } from "../src";
 
@@ -93,7 +94,7 @@ export function activity(partial: Partial<Activity> = {}): Activity {
 
 export async function makeCoach(
   script: ConstructorParameters<typeof ScriptedProvider>[0] = [],
-  options: { activities?: Activity[]; settings?: Partial<CoachSettings>; now?: () => Date; weather?: WeatherSource | null } = {},
+  options: { activities?: Activity[]; settings?: Partial<CoachSettings>; now?: () => Date; weather?: WeatherSource | null; raceWeather?: RaceWeatherSource | null } = {},
 ) {
   const provider = new ScriptedProvider(script);
   const activities = new FakeActivities(options.activities);
@@ -108,6 +109,7 @@ export async function makeCoach(
     },
     activities,
     weather: options.weather ?? null,
+    raceWeather: options.raceWeather ?? null,
     settings: options.settings,
     now: options.now ?? (() => NOW),
     logger: {

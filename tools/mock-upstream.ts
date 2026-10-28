@@ -334,7 +334,7 @@ const LONG_REPLY =
   "## 週四的閾值課\n改成 3 × 1.5 km，組間慢跑 2 分鐘。\n\n```\n## 這行在程式碼區塊裡，不是小標\n```\n\n" +
   "## 週末的長跑\n維持 16 km，前 10 km 控制在輕鬆跑的心率以下。";
 
-function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
+function reply(body: { messages: Message[]; system?: string | Block[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
   const last = body.messages.at(-1);
   const lastText = textOf(last);
   const isToolResult = Array.isArray(last?.content) && last.content.some((b) => b.type === "tool_result");
@@ -393,6 +393,12 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (remember) return [toolUse("remember", { content: remember[1]!.trim() })];
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
+  // 比賽日的天氣（規格 12.31）：系統提示的賽事清單裡第一場設定了地點的
+  // 系統提示：Anthropic 的在 system，OpenAI 相容的是第一則 system 訊息
+  const systemText = body.system ? textOf({ role: "system", content: body.system }) : "";
+  const placed = systemText.match(/- \[(\d+)\][^\n]*已設定地點/);
+  const asked = /比賽.*(天氣|配速)|怎麼配速/.test(lastText);
+  if (asked && placed) return [toolUse("get_race_weather", { race_id: Number(placed[1]) })];
   if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
   if (/騎完|剛騎/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
@@ -571,7 +577,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
 
 type OpenAIMessage = { role: string; content: string | null; tool_calls?: unknown[] };
 
-/** OpenAI 格式的請求轉成 reply() 使用的格式（只用得到最後一則與是否有工具） */
+/** OpenAI 格式的請求轉成 reply() 使用的格式（只用得到最後一則、系統提示與是否有工具） */
 function fromOpenAI(body: { messages: OpenAIMessage[]; tools?: unknown[]; tool_choice?: unknown }) {
   return {
     messages: body.messages
@@ -581,6 +587,8 @@ function fromOpenAI(body: { messages: OpenAIMessage[]; tools?: unknown[]; tool_c
           ? { role: "user", content: [{ type: "tool_result", content: m.content ?? "" }] }
           : { role: m.role, content: m.content ?? "" },
       ),
+    // 系統提示另外帶著（比賽日的天氣看賽事清單）
+    system: body.messages.find((m) => m.role === "system")?.content ?? undefined,
     tools: body.tools,
     tool_choice: body.tool_choice === "none" ? { type: "none" } : undefined,
   };
@@ -648,7 +656,8 @@ function mockWeather(url: URL) {
   const past = Number(url.searchParams.get("past_days") ?? 0);
   const days = Number(url.searchParams.get("forecast_days") ?? 7);
   // 日期依查詢的時區（和 Open-Meteo 一樣），不然測試的瀏覽器在 UTC 時跨日前後會對不上
-  const zone = url.searchParams.get("timezone") || "Asia/Taipei";
+  // auto（比賽地點的天氣）：模擬的地點都當成台北的時區
+  const zone = url.searchParams.get("timezone") === "auto" ? "Asia/Taipei" : url.searchParams.get("timezone") || "Asia/Taipei";
   const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date());
   const dates = Array.from({ length: past + days }, (_, i) => new Date(Date.parse(localToday) - (past - i) * 86_400_000).toISOString().slice(0, 10));
   const hours = dates.flatMap((d) => Array.from({ length: 24 }, (_, h) => ({ time: `${d}T${String(h).padStart(2, "0")}:00`, h })));

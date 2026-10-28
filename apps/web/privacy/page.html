@@ -31,7 +31,7 @@
       <section aria-labelledby="stored">
         <h2 id="stored">存在你裝置上的資料</h2>
         <ul>
-          <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事、課表、每日自評、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
+          <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事（包括你為查天氣選的比賽地點與起跑時間）、課表、每日自評、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
           <li><strong>瀏覽器的 localStorage</strong>：設定，包括 AI 服務與模型、AI 的 API key、Intervals.icu 的 API key 與 Athlete ID、時區、天氣的城市、多裝置同步的金鑰、你確認過的資料流向；以及幾個畫面的小狀態，例如是否略過新手引導、教練動態裡按過「知道了」的項目。</li>
           <li><strong>密碼鎖（選用）</strong>：在設定的「密碼鎖」啟用後，API key、Intervals.icu 的 key 與同步金鑰會用你的密碼加密後才保存；沒有啟用時是以明文保存。對話與訓練資料不會加密。</li>
           <li>設定裡「匯出資料庫」匯出的檔案不含 API key。</li>
@@ -57,11 +57,12 @@
           <li><strong>送到哪裡</strong>：<code>intervals.icu</code>。隱私政策：<a href="https://www.intervals.icu/privacy-policy/">Intervals.icu</a>。</li>
         </ul>
 
-        <h3>Open-Meteo（設定了天氣的城市才會）</h3>
+        <h3>Open-Meteo（設定了天氣的城市，或賽事設定了比賽地點才會）</h3>
         <ul>
           <li><strong>查天氣</strong>：送出四捨五入到 0.1 度（約 10 公里）的座標與你的時區，到 <code>api.open-meteo.com</code> 與 <code>air-quality-api.open-meteo.com</code>。</li>
-          <li><strong>找城市</strong>：在設定搜尋城市時，送出你輸入的名稱到 <code>geocoding-api.open-meteo.com</code>；直接選台灣的縣市不會送出任何東西。</li>
-          <li>這個城市只存在這個瀏覽器的設定裡：不進資料庫、不同步，AI 服務也看不到地點。</li>
+          <li><strong>比賽日的天氣</strong>：賽事設定了比賽地點、比賽在 16 天內時，送出那個地點四捨五入的座標到 <code>api.open-meteo.com</code>（時區用那個地點的）。</li>
+          <li><strong>找城市</strong>：在設定或賽事搜尋城市時，送出你輸入的名稱到 <code>geocoding-api.open-meteo.com</code>；直接選台灣的縣市不會送出任何東西。</li>
+          <li>天氣的城市只存在這個瀏覽器的設定裡：不進資料庫、不同步。比賽地點（名稱與四捨五入的座標）存在那場賽事上，開了多裝置同步時跟著賽事加密同步。兩者都只用來查天氣，AI 服務看不到地點，只看得到天氣的數字。</li>
           <li>條款與隱私：<a href="https://open-meteo.com/en/terms">Open-Meteo</a>。</li>
         </ul>
 

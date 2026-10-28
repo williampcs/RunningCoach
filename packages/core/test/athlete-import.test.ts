@@ -32,20 +32,21 @@ describe("parseExtraction", () => {
       JSON.stringify({
         profile: {},
         races: [
-          { name: "台北馬", date: "2026-12-20", distance_km: 42.195, target_time: "3:59:00", notes: null },
+          { name: "台北馬", date: "2026-12-20", distance_km: 42.195, target_time: "3:59:00", notes: null, city: "臺北市", start_time: "5:30" },
           { name: "去年的賽", date: "2026-03-01", distance_km: 21.0975 },
           { name: "日期不明", date: "2026-11", distance_km: 10 },
           { name: "不存在的日期", date: "2026-02-30", distance_km: 10 },
           { name: "沒有距離", date: "2026-11-01", distance_km: "很遠" },
-          { name: "秋季 10K", date: "2026-11-08", distance_km: "10", target_time: "不明" },
+          { name: "秋季 10K", date: "2026-11-08", distance_km: "10", target_time: "不明", city: "Osaka", start_time: "早上" },
         ],
         plan: "無",
       }),
       TODAY,
     );
     expect(result.races).toEqual([
-      { name: "秋季 10K", date: "2026-11-08", distance_km: 10, target_time: null, notes: null },
-      { name: "台北馬", date: "2026-12-20", distance_km: 42.195, target_time: "3:59:00", notes: null },
+      // 縣市只對照台灣的縣市（不送出去搜尋）；看不懂的起跑時間不帶
+      { name: "秋季 10K", date: "2026-11-08", distance_km: 10, target_time: null, notes: null, start_time: null, place: null },
+      { name: "台北馬", date: "2026-12-20", distance_km: 42.195, target_time: "3:59:00", notes: null, start_time: "05:30", place: { label: "台北市", lat: 25, lon: 121.6 } },
     ]);
     expect(result.plan).toBeNull();
   });

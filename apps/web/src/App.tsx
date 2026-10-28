@@ -4,6 +4,7 @@ import {
   Coach,
   FakeActivitySource,
   IntervalsClient,
+  OpenMeteoRaceWeather,
   OpenMeteoWeather,
   openMeteoUrlsAt,
   localDate,
@@ -122,6 +123,10 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
         })
       : null,
+    // 比賽地點的天氣（規格 12.31）：地點在賽事上，不依賴天氣的設定
+    raceWeather: new OpenMeteoRaceWeather({
+      urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
+    }),
     settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
   };
 }

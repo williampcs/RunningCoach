@@ -35,8 +35,9 @@ import type {
  * 12：planned_sessions 的 sport（交叉訓練的運動）與 done_at（選手回報做完了）（多運動，規格 12.24）
  * 13：races.sport（賽事的運動）與 activity_feedback（騎車等其他運動的體感與感受）（多運動的第 3 階段）
  * 14：planned_sessions.edited_at（教練改過這堂課的內容，規格 12.31 第 1 點）
+ * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -241,7 +242,9 @@ const SCHEMA = `
   );
 `;
 
-const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport"] as const;
+const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport", "place_label", "place_lat", "place_lon", "start_time"] as const;
+/** 可以清掉（寫成 NULL）的欄位：地點與起跑時間；其他欄位傳 null 時不改 */
+const RACE_CLEARABLE = new Set<string>(["place_label", "place_lat", "place_lon", "start_time"]);
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
 
 function parseJsonArray(json: string | null): unknown[] {
@@ -470,6 +473,11 @@ export class Db {
 
       // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
       if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
+      // --- Migration: races 的地點與起跑時間（schema 15：比賽地點的天氣，規格 12.31） ---
+      const raceCols15 = await columns("races");
+      for (const [col, type] of [["place_label", "TEXT"], ["place_lat", "REAL"], ["place_lon", "REAL"], ["start_time", "TEXT"]] as const) {
+        if (!raceCols15.has(col)) await d.exec(`ALTER TABLE races ADD COLUMN ${col} ${type}`);
+      }
 
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
@@ -540,10 +548,15 @@ export class Db {
     notes?: string;
     /** run 跑步（預設，存成 NULL）、ride 騎車 */
     sport?: string | null;
+    /** 比賽的地點（只用來查天氣）與起跑時間，選填 */
+    place_label?: string | null;
+    place_lat?: number | null;
+    place_lon?: number | null;
+    start_time?: string | null;
   }): Promise<number> {
     const result = await this.run(
-      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at, sport)" +
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at, sport, place_label, place_lat, place_lon, start_time)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         race.name,
         race.date,
@@ -553,6 +566,10 @@ export class Db {
         race.notes || null,
         this.stamp(),
         race.sport && race.sport !== "run" ? race.sport : null,
+        race.place_lat != null && race.place_lon != null ? (race.place_label ?? null) : null,
+        race.place_lat != null && race.place_lon != null ? race.place_lat : null,
+        race.place_lat != null && race.place_lon != null ? race.place_lon : null,
+        race.start_time || null,
       ],
     );
     return result.lastInsertRowid;
@@ -560,10 +577,10 @@ export class Db {
 
   /** 只更新有傳入的欄位 */
   async updateRace(raceId: number, fields: RaceUpdate): Promise<void> {
-    const updates = RACE_FIELDS.filter((k) => fields[k] !== undefined && fields[k] !== null);
+    const updates = RACE_FIELDS.filter((k) => fields[k] !== undefined && (fields[k] !== null || RACE_CLEARABLE.has(k)));
     if (updates.length === 0) return;
     const setClause = updates.map((k) => `${k}=?`).join(", ");
-    await this.run(`UPDATE races SET ${setClause} WHERE id=?`, [...updates.map((k) => fields[k]!), raceId]);
+    await this.run(`UPDATE races SET ${setClause} WHERE id=?`, [...updates.map((k) => fields[k] ?? null), raceId]);
   }
 
   /**

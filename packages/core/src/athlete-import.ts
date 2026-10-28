@@ -5,6 +5,8 @@
  * 這裡請摘要模型擷取成選手資料、賽事與訓練計畫的建議值，由使用者逐項確認後才寫入。
  * 原文不寫入資料庫。
  */
+import { normalizeStartTime } from "./races";
+import { matchTaiwanCities, type PlaceCandidate } from "./weather";
 
 /** 選手資料的欄位與名稱（與 update_athlete_profile 工具可用的欄位相同） */
 export const PROFILE_FIELDS: readonly { key: string; label: string; hint?: string }[] = [
@@ -35,6 +37,10 @@ export interface ImportedRace {
   distance_km: number;
   target_time: string | null;
   notes: string | null;
+  /** 起跑時間 HH:MM（原文有才有） */
+  start_time?: string | null;
+  /** 比賽地點：原文的縣市對得到台灣的縣市時才有（只用來查天氣；其他地方之後在賽事頁搜尋） */
+  place?: PlaceCandidate | null;
 }
 
 export interface ImportSuggestion {
@@ -75,7 +81,7 @@ export const IMPORT_PROMPT = `請根據我們過去的對話與你對我的了�
 - 休息日：
 - 偏好的訓練時段：
 
-【未來賽事】（每場一行：賽事名稱、日期 YYYY-MM-DD、距離、目標時間）
+【未來賽事】（每場一行：賽事名稱、日期 YYYY-MM-DD、距離、目標時間；知道的話加上舉辦的縣市與起跑時間）
 
 【目前的訓練計畫】（有固定的每週課表就逐日列出；沒有就寫「無」）`;
 
@@ -95,7 +101,7 @@ export function buildExtractionPrompt(text: string, today: string): string {
   return `以下是使用者從其他服務整理來的跑步資料，可能是固定格式，也可能是對話摘錄。今天是 ${today}。
 請擷取可以確定的資訊，只輸出一個 JSON 物件，不要其他文字：
 
-{"profile": {"<key>": "<value>"}, "races": [{"name": "賽事名稱", "date": "YYYY-MM-DD", "distance_km": 21.0975, "target_time": "1:55:00", "notes": null}], "plan": null}
+{"profile": {"<key>": "<value>"}, "races": [{"name": "賽事名稱", "date": "YYYY-MM-DD", "distance_km": 21.0975, "target_time": "1:55:00", "notes": null, "city": null, "start_time": null}], "plan": null}
 
 profile 可用的 key：
 ${keys}
@@ -104,7 +110,7 @@ ${keys}
 - 只填原文明確提到的資訊；「不明」、空白或需要推測的項目不要輸出。
 - 時間用 h:mm:ss 或 mm:ss；數字欄位只寫數字，不含單位。
 - 同一項有多個值時（例如 PB 更新過）用最新的。
-- races 只列今天以後、日期明確的賽事。半馬的 distance_km 是 21.0975，全馬是 42.195；target_time 與 notes 沒有就填 null。
+- races 只列今天以後、日期明確的賽事。半馬的 distance_km 是 21.0975，全馬是 42.195；target_time、notes、city（舉辦的縣市，例：台北市）、start_time（起跑時間 HH:MM）沒有就填 null。
 - plan 只在原文有具體的每週課表時填寫，用 Markdown 逐日條列；沒有就填 null。
 - 姓名、聯絡方式等可識別個人的資訊不要放進任何欄位。
 
@@ -112,6 +118,22 @@ ${keys}
 """
 ${text}
 """`;
+}
+
+/** 看得懂的起跑時間才帶入 */
+function startTimeOf(value: unknown): string | null {
+  try {
+    return normalizeStartTime(cleanText(value, 10));
+  } catch {
+    return null;
+  }
+}
+
+/** 縣市只在本機對照台灣的縣市（不送出去搜尋）；對到剛好一個才帶入 */
+function placeOf(value: unknown): PlaceCandidate | null {
+  const city = cleanText(value, 50);
+  const found = city ? matchTaiwanCities(city) : [];
+  return found.length === 1 ? found[0]! : null;
 }
 
 const UNKNOWN = /^(不明|未知|無|沒有|n\/?a|none|null|unknown|-+)$/i;
@@ -168,6 +190,8 @@ export function parseExtraction(reply: string, today: string): ImportSuggestion 
       distance_km: distance,
       target_time: cleanText(race.target_time, 20),
       notes: cleanText(race.notes, 300),
+      start_time: startTimeOf(race.start_time),
+      place: placeOf(race.city),
     });
   }
   races.sort((a, b) => a.date.localeCompare(b.date));

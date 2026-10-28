@@ -182,6 +182,15 @@ export interface Race {
   result_activity?: string | null;
   /** 賽事的運動（run 跑步、ride 騎車；多運動，schema 13）；沒有時是跑步 */
   sport?: string | null;
+  /**
+   * 比賽的地點（schema 15，規格 12.31）：只用來查比賽日的天氣. 顯示的名稱與四捨五入到 0.1° 的座標；
+   * 不給教練看（教練只看得到天氣）
+   */
+  place_label?: string | null;
+  place_lat?: number | null;
+  place_lon?: number | null;
+  /** 起跑時間 HH:MM（比賽地點的當地時間，選填） */
+  start_time?: string | null;
   created_at: string;
 }
 

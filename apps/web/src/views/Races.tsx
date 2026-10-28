@@ -6,6 +6,9 @@ import {
   shortDateLabel,
   duplicateGroups,
   isAfterRace,
+  normalizeStartTime,
+  placeFields,
+  racePlaceOf,
   raceOutcome,
   raceStatusText,
   RESULT_SOURCES,
@@ -13,6 +16,7 @@ import {
   type ResultSource,
   similarRaces,
   type DnsReason,
+  type PlaceCandidate,
   type Race,
 } from "@running-coach/core";
 
@@ -23,6 +27,7 @@ import { Disclosure, Icon, SportIcon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
 import { ImportFromAi } from "./ImportFromAi";
+import { RacePlacePicker } from "./PlacePicker";
 
 interface RaceForm {
   id: number | null;
@@ -36,6 +41,9 @@ interface RaceForm {
   notes: string;
   /** 賽事的運動（多運動）：run 跑步、ride 騎車 */
   sport: "run" | "ride";
+  /** 起跑時間 HH:MM 與比賽地點（只用來查比賽日的天氣，規格 12.31） */
+  startTime: string;
+  place: PlaceCandidate | null;
 }
 
 const EMPTY_RACE: RaceForm = {
@@ -48,6 +56,8 @@ const EMPTY_RACE: RaceForm = {
   confirmed: true,
   notes: "",
   sport: "run",
+  startTime: "",
+  place: null,
 };
 
 interface ResultForm {
@@ -125,6 +135,8 @@ export function RacesCard() {
         notes: f.notes.trim(),
         // 多運動：單車的賽事；開關關著時不寫（和原本一樣）
         ...(featureEnabled("multisport") ? { sport: f.sport } : {}),
+        start_time: normalizeStartTime(f.startTime),
+        ...placeFields(f.place, f.place?.label),
       };
       if (f.id === null) await coach.db.addRace(fields);
       else await coach.editRace(f.id, fields);
@@ -234,10 +246,15 @@ export function RacesCard() {
                 目標時間
                 <input value={form.target} placeholder="留空表示完賽即可" onChange={(e) => setForm({ ...form, target: e.target.value })} />
               </label>
+              <label>
+                起跑時間（選填）
+                <input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} />
+              </label>
               <label className="check">
                 <input type="checkbox" checked={form.confirmed} onChange={(e) => setForm({ ...form, confirmed: e.target.checked })} />
                 已確認報名
               </label>
+              <RacePlacePicker value={form.place} onChange={(place) => setForm({ ...form, place })} />
             </>
           )}
           <label className="wide">
@@ -282,6 +299,8 @@ export function RacesCard() {
                 shortDateLabel(race.date),
                 distanceText(race.distance_km * 1000),
                 `目標 ${race.target_time || "完賽"}`,
+                race.start_time ? `${race.start_time} 起跑` : null,
+                racePlaceOf(race)?.label || null,
                 ...(outcome === "finished" ? resultDetail(race) : []),
                 race.notes || null,
               ]
@@ -305,6 +324,8 @@ export function RacesCard() {
                 confirmed: Boolean(race.confirmed),
                 notes: race.notes ?? "",
                 sport: race.sport === "ride" ? "ride" : "run",
+                startTime: race.start_time ?? "",
+                place: racePlaceOf(race),
               })
             }
           >

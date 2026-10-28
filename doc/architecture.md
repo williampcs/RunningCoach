@@ -97,7 +97,7 @@ flowchart TB
     recovery["recovery.ts<br/>恢復狀況的判讀"]
     feed["feed.ts<br/>教練動態"]
     history["history.ts<br/>紀錄頁與累積"]
-    weather["weather.ts<br/>天氣"]
+    weather["weather.ts、race-weather.ts<br/>天氣、比賽日的天氣"]
   end
   subgraph data["資料"]
     db["db.ts<br/>schema、migration、所有 SQL"]
@@ -164,7 +164,7 @@ sequenceDiagram
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 14 版）
+## 資料庫的 schema（目前是第 15 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -187,7 +187,7 @@ erDiagram
 
 **選手與目標**
 - `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。
-- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）。
+- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）；比賽地點 `place_label`、`place_lat`、`place_lon`（只用來查比賽日的天氣，座標四捨五入到 0.1°，不給教練看）與起跑時間 `start_time`（schema 15，規格 12.31）。
 - `memories`：記住的事（選手記的或教練記的）。
 
 **訓練紀錄**

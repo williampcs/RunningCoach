@@ -15,7 +15,8 @@ import { athleteSports, sportOfType } from "./sports";
 import { activePlan, type ActivePlan } from "./planning";
 import { analyzeRecovery, describeCheckin } from "./recovery";
 import type { CoachSettings } from "./types";
-import { WEATHER_CREDIT, weatherNotice, type WeatherForecast } from "./weather";
+import { WEATHER_CREDIT, weatherNotice, type WeatherForecast, type WeatherHour } from "./weather";
+import { raceHours, raceWeatherSummary, raceWindowText } from "./race-weather";
 
 export type FeedAction =
   | { type: "checkin" }
@@ -52,6 +53,8 @@ const GAP_DAYS = 5;
 /** 近 7 天跑量比前三週平均多多少才提醒 */
 const VOLUME_SPIKE = 1.3;
 const RACE_SOON_DAYS = 30;
+/** 賽前幾天起在看板放「比賽日的天氣」（規格 12.31） */
+export const RACE_WEATHER_FEED_DAYS = 3;
 
 const ask = (label: string, message: string): FeedAction => ({ type: "ask", label, message });
 
@@ -207,8 +210,17 @@ function todaysPlanLines(content: string, today: string): string[] {
     .slice(0, 2);
 }
 
-/** weather：今天起的預報（設定了天氣且取得到時），用來提醒濕熱、下雨與空氣品質 */
-export async function buildFeed(db: Db, today: string, settings: CoachSettings, weather: WeatherForecast | null = null): Promise<FeedItem[]> {
+/**
+ * weather：今天起的預報（設定了天氣且取得到時），用來提醒濕熱、下雨與空氣品質.
+ * raceWeather：賽前三天內、有地點的賽事的逐時預報（race id → 逐時，比賽地點的當地時間）
+ */
+export async function buildFeed(
+  db: Db,
+  today: string,
+  settings: CoachSettings,
+  weather: WeatherForecast | null = null,
+  raceWeather: Map<number, WeatherHour[]> = new Map(),
+): Promise<FeedItem[]> {
   const multisport = featureOn(settings, "multisport");
   const [checkins, wellness, workouts, pending, races, pastRaces, plan, distinct, profile, others] = await Promise.all([
     db.getCheckins(1),
@@ -360,6 +372,27 @@ export async function buildFeed(db: Db, today: string, settings: CoachSettings, 
       // 倒數只是提醒，不放按鈕；賽前一週才請教練安排
       actions: left <= 7 && left > 0 ? [ask("排賽前幾天", `${race.name}還有 ${left} 天，幫我安排賽前這幾天的訓練、睡眠與補給。`)] : [],
     });
+    // 比賽日的天氣：賽前三天起（有地點、取得到預報時）；地點不寫出來
+    const hours = left <= RACE_WEATHER_FEED_DAYS ? raceWeather.get(race.id) : undefined;
+    const summary = hours ? raceWeatherSummary(raceHours(hours, race)) : null;
+    if (summary) {
+      const hot = summary.label.includes("濕熱");
+      items.push({
+        id: `race-weather-${race.id}-${today}`,
+        kind: "weather",
+        tone: hot ? "warn" : "info",
+        title: `比賽日的天氣：${summary.label}`,
+        tags: summary.tags,
+        detail: `${race.name} · ${raceWindowText(race)}`,
+        actions: [
+          ask(
+            "問教練怎麼配速",
+            `${race.name}（${race.date}）的天氣預報：${summary.line}。我該怎麼配速？補給和穿著要注意什麼？`,
+          ),
+        ],
+        credit: { ...WEATHER_CREDIT },
+      });
+    }
   }
   for (const race of pastRaces) {
     items.push({

@@ -3189,6 +3189,13 @@ button.back-button {
   gap: var(--sp-2);
 }
 
+/* 賽事的地點（比賽日的天氣，規格 12.31） */
+.race-place {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
 /* 第一次抓紀錄的兩個選項（FirstSync） */
 .first-sync {
   margin: 0;

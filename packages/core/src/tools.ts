@@ -25,6 +25,7 @@ import {
   similarRaces,
 } from "./races";
 import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
+import { racePlaceOf, raceWeatherForTool, raceWeatherUnavailable, type RaceWeatherSource } from "./race-weather";
 
 const RACE_ID_HINT =
   "race_id 為系統提示賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
@@ -192,6 +193,18 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           },
         },
         required: [],
+      },
+    },
+    {
+      name: "get_race_weather",
+      description:
+        "查比賽日的天氣預報：起跑到預計完賽每小時的溫度、體感、露點、降雨機率與風（比賽地點的當地時間）。比賽在 16 天內才有預報。" +
+        "比賽前兩週內談配速、補給、裝備或減量時先查。地點由選手在賽事頁設定，你看不到地點，只看得到天氣；沒有設定時請選手到賽事頁設定。" +
+        RACE_ID_HINT,
+      input_schema: {
+        type: "object",
+        properties: { race_id: { type: "integer", description: "賽事的 id" } },
+        required: ["race_id"],
       },
     },
     {
@@ -692,6 +705,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   search_conversations: () => "較早的對話",
   get_app_help: () => "App 的使用說明",
   get_weather: () => "天氣預報（Open-Meteo）",
+  get_race_weather: () => "比賽日的天氣預報（Open-Meteo）",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -716,6 +730,8 @@ export interface ToolExecutorDeps {
   llm: Llm;
   activities: ActivitySource;
   weather?: WeatherSource | null;
+  /** 比賽地點的天氣（規格 12.31）；不依賴天氣的設定 */
+  raceWeather?: RaceWeatherSource | null;
   settings: CoachSettings;
   today: () => string;
   logger: Logger;
@@ -982,6 +998,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           );
         }
         return lines.join("\n");
+      }
+
+      case "get_race_weather": {
+        const race = await db.getRace(toInt(input.race_id, "race_id"));
+        if (!race) return "找不到這場賽事，可能已經刪除。";
+        const unavailable = raceWeatherUnavailable(race, today());
+        if (unavailable) return unavailable;
+        if (!deps.raceWeather) return "這個版本查不到比賽地點的天氣。";
+        return raceWeatherForTool(race, await deps.raceWeather.forecast(racePlaceOf(race)!));
       }
 
       case "get_race_activity": {

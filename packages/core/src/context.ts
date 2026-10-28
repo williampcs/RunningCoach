@@ -64,6 +64,11 @@ function toInt(value: string | undefined): number | null {
 /** 單車的賽事標出運動；跑步的不標（和開關關著時一樣） */
 const raceSportLabel = (race: Race) => (race.sport === "ride" ? "（單車）" : "");
 
+/** 起跑時間與有沒有設定地點（地點本身不給教練看，規格 12.31） */
+export function raceWeatherLabel(race: Race): string {
+  return (race.start_time ? `｜起跑 ${race.start_time}` : "") + (race.place_lat != null ? "｜已設定地點（可查比賽日天氣）" : "");
+}
+
 function targetLabel(race: Race): string {
   return race.target_time ? `｜目標 ${race.target_time}` : "｜目標完賽";
 }
@@ -206,7 +211,8 @@ export class ContextManager {
       "",
       "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看下面的清單就說沒有。" +
         "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
-        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
+        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。" +
+        "比賽前兩週內談配速、補給、裝備或減量時，先用 get_race_weather 查比賽日的天氣（16 天內才有預報；賽事要有地點，地點由選手在賽事頁設定，你看不到地點，也不要問或猜）。",
     ].join("\n");
   }
 
@@ -298,7 +304,7 @@ export class ContextManager {
         const status = r.confirmed ? "已確認報名" : "考慮中";
         lines.push(
           `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${raceSportLabel(r)}` +
-            `${targetLabel(r)}｜距今 ${daysBetween(today, r.date)} 天（${status}）`,
+            `${targetLabel(r)}｜距今 ${daysBetween(today, r.date)} 天（${status}）${raceWeatherLabel(r)}`,
         );
       }
     }

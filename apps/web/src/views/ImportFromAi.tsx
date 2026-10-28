@@ -182,7 +182,9 @@ export function ImportFromAi({ startOpen = false, onClose }: { startOpen?: boole
                 <input type="checkbox" checked={r.selected} onChange={(e) => setRace(i, e.target.checked)} />
                 <span>
                   {r.race.date} {r.race.name}（{distanceText(r.race.distance_km)}
-                  {r.race.target_time ? `，目標 ${r.race.target_time}` : ""}）
+                  {r.race.target_time ? `，目標 ${r.race.target_time}` : ""}
+                  {r.race.start_time ? `，${r.race.start_time} 起跑` : ""}
+                  {r.race.place ? `，${r.race.place.label}` : ""}）
                   {r.duplicate && <span className="muted small">　已有同一天的賽事</span>}
                 </span>
               </label>
