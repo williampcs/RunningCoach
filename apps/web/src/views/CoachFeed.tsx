@@ -7,7 +7,9 @@ import {
   CloudSun,
   Copy,
   Flag,
+  Bandage,
   HeartPulse,
+  Siren,
   Hourglass,
   Sprout,
   SquarePen,
@@ -16,11 +18,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem } from "@running-coach/core";
+import { injuryName, shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem, type Injury } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
-import { Icon, SportIcon } from "../ui";
+import { Icon, PainPicker, SportIcon } from "../ui";
+import { checkRedFlags, dismissRedFlags, useRedFlagAlert } from "../red-flag-alert";
+import { redFlagFeedItem } from "./RedFlag";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
 
@@ -63,6 +67,8 @@ const ICONS: Record<FeedItem["kind"], LucideIcon> = {
   duplicate: Copy,
   weather: CloudSun,
   cross: Activity,
+  medical: Siren,
+  injury: Bandage,
 };
 
 const SCALES = [
@@ -71,21 +77,34 @@ const SCALES = [
   { key: "sleep", label: "睡眠", low: "很差", high: "很好" },
 ] as const;
 
-/** 今天的身體狀況自評：三個 1–5 分加上備註 */
+/**
+ * 今天的身體狀況自評：三個 1–5 分加上備註. 有還沒好的傷時，每個傷多問一題「左膝今天幾分？」（0–10，規格 12.33；
+ * 不回答就不記）. 備註有紅旗的字詞時出現就醫提示
+ */
 function CheckinForm({ onDone }: { onDone: () => void }) {
   const { coach, touch } = useApp();
+  const today = coach.today();
   const [values, setValues] = useState({ energy: 3, soreness: 2, sleep: 3, notes: "" });
+  const [injuries, setInjuries] = useState<Injury[]>([]);
+  const [pain, setPain] = useState<Record<number, number>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void coach.db.getCheckin(coach.today()).then((c: DailyCheckin | null) => {
+    void coach.db.getCheckin(today).then((c: DailyCheckin | null) => {
       if (c) setValues({ energy: c.energy, soreness: c.soreness, sleep: c.sleep, notes: c.notes ?? "" });
     });
-  }, [coach]);
+    void coach.db.getInjuries().then((list) => {
+      setInjuries(list);
+      // 今天已經回報過的分數帶出來
+      setPain(Object.fromEntries(list.flatMap((i) => i.scores.filter((x) => x.date === today && x.when === "checkin").map((x) => [i.id, x.score]))));
+    });
+  }, [coach, today]);
 
   async function save() {
     try {
       await coach.saveCheckin(values);
+      for (const [id, score] of Object.entries(pain)) await coach.db.addInjuryScore(Number(id), { date: today, score, when: "checkin" });
+      checkRedFlags(values.notes);
       touch();
       onDone();
     } catch (e) {
@@ -110,6 +129,14 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
           />
         </label>
       ))}
+      {injuries.map((i) => (
+        <div key={i.id} className="pain-question">
+          <span>
+            {injuryName(i)}今天幾分？{pain[i.id] !== undefined && <strong> {pain[i.id]}/10</strong>}
+          </span>
+          <PainPicker value={pain[i.id] ?? null} label={`${injuryName(i)}的疼痛`} onChange={(n) => setPain({ ...pain, [i.id]: n })} />
+        </div>
+      ))}
       <label>
         備註
         <AutoGrowTextarea value={values.notes} placeholder="例如：右小腿有點緊" onChange={(e) => setValues({ ...values, notes: e.target.value })} />
@@ -127,9 +154,12 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** 今天的身體狀況（可以回報或修改自評的）一直留著，那是查看與修改自評的地方；其他的可以按「知道了」略過 */
+/**
+ * 今天的身體狀況（可以回報或修改自評的）一直留著，那是查看與修改自評的地方；就醫提示要按「我知道了」才收起；
+ * 其他的可以按「知道了」略過
+ */
 function dismissible(item: FeedItem): boolean {
-  return !item.actions.some((a) => a.type === "checkin");
+  return !item.actions.some((a) => a.type === "checkin" || a.type === "ack");
 }
 
 /** 收起時輪播的間隔 */
@@ -155,7 +185,10 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [state, setState] = useState(() => loadState(today));
-  const [checkinOpen, setCheckinOpen] = useState(false);
+  // 打開自評表單的那一列（身體狀況、傷病的分數都可以打開）
+  const [checkinOpen, setCheckinOpen] = useState<string | null>(null);
+  // 就醫提示（規格 12.33）：和畫面上方的那條同一份，放在看板的最前面
+  const redFlag = useRedFlagAlert();
   // 收起時輪播到第幾則；滑鼠移上去或鍵盤聚焦時暫停
   const [tick, setTick] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -189,8 +222,9 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
     setState(next);
     saveState(next);
   };
-  const visible = items.filter((i) => !dismissible(i) || !state.dismissed.includes(i.id));
-  const hidden = items.length - visible.length;
+  const all = redFlag ? [redFlagFeedItem(redFlag), ...items] : items;
+  const visible = all.filter((i) => !dismissible(i) || !state.dismissed.includes(i.id));
+  const hidden = all.length - visible.length;
   const restore = () => update({ ...state, dismissed: [] });
 
   // 收起時一則一則輪播；偏好減少動態效果時不輪播
@@ -223,7 +257,10 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   function runAction(action: FeedAction, item: FeedItem) {
     switch (action.type) {
       case "checkin":
-        setCheckinOpen(true);
+        setCheckinOpen(item.id);
+        return;
+      case "ack":
+        dismissRedFlags();
         return;
       case "report":
         openReport(action.workoutId ?? action.intervalsId);
@@ -251,7 +288,9 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const label = (action: FeedAction, item: FeedItem) => {
     switch (action.type) {
       case "checkin":
-        return item.kind === "checkin" && item.tone === "info" ? "回報身體狀況" : "修改自評";
+        return item.kind === "injury" ? "回報分數" : item.kind === "checkin" && item.tone === "info" ? "回報身體狀況" : "修改自評";
+      case "ack":
+        return "我知道了";
       case "report":
         return "去回報";
       case "plan":
@@ -345,8 +384,8 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                   </a>
                 )}
               </div>
-              {item.actions.some((a) => a.type === "checkin") && checkinOpen ? (
-                <CheckinForm onDone={() => setCheckinOpen(false)} />
+              {item.actions.some((a) => a.type === "checkin") && checkinOpen === item.id ? (
+                <CheckinForm onDone={() => setCheckinOpen(null)} />
               ) : (
                 <div className="feed-actions">
                   {/* 整張看板最多一顆實心按鈕（primaryId）；其他列的第一個動作是外框，其餘是文字按鈕 */}

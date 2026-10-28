@@ -1,6 +1,7 @@
 /**
  * Discord bot 的功能說明（規格 12.12）. 指令名稱要和 apps/discord 的指令一致（測試會檢查）.
  */
+import { TERMS_SHORT } from "../terms";
 import type { GuideSection } from "./index";
 
 export const DISCORD_GUIDE: GuideSection[] = [
@@ -13,11 +14,22 @@ export const DISCORD_GUIDE: GuideSection[] = [
   {
     id: "commands",
     title: "指令",
-    keywords: ["指令", "/sync", "/plan", "/profile", "/status", "同步"],
-    body: `- \`/sync\`：同步 Intervals.icu 的資料，並合併暫存的跑後感受。
+    keywords: ["指令", "/sync", "/plan", "/profile", "/status", "/help", "同步"],
+    body: `- \`/help\`：教練的自我介紹、指令與使用須知的連結。
+- \`/sync\`：同步 Intervals.icu 的資料，並合併暫存的跑後感受。
 - \`/plan\`：更新本週的訓練計畫（貼上計畫內容）。
 - \`/profile\`：設定一個選手資料欄位，例如 goal_long_term、injuries。
 - \`/status\`：顯示模型設定與記憶的狀態。`,
+  },
+  {
+    id: "terms",
+    title: "使用須知",
+    keywords: ["免責", "使用須知", "醫療", "醫師", "受傷", "責任", "你是誰", "介紹"],
+    body: `${TERMS_SHORT}
+
+完整的使用須知在網頁版的「使用須知」頁，\`/help\` 會附上連結：不是醫療建議、哪些情況要先問醫師、立刻停止並就醫的警訊、AI 會出錯、資料的正確性、你的責任等。
+
+訊息裡寫到胸痛、胸悶、昏倒、心悸、喘不過氣、呼吸困難、意識不清、中暑等，bot 會先回一則就醫提示（停止運動、情況緊急撥 119），再回教練的回覆；這是程式比對字詞，不是教練的判斷。`,
   },
   {
     id: "memories",

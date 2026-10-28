@@ -3,9 +3,10 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
-import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { activePlan, changeSession, editSessionFromTool, nextPlan, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, injuryLine, PAIN_WHEN_LABELS, parseInjurySports, type InjurySide, type InjuryStatus, type PainWhen } from "./injuries";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
-import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
+import { MEMORY_MAX_CHARS, type Db, type InjuryInput, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
 import { activityLabel, otherActivitiesText } from "./activity-labels";
 import { sportOfType, SPORT_LABELS } from "./sports";
@@ -25,6 +26,8 @@ import {
   similarRaces,
 } from "./races";
 import { runWeatherNote, weatherForTool, type WeatherSource } from "./weather";
+import { racePlaceOf, raceWeatherForTool, raceWeatherUnavailable, type RaceWeatherSource } from "./race-weather";
+import { analyzeRide, weeklyVolumeOf, weeklyVolumeText } from "./ride-analysis";
 
 const RACE_ID_HINT =
   "race_id 為系統提示賽事清單（近期目標賽事、待記錄成績的賽事）中方括號內的數字；" +
@@ -63,7 +66,7 @@ const RIDE_KIND_LIST = ["ride_recovery", "ride_endurance", "ride_long", "ride_te
 const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
   name: "save_activity_feedback",
   description:
-    "記下一趟跑步以外的運動（騎車、游泳等，已從 Intervals.icu 同步）的體感與感受。選手回報騎完了、說了體感時呼叫；跑步用 save_workout。" +
+    "記下一趟跑步以外的運動（騎車、游泳等，已從 Intervals.icu 同步）的體感與感受；騎車會一併產生這趟的分析（回傳在結果裡）。選手回報騎完了、說了體感時呼叫；跑步用 save_workout。" +
     "不給 date 時是今天；那天有好幾趟時用 sport 指定，仍有好幾趟時記到最新的一趟。",
   input_schema: {
     type: "object",
@@ -76,6 +79,84 @@ const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
     required: ["perceived_effort"],
   },
 };
+
+/** 跑步的課的種類（save_training_plan 與 edit_planned_session 的 kind）；多運動時加上單車的課 */
+const RUN_KIND_LIST = ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"];
+
+const STEPS_DESCRIPTION =
+  "依序的步驟。一步：{distance_km 或 duration_min, target?, note?}；重複組：{repeat: 次數 1–30, steps: [...]}。" +
+  'target 寫代號：{"pace":"E|M|T|I|R"}、{"hr":"easy"}（輕鬆跑的心率上限）、{"zone":"Z2"}、{"rpe":[6,7]}';
+
+const exactly = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
+
+/**
+ * 步驟的 schema（放在 input_schema 的 $defs，課與重複組共用）. strict（規格 12.31 第 2 點）的限制：每個物件都要
+ * additionalProperties: false；不支援數字與字串長度的限制、陣列的長度只能限制到 1，所以「distance_km 或 duration_min 至少一個」、
+ * repeat 的範圍、rpe 是兩個數字，照舊由 parseSessions 檢查
+ */
+function stepDefs(): Record<string, unknown> {
+  return {
+    target: {
+      description: "目標的代號，由程式依訓練數值換算成配速或心率；不要寫數字的配速",
+      anyOf: [
+        exactly({ pace: { type: "string", enum: ["E", "M", "T", "I", "R"], description: "Daniels 的配速代號" } }),
+        exactly({ hr: { type: "string", enum: ["easy"], description: "輕鬆跑的心率上限" } }),
+        exactly({ zone: { type: "string", description: "心率區間，例：Z2" } }),
+        exactly({ rpe: { type: "array", items: { type: "integer" }, description: "體感的範圍 [下限, 上限]（1–10），例：[6,7]" } }),
+      ],
+    },
+    step: {
+      type: "object",
+      description: "一步：distance_km 或 duration_min 至少寫一個",
+      properties: {
+        distance_km: { type: "number", description: "距離（公里）" },
+        duration_min: { type: "number", description: "時間（分鐘）" },
+        target: { $ref: "#/$defs/target" },
+        note: { type: "string", description: "補充，例：組間慢跑" },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    repeat: {
+      type: "object",
+      description: "重複組",
+      properties: {
+        repeat: { type: "integer", description: "次數 1–30" },
+        steps: { type: "array", items: { $ref: "#/$defs/step" }, description: "每一次依序的步驟" },
+      },
+      required: ["repeat", "steps"],
+      additionalProperties: false,
+    },
+  };
+}
+
+/** 一堂課的 schema；date：save_training_plan 的課有日期，edit_planned_session 的沿用原本的日期 */
+function sessionSchema(options: { date: boolean }) {
+  return {
+    type: "object",
+    properties: {
+      ...(options.date ? { date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" } } : {}),
+      kind: {
+        type: "string",
+        enum: [...RUN_KIND_LIST],
+        description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
+      },
+      title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
+      steps: { type: "array", description: STEPS_DESCRIPTION, items: { anyOf: [{ $ref: "#/$defs/step" }, { $ref: "#/$defs/repeat" }] } },
+      purpose: { type: "string", description: "這堂課的目的" },
+      success: { type: "string", description: "完成的標準，例：心率不超過輕鬆跑上限、最後一趟仍能保持配速" },
+      fallback: {
+        type: "string",
+        description: options.date
+          ? "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有"
+          : "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有，其他的沒有時寫空字串",
+      },
+    },
+    // edit_planned_session 寫完整的一堂：替代也必填（沒有時是空字串），少一個選填的參數（strict 的選填參數有總數上限）
+    required: ["kind", "title", "steps", "purpose", "success", ...(options.date ? [] : ["fallback"])],
+    additionalProperties: false,
+  };
+}
 
 /** weather：選手設定了天氣的城市時才提供 get_weather */
 export function buildTools(settings: CoachSettings, options: { weather?: boolean } = {}): ToolDef[] {
@@ -114,6 +195,18 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           },
         },
         required: [],
+      },
+    },
+    {
+      name: "get_race_weather",
+      description:
+        "查比賽日的天氣預報：起跑到預計完賽每小時的溫度、體感、露點、降雨機率與風（比賽地點的當地時間）。比賽在 16 天內才有預報。" +
+        "比賽前兩週內談配速、補給、裝備或減量時先查。地點由選手在賽事頁設定，你看不到地點，只看得到天氣；沒有設定時請選手到賽事頁設定。" +
+        RACE_ID_HINT,
+      input_schema: {
+        type: "object",
+        properties: { race_id: { type: "integer", description: "賽事的 id" } },
+        required: ["race_id"],
       },
     },
     {
@@ -179,7 +272,9 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       name: "save_training_plan",
       description:
         "儲存一週的結構化課表（會停用舊計畫）。存檔前由程式依教練方法檢查；有問題時不存，回傳問題，" +
-        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再存。目標一律寫代號，由程式依訓練數值換算成配速或心率。",
+        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再存。目標一律寫代號，由程式依訓練數值換算成配速或心率。" +
+        "只改一堂課的內容、不牽動別天時用 edit_planned_session。",
+      strict: true,
       input_schema: {
         type: "object",
         properties: {
@@ -194,31 +289,9 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           sessions: {
             type: "array",
             description: "這週的每一堂課",
-            items: {
-              type: "object",
-              properties: {
-                date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" },
-                kind: {
-                  type: "string",
-                  enum: ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"],
-                  description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
-                },
-                title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
-                steps: {
-                  type: "array",
-                  description:
-                    "依序的步驟。一步：{distance_km 或 duration_min, target?, note?}；重複組：{repeat: 次數, steps: [...]}。" +
-                    'target 寫代號：{"pace":"E|M|T|I|R"}、{"hr":"easy"}（輕鬆跑的心率上限）、{"zone":"Z2"}、{"rpe":[6,7]}',
-                  items: { type: "object" },
-                },
-                purpose: { type: "string", description: "這堂課的目的" },
-                success: { type: "string", description: "完成的標準，例：心率不超過輕鬆跑上限、最後一趟仍能保持配速" },
-                fallback: { type: "string", description: "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有" },
-              },
-              required: ["kind", "title", "steps", "purpose", "success"],
-            },
+            items: sessionSchema({ date: true }),
           },
-          outline: { type: "string", description: "往後幾週的週期大綱（文字）" },
+          outline: { type: "string", description: "往後幾週的週期大綱（文字）；沒有時寫空字串" },
           accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
           warning_notes: {
             type: "string",
@@ -227,14 +300,40 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
               "檢查器的提醒本身不會給選手看，不寫數字",
           },
         },
-        required: ["style", "reason", "sessions"],
+        // strict 的選填參數在一次請求裡合計有上限（24），能有預設值的寫成必填（week_start、outline）
+        required: ["week_start", "style", "reason", "sessions", "outline"],
+        additionalProperties: false,
+        $defs: stepDefs(),
+      },
+    },
+    {
+      name: "edit_planned_session",
+      description:
+        "只改目前課表（這週或已排好的下週）中一堂課的內容：種類、標題、步驟、目的、完成的標準、替代。" +
+        "例如「週四只有 30 分鐘」「長跑改成 12 km」「間歇改成 400 m × 10」「肌力拿掉弓箭步」。日期不變（移到別天用 update_planned_session）；" +
+        "會牽動別天的（例如把強度課挪到隔天、休好幾天）用 save_training_plan 重排整週。" +
+        "session 寫改完後這堂課的完整內容（沒改的欄位照原本的寫）。改完由程式重新檢查整週；有問題時不改，回傳問題，" +
+        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再改。",
+      strict: true,
+      input_schema: {
+        type: "object",
+        properties: {
+          session_id: { type: "integer", description: "get_training_plan 列出的 session_id" },
+          reason: { type: "string", description: "給選手看的修改原因，一句話，例：週四只有 30 分鐘，間歇少兩組" },
+          session: sessionSchema({ date: false }),
+          accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
+          warning_notes: { type: "string", description: "保留的理由（accept_warnings=true 時必填）：給選手看的一句話，不寫數字" },
+        },
+        required: ["session_id", "reason", "session"],
+        additionalProperties: false,
+        $defs: stepDefs(),
       },
     },
     {
       name: "update_planned_session",
       description:
         "調整目前課表中的一堂課：移到這週的別天、跳過、改用替代的課，或恢復原本的課。" +
-        "選手說某天沒空、太累、想改輕鬆一點時呼叫；調整後會重新檢查整週。大幅修改時用 save_training_plan 重排。",
+        "選手說某天沒空、太累、想改輕鬆一點時呼叫；調整後會重新檢查整週。只改那堂課的內容用 edit_planned_session，大幅修改時用 save_training_plan 重排。",
       input_schema: {
         type: "object",
         properties: {
@@ -244,6 +343,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           reason: { type: "string", description: "調整的原因" },
         },
         required: ["session_id", "action", "reason"],
+        additionalProperties: false,
       },
     },
     {
@@ -412,6 +512,51 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       },
     },
     {
+      name: "record_injury",
+      description:
+        "記下一個新的傷或疼痛（傷病紀錄，選手在「選手 → 身體」看得到、改得了）。選手提到疼痛或受傷時，先照【傷病的處理】問完固定的問題，" +
+        "再跟選手確認要記下來（說出部位、哪一側、會痛的運動）後呼叫；記完要在回覆裡說「已記下：…」。同一個部位已經有紀錄時用 update_injury，不要重複新增。" +
+        "檢查器會依這份紀錄擋掉會痛的運動的強度課與長課。不寫病名、不做診斷。",
+      input_schema: {
+        type: "object",
+        properties: {
+          area: { type: "string", description: "部位，用選手的說法，例：膝蓋、小腿、足底、下背" },
+          side: { type: "string", enum: Object.keys(INJURY_SIDE_LABELS), description: "left 左、right 右、both 兩側、none 不分（例：下背）" },
+          started_on: { type: "string", description: "什麼時候開始 YYYY-MM-DD（約略即可）" },
+          sports: {
+            type: "array",
+            items: { type: "string", enum: ["run", "ride", "swim", "strength", "other"] },
+            description: "哪些運動會痛；不知道時不要給（當成全部的運動都會痛）",
+          },
+          score: { type: "integer", description: "這次問到的疼痛分數 0–10（選填）" },
+          score_when: { type: "string", enum: Object.keys(PAIN_WHEN_LABELS), description: "分數是什麼時候：during 運動中、after 運動後、morning 隔天早上、rest 休息或夜裡" },
+          red_flag: { type: "boolean", description: "有需要就醫的警訊（骨頭壓痛、腫脹、休息或夜裡也痛、無法正常走路、越來越痛等）時 true：所有運動都先不排" },
+          notes: { type: "string", description: "選手的原話或補充（不寫病名）" },
+        },
+        required: ["area", "side"],
+      },
+    },
+    {
+      name: "update_injury",
+      description:
+        "更新傷病紀錄：記一次疼痛的分數、狀態（active 進行中、improving 好轉中、resolved 好了）、會痛的運動、紅旗等，只傳要改的欄位。" +
+        "選手回報傷處的分數、說好多了或好了時呼叫（標成好了之前先跟選手確認）。紅旗只有在選手說醫師看過、可以運動時才取消。" +
+        "injury_id 是系統提示【傷病紀錄】裡的 [id]。",
+      input_schema: {
+        type: "object",
+        properties: {
+          injury_id: { type: "integer", description: "【傷病紀錄】裡的 [id]" },
+          score: { type: "integer", description: "疼痛分數 0–10" },
+          score_when: { type: "string", enum: Object.keys(PAIN_WHEN_LABELS), description: "分數是什麼時候：during 運動中、after 運動後、morning 隔天早上、rest 休息或夜裡" },
+          status: { type: "string", enum: Object.keys(INJURY_STATUS_LABELS), description: "active 進行中、improving 好轉中、resolved 好了" },
+          sports: { type: "array", items: { type: "string", enum: ["run", "ride", "swim", "strength", "other"] }, description: "哪些運動會痛（整個換掉）" },
+          red_flag: { type: "boolean", description: "有需要就醫的警訊時 true；選手說醫師看過、可以運動時 false" },
+          notes: { type: "string", description: "補充（不寫病名）" },
+        },
+        required: ["injury_id"],
+      },
+    },
+    {
       name: "forget",
       description: "刪掉一條已經過時或選手要你忘記的「記住的事」；刪完要在回覆裡說明。",
       input_schema: {
@@ -464,6 +609,8 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
   ];
   if (featureOn(settings, "multisport")) multisportTools(tools);
   if (options.weather) tools.push(WEATHER_TOOL);
+  // 每個工具的參數都只能是列出的那些（strict 的工具一定要；其他的一起寫，格式一致）
+  for (const tool of tools) tool.input_schema.additionalProperties = false;
   return tools;
 }
 
@@ -483,21 +630,26 @@ function multisportTools(tools: ToolDef[]): void {
     "騎車的卡：pref_goal_ride（health 保持健康／ftp 提升 FTP／distance 長距離／race 準備比賽）、pref_intensity_ride（easy／moderate／challenge）、" +
     "pref_ride_hours（每週騎幾小時，數字）、pref_ride_max_minutes（每次最多幾分鐘）、pref_long_ride_day（長騎日，例：週六）；" +
     "其他運動的目標：pref_goal_swim、pref_goal_strength、pref_goal_other（文字）";
-  const session = props("save_training_plan").sessions!.items!.properties;
-  // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排
-  session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];
-  session.kind!.description =
-    "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note；" +
-    "ride_* 是單車的課（選手練騎車時，照單車的排課規則）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、" +
-    "ride_sweetspot 甜蜜點、ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺";
-  session.sport = {
-    type: "string",
-    enum: ["ride", "swim", "other"],
-    description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
-  };
-  session.steps!.description +=
-    '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
-    '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）；單車的課的甜蜜點寫 {"zone":"SS"} 或 {"power":"SS"}';
+  // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排；改一堂課的工具同樣
+  for (const name of ["save_training_plan", "edit_planned_session"]) {
+    const tool = tools.find((t) => t.name === name)!;
+    const session = (name === "save_training_plan" ? props(name).sessions!.items! : (props(name).session as Schema)).properties;
+    session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];
+    session.kind!.description =
+      "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note；" +
+      "ride_* 是單車的課（選手練騎車時，照單車的排課規則）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、" +
+      "ride_sweetspot 甜蜜點、ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺";
+    session.sport = {
+      type: "string",
+      enum: ["ride", "swim", "other"],
+      description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
+    };
+    session.steps!.description +=
+      '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
+      '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）；單車的課的甜蜜點寫 {"zone":"SS"} 或 {"power":"SS"}';
+    const target = (tool.input_schema.$defs as Record<string, { anyOf: unknown[] }>).target!;
+    target.anyOf.push(exactly({ power: { type: "string", description: "功率區間（騎車），例：Z2；甜蜜點寫 SS" } }));
+  }
   // 賽事的運動
   for (const name of ["add_race", "update_race"]) {
     props(name).sport = { type: "string", enum: ["run", "ride"], description: "賽事的運動：run 跑步（預設）、ride 騎車（公路賽、百公里等）" };
@@ -600,6 +752,7 @@ const SOURCE_LABELS: Record<string, (input: Record<string, unknown>) => string> 
   search_conversations: () => "較早的對話",
   get_app_help: () => "App 的使用說明",
   get_weather: () => "天氣預報（Open-Meteo）",
+  get_race_weather: () => "比賽日的天氣預報（Open-Meteo）",
 };
 
 function positiveInt(value: unknown): number | null {
@@ -624,6 +777,8 @@ export interface ToolExecutorDeps {
   llm: Llm;
   activities: ActivitySource;
   weather?: WeatherSource | null;
+  /** 比賽地點的天氣（規格 12.31）；不依賴天氣的設定 */
+  raceWeather?: RaceWeatherSource | null;
   settings: CoachSettings;
   today: () => string;
   logger: Logger;
@@ -638,6 +793,49 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
+
+  /** 傷病紀錄的欄位（record_injury、update_injury）：只取有給的 */
+  function injuryFields(input: Record<string, unknown>): InjuryInput {
+    const fields: InjuryInput = {};
+    if (input.area !== undefined) fields.area = str(input.area);
+    if (input.side !== undefined) {
+      if (!(String(input.side) in INJURY_SIDE_LABELS)) throw new Error(`side 要是 ${Object.keys(INJURY_SIDE_LABELS).join("、")}`);
+      fields.side = input.side as InjurySide;
+    }
+    if (input.started_on !== undefined && input.started_on !== null && input.started_on !== "") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.started_on))) throw new Error(`started_on 格式要是 YYYY-MM-DD：${String(input.started_on)}`);
+      fields.started_on = String(input.started_on);
+    }
+    if (input.status !== undefined) {
+      if (!(String(input.status) in INJURY_STATUS_LABELS)) throw new Error(`status 要是 ${Object.keys(INJURY_STATUS_LABELS).join("、")}`);
+      fields.status = input.status as InjuryStatus;
+    }
+    if (input.sports !== undefined) {
+      if (!Array.isArray(input.sports)) throw new Error("sports 要是陣列");
+      fields.sports = parseInjurySports(input.sports.map(String).join(","));
+    }
+    if (input.red_flag !== undefined) fields.red_flag = input.red_flag === true;
+    if (input.notes !== undefined) fields.notes = str(input.notes);
+    return fields;
+  }
+
+  async function scoreFrom(id: number, input: Record<string, unknown>): Promise<void> {
+    if (input.score === undefined || input.score === null) return;
+    const when = String(input.score_when ?? "") in PAIN_WHEN_LABELS ? (input.score_when as PainWhen) : "checkin";
+    await db.addInjuryScore(id, { date: today(), score: toInt(input.score, "score"), when });
+  }
+
+  /** 記下或更新傷病後：課表上現在因為傷病不能做的課，請教練調整 */
+  async function injuryPlanNote(): Promise<string> {
+    const plans = [await activePlan(db, today()), await nextPlan(db, today())];
+    const held = plans.flatMap((p) => p?.sessions.filter((x) => x.injuryHold) ?? []);
+    if (!held.length) return "";
+    return (
+      "\n\n課表上因為傷病現在不能做的課（要調整，並告訴選手）：\n" +
+      held.map((x) => `・session_id=${x.id} ${x.when}「${x.title}」：${x.injuryHold}`).join("\n") +
+      "\n用 update_planned_session 跳過或改用替代，或用 edit_planned_session 改成不痛的運動、很輕鬆的課。"
+    );
+  }
 
   async function execute(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
@@ -749,7 +947,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "get_training_values": {
         const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
-        return formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
+        const text = formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
+        // 多運動：最近幾週的騎車量與趨勢（規格 12.31）
+        return multisport ? `${text}\n\n${weeklyVolumeText(await weeklyVolumeOf(db, today(), 9), today())}` : text;
       }
 
       case "get_recovery_status": {
@@ -843,6 +1043,25 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         return `已記下（id=${id}）：${content.trim()}`;
       }
 
+      case "record_injury": {
+        const area = str(input.area).trim();
+        if (!area) throw new Error("缺少 area（部位）");
+        const fields = injuryFields(input);
+        const id = await db.addInjury({ ...fields, area });
+        await scoreFrom(id, input);
+        const injury = (await db.getInjury(id))!;
+        return `已記下傷病（id=${id}）：${injuryLine(injury, today())}${await injuryPlanNote()}`;
+      }
+
+      case "update_injury": {
+        const id = toInt(input.injury_id, "injury_id");
+        const fields = injuryFields(input);
+        if (!(await db.updateInjury(id, fields))) throw new Error(`找不到 id=${id} 的傷病紀錄`);
+        await scoreFrom(id, input);
+        const injury = (await db.getInjury(id))!;
+        return `已更新傷病（id=${id}）：${injuryLine(injury, today())}${await injuryPlanNote()}`;
+      }
+
       case "forget": {
         const id = toInt(input.memory_id, "memory_id");
         if (!(await db.deleteMemory(id))) throw new Error(`找不到 id=${id} 的記住的事`);
@@ -890,6 +1109,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           );
         }
         return lines.join("\n");
+      }
+
+      case "get_race_weather": {
+        const race = await db.getRace(toInt(input.race_id, "race_id"));
+        if (!race) return "找不到這場賽事，可能已經刪除。";
+        const unavailable = raceWeatherUnavailable(race, today());
+        if (unavailable) return unavailable;
+        if (!deps.raceWeather) return "這個版本查不到比賽地點的天氣。";
+        return raceWeatherForTool(race, await deps.raceWeather.forecast(racePlaceOf(race)!));
       }
 
       case "get_race_activity": {
@@ -940,6 +1168,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       case "save_training_plan":
         return savePlanFromTool(db, today(), input, { multisport });
 
+      case "edit_planned_session":
+        return editSessionFromTool(db, today(), input, { multisport });
+
       case "save_activity_feedback": {
         if (!multisport) return `未知的 tool：${name}`;
         const date = str(input.date).trim() || today();
@@ -953,7 +1184,15 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           return `${date} 沒有同步到${SPORT_LABELS[sport as keyof typeof SPORT_LABELS] ?? "這項運動"}的紀錄（可能手錶還沒上傳到 Intervals.icu）。請選手同步後再回報，或之後在「運動回報」填。`;
         }
         await db.setActivityFeedback(found.intervals_id, effort, str(input.subjective_notes).trim() || null);
-        return `已記下 ${date} ${activityLabel(found.type)}（${Math.round(found.duration_min ?? 0)} 分鐘）的體感 ${effort}/10。`;
+        const saved = `已記下 ${date} ${activityLabel(found.type)}（${Math.round(found.duration_min ?? 0)} 分鐘）的體感 ${effort}/10。`;
+        if (sportOfType(found.type) !== "ride") return saved;
+        // 騎車：和跑步的 save_workout 一樣產生分析（規格 12.31）；失敗時體感照樣存著
+        try {
+          return `${saved}\n\n${await analyzeRide({ db, llm, weather, today: today() }, found.intervals_id)}`;
+        } catch (e) {
+          logger.warn(`Ride summary failed for ${found.intervals_id}: ${e instanceof Error ? e.message : String(e)}`);
+          return `${saved}（這次沒有產生分析）`;
+        }
       }
 
       case "update_planned_session": {

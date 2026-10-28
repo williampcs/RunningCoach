@@ -4,6 +4,7 @@ import {
   Coach,
   FakeActivitySource,
   IntervalsClient,
+  OpenMeteoRaceWeather,
   OpenMeteoWeather,
   openMeteoUrlsAt,
   localDate,
@@ -20,9 +21,12 @@ import { HelpView } from "./views/Help";
 import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
 import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
+import { TermsConfirm } from "./views/TermsConfirm";
+import { RedFlagBanner } from "./views/RedFlag";
+import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
-import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
 import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
@@ -122,6 +126,10 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
         })
       : null,
+    // 比賽地點的天氣（規格 12.31）：地點在賽事上，不依賴天氣的設定
+    raceWeather: new OpenMeteoRaceWeather({
+      urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
+    }),
     settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
   };
 }
@@ -132,6 +140,8 @@ export function App() {
   const [coach, setCoach] = useState<Coach | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
   const [settings, setSettings] = useState(loadSettings);
+  const [termsAtOpen] = useState(() => needsTermsConfirm(loadSettings()));
+  const redFlag = useRedFlagAlert();
   const [testMode, setTestMode] = useState(loadTestMode);
   // 從說明的連結打開：直接到使用說明頁的那一段
   const [helpTopic, setHelpTopic] = useState<{ id: string } | null>(() => {
@@ -446,9 +456,14 @@ export function App() {
   }
   if (!state) return <main className="page muted">載入中…</main>;
 
+  // 用過 App、還沒確認過這一版的使用須知：打開時先確認，底下的畫面不能操作（規格 12.32）.
+  // 只看打開時的設定：第一次設定時只勾了資料流向的人，在設定頁勾使用須知就好，不跳出來打斷
+  const termsGate = termsAtOpen && !termsAccepted(settings);
+
   return (
     <AppContext.Provider value={state}>
-      <div className="shell">
+      {termsGate && <TermsConfirm />}
+      <div className="shell" inert={termsGate}>
         <header className="topbar" ref={topbar}>
           <h1>Zone2Mate</h1>
           <span className={IS_STAGING ? "version staging" : "version"} title={BUILD_DETAIL}>
@@ -475,8 +490,10 @@ export function App() {
             <Icon as={SettingsIcon} size={ICON_TAB} />
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0) && (
+        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0 || redFlag) && (
           <div className="notices" inert={!!panel}>
+            {/* 就醫提示（規格 12.33）：最上面，按「我知道了」才收起 */}
+            <RedFlagBanner />
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
               <div className="notice info update-banner" role="status">

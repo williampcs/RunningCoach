@@ -1,4 +1,4 @@
-/* 隱私說明頁（規格 12.20）：和 App 同樣的顏色，淺色與深色跟著系統 */
+/* 隱私說明頁（規格 12.20）與使用須知（規格 12.32）：和 App 同樣的顏色，淺色與深色跟著系統 */
 :root {
   color-scheme: light dark;
   --bg: #f8fafc;
@@ -122,4 +122,10 @@ footer h2 {
   background: var(--warn);
   padding: 8px 16px;
   text-align: center;
+}
+
+/* 使用須知（規格 12.32）共用這份樣式：立即停止並就醫的那一節 */
+section.urgent {
+  background: var(--warn);
+  border-color: transparent;
 }

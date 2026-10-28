@@ -118,6 +118,8 @@ async function opensPrivacy(context, link) {
       await page.getByLabel("訊息").press("Enter");
       const reply = page.locator(".msg.assistant", { has: page.locator(".sources", { hasText: "App 的使用說明" }) }).last();
       check[`${tag}.coachUsedHelp`] = await reply.waitFor({ timeout: 20000 }).then(() => true, () => false);
+      // 模擬的回覆照抄工具的結果（開頭是「## 隱私說明」）：小標以下是收起的（12.30），先展開
+      for (const summary of await reply.locator("details.reply-section:not([open]) > summary").all()) await summary.click();
       check[`${tag}.link.coachReply`] = await opensPrivacy(context, reply.getByRole("link", { name: "隱私說明" }).first());
       // 回覆裡的 #help 連結照常在 App 裡切換
       await reply.getByRole("link", { name: "看完整說明" }).first().click();

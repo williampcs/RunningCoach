@@ -1,6 +1,7 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
+import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
 import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
 import type {
@@ -34,8 +35,12 @@ import type {
  * 11：races 的 outcome、outcome_reason（完賽、沒有完賽、沒有出賽）、gun_time、result_source、result_activity
  * 12：planned_sessions 的 sport（交叉訓練的運動）與 done_at（選手回報做完了）（多運動，規格 12.24）
  * 13：races.sport（賽事的運動）與 activity_feedback（騎車等其他運動的體感與感受）（多運動的第 3 階段）
+ * 14：planned_sessions.edited_at（教練改過這堂課的內容，規格 12.31 第 1 點）
+ * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
+ * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
+ * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 17;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -186,7 +191,8 @@ const SCHEMA = `
     note       TEXT,
     updated_at TEXT NOT NULL,
     sport      TEXT,
-    done_at    TEXT
+    done_at    TEXT,
+    edited_at  TEXT
   );
 
   CREATE TABLE IF NOT EXISTS other_activities (
@@ -230,6 +236,27 @@ const SCHEMA = `
     subjective_notes TEXT,
     updated_at       TEXT NOT NULL
   );
+  -- 騎車等其他運動的 AI 分析（騎後分析）：和體感一樣另外存，以 Intervals.icu 的活動 id 對應
+  CREATE TABLE IF NOT EXISTS activity_summaries (
+    intervals_id TEXT PRIMARY KEY,
+    summary      TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
+  -- 傷病紀錄（規格 12.33）：疼痛的分數以 JSON 存在同一列（[{date, score, when}]），同步時一筆就是一個傷
+  CREATE TABLE IF NOT EXISTS injuries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_id     TEXT UNIQUE,
+    area        TEXT NOT NULL,
+    side        TEXT NOT NULL DEFAULT 'none',
+    started_on  TEXT,
+    status      TEXT NOT NULL DEFAULT 'active',
+    sports      TEXT NOT NULL DEFAULT '',
+    red_flag    INTEGER NOT NULL DEFAULT 0,
+    notes       TEXT,
+    scores      TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pending_subjective (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     date             TEXT NOT NULL,
@@ -239,7 +266,50 @@ const SCHEMA = `
   );
 `;
 
-const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport"] as const;
+interface InjuryRow {
+  id: number;
+  area: string;
+  side: string;
+  started_on: string | null;
+  status: string;
+  sports: string;
+  red_flag: number;
+  notes: string | null;
+  scores: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 新增或修改傷病紀錄的欄位 */
+export interface InjuryInput {
+  area?: string;
+  side?: InjurySide;
+  started_on?: string | null;
+  status?: InjuryStatus;
+  sports?: Injury["sports"];
+  red_flag?: boolean;
+  notes?: string | null;
+}
+
+function injuryOf(row: InjuryRow): Injury {
+  return {
+    id: Number(row.id),
+    area: row.area,
+    side: (row.side in INJURY_SIDE_LABELS ? row.side : "none") as InjurySide,
+    started_on: row.started_on,
+    status: (row.status in INJURY_STATUS_LABELS ? row.status : "active") as InjuryStatus,
+    sports: parseInjurySports(row.sports),
+    red_flag: !!row.red_flag,
+    notes: row.notes,
+    scores: parsePainScores(row.scores),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", "notes", "sport", "place_label", "place_lat", "place_lon", "start_time"] as const;
+/** 可以清掉（寫成 NULL）的欄位：地點與起跑時間；其他欄位傳 null 時不改 */
+const RACE_CLEARABLE = new Set<string>(["place_label", "place_lat", "place_lon", "start_time"]);
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
 
 function parseJsonArray(json: string | null): unknown[] {
@@ -463,9 +533,16 @@ export class Db {
       for (const col of ["sport", "done_at"]) {
         if (!sessionCols.has(col)) await d.exec(`ALTER TABLE planned_sessions ADD COLUMN ${col} TEXT`);
       }
+      // --- Migration: planned_sessions.edited_at（schema 14：只改一堂課的內容，規格 12.31） ---
+      if (!sessionCols.has("edited_at")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN edited_at TEXT");
 
       // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
       if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
+      // --- Migration: races 的地點與起跑時間（schema 15：比賽地點的天氣，規格 12.31） ---
+      const raceCols15 = await columns("races");
+      for (const [col, type] of [["place_label", "TEXT"], ["place_lat", "REAL"], ["place_lon", "REAL"], ["start_time", "TEXT"]] as const) {
+        if (!raceCols15.has(col)) await d.exec(`ALTER TABLE races ADD COLUMN ${col} ${type}`);
+      }
 
       // 對話依時間排序（多裝置同步時 id 的先後不等於時間的先後）
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
@@ -536,10 +613,15 @@ export class Db {
     notes?: string;
     /** run 跑步（預設，存成 NULL）、ride 騎車 */
     sport?: string | null;
+    /** 比賽的地點（只用來查天氣）與起跑時間，選填 */
+    place_label?: string | null;
+    place_lat?: number | null;
+    place_lon?: number | null;
+    start_time?: string | null;
   }): Promise<number> {
     const result = await this.run(
-      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at, sport)" +
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO races (name, date, distance_km, target_time, confirmed, notes, created_at, sport, place_label, place_lat, place_lon, start_time)" +
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         race.name,
         race.date,
@@ -549,6 +631,10 @@ export class Db {
         race.notes || null,
         this.stamp(),
         race.sport && race.sport !== "run" ? race.sport : null,
+        race.place_lat != null && race.place_lon != null ? (race.place_label ?? null) : null,
+        race.place_lat != null && race.place_lon != null ? race.place_lat : null,
+        race.place_lat != null && race.place_lon != null ? race.place_lon : null,
+        race.start_time || null,
       ],
     );
     return result.lastInsertRowid;
@@ -556,10 +642,10 @@ export class Db {
 
   /** 只更新有傳入的欄位 */
   async updateRace(raceId: number, fields: RaceUpdate): Promise<void> {
-    const updates = RACE_FIELDS.filter((k) => fields[k] !== undefined && fields[k] !== null);
+    const updates = RACE_FIELDS.filter((k) => fields[k] !== undefined && (fields[k] !== null || RACE_CLEARABLE.has(k)));
     if (updates.length === 0) return;
     const setClause = updates.map((k) => `${k}=?`).join(", ");
-    await this.run(`UPDATE races SET ${setClause} WHERE id=?`, [...updates.map((k) => fields[k]!), raceId]);
+    await this.run(`UPDATE races SET ${setClause} WHERE id=?`, [...updates.map((k) => fields[k] ?? null), raceId]);
   }
 
   /**
@@ -707,6 +793,71 @@ export class Db {
   }
 
   // ---------------------------------------------------------------------------
+  // injuries（傷病紀錄，規格 12.33）
+  // ---------------------------------------------------------------------------
+
+  /** 傷病紀錄；沒好的在前，再依開始的先後 */
+  async getInjuries(options: { includeResolved?: boolean } = {}): Promise<Injury[]> {
+    const rows = await this.all<InjuryRow>(
+      `SELECT * FROM injuries${options.includeResolved ? "" : " WHERE status != 'resolved'"} ORDER BY status = 'resolved', COALESCE(started_on, created_at), id`,
+    );
+    return rows.map(injuryOf);
+  }
+
+  async getInjury(id: number): Promise<Injury | null> {
+    const row = await this.get<InjuryRow>("SELECT * FROM injuries WHERE id=?", [id]);
+    return row ? injuryOf(row) : null;
+  }
+
+  async addInjury(input: InjuryInput & { area: string }): Promise<number> {
+    const area = input.area.trim();
+    if (!area) throw new Error("缺少部位");
+    const stamp = this.stamp();
+    const { lastInsertRowid } = await this.run(
+      "INSERT INTO injuries (sync_id, area, side, started_on, status, sports, red_flag, notes, scores, created_at, updated_at)" +
+        " VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+      [area, input.side ?? "none", input.started_on ?? null, input.status ?? "active", (input.sports ?? []).join(","), input.red_flag ? 1 : 0, input.notes?.trim() || null, stamp, stamp],
+    );
+    return lastInsertRowid;
+  }
+
+  /** 只改傳入的欄位 */
+  async updateInjury(id: number, input: InjuryInput): Promise<boolean> {
+    const sets: string[] = [];
+    const values: (string | number | null)[] = [];
+    const set = (col: string, value: string | number | null) => {
+      sets.push(`${col}=?`);
+      values.push(value);
+    };
+    if (input.area !== undefined) {
+      if (!input.area.trim()) throw new Error("部位不能是空的");
+      set("area", input.area.trim());
+    }
+    if (input.side !== undefined) set("side", input.side);
+    if (input.started_on !== undefined) set("started_on", input.started_on);
+    if (input.status !== undefined) set("status", input.status);
+    if (input.sports !== undefined) set("sports", input.sports.join(","));
+    if (input.red_flag !== undefined) set("red_flag", input.red_flag ? 1 : 0);
+    if (input.notes !== undefined) set("notes", input.notes?.trim() || null);
+    if (!sets.length) return (await this.getInjury(id)) !== null;
+    set("updated_at", this.stamp());
+    return (await this.run(`UPDATE injuries SET ${sets.join(", ")} WHERE id=?`, [...values, id])).changes > 0;
+  }
+
+  /** 記一次疼痛的分數（0–10）；同一天、同一個時間點的蓋掉舊的 */
+  async addInjuryScore(id: number, score: PainScore): Promise<boolean> {
+    if (!Number.isInteger(score.score) || score.score < 0 || score.score > 10) throw new Error(`疼痛的分數要是 0–10 的整數：${score.score}`);
+    const injury = await this.getInjury(id);
+    if (!injury) return false;
+    await this.run("UPDATE injuries SET scores=?, updated_at=? WHERE id=?", [JSON.stringify(withScore(injury.scores, score)), this.stamp(), id]);
+    return true;
+  }
+
+  async deleteInjury(id: number): Promise<boolean> {
+    return (await this.run("DELETE FROM injuries WHERE id=?", [id])).changes > 0;
+  }
+
+  // ---------------------------------------------------------------------------
   // summaries
   // ---------------------------------------------------------------------------
 
@@ -850,7 +1001,7 @@ export class Db {
 
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
     return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
@@ -858,7 +1009,7 @@ export class Db {
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
     const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE id=?",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE id=?",
       [id],
     );
     return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
@@ -878,6 +1029,15 @@ export class Db {
     }
     if (!sets.length) return;
     await this.run(`UPDATE planned_sessions SET ${sets.join(", ")}, updated_at=? WHERE id=?`, [...params, this.stamp(), id]);
+  }
+
+  /** 改一堂課的內容（日期不變）：恢復成照計畫、記下原因與修改的時間 */
+  async editPlannedSessionContent(id: number, draft: Omit<SessionDraft, "date">, note: string): Promise<void> {
+    const stamp = this.stamp();
+    await this.run(
+      "UPDATE planned_sessions SET kind=?, title=?, steps=?, purpose=?, success=?, fallback=?, sport=?, status='planned', note=?, edited_at=?, updated_at=? WHERE id=?",
+      [draft.kind, draft.title, JSON.stringify(draft.steps), draft.purpose, draft.success, draft.fallback, draft.sport ?? null, note, stamp, stamp, id],
+    );
   }
 
   /** 改了單堂課之後，更新計畫的文字版 */
@@ -1244,8 +1404,8 @@ export class Db {
   /** 最近 N 天跑步以外的運動，新的在前 */
   getOtherActivities(days: number): Promise<OtherActivity[]> {
     return this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
-        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
       [addDays(this.clock.today(), -days)],
     );
   }
@@ -1259,8 +1419,8 @@ export class Db {
   /** 跑步以外的一筆運動（含回報的體感）；找不到時為 null */
   async getOtherActivity(intervalsId: string): Promise<OtherActivity | null> {
     const rows = await this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes" +
-        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+        " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
       [intervalsId],
     );
     return rows[0] ?? null;
@@ -1276,6 +1436,19 @@ export class Db {
       "INSERT INTO activity_feedback (intervals_id, perceived_effort, subjective_notes, updated_at) VALUES (?, ?, ?, ?)" +
         " ON CONFLICT(intervals_id) DO UPDATE SET perceived_effort=excluded.perceived_effort, subjective_notes=excluded.subjective_notes, updated_at=excluded.updated_at",
       [intervalsId, perceivedEffort, subjectiveNotes, updatedAt],
+    );
+  }
+
+  /** 騎車等其他運動的 AI 分析（騎後分析）；null 是刪掉 */
+  async setActivitySummary(intervalsId: string, summary: string | null, updatedAt = this.stamp()): Promise<void> {
+    if (summary === null) {
+      await this.run("DELETE FROM activity_summaries WHERE intervals_id=?", [intervalsId]);
+      return;
+    }
+    await this.run(
+      "INSERT INTO activity_summaries (intervals_id, summary, updated_at) VALUES (?, ?, ?)" +
+        " ON CONFLICT(intervals_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
+      [intervalsId, summary, updatedAt],
     );
   }
 

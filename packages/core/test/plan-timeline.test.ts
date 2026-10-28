@@ -11,6 +11,7 @@ let nextId = 1;
 const session = (date: string | null, kind: SessionDraft["kind"], title: string): ActivePlan["sessions"][number] => ({
   ...sessionView({ id: nextId++, date, kind, title, steps: kind === "rest" ? [] : [{ duration_min: 30 }], purpose: "", success: "", fallback: null }, t),
   result: null,
+  injuryHold: null,
 });
 
 const plan = (weekStart: string, sessions: ActivePlan["sessions"], style = "fixed"): ActivePlan => ({

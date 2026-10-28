@@ -8,9 +8,9 @@ import {
   type Message,
 } from "discord.js";
 
-import { formatStatus, type Coach, type Logger, type UsageStats } from "@running-coach/core";
+import { detectRedFlags, formatStatus, redFlagAdvice, type Coach, type Logger, type UsageStats } from "@running-coach/core";
 
-import { replyParts } from "./messages";
+import { helpText, replyParts } from "./messages";
 import { VERSION_LABEL } from "./version";
 
 const TYPING_INTERVAL_MS = 8_000;
@@ -29,13 +29,14 @@ const COMMANDS = [
     )
     .addStringOption((o) => o.setName("value").setDescription("欄位值").setRequired(true)),
   new SlashCommandBuilder().setName("status").setDescription("顯示版本、模型設定與五層記憶狀態"),
+  new SlashCommandBuilder().setName("help").setDescription("教練的自我介紹、指令與使用須知"),
 ];
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function createBot(coach: Coach, allowedChannelId: string, logger: Logger): Client {
+export function createBot(coach: Coach, allowedChannelId: string, logger: Logger, termsUrl: string): Client {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
@@ -65,6 +66,13 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
     if (!message.content || message.content.startsWith("/")) return;
     const channel = message.channel;
     if (!channel.isSendable()) return;
+
+    // 就醫提示（規格 12.33）：訊息有紅旗的字詞時，不等教練回覆先送出，由程式比對、不靠模型
+    const flags = detectRedFlags(message.content);
+    if (flags.length) {
+      const advice = redFlagAdvice(flags);
+      await channel.send(`**${advice.title}**\n${advice.detail}`);
+    }
 
     // 輸入中的提示約 10 秒就會消失，模型回應期間持續補送
     const sendTyping = () => void channel.sendTyping().catch(() => undefined);
@@ -114,6 +122,10 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
       }
       case "status": {
         await interaction.reply(formatStatus(await coach.status(), coach.describeModels(), coach.settings, VERSION_LABEL));
+        return;
+      }
+      case "help": {
+        await interaction.reply(helpText(termsUrl));
         return;
       }
     }

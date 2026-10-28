@@ -12,6 +12,7 @@ import { coachingMethod } from "./coaching-method";
 import { featureOn } from "./features";
 import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
+import { hardBlockReason, injuryLine, injuryName } from "./injuries";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
@@ -63,6 +64,11 @@ function toInt(value: string | undefined): number | null {
 
 /** 單車的賽事標出運動；跑步的不標（和開關關著時一樣） */
 const raceSportLabel = (race: Race) => (race.sport === "ride" ? "（單車）" : "");
+
+/** 起跑時間與有沒有設定地點（地點本身不給教練看，規格 12.31） */
+export function raceWeatherLabel(race: Race): string {
+  return (race.start_time ? `｜起跑 ${race.start_time}` : "") + (race.place_lat != null ? "｜已設定地點（可查比賽日天氣）" : "");
+}
 
 function targetLabel(race: Race): string {
   return race.target_time ? `｜目標 ${race.target_time}` : "｜目標完賽";
@@ -164,7 +170,8 @@ export class ContextManager {
       "【排課表】",
       "排課前先看選手的訓練偏好（目標、強度、每週次數、每次最多多久、固定或彈性）；沒有的先問，" +
         `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
-        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整，並說明改了什麼。" +
+        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整（移動、跳過、改用替代），並說明改了什麼。" +
+        "只動一天的內容（例如那天只有 30 分鐘、長跑縮短、間歇換組數、肌力拿掉某個動作）用 edit_planned_session 只改那一堂；會牽動別天的（強度課挪到隔天、休好幾天）才用 save_training_plan 重排整週。" +
         "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
       "",
       "【數值與依據】",
@@ -198,14 +205,16 @@ export class ContextManager {
       "",
       `選手說「記住…」，或提到長期有效、而選手資料欄位放不下的事（固定的行程限制、裝備、身體的習慣反應、喜歡或不喜歡的課）時，用 remember 記成一句話，並在回覆裡說「已記下：…」。` +
         "內容變了用 remember 帶 replace_id 改寫；過時的用 forget 刪掉並說明。" +
-        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、傷病、偏好用 update_athlete_profile）。" +
+        "不要記一次性的事（今天的課、這次跑步的數據，那些已經有紀錄），也不要記選手資料欄位有的（目標、PB、舊傷與長期要注意的、偏好用 update_athlete_profile）；" +
+        "現在會痛的傷用 record_injury 記在傷病紀錄。" +
         `最多 ${MEMORY_MAX_ITEMS} 條，滿了先和選手商量刪哪些。`,
       "選手提到之前聊過、但對話摘要與最近的對話裡沒有的事時，用 search_conversations 依日期或關鍵字找；「昨天」「上週」先依今天的日期換算成日期。",
       "選手的訊息開頭有「（回覆…）」時，表示他在回覆那一則；需要更多前後文時，用 search_conversations 查那一天的對話。",
       "",
       "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看下面的清單就說沒有。" +
         "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
-        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
+        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。" +
+        "比賽前兩週內談配速、補給、裝備或減量時，先用 get_race_weather 查比賽日的天氣（16 天內才有預報；賽事要有地點，地點由選手在賽事頁設定，你看不到地點，也不要問或猜）。",
     ].join("\n");
   }
 
@@ -235,6 +244,16 @@ export class ContextManager {
     if (pbs.length) lines.push(`個人最佳：${pbs.join(" / ")}`);
 
     if (profile.injuries) lines.push(`傷病注意：${profile.injuries}`);
+    // 傷病紀錄（規格 12.33）：還沒好的；檢查器依它擋課
+    const injuries = await this.db.getInjuries();
+    if (injuries.length) {
+      lines.push(
+        "【傷病紀錄】（還沒好的；[id] 給 update_injury 用。照教練方法的「傷病的處理」：會痛的運動降量或停掉，不給治療與復健的動作）",
+        ...injuries.map((i) => `・${injuryLine(i, today)}`),
+      );
+      const stale = injuries.filter((i) => !i.red_flag && hardBlockReason(i, today)?.includes("沒有回報"));
+      if (stale.length) lines.push(`・${stale.map(injuryName).join("、")}最近沒有回報疼痛的分數：談到訓練時先問今天幾分，用 update_injury 記下。`);
+    }
     if (profile.weekly_km_target) lines.push(`每週目標里程：${profile.weekly_km_target}km`);
 
     // 生理資料
@@ -297,7 +316,7 @@ export class ContextManager {
         const status = r.confirmed ? "已確認報名" : "考慮中";
         lines.push(
           `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${raceSportLabel(r)}` +
-            `${targetLabel(r)}｜距今 ${daysBetween(today, r.date)} 天（${status}）`,
+            `${targetLabel(r)}｜距今 ${daysBetween(today, r.date)} 天（${status}）${raceWeatherLabel(r)}`,
         );
       }
     }

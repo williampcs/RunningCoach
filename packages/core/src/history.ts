@@ -10,6 +10,7 @@ import { planResultsSince, type RunPlanResult } from "./planning";
 import { sportOfType } from "./sports";
 import { computeTrainingValues, intensityDistribution } from "./training-values";
 import type { OtherActivity, Workout } from "./types";
+import { rideMetrics } from "./ride-analysis";
 
 export interface RunCard {
   workout: Workout;
@@ -113,29 +114,28 @@ export interface RideCard {
   intensity: { low: number; moderate: number; high: number } | null;
   /** 平均功率（瓦）；沒有功率計時為 null */
   watts: number | null;
+  /** 標準化功率（瓦）與平均踏頻（rpm）；沒有時為 null（規格 12.31：有資料才顯示） */
+  normalizedWatts: number | null;
+  cadence: number | null;
+  /** 教練的分析：第一段是結論，其餘是細節（和跑步一樣） */
+  headline: string | null;
+  details: string | null;
   plan: RunCard["plan"];
   outsidePlan: boolean;
   expectedRpe: [number, number] | null;
 }
 
-function rawNumber(json: string | null | undefined, key: string): number | null {
-  try {
-    const v = json ? (JSON.parse(json) as Record<string, unknown>)[key] : null;
-    return typeof v === "number" && v > 0 ? v : null;
-  } catch {
-    return null;
-  }
-}
-
 export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<typeof planResultsSince>>): RideCard {
-  const d = intensityDistribution([activity], null);
+  const m = rideMetrics(activity);
   const p = planned.byOther.get(activity.intervals_id);
   const result: SessionResult | undefined = p?.result;
-  const watts = rawNumber(activity.raw_json, "icu_average_watts") ?? rawNumber(activity.raw_json, "average_watts");
   return {
     activity,
-    intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
-    watts: watts ? Math.round(watts) : null,
+    intensity: m.intensity,
+    watts: m.watts,
+    normalizedWatts: m.normalizedWatts,
+    cadence: m.cadence,
+    ...splitSummary(activity.summary),
     plan: planOf(p),
     outsidePlan: planned.othersInPlannedWeek.has(activity.intervals_id),
     expectedRpe: p && result?.outcome !== "fallback" ? EXPECTED_RPE[p.kind] : p ? EXPECTED_RPE.ride_endurance : null,

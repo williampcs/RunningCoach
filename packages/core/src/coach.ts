@@ -1,7 +1,7 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
-import { buildFeed, type FeedItem } from "./feed";
+import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
 import { featureOn } from "./features";
 import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
@@ -14,9 +14,11 @@ import { sameRun } from "./dedupe";
 import { sportOfType } from "./sports";
 import { recoveryNoteFor } from "./recovery";
 import { runSync, SYNC_DAYS } from "./sync";
-import { editRace, markRaceNotStarted, raceActivity, recordRaceResult } from "./races";
+import { editRace, markRaceNotStarted, placeFields, raceActivity, recordRaceResult } from "./races";
 import type { RaceUpdate } from "./db";
-import { runWeatherNote, todayWeatherLine, type WeatherForecast, type WeatherSource } from "./weather";
+import { runWeatherNote, todayWeatherLine, type WeatherForecast, type WeatherHour, type WeatherSource } from "./weather";
+import { racePlaceOf, type RaceWeatherSource } from "./race-weather";
+import { analyzeRide, weeklyVolumeOf, type WeekVolume } from "./ride-analysis";
 import {
   buildTools,
   createToolExecutor,
@@ -67,7 +69,8 @@ export type RunReport =
   /** 最新活動不是今天（手錶尚未同步），主觀感受已暫存，之後同步時自動合併 */
   | { status: "pending"; date: string; latest: Activity | null }
   /** 騎車等其他運動（多運動）：體感存到那一趟 */
-  | { status: "other"; activity: OtherActivity };
+  /** summary：騎車的分析（多運動開著時，規格 12.31）；其他運動或產生失敗時為 null */
+  | { status: "other"; activity: OtherActivity; summary: string | null };
 
 /** 跑後回報要存到哪裡 */
 export type ReportTarget =
@@ -147,13 +150,15 @@ export interface CoachOptions {
   activities: ActivitySource;
   /** 天氣（選手設定了天氣的城市時）；地點只在 WeatherSource 裡，Coach 看不到 */
   weather?: WeatherSource | null;
+  /** 比賽地點的天氣（規格 12.31）：地點在賽事上，只用來查天氣；沒有時教練與看板查不到比賽日的天氣 */
+  raceWeather?: RaceWeatherSource | null;
   settings?: Partial<CoachSettings>;
   now?: () => Date;
   logger?: Logger;
 }
 
 /** 可以在執行中更換的部分（見 Coach.configure） */
-export type CoachConfig = Pick<CoachOptions, "llm" | "activities" | "weather" | "settings">;
+export type CoachConfig = Pick<CoachOptions, "llm" | "activities" | "weather" | "raceWeather" | "settings">;
 
 /** 由 CoachConfig 建出的元件；一輪對話從頭到尾使用同一份 */
 interface Runtime {
@@ -162,6 +167,7 @@ interface Runtime {
   context: ContextManager;
   activities: ActivitySource;
   weather: WeatherSource | null;
+  raceWeather: RaceWeatherSource | null;
   executeTool: ToolExecutor;
 }
 
@@ -216,11 +222,13 @@ export class Coach {
       context: new ContextManager(this.db, settings, this.now),
       activities: config.activities,
       weather: config.weather ?? null,
+      raceWeather: config.raceWeather ?? null,
       executeTool: createToolExecutor({
         db: this.db,
         llm,
         activities: config.activities,
         weather: config.weather ?? null,
+        raceWeather: config.raceWeather ?? null,
         settings,
         today: () => localDate(this.now(), settings.timeZone),
         logger: this.logger,
@@ -455,7 +463,12 @@ export class Coach {
       const found = await this.db.getOtherActivity(target.intervalsId);
       if (!found) throw new Error("找不到這筆活動，可能已在 Intervals.icu 刪除。請重新整理後再選一次。");
       await this.db.setActivityFeedback(target.intervalsId, perceivedEffort, subjectiveNotes.trim() || null);
-      return { status: "other", activity: (await this.db.getOtherActivity(target.intervalsId))! };
+      // 騎車：和跑步一樣，存了體感就產生分析（失敗時體感照樣存著）
+      const summary = await this.analyzeRide(target.intervalsId).catch((e) => {
+        this.logger.warn(`Ride summary failed for ${target.intervalsId}: ${String(e)}`);
+        return null;
+      });
+      return { status: "other", activity: (await this.db.getOtherActivity(target.intervalsId))!, summary };
     }
     if (target?.kind === "saved") {
       const { workout, summary } = await this.addSubjective(target.workoutId, perceivedEffort, subjectiveNotes);
@@ -567,7 +580,38 @@ export class Coach {
 
   /** 教練動態：打開 App 時要提醒的事項 */
   async feed(): Promise<FeedItem[]> {
-    return buildFeed(this.db, this.today(), this.settings, await this.weatherForecast());
+    const [weather, raceWeather] = await Promise.all([this.weatherForecast(), this.raceForecasts()]);
+    return buildFeed(this.db, this.today(), this.settings, weather, raceWeather);
+  }
+
+  /**
+   * 看板的「比賽日的天氣」（規格 12.31）：賽前三天內、有地點的賽事的逐時預報（race id → 逐時）；
+   * 取不到的略過（最多等 WEATHER_WAIT_MS），不丟錯
+   */
+  private async raceForecasts(): Promise<Map<number, WeatherHour[]>> {
+    const out = new Map<number, WeatherHour[]>();
+    const source = this.runtime.raceWeather;
+    if (!source) return out;
+    const races = (await this.db.getUpcomingRaces(RACE_WEATHER_FEED_DAYS)).filter((r) => racePlaceOf(r) !== null);
+    await Promise.all(
+      races.map(async (race) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const hours = await Promise.race([
+            source.forecast(racePlaceOf(race)!),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), WEATHER_WAIT_MS);
+            }),
+          ]);
+          if (hours) out.set(race.id, hours);
+        } catch (e) {
+          this.logger.warn(`Race weather fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          clearTimeout(timer);
+        }
+      }),
+    );
+    return out;
   }
 
   /** 啟用中的課表，目標依現在的訓練數值換算（網頁版的計畫頁） */
@@ -587,6 +631,23 @@ export class Coach {
 
   /** 紀錄頁頁首的累積（只增不減） */
   /** 最近 N 天的騎車卡片（多運動） */
+  /**
+   * 騎車的分析（多運動，規格 12.31）：產生並存下一趟騎車的分析；不是騎車或開關關著時回傳 null.
+   * 用跑後摘要的模型
+   */
+  async analyzeRide(intervalsId: string): Promise<string | null> {
+    if (!featureOn(this.settings, "multisport")) return null;
+    const a = await this.db.getOtherActivity(intervalsId);
+    if (!a) throw new Error("找不到這筆活動，可能已在 Intervals.icu 刪除。");
+    if (sportOfType(a.type) !== "ride") return null;
+    return analyzeRide({ db: this.db, llm: this.runtime.llm, weather: this.runtime.weather, today: this.today() }, intervalsId);
+  }
+
+  /** 最近幾週每週跑步與騎車的量（紀錄頁的騎車週趨勢，多運動） */
+  weeklyVolume(weeks = 10): Promise<WeekVolume[]> {
+    return weeklyVolumeOf(this.db, this.today(), weeks);
+  }
+
   rideCards(days = 30): Promise<RideCard[]> {
     return rideCards(this.db, this.today(), days);
   }
@@ -659,6 +720,8 @@ export class Coach {
         distance_km: race.distance_km,
         target_time: race.target_time ?? undefined,
         notes: race.notes ?? undefined,
+        start_time: race.start_time ?? null,
+        ...placeFields(race.place ?? null, race.place?.label),
       });
     }
     const plan = selected.plan?.trim() ?? "";

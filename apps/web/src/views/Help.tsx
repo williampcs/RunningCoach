@@ -5,6 +5,7 @@ import { appGuide } from "@running-coach/core";
 import { FEATURES_ON } from "../environment";
 import { Markdown } from "../Markdown";
 import { PrivacyLink } from "./PrivacyLink";
+import { TermsShort } from "./TermsLink";
 
 /** 使用說明（規格 12.12）：和教練查的是同一份；可以搜尋，從教練回覆的連結打開時捲到那一段 */
 export function HelpView({ topic }: { topic: { id: string } | null }) {
@@ -33,6 +34,7 @@ export function HelpView({ topic }: { topic: { id: string } | null }) {
         <p className="small muted">
           每個分頁與按鈕的用途。也可以直接問教練，例如“多裝置同步怎麼用？”。資料存在哪裡、會送到哪裡見 <PrivacyLink />。
         </p>
+        <TermsShort className="small muted" />
         <input type="search" value={query} placeholder="搜尋，例如：同步、密碼鎖、課表" aria-label="搜尋使用說明" onChange={(e) => setQuery(e.target.value)} />
         <ul className="help-toc">
           {shown.map((s) => (

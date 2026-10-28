@@ -135,17 +135,23 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
       {card.intensity && <IntensityBar intensity={card.intensity} />}
       <EffortScale effort={w.perceived_effort} expected={card.expectedRpe} difficulty={card.plan?.difficultyLabel ?? null} />
       {w.subjective_notes && <p className="small">「{w.subjective_notes}」</p>}
-      {(card.headline || card.details) && (
-        <div className="run-summary">
-          {card.headline && <Markdown>{card.headline}</Markdown>}
-          {card.details && (
-            <Disclosure summary={card.headline ? "看完整分析" : "看教練的分析"}>
-              <Markdown>{card.details}</Markdown>
-            </Disclosure>
-          )}
-        </div>
-      )}
+      <SummaryView headline={card.headline} details={card.details} />
       {children}
+    </div>
+  );
+}
+
+/** 教練的分析：第一段是結論，其餘收在「看完整分析」 */
+export function SummaryView({ headline, details }: { headline: string | null; details: string | null }) {
+  if (!headline && !details) return null;
+  return (
+    <div className="run-summary">
+      {headline && <Markdown>{headline}</Markdown>}
+      {details && (
+        <Disclosure summary={headline ? "看完整分析" : "看教練的分析"}>
+          <Markdown>{details}</Markdown>
+        </Disclosure>
+      )}
     </div>
   );
 }
@@ -162,11 +168,20 @@ export function RideCardView({ card, children }: { card: RideCard; children?: Re
         <Stat label="平均心率" value={a.avg_hr ?? "—"} />
         <Stat label={card.watts ? "功率" : "負荷"} value={card.watts ?? a.training_load ?? "—"} unit={card.watts ? "W" : undefined} />
       </dl>
-      {card.watts && a.training_load != null && <p className="small muted">負荷 {a.training_load}</p>}
-      {a.avg_hr == null && <p className="small muted">沒有心率資料</p>}
+      {/* 有資料才出現（規格 12.31）：功率在上面的格子，這裡是負荷、標準化功率與踏頻 */}
+      {(() => {
+        const extra = [
+          card.watts && a.training_load != null ? `負荷 ${a.training_load}` : null,
+          card.normalizedWatts ? `標準化功率 ${card.normalizedWatts} W` : null,
+          card.cadence ? `平均踏頻 ${card.cadence} rpm` : null,
+          a.avg_hr == null ? "沒有心率資料" : null,
+        ].filter(Boolean);
+        return extra.length > 0 && <p className="small muted ride-extra">{extra.join("・")}</p>;
+      })()}
       {card.intensity && <IntensityBar intensity={card.intensity} />}
       <EffortScale effort={a.perceived_effort ?? null} expected={card.expectedRpe} difficulty={card.plan?.difficultyLabel ?? null} />
       {a.subjective_notes && <p className="small">「{a.subjective_notes}」</p>}
+      <SummaryView headline={card.headline} details={card.details} />
       {children}
     </div>
   );

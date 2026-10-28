@@ -38,6 +38,7 @@ jobs:
     # 手動執行時也只部署 v2：staging 就是 v2 的樣子
     if: ${{ github.ref_name == 'v2' && (vars.STAGING_PAGES_PROJECT != '' || vars.STAGING_SYNC_D1_DATABASE_ID != '') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -45,6 +46,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       - run: npm run typecheck
       - run: npm test
 
@@ -53,6 +56,7 @@ jobs:
     needs: test
     if: ${{ vars.STAGING_SYNC_D1_DATABASE_ID != '' && vars.STAGING_WEB_URL != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -60,6 +64,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       - name: Fill in account values
         env:
           WORKER_NAME: running-coach-sync-staging
@@ -82,6 +88,7 @@ jobs:
     needs: [test, sync]
     if: ${{ !cancelled() && needs.test.result == 'success' && needs.sync.result != 'failure' && vars.STAGING_PAGES_PROJECT != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -99,6 +106,8 @@ jobs:
             exit 1
           fi
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       - run: npm run build -w @running-coach/web -- --base /
         env:
           VITE_STAGING: "1"

@@ -104,7 +104,7 @@ describe("單車的教練方法", () => {
     expect(planningRules({ multisport: true, sports: ["run"] })).not.toContain(CYCLING_RULES);
     // 跑步＋騎車：兩份都有
     expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_METHOD);
-    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v6】");
+    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain("【教練方法 v7】");
     expect(planningRules({ multisport: true, sports: ["run", "ride"] })).toContain(CYCLING_RULES);
     // 只練騎車：不帶跑步的方法
     const rideOnly = coachingMethod({ multisport: true, sports: ["ride"] });
@@ -429,10 +429,15 @@ describe("運動回報、賽事與多裝置同步", () => {
   });
 
   it("教練也可以在對話中記下騎車的體感", async () => {
-    const { coach, provider } = await makeCoach([toolTurn("save_activity_feedback", { perceived_effort: 5, sport: "ride" }), turn({ text: "好" })], { settings: MULTI });
+    const { coach, provider } = await makeCoach(
+      [toolTurn("save_activity_feedback", { perceived_effort: 5, sport: "ride" }), turn({ text: "穩定的耐力騎\n\n- 強度大多在低區" }), turn({ text: "好" })],
+      { settings: MULTI },
+    );
     await coach.db.upsertOtherActivities([ride("2026-10-10")]);
     await coach.chat("剛騎完，體感 5");
-    expect(provider.calls[1]!.toolResults![0]!.content).toContain("已記下 2026-10-10 騎車（60 分鐘）的體感 5/10");
+    // 騎車的體感存了就產生分析（規格 12.31），結果裡有分析
+    expect(provider.calls[2]!.toolResults![0]!.content).toContain("已記下 2026-10-10 騎車（60 分鐘）的體感 5/10");
+    expect(provider.calls[2]!.toolResults![0]!.content).toContain("穩定的耐力騎");
     expect(provider.calls[0]!.request.system!).toContain("save_activity_feedback");
   });
 

@@ -11,6 +11,7 @@
  */
 import { daysBetween } from "./dates";
 import type { Db, RaceUpdate } from "./db";
+import { roundPlace, type WeatherPlace } from "./weather";
 import { sportOfType } from "./sports";
 import { parseDuration } from "./training-values";
 import type { Race } from "./types";
@@ -33,6 +34,22 @@ export const RESULT_SOURCES = {
   other: "不確定",
 } as const;
 export type ResultSource = keyof typeof RESULT_SOURCES;
+
+/** 起跑時間寫成 HH:MM（24 小時制）；空白是沒有；看不懂時丟錯 */
+export function normalizeStartTime(text: string | null | undefined): string | null {
+  const t = (text ?? "").trim();
+  if (!t) return null;
+  const m = /^(\d{1,2})[:：](\d{2})$/.exec(t);
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) throw new Error(`起跑時間要寫成 HH:MM（例：06:30）：${t}`);
+  return `${m[1]!.padStart(2, "0")}:${m[2]}`;
+}
+
+/** 地點寫進賽事的欄位；null 是清除 */
+export function placeFields(place: WeatherPlace | null, label = ""): { place_label: string | null; place_lat: number | null; place_lon: number | null } {
+  if (!place) return { place_label: null, place_lat: null, place_lon: null };
+  const { lat, lon } = roundPlace(place.lat, place.lon);
+  return { place_label: label.trim().slice(0, 100) || null, place_lat: lat, place_lon: lon };
+}
 
 /** 賽後還能改的欄位 */
 const AFTER_RACE_FIELDS = new Set(["name", "notes"]);
@@ -102,6 +119,11 @@ export async function editRace(db: Db, today: string, id: number, fields: RaceUp
     if (blocked.length) throw new Error(`「${race.name}」已經是賽後，只能改名稱與備註（不能改：${blocked.join("、")}）`);
   }
   if (typeof fields.date === "string" && !/^\d{4}-\d{2}-\d{2}$/.test(fields.date)) throw new Error(`日期格式要是 YYYY-MM-DD：${fields.date}`);
+  if (fields.start_time !== undefined) fields = { ...fields, start_time: normalizeStartTime(fields.start_time === null ? null : String(fields.start_time)) };
+  // 地點的座標只留到 0.1°（約 10 km），和天氣的城市一樣
+  if (typeof fields.place_lat === "number" && typeof fields.place_lon === "number") {
+    fields = { ...fields, ...placeFields(roundPlace(fields.place_lat, fields.place_lon), String(fields.place_label ?? "")) };
+  }
   await db.updateRace(id, fields);
   return (await db.getRace(id))!;
 }
@@ -200,6 +222,8 @@ export function raceLineForCoach(r: Race, today: string): string {
   return (
     `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${r.sport === "ride" ? "（單車）" : ""}｜目標 ${r.target_time || "完賽"}｜${raceStatusText(r, today)}` +
     (raceOutcome(r) === "finished" ? resultDetail(r).map((d) => `｜${d}`).join("") : "") +
+    // 地點不給教練看，只說有沒有設定（可以查比賽日的天氣）
+    (raceOutcome(r) === null && r.date >= today ? `${r.start_time ? `｜起跑 ${r.start_time}` : ""}${r.place_lat != null ? "｜已設定地點" : ""}` : "") +
     (r.notes ? `｜備註：${r.notes}` : "")
   );
 }

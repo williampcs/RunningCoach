@@ -18,7 +18,7 @@ export {
   type UsageStats,
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
-export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type RaceUpdate, type SaveResult } from "./db";
+export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
 export { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
@@ -69,6 +69,16 @@ export {
   type DnsReason,
   type RaceOutcome,
 } from "./races";
+export { normalizeStartTime, placeFields } from "./races";
+export { rideMetrics, weeklyVolume, type RideMetrics, type WeekVolume } from "./ride-analysis";
+export {
+  OpenMeteoRaceWeather,
+  racePlaceOf,
+  raceWeatherSummary,
+  RACE_FORECAST_DAYS,
+  type RacePlace,
+  type RaceWeatherSource,
+} from "./race-weather";
 export {
   OPEN_METEO_URLS,
   OpenMeteoWeather,
@@ -146,6 +156,7 @@ export {
   SESSION_KINDS,
   sessionSport,
   STATUS_LABELS,
+  EDITED_LABEL,
   type PlannedSession,
   type PlanStyle,
   type SessionKind,
@@ -198,3 +209,23 @@ export {
 } from "./recovery";
 export * from "./device-sync";
 export { appGuide, findGuide, type GuideSection, type Shell } from "./app-guide";
+export { TERMS_SHORT, TERMS_UPDATED, TERMS_VERSION } from "./terms";
+export {
+  hardBlockReason,
+  INJURY_SIDE_LABELS,
+  INJURY_STATUS_LABELS,
+  injuryAffects,
+  injuryName,
+  injurySportsText,
+  isOpen as injuryIsOpen,
+  latestPain,
+  PAIN_LIMIT,
+  PAIN_WHEN_LABELS,
+  SCORE_STALE_DAYS,
+  type Injury,
+  type InjurySide,
+  type InjuryStatus,
+  type PainScore,
+  type PainWhen,
+} from "./injuries";
+export { detectRedFlags, RED_FLAG_TERMS, redFlagAdvice } from "./red-flags";

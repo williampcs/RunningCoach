@@ -94,10 +94,10 @@ flowchart TB
     tv["training-values.ts / sports.ts / coaching-method.ts<br/>配速、心率區間、VDOT；各運動的區間；跑步與單車的教練方法"]
     plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、多運動的每週額度"]
     races["races.ts<br/>賽事的規則"]
-    recovery["recovery.ts<br/>恢復狀況的判讀"]
+    recovery["recovery.ts / injuries.ts / red-flags.ts<br/>恢復狀況的判讀、傷病紀錄、就醫提示的字詞"]
     feed["feed.ts<br/>教練動態"]
     history["history.ts<br/>紀錄頁與累積"]
-    weather["weather.ts<br/>天氣"]
+    weather["weather.ts、race-weather.ts<br/>天氣、比賽日的天氣"]
   end
   subgraph data["資料"]
     db["db.ts<br/>schema、migration、所有 SQL"]
@@ -114,8 +114,9 @@ flowchart TB
 ```
 
 - **Coach** 是外殼唯一要用的入口：`chat()`、`sync()`、`reportRun()`、`feed()`、`activePlan()`、賽事的操作等。網頁版與 Discord 不直接碰規則。
-- **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼，都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
+- **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼、傷病時不能排的課、要不要出現就醫提示（`red-flags.ts` 比對選手寫的字），都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
 - **教練能做的事都是「工具」**（`tools.ts`）：例如查最近的訓練、存課表、記錄比賽成績。教練說要做某件事，就是呼叫工具；工具裡再套用和網頁按鈕一樣的規則，所以選手和教練能做的事一致。
+- **寫課表的工具開 strict**（規格 12.31 第 2 點）：`save_training_plan` 與 `edit_planned_session` 的 schema 寫完整（步驟與重複組放在 `$defs`），Claude 送 `strict: true`，模型的輸入一定符合格式；程式照樣用 `parseSessions` 驗證（strict 管不到的規則，例如距離或時間至少一個、重複 1–30 次）。strict 在一次請求裡有上限（20 個工具、選填參數合計 24 個、聯集 16 個），所以只開這兩個；API 不接受時轉接層拿掉 strict 再送一次。OpenAI 相容的供應商不送 strict，`$ref` 展開、拿掉 `additionalProperties`。
 
 ### 一則對話怎麼跑
 
@@ -157,13 +158,13 @@ sequenceDiagram
 |---|---|---|
 | 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
 | API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
-| 教練動態「知道了」、收起等小狀態 | localStorage | 不會 |
+| 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 13 版）
+## 資料庫的 schema（目前是第 17 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -178,6 +179,7 @@ erDiagram
   conversations ||--o| conversations : "reply_to：回覆哪一則（存摘錄）"
   pending_subjective }o--o| workouts : "同步時依日期配對"
   activity_feedback |o--o| other_activities : "intervals_id：騎車等的體感"
+  activity_summaries |o--o| other_activities : "intervals_id：騎後分析"
   races }o--o| other_activities : "result_activity = intervals_id：單車賽事當天那趟"
   daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
 ```
@@ -186,8 +188,9 @@ erDiagram
 
 **選手與目標**
 - `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。
-- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）。
+- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）；比賽地點 `place_label`、`place_lat`、`place_lon`（只用來查比賽日的天氣，座標四捨五入到 0.1°，不給教練看）與起跑時間 `start_time`（schema 15，規格 12.31）。
 - `memories`：記住的事（選手記的或教練記的）。
+- `injuries`：傷病紀錄（schema 17，規格 12.33）：部位 `area`、哪一側 `side`、開始日期、狀態（進行中、好轉中、好了）、會痛的運動 `sports`（逗號分隔，空的是不知道、當成全部）、紅旗 `red_flag`、備註，疼痛的分數 `scores`（JSON：`[{date, score, when}]`，同一天同一個時間點蓋掉舊的）。教練用 `record_injury`、`update_injury` 寫，選手在「選手 → 身體」改；檢查器依它擋課（`plan.ts` 的 `injuryWarnings`：會痛的運動在疼痛超過 3/10 或超過 3 天沒有分數時，強度課與長課不能存；有紅旗時所有課都不能存），已經排好的課算出「先不要做」（`planning.ts` 的 `injuryHolds`）。
 
 **訓練紀錄**
 - `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。
@@ -196,13 +199,14 @@ erDiagram
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
 - `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
+- `activity_summaries`：騎車的 AI 分析（騎後分析，schema 16，規格 12.31）。和體感一樣另外存、用 `intervals_id` 對應；用跑後摘要的模型，存了騎車的體感（回報、補填、教練的 `save_activity_feedback`）或按「請教練分析」時產生（`ride-analysis.ts`）。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
 - `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
-- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。
 
 **對話**
 - `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。
@@ -224,9 +228,11 @@ erDiagram
 | `pl:sync_id`、`ps:sync_id` | 一份課表、一堂課 |
 | `ck:日期` | 一天的自評 |
 | `m:sync_id` | 一則記住的事 |
+| `in:sync_id` | 一個傷（含疼痛的分數；schema 17，舊版不認得，不套用也不刪） |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
 | `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
+| `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
 - `spaces`：同步空間與存取憑證的雜湊。
@@ -281,7 +287,7 @@ sequenceDiagram
 
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
 
-網頁版的建置另外輸出隱私說明頁 `privacy.html`（Cloudflare Pages 提供在 `/privacy`）：不用 JavaScript 的靜態頁，範本在 `apps/web/privacy/`，建置時填入 staging 的標示與同步服務的網址；測試會檢查網頁版預設會連的外部網址都寫在上面（規格 12.20）。資料流向（存在哪裡、送到哪裡）改了時要一起改這一頁。
+網頁版的建置另外輸出隱私說明頁 `privacy.html`（Cloudflare Pages 提供在 `/privacy`）：不用 JavaScript 的靜態頁，範本在 `apps/web/privacy/`，建置時填入 staging 的標示與同步服務的網址；測試會檢查網頁版預設會連的外部網址都寫在上面（規格 12.20）。資料流向（存在哪裡、送到哪裡）改了時要一起改這一頁。同樣的方式另外輸出使用須知 `terms.html`（`/terms`，範本在 `apps/web/terms/`，共用 `privacy.css`）；精簡版與版本號在 `packages/core/src/terms.ts`，網頁版與 Discord 共用（規格 12.32）。
 
 網頁版的建置另外輸出 `version.json`（這次建置的 commit 與日期，`_headers` 設成不快取）。網頁打開時、回到前景時、前景中每 30 分鐘讀一次，和自己的 commit 不同就在上方提示「有新版本，點這裡更新」，點了才重新載入；讀不到時不提示（規格 12.18）。
 

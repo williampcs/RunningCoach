@@ -77,6 +77,8 @@ export interface OtherActivity {
   /** 選手回報的體感（1–10）與感受（activity_feedback，多運動的「運動回報」，schema 13） */
   perceived_effort?: number | null;
   subjective_notes?: string | null;
+  /** 教練的分析（騎後分析，activity_summaries，schema 16）；還沒分析時為 null */
+  summary?: string | null;
 }
 
 /** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */
@@ -182,6 +184,15 @@ export interface Race {
   result_activity?: string | null;
   /** 賽事的運動（run 跑步、ride 騎車；多運動，schema 13）；沒有時是跑步 */
   sport?: string | null;
+  /**
+   * 比賽的地點（schema 15，規格 12.31）：只用來查比賽日的天氣. 顯示的名稱與四捨五入到 0.1° 的座標；
+   * 不給教練看（教練只看得到天氣）
+   */
+  place_label?: string | null;
+  place_lat?: number | null;
+  place_lon?: number | null;
+  /** 起跑時間 HH:MM（比賽地點的當地時間，選填） */
+  start_time?: string | null;
   created_at: string;
 }
 

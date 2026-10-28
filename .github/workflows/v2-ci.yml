@@ -18,6 +18,7 @@ jobs:
   check:
     name: Typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -25,6 +26,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       - run: npm run typecheck
       - run: npm test
       - run: npm run build --workspaces --if-present
@@ -32,6 +35,7 @@ jobs:
   discord-image:
     name: Build Discord image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       # 只驗證能建置，不推送到 registry（部署方式見 KI-023）

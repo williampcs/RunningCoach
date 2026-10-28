@@ -3,7 +3,7 @@
  *
  * 直接以 fetch 呼叫，不依賴任何 SDK。Claude 不走這裡，見 anthropic.ts。
  */
-import type { ChatRequest, ChatSession, Effort, LlmProvider, ToolResult, Turn } from "./types";
+import type { ChatRequest, ChatSession, Effort, LlmProvider, ToolDef, ToolResult, Turn } from "./types";
 
 export interface OpenAICompatibleOptions {
   apiKey: string;
@@ -85,7 +85,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     ];
     const tools = request.tools?.map((t) => ({
       type: "function",
-      function: { name: t.name, description: t.description, parameters: t.input_schema },
+      function: { name: t.name, description: t.description, parameters: plainSchema(t.input_schema) },
     }));
 
     return {
@@ -298,4 +298,28 @@ async function errorMessage(response: Response): Promise<string> {
     // 非 JSON 的錯誤內容，直接回傳原文
   }
   return `${response.status} ${text.slice(0, 300)}`;
+}
+
+/**
+ * 給 OpenAI 相容服務的參數 schema：展開 $ref（有些服務不支援）、拿掉 strict 才需要的 additionalProperties
+ * （和加上 strict 之前送出的一樣寬鬆；各家對 JSON Schema 的支援不一）
+ */
+export function plainSchema(schema: ToolDef["input_schema"]): Record<string, unknown> {
+  const defs = schema.$defs ?? {};
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (!value || typeof value !== "object") return value;
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.$ref === "string") {
+      const name = obj.$ref.replace(/^#\/\$defs\//, "");
+      if (!(name in defs)) throw new Error(`找不到 schema 的定義：${obj.$ref}`);
+      return walk(defs[name]);
+    }
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([k]) => k !== "$defs" && k !== "additionalProperties")
+        .map(([k, v]) => [k, walk(v)]),
+    );
+  };
+  return walk(schema) as Record<string, unknown>;
 }

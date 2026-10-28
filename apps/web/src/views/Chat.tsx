@@ -16,6 +16,8 @@ import { Archive, X } from "lucide-react";
 import { errorText, useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { TermsShort } from "./TermsLink";
+import { checkRedFlags } from "../red-flag-alert";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
@@ -34,6 +36,7 @@ const TOOL_STATUS: Record<string, string> = {
   save_daily_checkin: "記錄今天的身體狀況",
   save_training_plan: "檢查並儲存課表",
   update_planned_session: "調整課表",
+  edit_planned_session: "修改一堂課",
   add_race: "新增賽事",
   list_races: "查看賽事",
   get_race_activity: "查比賽當天的手錶紀錄",
@@ -258,6 +261,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       const content = text.trim();
       if (!content || busy.current) return;
       busy.current = true;
+      // 有紅旗的字詞（胸痛、昏倒…）時，畫面上直接出現就醫提示，不等教練回覆（規格 12.33）
+      checkRedFlags(content);
       // 這次的兩則（訊息與回覆）也要留在畫面上
       setLimit((n) => n + 2);
       setSentCount((n) => n + 1);
@@ -349,8 +354,9 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     <>
       <CoachFeed collapseSignal={sentCount} />
       <div className="messages" ref={list}>
-        <GettingStarted />
+        {/* 讀更早的對話的觸發點放在最上面：新手引導比畫面還高時（手機上），捲到最上面也要觸發得到 */}
         <div ref={top} />
+        <GettingStarted />
         {hasOlder && (
           <button className="text" disabled={loadingOlder} onClick={loadOlder}>
             {loadingOlder ? "讀取中…" : "載入更早的對話"}
@@ -496,6 +502,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           </button>
         </form>
       )}
+      {/* 精簡版的使用須知一直顯示在輸入框下方（規格 12.32） */}
+      <TermsShort />
     </>
   );
 }

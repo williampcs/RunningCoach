@@ -32,6 +32,7 @@ jobs:
   test:
     name: Typecheck and test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -39,6 +40,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       - run: npm run typecheck
       - run: npm test
 
@@ -47,6 +50,7 @@ jobs:
     needs: test
     if: ${{ vars.WEB_PAGES_PROJECT != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -54,6 +58,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
+        timeout-minutes: 5
       # 網站在網域的根目錄；_headers（安全標頭）由建置產生
       - run: npm run build -w @running-coach/web -- --base /
         env:

@@ -148,6 +148,10 @@ function activities() {
       moving_time: 5100,
       average_heartrate: 130,
       icu_training_load: 52,
+      // 訓練台：有踏頻與功率（騎車卡有資料才顯示踏頻、功率與標準化功率，規格 12.31）
+      average_cadence: 88,
+      icu_average_watts: 172,
+      icu_weighted_avg_watts: 181,
       lthr: RIDE_LTHR,
       icu_hr_zones: RIDE_HR_ZONES,
       icu_hr_zone_times: [2400, 2400, 300, 0, 0, 0, 0],
@@ -293,6 +297,23 @@ function cyclingPlan(rideOnly: boolean, accept = false) {
   };
 }
 
+/** 上一次模擬的 edit_planned_session（檢查器退回時寫理由再送） */
+let lastEdit: Record<string, unknown> | null = null;
+
+/** edit_planned_session 的一堂課（完整的內容，沒有日期） */
+const EDITED_SESSION = {
+  kind: "interval",
+  title: "8×400 m",
+  steps: [
+    { duration_min: 15, target: { hr: "easy" } },
+    { repeat: 8, steps: [{ distance_km: 0.4, target: { pace: "I" } }, { duration_min: 1.5, note: "慢跑恢復" }] },
+    { duration_min: 10, target: { hr: "easy" } },
+  ],
+  purpose: "最大攝氧量",
+  success: "最後一趟仍能保持配速",
+  fallback: "改成 40 分鐘輕鬆跑",
+};
+
 /** 工具清單有單車的課（多運動的第 3 階段） */
 const hasCycling = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("ride_sweetspot");
 
@@ -309,6 +330,11 @@ const toolUse = (name: string, input: Record<string, unknown> = {}): Block => ({
   input,
 });
 
+/** 傷病（規格 12.33）：選手說哪裡痛時，模擬的教練先問的固定問題 */
+const INJURY_QUESTIONS =
+  "（模擬回覆）先問清楚再建議：\n\n1. 哪一側？\n2. 什麼時候開始？\n3. 哪些運動會痛？\n4. 運動中、運動後、隔天早上各幾分（0–10）？\n" +
+  "5. 有沒有腫、按壓骨頭會不會痛？\n6. 跑姿有沒有改變？\n7. 越來越痛還是在好轉？\n8. 休息或夜裡也痛嗎？";
+
 /** 依對話內容決定模擬教練的下一步 */
 /** 模擬的長回覆：結論＋三個小標（程式碼區塊裡的 ## 不算小標） */
 const LONG_REPLY =
@@ -317,7 +343,7 @@ const LONG_REPLY =
   "## 週四的閾值課\n改成 3 × 1.5 km，組間慢跑 2 分鐘。\n\n```\n## 這行在程式碼區塊裡，不是小標\n```\n\n" +
   "## 週末的長跑\n維持 16 km，前 10 km 控制在輕鬆跑的心率以下。";
 
-function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
+function reply(body: { messages: Message[]; system?: string | Block[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
   const last = body.messages.at(-1);
   const lastText = textOf(last);
   const isToolResult = Array.isArray(last?.content) && last.content.some((b) => b.type === "tool_result");
@@ -335,6 +361,16 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
     return [{ type: "text", text: `整理如下：\n\n\`\`\`json\n${JSON.stringify(extraction, null, 2)}\n\`\`\`` }];
   }
 
+  // 騎後分析（規格 12.31）：提到有沒有功率，E2E 檢查功率有帶進去
+  if (!body.tools?.length && lastText.includes("騎車訓練")) {
+    const power = /平均功率：(\d+) W/.exec(lastText);
+    return [
+      {
+        type: "text",
+        text: `（模擬騎後分析）穩定的耐力騎，強度控制得不錯\n\n- 大多在低強度${power ? `\n- 平均功率 ${power[1]} W，出力平穩` : ""}\n- 明天可以安排輕鬆跑`,
+      },
+    ];
+  }
   // 沒有工具的單次生成（跑後摘要、對話壓縮）；真實模型常回 Markdown
   if (!body.tools?.length) {
     return [
@@ -347,6 +383,17 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (body.tool_choice?.type === "none") return [{ type: "text", text: "（模擬回覆）已達工具呼叫上限，先回覆到這裡。" }];
 
   if (isToolResult) {
+    // 只改一堂課（規格 12.31）：看完課表後，把第一堂閾值課改成 400 m × 8
+    const asked = textOf([...body.messages].reverse().find((m) => m.role === "user" && typeof m.content === "string"));
+    const threshold = lastText.match(/\[session_id=(\d+)\][^\n]*｜T 閾值/);
+    if (/改成 400 m × 8/.test(asked) && threshold && !lastText.includes("已修改")) {
+      lastEdit = { session_id: Number(threshold[1]), reason: "（模擬）想練速度，改成 400 m × 8", session: EDITED_SESSION };
+      return [toolUse("edit_planned_session", lastEdit)];
+    }
+    // 整週的檢查有新的提醒時寫理由再改一次
+    if (/改成 400 m × 8/.test(asked) && lastText.includes("尚未修改") && lastEdit) {
+      return [toolUse("edit_planned_session", { ...lastEdit, accept_warnings: true, warning_notes: "（模擬）選手想練速度" })];
+    }
     // 跑步＋騎車的課表有跨運動的警告：寫理由再存一次
     if (lastText.includes("尚未儲存") && lastText.includes("跑步與騎車")) {
       return [toolUse("save_training_plan", cyclingPlan(false, true))];
@@ -359,16 +406,31 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
     }
     return [{ type: "text", text: `（模擬回覆）工具回傳了：\n\n${lastText}\n\n**建議**：明天安排 40 分鐘輕鬆跑，心率維持在 Z2。` }];
   }
+  // 傷病（規格 12.33）：先問固定的問題；選手回答後（有幾分）記進傷病紀錄
+  if (/膝蓋.*痛/.test(lastText) && !/\d+\s*分/.test(lastText)) return [{ type: "text", text: INJURY_QUESTIONS }];
+  if (/左膝.*\d+\s*分/.test(lastText)) {
+    const score = Number(/運動中\s*(\d+)\s*分|跑步中\s*(\d+)\s*分/.exec(lastText)?.slice(1).find(Boolean) ?? 5);
+    return [
+      toolUse("record_injury", { area: "膝蓋", side: "left", started_on: daysAgo(2), sports: ["run"], score, score_when: "during", notes: "（模擬）下樓梯會痛" }),
+    ];
+  }
   const howTo = lastText.match(/([^\s\]？?]+?)(?:怎麼用|在哪裡)/);
   if (howTo) return [toolUse("get_app_help", { topic: howTo[1]! })];
   const remember = lastText.match(/幫我記住[：:，, ]*(.+)/);
   if (remember) return [toolUse("remember", { content: remember[1]!.trim() })];
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
+  // 比賽日的天氣（規格 12.31）：系統提示的賽事清單裡第一場設定了地點的
+  // 系統提示：Anthropic 的在 system，OpenAI 相容的是第一則 system 訊息
+  const systemText = body.system ? textOf({ role: "system", content: body.system }) : "";
+  const placed = systemText.match(/- \[(\d+)\][^\n]*已設定地點/);
+  const asked = /比賽.*(天氣|配速)|怎麼配速/.test(lastText);
+  if (asked && placed) return [toolUse("get_race_weather", { race_id: Number(placed[1]) })];
   if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
   if (/騎完|剛騎/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
   }
+  if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }
@@ -542,7 +604,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
 
 type OpenAIMessage = { role: string; content: string | null; tool_calls?: unknown[] };
 
-/** OpenAI 格式的請求轉成 reply() 使用的格式（只用得到最後一則與是否有工具） */
+/** OpenAI 格式的請求轉成 reply() 使用的格式（只用得到最後一則、系統提示與是否有工具） */
 function fromOpenAI(body: { messages: OpenAIMessage[]; tools?: unknown[]; tool_choice?: unknown }) {
   return {
     messages: body.messages
@@ -552,6 +614,8 @@ function fromOpenAI(body: { messages: OpenAIMessage[]; tools?: unknown[]; tool_c
           ? { role: "user", content: [{ type: "tool_result", content: m.content ?? "" }] }
           : { role: m.role, content: m.content ?? "" },
       ),
+    // 系統提示另外帶著（比賽日的天氣看賽事清單）
+    system: body.messages.find((m) => m.role === "system")?.content ?? undefined,
     tools: body.tools,
     tool_choice: body.tool_choice === "none" ? { type: "none" } : undefined,
   };
@@ -619,7 +683,8 @@ function mockWeather(url: URL) {
   const past = Number(url.searchParams.get("past_days") ?? 0);
   const days = Number(url.searchParams.get("forecast_days") ?? 7);
   // 日期依查詢的時區（和 Open-Meteo 一樣），不然測試的瀏覽器在 UTC 時跨日前後會對不上
-  const zone = url.searchParams.get("timezone") || "Asia/Taipei";
+  // auto（比賽地點的天氣）：模擬的地點都當成台北的時區
+  const zone = url.searchParams.get("timezone") === "auto" ? "Asia/Taipei" : url.searchParams.get("timezone") || "Asia/Taipei";
   const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date());
   const dates = Array.from({ length: past + days }, (_, i) => new Date(Date.parse(localToday) - (past - i) * 86_400_000).toISOString().slice(0, 10));
   const hours = dates.flatMap((d) => Array.from({ length: 24 }, (_, h) => ({ time: `${d}T${String(h).padStart(2, "0")}:00`, h })));

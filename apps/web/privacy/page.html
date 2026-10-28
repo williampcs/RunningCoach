@@ -15,7 +15,7 @@
     <main>
       <p class="back"><a href="/">← 回到 Zone2Mate</a></p>
       <h1>隱私說明</h1>
-      <p class="lead">這一頁說明 Zone2Mate 網頁版（使用你自己的 AI API key）的資料存在哪裡、會送到哪裡。提供者：Zone2Mate（個人開發的專案）。</p>
+      <p class="lead">這一頁說明 Zone2Mate 網頁版（使用你自己的 AI API key）的資料存在哪裡、會送到哪裡。提供者：Zone2Mate（個人開發的專案）。使用上要注意的事（不是醫療建議、AI 會出錯等）見<a href="/terms">使用須知</a>。</p>
 
       <section class="summary" aria-labelledby="summary">
         <h2 id="summary">重點</h2>
@@ -31,8 +31,8 @@
       <section aria-labelledby="stored">
         <h2 id="stored">存在你裝置上的資料</h2>
         <ul>
-          <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事、課表、每日自評、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
-          <li><strong>瀏覽器的 localStorage</strong>：設定，包括 AI 服務與模型、AI 的 API key、Intervals.icu 的 API key 與 Athlete ID、時區、天氣的城市、多裝置同步的金鑰、你確認過的資料流向；以及幾個畫面的小狀態，例如是否略過新手引導、教練動態裡按過「知道了」的項目。</li>
+          <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事（包括你為查天氣選的比賽地點與起跑時間）、課表、每日自評、傷病紀錄（部位、哪一側、會痛的運動、疼痛的分數）、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
+          <li><strong>瀏覽器的 localStorage</strong>：設定，包括 AI 服務與模型、AI 的 API key、Intervals.icu 的 API key 與 Athlete ID、時區、天氣的城市、多裝置同步的金鑰、你確認過的資料流向；以及幾個畫面的小狀態，例如是否略過新手引導、教練動態裡按過「知道了」的項目、確認過的使用須知版本、還沒按「我知道了」的就醫提示。</li>
           <li><strong>密碼鎖（選用）</strong>：在設定的「密碼鎖」啟用後，API key、Intervals.icu 的 key 與同步金鑰會用你的密碼加密後才保存；沒有啟用時是以明文保存。對話與訓練資料不會加密。</li>
           <li>設定裡「匯出資料庫」匯出的檔案不含 API key。</li>
         </ul>
@@ -45,7 +45,7 @@
         <h3>你選的 AI 服務</h3>
         <ul>
           <li><strong>什麼時候</strong>：和教練對話、教練分析一趟跑步、整理較早的對話成摘要、「從其他 AI 帶入」整理你貼上的文字時。</li>
-          <li><strong>送什麼</strong>：你的訊息與最近的對話、對話摘要、選手資料、記住的事、近期的賽事、今天的日期與你的時區；教練需要時，還有它查詢的跑步紀錄、恢復資料、每日自評、課表與天氣的數字（不含地點）。另外會帶著你的 API key，讓對方確認是你的帳號。</li>
+          <li><strong>送什麼</strong>：你的訊息與最近的對話、對話摘要、選手資料、記住的事、還沒好的傷病紀錄、近期的賽事、今天的日期與你的時區；教練需要時，還有它查詢的跑步紀錄、恢復資料、每日自評、課表與天氣的數字（不含地點）。另外會帶著你的 API key，讓對方確認是你的帳號。</li>
           <li><strong>送到哪裡</strong>：依你在設定選的供應商，<code>api.anthropic.com</code>（Anthropic）、<code>api.openai.com</code>（OpenAI）、<code>generativelanguage.googleapis.com</code>（Google Gemini），或你在「其他 OpenAI 相容服務」填的網址。不經過我們的伺服器。</li>
           <li>這些服務看得到你送出的內容，如何保存與使用依它們的條款與隱私政策：<a href="https://www.anthropic.com/legal/privacy">Anthropic</a>、<a href="https://openai.com/policies/privacy-policy/">OpenAI</a>、<a href="https://ai.google.dev/gemini-api/terms">Google Gemini API</a>。</li>
         </ul>
@@ -57,11 +57,12 @@
           <li><strong>送到哪裡</strong>：<code>intervals.icu</code>。隱私政策：<a href="https://www.intervals.icu/privacy-policy/">Intervals.icu</a>。</li>
         </ul>
 
-        <h3>Open-Meteo（設定了天氣的城市才會）</h3>
+        <h3>Open-Meteo（設定了天氣的城市，或賽事設定了比賽地點才會）</h3>
         <ul>
           <li><strong>查天氣</strong>：送出四捨五入到 0.1 度（約 10 公里）的座標與你的時區，到 <code>api.open-meteo.com</code> 與 <code>air-quality-api.open-meteo.com</code>。</li>
-          <li><strong>找城市</strong>：在設定搜尋城市時，送出你輸入的名稱到 <code>geocoding-api.open-meteo.com</code>；直接選台灣的縣市不會送出任何東西。</li>
-          <li>這個城市只存在這個瀏覽器的設定裡：不進資料庫、不同步，AI 服務也看不到地點。</li>
+          <li><strong>比賽日的天氣</strong>：賽事設定了比賽地點、比賽在 16 天內時，送出那個地點四捨五入的座標到 <code>api.open-meteo.com</code>（時區用那個地點的）。</li>
+          <li><strong>找城市</strong>：在設定或賽事搜尋城市時，送出你輸入的名稱到 <code>geocoding-api.open-meteo.com</code>；直接選台灣的縣市不會送出任何東西。</li>
+          <li>天氣的城市只存在這個瀏覽器的設定裡：不進資料庫、不同步。比賽地點（名稱與四捨五入的座標）存在那場賽事上，開了多裝置同步時跟著賽事加密同步。兩者都只用來查天氣，AI 服務看不到地點，只看得到天氣的數字。</li>
           <li>條款與隱私：<a href="https://open-meteo.com/en/terms">Open-Meteo</a>。</li>
         </ul>
 
@@ -76,7 +77,7 @@
       <section aria-labelledby="device-sync">
         <h2 id="device-sync">多裝置同步（開了才有）</h2>
         <ul>
-          <li>同步的內容：選手資料、賽事、課表、每日自評、記住的事、對話與摘要，以及跑步的體感與教練的分析。跑步紀錄本身每台裝置各自向 Intervals.icu 讀取；API key 不會同步。</li>
+          <li>同步的內容：選手資料、賽事、課表、每日自評、傷病紀錄、記住的事、對話與摘要，以及跑步的體感與教練的分析。跑步紀錄本身每台裝置各自向 Intervals.icu 讀取；API key 不會同步。</li>
           <li>每一筆都在你的裝置上用同步金鑰加密（AES-GCM）後才送出。金鑰只在你的裝置上（以及你自己存下的復原碼），同步服務沒有，所以我們解不開。</li>
           <li>同步服務存的只有：
             <ul>
@@ -136,10 +137,11 @@
 
       <footer>
         <p>這一頁說明目前的做法；做法改變時，會先更新這一頁，並寫在下面的異動紀錄。</p>
-        <p>最後更新：2026-10-25</p>
+        <p>最後更新：2026-10-28</p>
         <h2 id="changes">異動紀錄</h2>
         <ul>
           <li>2026-10-25：第一版。</li>
+          <li>2026-10-28：加上傷病紀錄（存在裝置上，開了多裝置同步時加密同步）、使用須知的確認與就醫提示（只存在這個瀏覽器）。</li>
           <!--DEVICES_CHANGE-->
         </ul>
       </footer>

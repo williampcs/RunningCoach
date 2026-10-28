@@ -72,8 +72,8 @@ let step = "start";
       c.bodyImport = (await page.locator(".profile-subpage").getByRole("button", { name: "從其他 AI 帶入" }).count()) === 1;
       await E2E.profileSave(page, () => page.getByLabel("最大心率（實測）").fill("190"));
       // 長文字的欄位按 Enter 就是打完了（存起來、不換行）
-      await page.getByLabel("傷病注意").fill("右膝舊傷");
-      await E2E.profileSave(page, () => page.getByLabel("傷病注意").press("Enter"));
+      await page.getByLabel("舊傷與長期要注意的").fill("右膝舊傷");
+      await E2E.profileSave(page, () => page.getByLabel("舊傷與長期要注意的").press("Enter"));
       await back();
       c.bodySummary = (await row("身體").innerText()).includes("最大心率 190 · 右膝舊傷");
 

@@ -12,6 +12,7 @@ import {
   sportOfType,
   raceStatusText,
   STATUS_LABELS,
+  EDITED_LABEL,
   weekdayName,
   type ActivePlan,
   type OtherActivity,
@@ -99,7 +100,11 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
         ? "沒做"
         : OUTCOME_LABELS[r.outcome]
       : STATUS_LABELS[s.status];
-  return label ? { label, cls: r?.outcome ?? s.status } : null;
+  if (label) return { label, cls: r?.outcome ?? s.status };
+  // 傷病（規格 12.33）：之後才記下的傷讓這堂課現在不能做
+  if (s.injuryHold && s.status === "planned") return { label: "先不要做", cls: "hold" };
+  // 教練改過內容（規格 12.31）：照計畫、還沒有結果時標示「已調整」，原因寫在卡片裡
+  return s.editedAt && s.status === "planned" ? { label: EDITED_LABEL, cls: "edited" } : null;
 }
 
 /** 狀態：達成打勾（綠），其他是灰（不用紅，課表是建議不是考核） */
@@ -209,7 +214,8 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
   const done = r !== null && r.workoutId !== null;
   // 肌力的課可以在 App 裡回報做完了（多運動，規格 12.24）：今天以前（或沒有日期）、還沒配到手錶紀錄的
-  const today = useApp().coach.today();
+  const { coach, goTo } = useApp();
+  const today = coach.today();
   const reportable =
     featureEnabled("multisport") && s.kind === "strength" && s.id !== null && (!s.date || s.date <= today) && !(r?.outcome === "achieved" && !s.doneAt);
 
@@ -275,6 +281,14 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
               {r.reasons.length > 0 && `${r.actual ? "。" : ""}${r.reasons.join("、")}`}
               {r.difficulty && `。${DIFFICULTY_LABELS[r.difficulty]}`}
             </p>
+          )}
+          {s.injuryHold && s.status === "planned" && !done && (
+            <div className="notice warn inline injury-hold">
+              <span>因為傷病，這堂課先不要做。</span>
+              <button className="text" onClick={() => goTo("chat", `「${s.title}」（${s.when}）因為傷病先不要做，請幫我調整這堂課。`)}>
+                請教練調整
+              </button>
+            </div>
           )}
           {s.note && <p className="small muted">調整的原因：{s.note}</p>}
           {hasDetails && <DisclosureButton open={details} onToggle={() => setDetails(!details)} controls={detailsId} />}
