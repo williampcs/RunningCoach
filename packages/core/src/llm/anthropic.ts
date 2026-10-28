@@ -21,6 +21,8 @@ function supportsEffort(model: string): boolean {
 
 export class AnthropicProvider implements LlmProvider {
   private readonly client: Anthropic;
+  /** API 拒絕了 strict 的工具（400）之後，這個轉接層之後都不送 strict（規格 12.31 第 2 點）；程式照樣驗證工具的輸入 */
+  private strictRejected = false;
 
   constructor(options: AnthropicProviderOptions) {
     this.client = new Anthropic({
@@ -36,8 +38,9 @@ export class AnthropicProvider implements LlmProvider {
 
   startChat(request: ChatRequest): ChatSession {
     const client = this.client;
+    const provider = this;
     const messages: Anthropic.MessageParam[] = request.messages.map((m) => ({ role: m.role, content: m.content }));
-    const tools = request.tools as Anthropic.Tool[] | undefined;
+    let tools = request.tools?.map((t) => (this.strictRejected ? withoutStrict(t) : t)) as Anthropic.Tool[] | undefined;
     const system = systemParam(request);
 
     return {
@@ -58,9 +61,20 @@ export class AnthropicProvider implements LlmProvider {
           // 新模型預設開啟思考，思考深度以 effort 控制
           ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
         };
-        const response = opts.onText
-          ? await streamMessage(client, params, opts.onText)
-          : await client.messages.create(params);
+        const send = (p: Anthropic.MessageCreateParamsNonStreaming) =>
+          opts.onText ? streamMessage(client, p, opts.onText) : client.messages.create(p);
+        let response: Anthropic.Message;
+        try {
+          response = await send(params);
+        } catch (e) {
+          // strict 的 schema 不被接受（例如超過複雜度的上限）時，拿掉 strict 再送一次，不讓對話因此失敗；400 不計費
+          if (!(e instanceof Anthropic.BadRequestError) || !tools?.some((t) => t.strict)) throw e;
+          const loose = tools.map(withoutStrict) as Anthropic.Tool[];
+          // 拿掉 strict 也失敗的，是別的原因造成的 400：照樣丟出，之後照樣送 strict
+          response = await send({ ...params, tools: loose });
+          tools = loose;
+          provider.strictRejected = true;
+        }
 
         // 本輪 assistant 訊息原封不動加回（含 thinking、tool_use 區塊）
         messages.push({ role: "assistant", content: response.content });
@@ -125,6 +139,11 @@ function systemParam(request: ChatRequest): string | Anthropic.TextBlockParam[] 
     { type: "text", text: system.slice(0, stableChars), cache_control: { type: "ephemeral" } },
     ...(dynamic ? [{ type: "text" as const, text: dynamic }] : []),
   ];
+}
+
+function withoutStrict<T extends { strict?: boolean }>(tool: T): T {
+  const { strict: _, ...rest } = tool;
+  return rest as T;
 }
 
 function toToolResultBlocks(results: ToolResult[]): Anthropic.ToolResultBlockParam[] {

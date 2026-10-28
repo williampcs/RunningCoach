@@ -34,8 +34,9 @@ import type {
  * 11：races 的 outcome、outcome_reason（完賽、沒有完賽、沒有出賽）、gun_time、result_source、result_activity
  * 12：planned_sessions 的 sport（交叉訓練的運動）與 done_at（選手回報做完了）（多運動，規格 12.24）
  * 13：races.sport（賽事的運動）與 activity_feedback（騎車等其他運動的體感與感受）（多運動的第 3 階段）
+ * 14：planned_sessions.edited_at（教練改過這堂課的內容，規格 12.31 第 1 點）
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -186,7 +187,8 @@ const SCHEMA = `
     note       TEXT,
     updated_at TEXT NOT NULL,
     sport      TEXT,
-    done_at    TEXT
+    done_at    TEXT,
+    edited_at  TEXT
   );
 
   CREATE TABLE IF NOT EXISTS other_activities (
@@ -463,6 +465,8 @@ export class Db {
       for (const col of ["sport", "done_at"]) {
         if (!sessionCols.has(col)) await d.exec(`ALTER TABLE planned_sessions ADD COLUMN ${col} TEXT`);
       }
+      // --- Migration: planned_sessions.edited_at（schema 14：只改一堂課的內容，規格 12.31） ---
+      if (!sessionCols.has("edited_at")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN edited_at TEXT");
 
       // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
       if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
@@ -850,7 +854,7 @@ export class Db {
 
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
     return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
@@ -858,7 +862,7 @@ export class Db {
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
     const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at FROM planned_sessions WHERE id=?",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE id=?",
       [id],
     );
     return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
@@ -878,6 +882,15 @@ export class Db {
     }
     if (!sets.length) return;
     await this.run(`UPDATE planned_sessions SET ${sets.join(", ")}, updated_at=? WHERE id=?`, [...params, this.stamp(), id]);
+  }
+
+  /** 改一堂課的內容（日期不變）：恢復成照計畫、記下原因與修改的時間 */
+  async editPlannedSessionContent(id: number, draft: Omit<SessionDraft, "date">, note: string): Promise<void> {
+    const stamp = this.stamp();
+    await this.run(
+      "UPDATE planned_sessions SET kind=?, title=?, steps=?, purpose=?, success=?, fallback=?, sport=?, status='planned', note=?, edited_at=?, updated_at=? WHERE id=?",
+      [draft.kind, draft.title, JSON.stringify(draft.steps), draft.purpose, draft.success, draft.fallback, draft.sport ?? null, note, stamp, stamp, id],
+    );
   }
 
   /** 改了單堂課之後，更新計畫的文字版 */

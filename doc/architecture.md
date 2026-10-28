@@ -116,6 +116,7 @@ flowchart TB
 - **Coach** 是外殼唯一要用的入口：`chat()`、`sync()`、`reportRun()`、`feed()`、`activePlan()`、賽事的操作等。網頁版與 Discord 不直接碰規則。
 - **規則寫在程式，不交給 AI 判斷**：課表的檢查、配速換算、恢復狀況的判讀、賽事能不能改、教練動態要提醒什麼，都是固定、可測試的程式。AI 負責聊天、解釋、在規則允許的範圍內排課。
 - **教練能做的事都是「工具」**（`tools.ts`）：例如查最近的訓練、存課表、記錄比賽成績。教練說要做某件事，就是呼叫工具；工具裡再套用和網頁按鈕一樣的規則，所以選手和教練能做的事一致。
+- **寫課表的工具開 strict**（規格 12.31 第 2 點）：`save_training_plan` 與 `edit_planned_session` 的 schema 寫完整（步驟與重複組放在 `$defs`），Claude 送 `strict: true`，模型的輸入一定符合格式；程式照樣用 `parseSessions` 驗證（strict 管不到的規則，例如距離或時間至少一個、重複 1–30 次）。strict 在一次請求裡有上限（20 個工具、選填參數合計 24 個、聯集 16 個），所以只開這兩個；API 不接受時轉接層拿掉 strict 再送一次。OpenAI 相容的供應商不送 strict，`$ref` 展開、拿掉 `additionalProperties`。
 
 ### 一則對話怎麼跑
 
@@ -163,7 +164,7 @@ sequenceDiagram
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 13 版）
+## 資料庫的 schema（目前是第 14 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -202,7 +203,7 @@ erDiagram
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
-- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。
 
 **對話**
 - `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。

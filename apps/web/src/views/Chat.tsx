@@ -34,6 +34,7 @@ const TOOL_STATUS: Record<string, string> = {
   save_daily_checkin: "記錄今天的身體狀況",
   save_training_plan: "檢查並儲存課表",
   update_planned_session: "調整課表",
+  edit_planned_session: "修改一堂課",
   add_race: "新增賽事",
   list_races: "查看賽事",
   get_race_activity: "查比賽當天的手錶紀錄",

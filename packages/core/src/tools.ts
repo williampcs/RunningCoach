@@ -3,7 +3,7 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
-import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { changeSession, editSessionFromTool, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
@@ -76,6 +76,84 @@ const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
     required: ["perceived_effort"],
   },
 };
+
+/** 跑步的課的種類（save_training_plan 與 edit_planned_session 的 kind）；多運動時加上單車的課 */
+const RUN_KIND_LIST = ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"];
+
+const STEPS_DESCRIPTION =
+  "依序的步驟。一步：{distance_km 或 duration_min, target?, note?}；重複組：{repeat: 次數 1–30, steps: [...]}。" +
+  'target 寫代號：{"pace":"E|M|T|I|R"}、{"hr":"easy"}（輕鬆跑的心率上限）、{"zone":"Z2"}、{"rpe":[6,7]}';
+
+const exactly = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
+
+/**
+ * 步驟的 schema（放在 input_schema 的 $defs，課與重複組共用）. strict（規格 12.31 第 2 點）的限制：每個物件都要
+ * additionalProperties: false；不支援數字與字串長度的限制、陣列的長度只能限制到 1，所以「distance_km 或 duration_min 至少一個」、
+ * repeat 的範圍、rpe 是兩個數字，照舊由 parseSessions 檢查
+ */
+function stepDefs(): Record<string, unknown> {
+  return {
+    target: {
+      description: "目標的代號，由程式依訓練數值換算成配速或心率；不要寫數字的配速",
+      anyOf: [
+        exactly({ pace: { type: "string", enum: ["E", "M", "T", "I", "R"], description: "Daniels 的配速代號" } }),
+        exactly({ hr: { type: "string", enum: ["easy"], description: "輕鬆跑的心率上限" } }),
+        exactly({ zone: { type: "string", description: "心率區間，例：Z2" } }),
+        exactly({ rpe: { type: "array", items: { type: "integer" }, description: "體感的範圍 [下限, 上限]（1–10），例：[6,7]" } }),
+      ],
+    },
+    step: {
+      type: "object",
+      description: "一步：distance_km 或 duration_min 至少寫一個",
+      properties: {
+        distance_km: { type: "number", description: "距離（公里）" },
+        duration_min: { type: "number", description: "時間（分鐘）" },
+        target: { $ref: "#/$defs/target" },
+        note: { type: "string", description: "補充，例：組間慢跑" },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    repeat: {
+      type: "object",
+      description: "重複組",
+      properties: {
+        repeat: { type: "integer", description: "次數 1–30" },
+        steps: { type: "array", items: { $ref: "#/$defs/step" }, description: "每一次依序的步驟" },
+      },
+      required: ["repeat", "steps"],
+      additionalProperties: false,
+    },
+  };
+}
+
+/** 一堂課的 schema；date：save_training_plan 的課有日期，edit_planned_session 的沿用原本的日期 */
+function sessionSchema(options: { date: boolean }) {
+  return {
+    type: "object",
+    properties: {
+      ...(options.date ? { date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" } } : {}),
+      kind: {
+        type: "string",
+        enum: [...RUN_KIND_LIST],
+        description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
+      },
+      title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
+      steps: { type: "array", description: STEPS_DESCRIPTION, items: { anyOf: [{ $ref: "#/$defs/step" }, { $ref: "#/$defs/repeat" }] } },
+      purpose: { type: "string", description: "這堂課的目的" },
+      success: { type: "string", description: "完成的標準，例：心率不超過輕鬆跑上限、最後一趟仍能保持配速" },
+      fallback: {
+        type: "string",
+        description: options.date
+          ? "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有"
+          : "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有，其他的沒有時寫空字串",
+      },
+    },
+    // edit_planned_session 寫完整的一堂：替代也必填（沒有時是空字串），少一個選填的參數（strict 的選填參數有總數上限）
+    required: ["kind", "title", "steps", "purpose", "success", ...(options.date ? [] : ["fallback"])],
+    additionalProperties: false,
+  };
+}
 
 /** weather：選手設定了天氣的城市時才提供 get_weather */
 export function buildTools(settings: CoachSettings, options: { weather?: boolean } = {}): ToolDef[] {
@@ -179,7 +257,9 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       name: "save_training_plan",
       description:
         "儲存一週的結構化課表（會停用舊計畫）。存檔前由程式依教練方法檢查；有問題時不存，回傳問題，" +
-        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再存。目標一律寫代號，由程式依訓練數值換算成配速或心率。",
+        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再存。目標一律寫代號，由程式依訓練數值換算成配速或心率。" +
+        "只改一堂課的內容、不牽動別天時用 edit_planned_session。",
+      strict: true,
       input_schema: {
         type: "object",
         properties: {
@@ -194,31 +274,9 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           sessions: {
             type: "array",
             description: "這週的每一堂課",
-            items: {
-              type: "object",
-              properties: {
-                date: { type: "string", description: "YYYY-MM-DD；flexible 可以不填" },
-                kind: {
-                  type: "string",
-                  enum: ["easy", "long", "marathon", "threshold", "interval", "repetition", "rest", "cross", "strength", "race"],
-                  description: "cross 交叉訓練（騎車、游泳等）、strength 肌力訓練：steps 寫時間，動作寫在 note",
-                },
-                title: { type: "string", description: "簡短的標題，例：5×1 km 閾值" },
-                steps: {
-                  type: "array",
-                  description:
-                    "依序的步驟。一步：{distance_km 或 duration_min, target?, note?}；重複組：{repeat: 次數, steps: [...]}。" +
-                    'target 寫代號：{"pace":"E|M|T|I|R"}、{"hr":"easy"}（輕鬆跑的心率上限）、{"zone":"Z2"}、{"rpe":[6,7]}',
-                  items: { type: "object" },
-                },
-                purpose: { type: "string", description: "這堂課的目的" },
-                success: { type: "string", description: "完成的標準，例：心率不超過輕鬆跑上限、最後一趟仍能保持配速" },
-                fallback: { type: "string", description: "狀況不好時的替代，例：改成 40 分鐘輕鬆跑；強度課一定要有" },
-              },
-              required: ["kind", "title", "steps", "purpose", "success"],
-            },
+            items: sessionSchema({ date: true }),
           },
-          outline: { type: "string", description: "往後幾週的週期大綱（文字）" },
+          outline: { type: "string", description: "往後幾週的週期大綱（文字）；沒有時寫空字串" },
           accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
           warning_notes: {
             type: "string",
@@ -227,14 +285,40 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
               "檢查器的提醒本身不會給選手看，不寫數字",
           },
         },
-        required: ["style", "reason", "sessions"],
+        // strict 的選填參數在一次請求裡合計有上限（24），能有預設值的寫成必填（week_start、outline）
+        required: ["week_start", "style", "reason", "sessions", "outline"],
+        additionalProperties: false,
+        $defs: stepDefs(),
+      },
+    },
+    {
+      name: "edit_planned_session",
+      description:
+        "只改目前課表（這週或已排好的下週）中一堂課的內容：種類、標題、步驟、目的、完成的標準、替代。" +
+        "例如「週四只有 30 分鐘」「長跑改成 12 km」「間歇改成 400 m × 10」「肌力拿掉弓箭步」。日期不變（移到別天用 update_planned_session）；" +
+        "會牽動別天的（例如把強度課挪到隔天、休好幾天）用 save_training_plan 重排整週。" +
+        "session 寫改完後這堂課的完整內容（沒改的欄位照原本的寫）。改完由程式重新檢查整週；有問題時不改，回傳問題，" +
+        "請修改，或設 accept_warnings=true 並在 warning_notes 寫理由再改。",
+      strict: true,
+      input_schema: {
+        type: "object",
+        properties: {
+          session_id: { type: "integer", description: "get_training_plan 列出的 session_id" },
+          reason: { type: "string", description: "給選手看的修改原因，一句話，例：週四只有 30 分鐘，間歇少兩組" },
+          session: sessionSchema({ date: false }),
+          accept_warnings: { type: "boolean", description: "檢查器有提醒、但有理由保留時設 true" },
+          warning_notes: { type: "string", description: "保留的理由（accept_warnings=true 時必填）：給選手看的一句話，不寫數字" },
+        },
+        required: ["session_id", "reason", "session"],
+        additionalProperties: false,
+        $defs: stepDefs(),
       },
     },
     {
       name: "update_planned_session",
       description:
         "調整目前課表中的一堂課：移到這週的別天、跳過、改用替代的課，或恢復原本的課。" +
-        "選手說某天沒空、太累、想改輕鬆一點時呼叫；調整後會重新檢查整週。大幅修改時用 save_training_plan 重排。",
+        "選手說某天沒空、太累、想改輕鬆一點時呼叫；調整後會重新檢查整週。只改那堂課的內容用 edit_planned_session，大幅修改時用 save_training_plan 重排。",
       input_schema: {
         type: "object",
         properties: {
@@ -244,6 +328,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           reason: { type: "string", description: "調整的原因" },
         },
         required: ["session_id", "action", "reason"],
+        additionalProperties: false,
       },
     },
     {
@@ -464,6 +549,8 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
   ];
   if (featureOn(settings, "multisport")) multisportTools(tools);
   if (options.weather) tools.push(WEATHER_TOOL);
+  // 每個工具的參數都只能是列出的那些（strict 的工具一定要；其他的一起寫，格式一致）
+  for (const tool of tools) tool.input_schema.additionalProperties = false;
   return tools;
 }
 
@@ -483,21 +570,26 @@ function multisportTools(tools: ToolDef[]): void {
     "騎車的卡：pref_goal_ride（health 保持健康／ftp 提升 FTP／distance 長距離／race 準備比賽）、pref_intensity_ride（easy／moderate／challenge）、" +
     "pref_ride_hours（每週騎幾小時，數字）、pref_ride_max_minutes（每次最多幾分鐘）、pref_long_ride_day（長騎日，例：週六）；" +
     "其他運動的目標：pref_goal_swim、pref_goal_strength、pref_goal_other（文字）";
-  const session = props("save_training_plan").sessions!.items!.properties;
-  // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排
-  session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];
-  session.kind!.description =
-    "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note；" +
-    "ride_* 是單車的課（選手練騎車時，照單車的排課規則）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、" +
-    "ride_sweetspot 甜蜜點、ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺";
-  session.sport = {
-    type: "string",
-    enum: ["ride", "swim", "other"],
-    description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
-  };
-  session.steps!.description +=
-    '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
-    '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）；單車的課的甜蜜點寫 {"zone":"SS"} 或 {"power":"SS"}';
+  // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排；改一堂課的工具同樣
+  for (const name of ["save_training_plan", "edit_planned_session"]) {
+    const tool = tools.find((t) => t.name === name)!;
+    const session = (name === "save_training_plan" ? props(name).sessions!.items! : (props(name).session as Schema)).properties;
+    session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];
+    session.kind!.description =
+      "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note；" +
+      "ride_* 是單車的課（選手練騎車時，照單車的排課規則）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、" +
+      "ride_sweetspot 甜蜜點、ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺";
+    session.sport = {
+      type: "string",
+      enum: ["ride", "swim", "other"],
+      description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
+    };
+    session.steps!.description +=
+      '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
+      '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）；單車的課的甜蜜點寫 {"zone":"SS"} 或 {"power":"SS"}';
+    const target = (tool.input_schema.$defs as Record<string, { anyOf: unknown[] }>).target!;
+    target.anyOf.push(exactly({ power: { type: "string", description: "功率區間（騎車），例：Z2；甜蜜點寫 SS" } }));
+  }
   // 賽事的運動
   for (const name of ["add_race", "update_race"]) {
     props(name).sport = { type: "string", enum: ["run", "ride"], description: "賽事的運動：run 跑步（預設）、ride 騎車（公路賽、百公里等）" };
@@ -939,6 +1031,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "save_training_plan":
         return savePlanFromTool(db, today(), input, { multisport });
+
+      case "edit_planned_session":
+        return editSessionFromTool(db, today(), input, { multisport });
 
       case "save_activity_feedback": {
         if (!multisport) return `未知的 tool：${name}`;

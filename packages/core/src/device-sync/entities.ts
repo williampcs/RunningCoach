@@ -52,8 +52,8 @@ const RACE_COLS = ["name", "date", "distance_km", "target_time", "confirmed", "r
 const RACE_OPTIONAL_COLS = ["sport"] as const;
 const PLAN_COLS = ["week_label", "content", "created_at", "is_active", "week_start", "style", "reason", "outline", "notes"] as const;
 const SESSION_COLS = ["position", "date", "kind", "title", "steps", "purpose", "success", "fallback", "status", "note", "updated_at"] as const;
-/** schema 12 的欄位（多運動，規格 12.24）：有值時才放，之前同步過的課內容不變、不必全部重送 */
-const SESSION_OPTIONAL_COLS = ["sport", "done_at"] as const;
+/** schema 12 的欄位（多運動，規格 12.24）與 14 的 edited_at（改過內容，規格 12.31）：有值時才放，之前同步過的課內容不變、不必全部重送 */
+const SESSION_OPTIONAL_COLS = ["sport", "done_at", "edited_at"] as const;
 const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as const;
 const MEMORY_COLS = ["content", "source", "created_at", "updated_at"] as const;
 

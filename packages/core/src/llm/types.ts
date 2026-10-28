@@ -11,7 +11,15 @@ export interface ToolDef {
     type: "object";
     properties: Record<string, unknown>;
     required: string[];
+    additionalProperties?: false;
+    /** 共用的子 schema（以 {"$ref": "#/$defs/名稱"} 引用） */
+    $defs?: Record<string, unknown>;
   };
+  /**
+   * Claude 的 strict tool use：模型的輸入一定符合 schema（每個物件都要 additionalProperties: false，限制見規格 12.31 第 2 點）.
+   * 只有 Claude 轉接層會送；OpenAI 相容的供應商不送
+   */
+  strict?: boolean;
 }
 
 export interface ToolCall {

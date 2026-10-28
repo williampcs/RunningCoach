@@ -135,6 +135,8 @@ export interface PlannedSession extends SessionDraft {
   note: string | null;
   /** 選手在 App 裡回報做完的時間（肌力等沒有手錶紀錄的課，規格 12.24）；沒有回報時為 null */
   done_at?: string | null;
+  /** 教練改過這堂課的內容的時間（edit_planned_session，規格 12.31）；沒改過時為 null */
+  edited_at?: string | null;
 }
 
 /** 固定：照星期排；彈性：一週的菜單，哪天跑都可以 */
@@ -956,6 +958,8 @@ function checkRides(
 
 export const STYLE_LABELS: Record<PlanStyle, string> = { fixed: "固定", flexible: "彈性（這週的菜單，哪天跑都可以）" };
 export const STATUS_LABELS: Record<SessionStatus, string> = { planned: "", skipped: "已跳過", fallback: "改用替代" };
+/** 教練改過內容的課（edit_planned_session，規格 12.31）；照計畫的課才顯示（跳過、改用替代的照原本的狀態） */
+export const EDITED_LABEL = "已調整";
 
 /** 步驟的強度：顏色和紀錄頁的強度橫條同一套；other 是不算強度的（肌力、交叉訓練沒有目標時） */
 export type StepIntensity = "low" | "moderate" | "high" | "other";
@@ -1121,6 +1125,8 @@ export interface SessionView {
   sport: Sport | null;
   /** 選手在 App 裡回報做完的時間（肌力等沒有手錶紀錄的課）；沒有時為 null */
   doneAt: string | null;
+  /** 教練改過內容的時間（課表頁顯示「已調整」）；沒改過時為 null */
+  editedAt: string | null;
   rows: StepRow[];
   chips: string[];
   brief: string[];
@@ -1131,7 +1137,7 @@ export interface SessionView {
 }
 
 export function sessionView(
-  session: SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "done_at">>,
+  session: SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "done_at" | "edited_at">>,
   ctx: TargetContext,
 ): SessionView {
   const e = estimateSession(session, ctx);
@@ -1157,6 +1163,7 @@ export function sessionView(
         : kindHint(session.kind, session.title),
     sport: sessionSport(session) === "ride" ? "ride" : (session.sport ?? null),
     doneAt: session.done_at ?? null,
+    editedAt: session.edited_at ?? null,
     rows: stepRows(session, ctx),
     ...sessionChips(session, e, ctx),
     structure: sessionStructure(session, ctx),
@@ -1174,7 +1181,7 @@ export function sortSessions<T extends { date: string | null }>(sessions: T[]): 
 /** 課表的 Markdown（存在 training_plans.content：v1 與 Discord 的 /plan 讀得到；工具與網頁版另外即時換算） */
 export function planMarkdown(
   plan: { weekLabel: string; weekStart: string; style: PlanStyle; reason: string; outline: string | null; notes: string | null },
-  sessions: (SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note">>)[],
+  sessions: (SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "edited_at">>)[],
   ctx: TargetContext,
 ): string {
   const views = sortSessions(sessions).map((s) => sessionView(s, ctx));
@@ -1183,7 +1190,7 @@ export function planMarkdown(
   if (plan.reason) lines.push(`原因：${plan.reason}`);
   lines.push("");
   for (const v of views) {
-    const status = STATUS_LABELS[v.status];
+    const status = STATUS_LABELS[v.status] || (v.editedAt ? `${EDITED_LABEL}${v.note ? `：${v.note}` : ""}` : "");
     lines.push(`- ${v.when}｜${v.kindLabel}：${v.title}${status ? `（${status}）` : ""}`);
     if (v.steps) lines.push(`  - ${v.steps}（${v.isRun ? `約 ${v.km} km、` : ""}${v.minutes} 分鐘）`);
     const detail = [v.purpose && `目的：${v.purpose}`, v.success && `完成的標準：${v.success}`, v.fallback && `狀況不好時：${v.fallback}`].filter(Boolean);

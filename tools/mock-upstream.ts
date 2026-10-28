@@ -293,6 +293,23 @@ function cyclingPlan(rideOnly: boolean, accept = false) {
   };
 }
 
+/** 上一次模擬的 edit_planned_session（檢查器退回時寫理由再送） */
+let lastEdit: Record<string, unknown> | null = null;
+
+/** edit_planned_session 的一堂課（完整的內容，沒有日期） */
+const EDITED_SESSION = {
+  kind: "interval",
+  title: "8×400 m",
+  steps: [
+    { duration_min: 15, target: { hr: "easy" } },
+    { repeat: 8, steps: [{ distance_km: 0.4, target: { pace: "I" } }, { duration_min: 1.5, note: "慢跑恢復" }] },
+    { duration_min: 10, target: { hr: "easy" } },
+  ],
+  purpose: "最大攝氧量",
+  success: "最後一趟仍能保持配速",
+  fallback: "改成 40 分鐘輕鬆跑",
+};
+
 /** 工具清單有單車的課（多運動的第 3 階段） */
 const hasCycling = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("ride_sweetspot");
 
@@ -347,6 +364,17 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (body.tool_choice?.type === "none") return [{ type: "text", text: "（模擬回覆）已達工具呼叫上限，先回覆到這裡。" }];
 
   if (isToolResult) {
+    // 只改一堂課（規格 12.31）：看完課表後，把第一堂閾值課改成 400 m × 8
+    const asked = textOf([...body.messages].reverse().find((m) => m.role === "user" && typeof m.content === "string"));
+    const threshold = lastText.match(/\[session_id=(\d+)\][^\n]*｜T 閾值/);
+    if (/改成 400 m × 8/.test(asked) && threshold && !lastText.includes("已修改")) {
+      lastEdit = { session_id: Number(threshold[1]), reason: "（模擬）想練速度，改成 400 m × 8", session: EDITED_SESSION };
+      return [toolUse("edit_planned_session", lastEdit)];
+    }
+    // 整週的檢查有新的提醒時寫理由再改一次
+    if (/改成 400 m × 8/.test(asked) && lastText.includes("尚未修改") && lastEdit) {
+      return [toolUse("edit_planned_session", { ...lastEdit, accept_warnings: true, warning_notes: "（模擬）選手想練速度" })];
+    }
     // 跑步＋騎車的課表有跨運動的警告：寫理由再存一次
     if (lastText.includes("尚未儲存") && lastText.includes("跑步與騎車")) {
       return [toolUse("save_training_plan", cyclingPlan(false, true))];
@@ -369,6 +397,7 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/騎完|剛騎/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
   }
+  if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }

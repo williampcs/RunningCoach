@@ -29,6 +29,14 @@ class Sse {
   constructor(readonly body: string) {}
 }
 
+/** HTTP 錯誤的回應 */
+class HttpError {
+  constructor(
+    readonly status: number,
+    readonly body: unknown,
+  ) {}
+}
+
 /** Anthropic 格式的 SSE：每個事件帶 event 名稱 */
 const anthropicSse = (events: Record<string, unknown>[]) =>
   new Sse(events.map((e) => `event: ${String(e.type)}\ndata: ${JSON.stringify(e)}\n\n`).join(""));
@@ -46,6 +54,11 @@ async function mockApi(responses: unknown[]) {
     req.on("end", () => {
       captured.push({ headers: req.headers, body: JSON.parse(raw) });
       const response = responses.shift();
+      if (response instanceof HttpError) {
+        res.writeHead(response.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(response.body));
+        return;
+      }
       if (response instanceof Sse) {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.end(response.body);
@@ -248,6 +261,58 @@ describe("AnthropicProvider", () => {
         { type: "text", text: "讓我看看" },
         { type: "tool_use", id: "toolu_1", name: "get_training_plan", input: { week: "2026-W41" } },
       ],
+    });
+  });
+});
+
+describe("strict 的工具（規格 12.31 第 2 點）", () => {
+  const strictTools: ToolDef[] = [
+    {
+      name: "edit_planned_session",
+      description: "改一堂課",
+      strict: true,
+      input_schema: {
+        type: "object",
+        properties: { step: { $ref: "#/$defs/step" } },
+        required: ["step"],
+        additionalProperties: false,
+        $defs: { step: { type: "object", properties: { duration_min: { type: "number" } }, required: [], additionalProperties: false } },
+      },
+    },
+  ];
+  const ok = { content: [{ type: "text", text: "好" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } };
+
+  it("Claude：送出 strict 與 $defs；API 不接受（400）時拿掉 strict 再送一次，之後的對話也不送", async () => {
+    const rejected = new HttpError(400, { type: "error", error: { type: "invalid_request_error", message: "Schema is too complex for compilation" } });
+    const { baseURL, captured } = await mockApi([rejected, ok, ok]);
+    const provider = new AnthropicProvider({ apiKey: "k", baseURL });
+    const request = { model: "claude-test", system: "s", messages: [{ role: "user" as const, content: "hi" }], tools: strictTools, maxTokens: 100, effort: "low" as const };
+    expect((await provider.startChat(request).next()).text).toBe("好");
+    expect(captured[0]!.body.tools[0].strict).toBe(true);
+    expect(captured[0]!.body.tools[0].input_schema.$defs.step).toBeDefined();
+    expect(captured[1]!.body.tools[0].strict).toBeUndefined();
+    expect(captured[1]!.body.tools[0].input_schema).toEqual(strictTools[0]!.input_schema);
+    await provider.startChat(request).next();
+    expect(captured[2]!.body.tools[0].strict).toBeUndefined();
+  });
+
+  it("Claude：沒有 strict 的工具時，400 照樣丟出", async () => {
+    const { baseURL, captured } = await mockApi([new HttpError(400, { type: "error", error: { type: "invalid_request_error", message: "bad" } })]);
+    const session = new AnthropicProvider({ apiKey: "k", baseURL }).startChat({ model: "m", messages: [{ role: "user", content: "hi" }], tools, maxTokens: 10, effort: "low" });
+    await expect(session.next()).rejects.toThrow(/bad/);
+    expect(captured).toHaveLength(1);
+  });
+
+  it("OpenAI 相容：不送 strict，展開 $ref、拿掉 additionalProperties", async () => {
+    const { baseURL, captured } = await mockApi([{ choices: [{ message: { role: "assistant", content: "好" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }]);
+    await new OpenAICompatibleProvider({ apiKey: "k", baseURL }).startChat({ model: "m", messages: [{ role: "user", content: "hi" }], tools: strictTools, maxTokens: 10, effort: "low" }).next();
+    const tool = captured[0]!.body.tools[0];
+    expect(tool.strict).toBeUndefined();
+    expect(tool.function.strict).toBeUndefined();
+    expect(tool.function.parameters).toEqual({
+      type: "object",
+      properties: { step: { type: "object", properties: { duration_min: { type: "number" } }, required: [] } },
+      required: ["step"],
     });
   });
 });

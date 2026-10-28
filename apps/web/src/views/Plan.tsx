@@ -12,6 +12,7 @@ import {
   sportOfType,
   raceStatusText,
   STATUS_LABELS,
+  EDITED_LABEL,
   weekdayName,
   type ActivePlan,
   type OtherActivity,
@@ -99,7 +100,9 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
         ? "沒做"
         : OUTCOME_LABELS[r.outcome]
       : STATUS_LABELS[s.status];
-  return label ? { label, cls: r?.outcome ?? s.status } : null;
+  if (label) return { label, cls: r?.outcome ?? s.status };
+  // 教練改過內容（規格 12.31）：照計畫、還沒有結果時標示「已調整」，原因寫在卡片裡
+  return s.editedAt && s.status === "planned" ? { label: EDITED_LABEL, cls: "edited" } : null;
 }
 
 /** 狀態：達成打勾（綠），其他是灰（不用紅，課表是建議不是考核） */

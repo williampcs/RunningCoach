@@ -164,7 +164,8 @@ export class ContextManager {
       "【排課表】",
       "排課前先看選手的訓練偏好（目標、強度、每週次數、每次最多多久、固定或彈性）；沒有的先問，" +
         `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
-        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整，並說明改了什麼。" +
+        "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整（移動、跳過、改用替代），並說明改了什麼。" +
+        "只動一天的內容（例如那天只有 30 分鐘、長跑縮短、間歇換組數、肌力拿掉某個動作）用 edit_planned_session 只改那一堂；會牽動別天的（強度課挪到隔天、休好幾天）才用 save_training_plan 重排整週。" +
         "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
       "",
       "【數值與依據】",

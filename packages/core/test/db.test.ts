@@ -18,7 +18,7 @@ describe("Db", () => {
     const { db, driver } = await freshDb();
     await db.init();
     const [row] = await driver.all("PRAGMA user_version");
-    expect(row?.user_version).toBe(13);
+    expect(row?.user_version).toBe(14);
   });
 
   it("schema 2 → 3：恢復資料補上 Apple 的 HRV（SDNN）欄位，保留原有資料", async () => {

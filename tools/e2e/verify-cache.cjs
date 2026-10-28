@@ -90,6 +90,14 @@ let step = "start";
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
       c.dateAfterBreakpoint = !blocks[0][0].text.includes(today) && blocks[0][1].text.includes(`今天日期：${today}`);
       c.parallelHint = blocks[0][0].text.includes("在同一輪一起呼叫");
+      // strict（規格 12.31）：Claude 直連時存課表與改一堂課的工具帶 strict 與 $defs；OpenAI 相容的（OpenRouter）不帶、$ref 已展開
+      const tools = all[0].body.tools;
+      const toolOf = (name) => tools.find((t) => (t.name ?? t.function?.name) === name);
+      if (route === "anthropic") {
+        c.strictTools = toolOf("edit_planned_session").strict === true && toolOf("save_training_plan").strict === true && toolOf("save_training_plan").input_schema.$defs !== undefined && !toolOf("get_training_plan").strict;
+      } else {
+        c.noStrict = !JSON.stringify(tools).includes('"strict"') && !JSON.stringify(tools).includes("$ref") && toolOf("edit_planned_session") !== undefined;
+      }
 
       step = "頁尾";
       const sum = (calls, key) => calls.reduce((n, r) => n + r.usage[key], 0);

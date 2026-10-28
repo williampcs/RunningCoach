@@ -146,6 +146,7 @@ export {
   SESSION_KINDS,
   sessionSport,
   STATUS_LABELS,
+  EDITED_LABEL,
   type PlannedSession,
   type PlanStyle,
   type SessionKind,

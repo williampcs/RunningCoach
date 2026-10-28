@@ -255,6 +255,32 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
     return false;
   })();
 
+  step = "請教練只改一堂課（12.31）";
+  // 「改成 400 m × 8」：模擬的教練看完課表後用 edit_planned_session 改下週四的閾值；其他堂不變
+  await tab("計畫");
+  await sessions.first().waitFor({ timeout: 10000 });
+  const othersBefore = await sessions.evaluateAll((els) => els.filter((e) => !e.innerText.includes("閾值")).map((e) => [e.closest(".tl-day").dataset.date, e.querySelector(".plan-session-name").innerText]));
+  const thresholdDay = await dayOf(t);
+  await tab("對話");
+  await page.getByPlaceholder("輸入訊息…").fill("下週四的閾值改成 400 m × 8");
+  await page.getByRole("button", { name: "送出" }).click();
+  await page.locator('.msg.user:has-text("改成 400 m × 8") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
+  check.coachEdited = (await page.locator(".bubble.assistant").last().innerText()).includes("已修改");
+  const llm = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm").at(-1).body;
+  // 這裡走 OpenAI 相容的模擬服務：不送 strict、$ref 已展開（Claude 直連帶 strict 由 verify-cache 檢查）
+  check.toolsPlain = llm.tools.some((x) => x.function?.name === "edit_planned_session") && !JSON.stringify(llm.tools).includes("$ref") && !JSON.stringify(llm.tools).includes('"strict"');
+  await tab("計畫");
+  const edited = sessions.filter({ hasText: "8×400 m" });
+  await edited.waitFor({ timeout: 10000 });
+  check.editedSameDay = (await dayOf(edited)) === thresholdDay && (await sessions.filter({ hasText: "4×1 km 閾值" }).count()) === 0;
+  check.editedBadge = (await edited.locator(".badge").innerText()) === "已調整";
+  if ((await edited.locator("button.plan-session-head").getAttribute("aria-expanded")) !== "true") await edited.locator("button.plan-session-head").click();
+  check.editedReason = (await edited.innerText()).includes("調整的原因：（模擬）想練速度，改成 400 m × 8");
+  const othersAfter = await sessions.evaluateAll((els) => els.filter((e) => !e.innerText.includes("8×400")).map((e) => [e.closest(".tl-day").dataset.date, e.querySelector(".plan-session-name").innerText]));
+  check.othersUnchanged = JSON.stringify(othersAfter) === JSON.stringify(othersBefore);
+  await page.locator(".page").evaluate((el) => el.scrollTo(0, 0));
+  await edited.screenshot({ path: `${E2E.OUT}/plan-${width}-${scheme}-edited.png` });
+
   step = "這週的課表：配對已經跑的紀錄";
   await tab("對話");
   await page.getByPlaceholder("輸入訊息…").fill("幫我排這週的課表");

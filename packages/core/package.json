@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@running-coach/sqlite-node": "*",
-    "@types/node": "^22"
+    "@types/node": "^22",
+    "ajv": "^8.20.0"
   }
 }
