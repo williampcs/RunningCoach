@@ -1126,6 +1126,48 @@ button.info-button[aria-expanded="true"] {
   padding: 0 0 var(--sp-2) var(--sp-4);
 }
 
+/* 正在寫的那一列（邊寫邊收）：旁邊的「寫作中」一閃一閃；減少動態效果時不動 */
+.reply-writing {
+  margin-left: var(--sp-2);
+  font-size: var(--fs-aux);
+  font-weight: 400;
+  color: var(--muted);
+  animation: reply-writing 1.2s ease-in-out infinite;
+}
+
+@keyframes reply-writing {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 點開與收起：短的高度動畫（瀏覽器支援 ::details-content 時） */
+.coach-reply {
+  interpolate-size: allow-keywords;
+}
+
+.reply-section::details-content {
+  height: 0;
+  overflow: clip;
+  transition:
+    height 0.2s ease,
+    content-visibility 0.2s allow-discrete;
+}
+
+.reply-section[open]::details-content {
+  height: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reply-writing {
+    animation: none;
+  }
+
+  .reply-section::details-content {
+    transition: none;
+  }
+}
+
 button.text.reply-toggle-all {
   align-self: flex-start;
   min-height: 32px;

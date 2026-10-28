@@ -66,16 +66,41 @@ function plainText(content: string): string {
 /** 小標裡的 Markdown 符號（粗體、程式碼）去掉，收起的那一列只寫字 */
 const headingText = (title: string) => title.replace(/(\*\*|__|`)/g, "");
 
+/** 哪些段落打開：each 是選手點過的，all 是按過「全部展開／收起」之後沒點過的段落的預設 */
+interface ReplyOpen {
+  all: boolean | null;
+  each: Record<number, boolean>;
+}
+
 /**
  * 教練的回覆（規格 12.30 第 2 點）：有小標（##）時，第一個小標之前的結論一直顯示，每個小標收成一列，加「全部展開」；
- * 沒有小標的照舊整段。正在寫的回覆不經過這裡（整段顯示），寫完存進對話後才收起；選手點開的保持打開
+ * 沒有小標的照舊整段.
+ * 邊寫邊收：串流中（streaming）也是同一個樣子，結論逐字出現，每個小標一出現就是收起的一列，正在寫的那列標「寫作中」；
+ * 選手可以在串流中點開，裡面照樣逐字出現。寫完時由 initial 接著用串流中的打開狀態，畫面不跳
  */
-function CoachReply({ content }: { content: string }) {
-  const { lead, sections } = useMemo(() => splitReplySections(content), [content]);
+function CoachReply({
+  content,
+  streaming = false,
+  initial,
+  onOpenChange,
+}: {
+  content: string;
+  streaming?: boolean;
+  initial?: ReplyOpen;
+  onOpenChange?: (open: ReplyOpen) => void;
+}) {
+  // 串流中最後一行還只是「#」「##」時先不顯示，等它成為小標，免得結論後面閃一下井字號
+  const text = streaming ? content.replace(/\n? {0,3}#{1,6}[ \t]*$/, "") : content;
+  const { lead, sections } = useMemo(() => splitReplySections(text), [text]);
+  const [open, setOpenState] = useState<ReplyOpen>(() => initial ?? { all: null, each: {} });
+  const setOpen = (next: ReplyOpen) => {
+    setOpenState(next);
+    onOpenChange?.(next);
+  };
+  if (!sections.length) return <Markdown>{text}</Markdown>;
   // 沒有結論（一開始就是小標）時打開第一段，不讓整則回覆只剩幾個標題
-  const [open, setOpen] = useState<boolean[]>(() => sections.map((_, i) => i === 0 && !lead));
-  if (!sections.length) return <Markdown>{content}</Markdown>;
-  const allOpen = sections.every((_, i) => open[i]);
+  const isOpen = (i: number) => open.each[i] ?? open.all ?? (i === 0 && !lead);
+  const allOpen = sections.every((_, i) => isOpen(i));
   return (
     <div className="coach-reply">
       {lead && <Markdown>{lead}</Markdown>}
@@ -83,17 +108,22 @@ function CoachReply({ content }: { content: string }) {
         {sections.map((s, i) => (
           <Disclosure
             key={i}
-            summary={headingText(s.title)}
+            summary={
+              <>
+                {headingText(s.title)}
+                {streaming && i === sections.length - 1 && <span className="reply-writing">寫作中</span>}
+              </>
+            }
             className="reply-section"
-            open={open[i] ?? false}
-            onToggle={(now) => setOpen((o) => (o[i] === now ? o : sections.map((_, j) => (j === i ? now : (o[j] ?? false)))))}
+            open={isOpen(i)}
+            onToggle={(now) => now !== isOpen(i) && setOpen({ ...open, each: { ...open.each, [i]: now } })}
           >
             <Markdown>{s.body}</Markdown>
           </Disclosure>
         ))}
       </div>
       {sections.length > 1 && (
-        <button type="button" className="text reply-toggle-all" onClick={() => setOpen(sections.map(() => !allOpen))}>
+        <button type="button" className="text reply-toggle-all" onClick={() => setOpen({ all: !allOpen, each: {} })}>
           {allOpen ? "全部收起" : "全部展開"}
         </button>
       )}
@@ -133,6 +163,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   const [draft, setDraft] = useState("");
   const [tool, setTool] = useState<string | null>(null);
   const draftText = useRef("");
+  // 串流中的回覆哪些段落打開（存好後的那一則接著用）
+  const draftOpen = useRef<ReplyOpen>({ all: null, each: {} });
+  // 這次送出的第幾次模型呼叫：換一次就是新的一段文字（串流中的回覆重新開始）
+  const [draftRound, setDraftRound] = useState(0);
   const frame = useRef<number | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   // 以 ref 同步判斷是否送出中：state 要到下次 render 才更新，擋不住同一輪內的重複觸發
@@ -154,6 +188,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       } else {
         // 新的一次模型呼叫或開始執行工具：先前的文字不是最終回覆
         draftText.current = "";
+        draftOpen.current = { all: null, each: {} };
+        setDraftRound((n) => n + 1);
         setTool(event.type === "tool" ? event.name : null);
       }
       showDraft();
@@ -227,6 +263,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       setSentCount((n) => n + 1);
       // 從資料庫讀：其他分頁交辦的訊息在剛切到對話頁時就送出，這時對話可能還沒讀進來
       setBaseId((await coach.db.getRecentConversations(1)).at(-1)?.id ?? 0);
+      draftOpen.current = { all: null, each: {} };
       setSending(content);
       setSendingReply(reply);
       setError(null);
@@ -331,7 +368,12 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
             <div id={`msg-${m.id}`} className={`msg ${m.role}${m.archived ? " archived" : ""}`}>
               {m.reply_to && quote(m.reply_to, () => jumpTo(m.reply_to!))}
               <div className={`bubble ${m.role}`}>
-                {m.role === "assistant" ? <CoachReply content={m.content} /> : m.content}
+                {m.role === "assistant" ? (
+                  // 這次的回覆剛存好：接著用串流中的打開狀態（邊寫邊收，寫完畫面不跳）
+                  <CoachReply content={m.content} initial={sending !== null && m.id > baseId ? draftOpen.current : undefined} />
+                ) : (
+                  m.content
+                )}
                 {m.sources?.length ? <p className="sources">參考了：{m.sources.join("、")}</p> : null}
               </div>
               <div className="msg-meta">
@@ -406,7 +448,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         {progressShown &&
           (draft ? (
             <div className="bubble assistant streaming">
-              <Markdown>{draft}</Markdown>
+              <CoachReply key={draftRound} content={draft} streaming initial={draftOpen.current} onOpenChange={(o) => (draftOpen.current = o)} />
             </div>
           ) : (
             <div className="bubble assistant muted">{tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}</div>

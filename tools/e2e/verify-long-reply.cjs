@@ -1,4 +1,5 @@
-// 驗證教練的長回覆（規格 12.30 第 2 點）：結論一直顯示、每個小標收成一列、全部展開；串流時全部展開，寫完才收起；
+// 驗證教練的長回覆（規格 12.30 第 2 點）：結論一直顯示、每個小標收成一列、全部展開；邊寫邊收（串流中小標一出現就是收起的一列、
+// 正在寫的那列標「寫作中」、串流中可以點開、寫完前後版面不變）；
 // 程式碼區塊裡的 ## 不算小標；記住時預填完整的內容；沒有小標的回覆照舊整段
 const E2E = require("./env.cjs");
 const { chromium } = E2E;
@@ -40,18 +41,39 @@ let step = "start";
       const short = await send("你好");
       c.shortNoSections = (await short.locator(".reply-section").count()) === 0 && (await short.getByRole("button", { name: "全部展開" }).count()) === 0;
 
-      step = "長回覆：串流時全部展開";
+      step = "長回覆：邊寫邊收";
       const streaming = page.locator(".bubble.assistant.streaming");
-      let streamedHeading = false;
-      let streamedCollapsed = true;
+      const openStates = (bubble) => bubble.locator(".reply-section").evaluateAll((els) => els.map((e) => e.open));
+      const stream = {};
       const reply = await send("請詳細說明這週的安排", async () => {
-        // 寫到第二個小標時：小標是一般的標題（沒有收起），內容看得到
-        await streaming.locator("h2", { hasText: "週四的閾值課" }).waitFor({ timeout: 20000 });
-        streamedHeading = await streaming.locator("h2", { hasText: "這週的狀況" }).isVisible();
-        streamedCollapsed = (await streaming.locator("details").count()) > 0;
+        // 第一個小標一出現就是收起的一列，旁邊標「寫作中」；內文不在畫面上長出來
+        const first = streaming.locator(".reply-section").first();
+        await first.waitFor({ timeout: 20000 });
+        stream.collapsedRow = (await first.getAttribute("open")) === null && (await streaming.locator("h2").count()) === 0;
+        stream.writing = await first.locator(".reply-writing", { hasText: "寫作中" }).isVisible();
         if (!mobile) await page.screenshot({ path: `${E2E.OUT}/long-reply-streaming.png` });
+        // 串流中點開正在寫的那一段：裡面照樣逐字出現
+        await first.locator("summary").click();
+        stream.openedWhileStreaming = await first.getByText("長跑後段的心率漂移").waitFor({ timeout: 15000 }).then(() => true, () => false);
+        // 寫到第二段：第一段的「寫作中」移到第二段，第二段收著
+        const second = streaming.locator(".reply-section").nth(1);
+        await second.waitFor({ timeout: 15000 });
+        stream.writingMoved = (await first.locator(".reply-writing").count()) === 0 && (await second.locator(".reply-writing").count()) === 1 && (await second.getAttribute("open")) === null;
+        // 快寫完時的樣子（最後一段的最後幾個字）
+        await streaming.locator(".reply-section").nth(2).waitFor({ timeout: 15000 });
+        await page.waitForFunction(() => document.querySelector(".bubble.assistant.streaming")?.textContent.includes("輕鬆跑的心率以下"), null, { timeout: 20000 });
+        stream.before = await openStates(streaming);
       });
-      c.streamingExpanded = streamedHeading && !streamedCollapsed;
+      c.streamCollapsedRow = stream.collapsedRow === true;
+      c.streamWriting = stream.writing === true;
+      c.streamOpened = stream.openedWhileStreaming === true;
+      c.streamWritingMoved = stream.writingMoved === true;
+      // 寫完前後版面一樣：列數與打開的狀態沒變（不會突然收起）
+      const after = await openStates(reply);
+      c.noJumpAtEnd = JSON.stringify(stream.before) === JSON.stringify([true, false, false]) && JSON.stringify(after) === JSON.stringify(stream.before);
+      c.noWritingAfter = (await reply.locator(".reply-writing").count()) === 0;
+      // 回到全部收起，接著檢查寫完的樣子
+      await reply.locator(".reply-section").first().locator("summary").click();
 
       step = "寫完：結論顯示、小標收起";
       const sections = reply.locator(".reply-section");
@@ -70,8 +92,10 @@ let step = "start";
 
       step = "點開一段";
       await sections.nth(1).locator("summary").click();
-      c.oneOpened = (await reply.getByText("組間慢跑 2 分鐘").isVisible()) && (await reply.locator(".reply-section[open]").count()) === 1;
-      c.codeInBody = await sections.nth(1).getByText("這行在程式碼區塊裡").isVisible();
+      // 打開有短的高度動畫：等它長出來
+      const visible = (loc) => loc.waitFor({ timeout: 3000 }).then(() => true, () => false);
+      c.oneOpened = (await visible(reply.getByText("組間慢跑 2 分鐘"))) && (await reply.locator(".reply-section[open]").count()) === 1;
+      c.codeInBody = await visible(sections.nth(1).getByText("這行在程式碼區塊裡"));
 
       step = "全部展開、全部收起";
       await reply.getByRole("button", { name: "全部展開" }).click();

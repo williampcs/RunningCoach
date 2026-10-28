@@ -29,6 +29,8 @@ const PORT = Number(process.env.MOCK_PORT ?? 8788);
 // 模擬思考的停頓與串流時每段文字的間隔（毫秒）
 const THINK_MS = Number(process.env.MOCK_THINK_MS ?? 800);
 const CHUNK_MS = Number(process.env.MOCK_CHUNK_MS ?? 25);
+// 長回覆寫慢一點（約 10 秒）：E2E 要在串流中點開段落、看「寫作中」（規格 12.30）
+const chunkMs = (text: string) => (text === LONG_REPLY ? CHUNK_MS * 4 : CHUNK_MS);
 
 type Block = { type: string; [key: string]: unknown };
 type Message = { role: string; content: string | Block[] };
@@ -524,7 +526,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
       send("content_block_start", { index, content_block: { type: "text", text: "" } });
       for (const text of pieces(String(block.text))) {
         send("content_block_delta", { index, delta: { type: "text_delta", text } });
-        await sleep(CHUNK_MS);
+        await sleep(chunkMs(String(block.text)));
       }
     } else {
       send("content_block_start", { index, content_block: { ...block, input: {} } });
@@ -574,7 +576,7 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage,
   await sleep(THINK_MS);
   for (const piece of pieces(text)) {
     chunk({ content: piece });
-    await sleep(CHUNK_MS);
+    await sleep(chunkMs(text));
   }
   for (const [index, call] of toolCalls.entries()) {
     chunk({ tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: "" } }] });
