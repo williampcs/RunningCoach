@@ -35,6 +35,6 @@ export const DISCORD_GUIDE: GuideSection[] = [
     id: "web",
     title: "網頁版",
     keywords: ["網頁", "手機", "App", "多裝置"],
-    body: `網頁版有更多畫面：跑後回報、紀錄與累積、課表的調整、選手資料與記住的事、多裝置同步。Discord bot 和網頁版的資料是分開的，不會同步。`,
+    body: `網頁版有更多畫面：運動的回報、紀錄與累積、課表的調整、選手資料與記住的事、多裝置同步。Discord bot 和網頁版的資料是分開的，不會同步。`,
   },
 ];

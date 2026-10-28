@@ -2,7 +2,8 @@
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, type FeedItem } from "./feed";
-import { accumulation, runCards, type Accumulation, type RunCard } from "./history";
+import { featureOn } from "./features";
+import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
 import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
 import { isoWeekLabel, localDate } from "./dates";
@@ -10,6 +11,7 @@ import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
+import { sportOfType } from "./sports";
 import { recoveryNoteFor } from "./recovery";
 import { runSync, SYNC_DAYS } from "./sync";
 import { editRace, markRaceNotStarted, raceActivity, recordRaceResult } from "./races";
@@ -30,8 +32,10 @@ import {
   type ActivitySource,
   type CoachSettings,
   type DailyCheckin,
+  type OtherActivity,
   type Race,
   type Logger,
+  type Sport,
   type ReplyRef,
   type SqlDriver,
   type Workout,
@@ -61,7 +65,9 @@ export type RunReport =
   /** 找到今天的活動，已合併主觀感受存檔 */
   | { status: "saved"; activity: Activity; workoutId: number; summary: string | null }
   /** 最新活動不是今天（手錶尚未同步），主觀感受已暫存，之後同步時自動合併 */
-  | { status: "pending"; date: string; latest: Activity | null };
+  | { status: "pending"; date: string; latest: Activity | null }
+  /** 騎車等其他運動（多運動）：體感存到那一趟 */
+  | { status: "other"; activity: OtherActivity };
 
 /** 跑後回報要存到哪裡 */
 export type ReportTarget =
@@ -70,7 +76,9 @@ export type ReportTarget =
   /** Intervals.icu 上有、還沒同步的活動 */
   | { kind: "new"; intervalsId: string }
   /** 手錶還沒上傳：暫存為今天的回報，同步時配對 */
-  | { kind: "pending" };
+  | { kind: "pending" }
+  /** 已同步的騎車等其他運動（多運動） */
+  | { kind: "other"; intervalsId: string };
 
 /** 跑後回報可以選的一筆跑步 */
 export interface ReportCandidate {
@@ -78,6 +86,8 @@ export interface ReportCandidate {
   activity: Activity;
   /** 開始時間（當地），例：07:12；來源沒有提供時為 null */
   startTime: string | null;
+  /** 哪種運動（多運動）；跑步是 run */
+  sport: Sport;
 }
 
 /** 跑後回報列出幾天內的跑步：今天、昨天、前天 */
@@ -92,6 +102,24 @@ function startTimeOf(rawJson: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+/** 其他運動當成 Activity 顯示（跑後回報的選項） */
+function otherAsActivity(a: OtherActivity): Activity {
+  return {
+    intervals_id: a.intervals_id,
+    date: a.date,
+    type: a.type,
+    distance_km: a.distance_km,
+    duration_min: a.duration_min,
+    avg_hr: a.avg_hr,
+    max_hr: null,
+    avg_pace: null,
+    elevation_m: null,
+    calories: null,
+    training_load: a.training_load,
+    raw_json: a.raw_json ?? null,
+  };
 }
 
 function workoutAsActivity(w: Workout): Activity {
@@ -308,6 +336,7 @@ export class Coach {
       context: rt.context,
       llm: rt.llm,
       logger: this.logger,
+      multisport: featureOn(rt.settings, "multisport"),
     }).finally(() => {
       this.compressing = null;
     });
@@ -321,7 +350,7 @@ export class Coach {
   /** 從活動來源同步最近的跑步活動，並合併主觀暫存 */
   async sync(): Promise<string> {
     const { llm, activities, weather } = this.runtime;
-    const result = await runSync({ db: this.db, llm, activities, weather, logger: this.logger });
+    const result = await runSync({ db: this.db, llm, activities, weather, logger: this.logger, multisport: featureOn(this.runtime.settings, "multisport") });
     this.wellnessFetchedAt = this.now().getTime();
     return result;
   }
@@ -392,12 +421,21 @@ export class Coach {
         target: local ? { kind: "saved", workoutId: local.id } : { kind: "new", intervalsId: activity.intervals_id! },
         activity,
         startTime: startTimeOf(activity.raw_json),
+        sport: "run",
       });
     }
     // 已同步、但這次沒從來源拿到的（例如連不上 Intervals.icu）
     for (const w of saved) {
       if (listed.has(w.id) || w.perceived_effort != null) continue;
-      candidates.push({ target: { kind: "saved", workoutId: w.id }, activity: workoutAsActivity(w), startTime: startTimeOf(w.raw_json) });
+      candidates.push({ target: { kind: "saved", workoutId: w.id }, activity: workoutAsActivity(w), startTime: startTimeOf(w.raw_json), sport: "run" });
+    }
+    // 多運動：已同步、還沒回報的騎車等其他運動（肌力訓練用課表頁的「做完了」）
+    if (featureOn(this.runtime.settings, "multisport")) {
+      for (const a of await this.db.getOtherActivities(REPORT_LOOKBACK_DAYS)) {
+        const sport = sportOfType(a.type);
+        if (a.perceived_effort != null || sport === "strength") continue;
+        candidates.push({ target: { kind: "other", intervalsId: a.intervals_id }, activity: otherAsActivity(a), startTime: startTimeOf(a.raw_json), sport });
+      }
     }
     candidates.sort(
       (a, b) => b.activity.date.localeCompare(a.activity.date) || (b.startTime ?? "").localeCompare(a.startTime ?? ""),
@@ -413,6 +451,12 @@ export class Coach {
   async reportRun(perceivedEffort: number, subjectiveNotes: string, target?: ReportTarget): Promise<RunReport> {
     const { llm, activities } = this.runtime;
     const today = this.today();
+    if (target?.kind === "other") {
+      const found = await this.db.getOtherActivity(target.intervalsId);
+      if (!found) throw new Error("找不到這筆活動，可能已在 Intervals.icu 刪除。請重新整理後再選一次。");
+      await this.db.setActivityFeedback(target.intervalsId, perceivedEffort, subjectiveNotes.trim() || null);
+      return { status: "other", activity: (await this.db.getOtherActivity(target.intervalsId))! };
+    }
     if (target?.kind === "saved") {
       const { workout, summary } = await this.addSubjective(target.workoutId, perceivedEffort, subjectiveNotes);
       return { status: "saved", activity: workoutAsActivity(workout), workoutId: workout.id, summary };
@@ -542,13 +586,23 @@ export class Coach {
   }
 
   /** 紀錄頁頁首的累積（只增不減） */
+  /** 最近 N 天的騎車卡片（多運動） */
+  rideCards(days = 30): Promise<RideCard[]> {
+    return rideCards(this.db, this.today(), days);
+  }
+
+  /** 騎車的累積（多運動） */
+  rideAccumulation(): Promise<RideAccumulation> {
+    return rideAccumulation(this.db, this.today());
+  }
+
   accumulation(): Promise<Accumulation> {
     return accumulation(this.db, this.today(), this.settings.timeZone);
   }
 
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
-    return changeSession(this.db, this.today(), id, action, options);
+    return changeSession(this.db, this.today(), id, action, { ...options, multisport: featureOn(this.settings, "multisport") });
   }
 
   // ---------------------------------------------------------------------------

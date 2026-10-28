@@ -3,6 +3,7 @@ import { useState } from "react";
 import { IMPORT_PROMPT, PROFILE_FIELDS, type ImportedRace, type ImportSuggestion } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { InfoTip } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 
@@ -33,10 +34,11 @@ const distanceText = (km: number) =>
 /**
  * 從其他 AI 服務帶入（規格 6.5）：使用者貼上原本的服務整理好的內容，模型擷取成建議值，逐項確認後寫入.
  * 原文只在這個元件的狀態裡，不寫入資料庫；帶入、取消或離開這頁就會丟掉。
+ * startOpen：直接從貼上的步驟開始（選手頁的下一層、計畫頁的賽事）；帶入或取消後呼叫 onClose
  */
-export function ImportFromAi() {
-  const { coach, llmProblem, touch, goTo } = useApp();
-  const [open, setOpen] = useState(false);
+export function ImportFromAi({ startOpen = false, onClose }: { startOpen?: boolean; onClose?: () => void } = {}) {
+  const { coach, llmProblem, touch, goTo, toast } = useApp();
+  const [open, setOpen] = useState(startOpen);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -48,6 +50,7 @@ export function ImportFromAi() {
     setText("");
     setReview(null);
     setCopied(false);
+    onClose?.();
   }
 
   async function copyPrompt() {
@@ -92,8 +95,11 @@ export function ImportFromAi() {
         result.races > 0 && `賽事 ${result.races} 場`,
         result.plan && "本週課表",
       ].filter(Boolean);
+      const done = `已帶入${parts.join("、")}。原本貼上的內容已丟棄。`;
+      // 帶入後回到打開它的地方時，結果用畫面下方的小提示說
+      if (onClose) toast(done);
+      else setMessage({ kind: "ok", text: done });
       close();
-      setMessage({ kind: "ok", text: `已帶入${parts.join("、")}。原本貼上的內容已丟棄。` });
       touch();
     } catch (e) {
       setMessage({ kind: "error", text: `帶入失敗：${errorText(e)}` });
@@ -105,11 +111,14 @@ export function ImportFromAi() {
   if (!open) {
     return (
       <section className="card">
-        <h2>從其他 AI 帶入</h2>
-        <p className="muted small">
-          已經在 ChatGPT、Claude 等服務跟 AI 聊過訓練？請它整理你的資料，貼回來後幫你填好選手資料、賽事與課表，確認後再帶入。
-        </p>
-        <div className="row">
+        <div className="card-head">
+          <h2>從其他 AI 帶入</h2>
+          <InfoTip label="從其他 AI 帶入的說明">
+            已經在 ChatGPT、Claude 等服務跟 AI 聊過訓練？請它整理你的資料，貼回來後幫你填好選手資料、賽事與課表，確認後再帶入。
+          </InfoTip>
+        </div>
+        <p className="muted">跟其他 AI 聊過訓練？把它整理的資料帶進來。</p>
+        <div className="actions">
           <button
             onClick={() => {
               setMessage(null);
@@ -178,7 +187,7 @@ export function ImportFromAi() {
                 </span>
               </label>
             ))}
-            <p className="muted small">帶入後可以在「計畫與賽事」修改。</p>
+            <p className="muted small">帶入後可以在「計畫」修改。</p>
           </div>
         )}
 
@@ -200,14 +209,14 @@ export function ImportFromAi() {
         )}
 
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
-        <div className="row">
+        <div className="actions">
           <button className="primary" disabled={busy || count === 0} onClick={() => void apply()}>
             {busy ? "帶入中…" : `帶入選取的 ${count} 項`}
           </button>
-          <button disabled={busy} onClick={() => setReview(null)}>
+          <button className="text" disabled={busy} onClick={() => setReview(null)}>
             上一步
           </button>
-          <button disabled={busy} onClick={close}>
+          <button className="text" disabled={busy} onClick={close}>
             取消
           </button>
         </div>
@@ -224,7 +233,7 @@ export function ImportFromAi() {
         <li>確認整理出來的資料，勾選要帶入的項目。</li>
       </ol>
       <textarea readOnly rows={6} value={IMPORT_PROMPT} aria-label="提示詞" className="small" />
-      <div className="row">
+      <div className="actions">
         <button onClick={() => void copyPrompt()}>{copied ? "已複製" : "複製提示詞"}</button>
       </div>
       <textarea
@@ -234,19 +243,17 @@ export function ImportFromAi() {
         placeholder="把原本的 AI 整理好的內容貼在這裡"
         onChange={(e) => setText(e.target.value)}
       />
-      <p className="muted small">
-        內容會送到你設定的 AI 模型整理，不會存進資料庫；帶入、取消或離開這頁之後就會丟掉。
-      </p>
+      <p className="field-note">內容會送到你的 AI 模型整理，不存進資料庫，離開這頁就丟掉。</p>
       {llmProblem && (
         <div className="notice warn">
           {llmProblem}，目前無法整理。
-          <button className="link" onClick={() => goTo("settings")}>
+          <button className="text" onClick={() => goTo("settings")}>
             前往設定
           </button>
         </div>
       )}
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
-      <div className="row">
+      <div className="actions">
         <button
           className="primary"
           disabled={busy || text.trim() === "" || llmProblem !== null}
@@ -254,7 +261,7 @@ export function ImportFromAi() {
         >
           {busy ? "整理中…" : "整理"}
         </button>
-        <button disabled={busy} onClick={close}>
+        <button className="text" disabled={busy} onClick={close}>
           取消
         </button>
       </div>

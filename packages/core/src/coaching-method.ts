@@ -4,13 +4,27 @@
  * 不靠檢索教材：固定的一套方法，每次都用同樣的說法。
  * - COACHING_METHOD：每次都放進系統提示（課的種類、強度分配、漸進、缺課、生病、疼痛、就醫）。
  * - PLANNING_RULES：排課表的細則，附在 get_training_values 的結果後面，排課表時才需要。
- * 出處與理由寫在 doc/coaching-method.md；改內容時兩邊一起改，並把版本號加一（有測試檢查兩邊一致）。
+ * - 多運動（功能開關 multisport，規格 12.24）開著時，另外加上跑者的交叉訓練（CROSS_TRAINING_*），版本是 v5；
+ *   關著時和 v3 一樣（提示詞不變）。
+ * - 單車（多運動的第 3 階段）：選手練騎車時加上單車的教練方法（CYCLING_*，doc/coaching-method-cycling.md）；
+ *   只練騎車的人不帶跑步的方法，只帶共通的生病、疼痛與就醫。
+ * 出處與理由寫在 doc/coaching-method.md 與 doc/coaching-method-cycling.md；改內容時程式與文件一起改，並把版本號加一
+ * （有測試檢查兩邊一致）。
  */
+import type { Sport } from "./types";
 
-export const COACHING_METHOD_VERSION = 3;
+/**
+ * 目前的版本（doc/coaching-method.md 的版本）；v4 是 v3 加上多運動的交叉訓練，v5 加上和單車的教練方法的銜接，
+ * v6 是練跑步＋騎車時強度課與時間依每週的額度（allocation.ts）
+ */
+export const COACHING_METHOD_VERSION = 6;
+/** 單車的教練方法的版本（doc/coaching-method-cycling.md） */
+export const CYCLING_METHOD_VERSION = 2;
+/** 多運動的開關關著時用的版本（和加上交叉訓練之前一樣） */
+const BASE_VERSION = 3;
 
 export const COACHING_METHOD = [
-  `【教練方法 v${COACHING_METHOD_VERSION}】以 Daniels 的配速分區為準，強度分配採 80/20。照這套方法回答，不要混用其他流派的說法（例如 MAF 法、別的區間算法）。`,
+  `【教練方法 v${BASE_VERSION}】以 Daniels 的配速分區為準，強度分配採 80/20。照這套方法回答，不要混用其他流派的說法（例如 MAF 法、別的區間算法）。`,
   "・課的種類：E 輕鬆跑與長跑（有氧基礎與恢復，能聊天的強度）；M 馬拉松配速（全馬專項）；" +
     "T 閾值（「舒服的辛苦」，連續約 20 分鐘或分段）；I 間歇（每段 3–5 分鐘，休息稍短於跑的時間）；" +
     "R 反覆跑（每段 2 分鐘以內、充分休息，練速度與跑姿）；加速跑（輕鬆跑後 4–6 趟、每趟約 20 秒）。",
@@ -29,7 +43,7 @@ export const COACHING_METHOD = [
 ].join("\n");
 
 export const PLANNING_RULES = [
-  `【排課表的規則（教練方法 v${COACHING_METHOD_VERSION}）】`,
+  `【排課表的規則（教練方法 v${BASE_VERSION}）】`,
   "・每週至少一天休息或很輕鬆。強度課（M、T、I、R）一週最多兩堂，不連排兩天，中間至少隔一天輕鬆跑；長跑另外算。",
   "・每堂強度課的量（Daniels）：T 不超過週跑量的 10%；I 不超過 8%，最多 10 km；R 不超過 5%，最多 8 km；M 不超過 20%，最多 29 km。",
   "・長跑不超過週跑量的 25–30%，也不超過 2.5 小時；週跑量低時以時間為準。",
@@ -44,3 +58,95 @@ export const PLANNING_RULES = [
   "・肌力訓練（kind=strength）每週 1–2 次，排在強度課當天（課後）或輕鬆日，不排在強度課前一天；steps 寫時間，動作寫在 note。" +
     "選手有其他運動（訓練偏好的「其他運動」）時，可以排交叉訓練（kind=cross）代替部分輕鬆跑。",
 ].join("\n");
+
+/** 跑者的交叉訓練（v4–v6，多運動開著時接在原則後面） */
+export const CROSS_TRAINING_METHOD = [
+  "・交叉訓練的目標（v4）：騎車、游泳的心率與跑步不同（騎車通常低一些），用那項運動自己的區間（get_training_values 的「跑步以外的運動的區間」），" +
+    "不要拿跑步的區間套用；那項運動在 Intervals.icu 沒有設定時用體感，並請選手到 Intervals.icu 的運動設定填閾值心率（或做一次 30 分鐘的測試）。" +
+    "有 FTP 的騎車可以用功率區間；沒有功率計時用心率。5 分鐘以內的短間歇心率跟不上，看體感。",
+  "・課表外的運動（v4）：選手做了課表外的運動、或用別的運動取代了課表上的課時，依那趟的時間、負荷與強度調整接下來的課：" +
+    "很久或很硬的隔天不排強度課（延後或減量）；高強度的交叉訓練算一堂強度課；取代掉的課不必補。跑量照跑步自己算，不把騎車換算成跑量。",
+  "・選手練的運動（v5）：看訓練偏好的「練的運動」與各自的目標；只排選手有練的運動。選手練騎車時，騎車的課照單車的教練方法排（單車的課）；" +
+    "沒有練騎車的人，騎車只當交叉訓練（輕鬆到中等），不排單車的強度課。游泳等其他運動只當交叉訓練，給一般的建議。",
+  "・跑步＋騎車的額度（v6）：練騎車的人，每週跑步與騎車的時間與強度課照程式算的額度（get_training_values 的【這週的額度】：依各項的強度、主要運動與賽程），" +
+    "跑步的強度課數量照額度，不是上面「強度偏好決定的堂數」；只在額度裡排課。",
+].join("\n");
+
+export const CROSS_TRAINING_RULES = [
+  "・交叉訓練（kind=cross，v4）要寫 sport（ride、swim、other），目標寫代號：{\"zone\":\"Z2\"} 或 {\"hr\":\"easy\"} 用那項運動的心率區間，騎車有 FTP 時可以寫 {\"power\":\"Z2\"}；" +
+    "沒有那項運動的區間時程式顯示體感。中強度以上 15 分鐘以上的交叉訓練算一堂強度課（數量與間隔一起檢查）。",
+  "・調整課表（A → A'）時，這週已經做的其他運動（get_training_plan 的「課表外的其他運動」）也算進去：檢查器會把高強度的算進強度課的數量與間隔、很久或很硬的隔天提醒延後或減量。",
+  "・肌力與交叉訓練的課，選手說做完了（手錶沒有紀錄）時用 update_planned_session 的 action=done 記下。",
+  "・練騎車的人（v6）：跑步的強度課與時間照【這週的額度】；檢查器照額度檢查。",
+].join("\n");
+
+/** 單車的教練方法的原則（選手練騎車時接在系統提示的原則後面；doc/coaching-method-cycling.md） */
+export const CYCLING_METHOD = [
+  `【單車的教練方法 v${CYCLING_METHOD_VERSION}】選手練騎車：騎車用騎車自己的強度基準排課，跑步的規則照跑步的方法。照這套方法回答，不要混用其他流派的說法。`,
+  "・強度的基準：有功率計時用 FTP 的功率區間（Intervals.icu 的設定，預設是 Coggan 的 7 區：Z1 恢復 55% 以下、Z2 耐力 56–75%、Z3 節奏 76–90%、Z4 閾值 91–105%、" +
+    "Z5 最大攝氧 106–120%、Z6 無氧 121–150%、Z7 爆發）；沒有功率計時用騎車自己的心率區間（以騎車的閾值心率切，通常比跑步低，不拿跑步的區間套用）；" +
+    "騎車的區間沒有設定時用體感，並請選手到 Intervals.icu 的騎車設定填閾值心率，或做一次 30 分鐘的測試（最後 20 分鐘的平均心率約為閾值心率）。" +
+    "5 分鐘以內的短間歇心率跟不上，看體感。FTP 依據不足時（例如只有 eFTP）目標取下限，第一堂後依實際調整。",
+  "・課的種類：恢復騎（Z1，60 分鐘以內）；耐力騎（Z2，能聊天，大部分的量）；長騎（Z2 為主，每週一次）；節奏騎（Z3，例：2 × 20 分鐘）；" +
+    "甜蜜點（FTP 的 88–94%，例：2 × 20、3 × 15 分鐘）；閾值騎（Z4，例：2 × 20、4 × 8 分鐘，休息約一半）；最大攝氧間歇（Z5，3–5 分鐘 × 4–6，休息約等長）；" +
+    "無氧與衝刺（Z6–Z7，只給有比賽需求的人，少量）。",
+  "・強度分配：以時間計約 80% 在低強度（Z1–Z2）。每週跑步與騎車的時間與強度課（節奏以上）照程式算的額度（get_training_values 的【這週的額度】）：" +
+    "每項運動的強度偏好決定它的強度課（輕鬆就好 0、適度 1、想要挑戰 2；騎車輕鬆就好時可以有一堂少量的節奏騎），兩項合計一週最多 3 堂（新手 2 堂）；" +
+    "主要運動拿約六到七成的時間與至少一半的強度課，不選就依各項的設定；賽事進入專項準備期（全馬約 12 週、半馬約 8 週、10 km 約 6 週、單車的賽事約 8 週）那項暫時變主要，" +
+    "賽前減量那週兩項都降量，賽後恢復完回到原本的主要運動；換重心時告訴選手。每週騎車約 4 小時以下時，騎車的強度課可以多用甜蜜點。" +
+    "剛開始、剛恢復訓練、上一堂太難沒做完時先少一堂；強度課不連排兩天。",
+  "・漸進：體能（CTL）每週上升不超過約 5 點；長騎每次比最近 30 天最長的一趟多不超過 15–20 分鐘；每 3–4 週一週恢復週，量減約 30–40%。",
+  "・跑步＋騎車一起練：硬的日子之間隔輕鬆日，不論是跑還是騎；硬的騎車隔天不排重要的跑步強度課；長跑與長騎不排在連續兩天。" +
+    "跑量照跑步自己算，騎車不換算成跑量（衝擊不同）；總負荷看 Intervals.icu 的 CTL／ATL。輕鬆騎可以代替輕鬆跑；用騎車取代跑步的課時說明取捨。" +
+    "不做鐵人三項的連續訓練（騎完接跑）。",
+  "・缺課與中斷：錯過的不補；停騎一週以上先只騎耐力、量約原本的一半，逐週加回。膝蓋前側、膝蓋後側或下背痛，先建議檢查座墊高度與前後、把手的位置（bike fit）。",
+  "・安全與補給：90 分鐘以上的騎乘每小時約 30–60 公克碳水（長而硬的可以更多）並補水；熱天看心率或體感；天氣不好或天黑時建議改成室內騎。",
+].join("\n");
+
+/** 不跑步的人（只練騎車等）：不帶跑步的方法，只帶共通的生病、疼痛、肌力與就醫（和跑步的規則相同，說法不限跑步） */
+export const CYCLING_ONLY_SHARED = [
+  "・生病：只有脖子以上的症狀（鼻塞、喉嚨痛）可以輕鬆運動或休息；發燒、全身痠痛、胸悶、咳嗽有痰或腸胃不適就休息，退燒後至少再等一天才恢復。",
+  "・疼痛：運動時疼痛不超過 3/10、隔天早上回到平常、沒有一週比一週嚴重，可以降低量繼續；否則停掉會痛的訓練。腫脹、骨頭有一點壓痛，或兩週沒有改善，建議就醫。",
+  "・立即停下並就醫：胸痛、昏倒或快昏倒、不尋常的心悸或喘不過氣；高溫下頭暈、意識混亂或停止流汗。",
+  "・肌力訓練每週 1–2 次、每次 20–30 分鐘（深蹲、弓箭步、臀橋、核心），新手從徒手開始。",
+  "・你不是醫師：涉及受傷與疾病時給保守的訓練調整，建議就醫，不做診斷。",
+].join("\n");
+
+/** 單車的排課細則（練騎車時附在 get_training_values 的結果後面） */
+export const CYCLING_RULES = [
+  `【單車的排課規則（單車的教練方法 v${CYCLING_METHOD_VERSION}）】`,
+  "・單車的課用這些 kind（不用寫 sport）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、ride_sweetspot 甜蜜點、" +
+    "ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺。steps 用時間寫（duration_min）。",
+  '・目標寫代號，由程式換算：心率 {"zone":"Z2"}（騎車自己的區間）、功率 {"power":"Z2"}（有 FTP 時，沒有時程式改看心率）、' +
+    '甜蜜點 {"zone":"SS"} 或 {"power":"SS"}、體感 {"rpe":[8,9]}。5 分鐘以內、Z5 以上的間歇，沒有功率時程式顯示成體感。不寫數字的功率或心率。',
+  "・每週至少一天休息或恢復騎。跑步與騎車的時間與強度課（節奏以上）照【這週的額度】（兩項合計一週最多 3 堂，新手 2 堂），不連排兩天；" +
+    "強度課要附狀況不好時的替代（例如改成 60 分鐘耐力騎）。主要運動因為賽事改變（或賽後回到原本的）時，reason 用一句話說明。",
+  "・長騎每次比最近 30 天最長的一趟多不超過約 20 分鐘（最近沒有騎車時先 90 分鐘以內）；體能（CTL）每週上升不超過約 5 點；每 3–4 週一週恢復週。",
+  "・單車賽事的賽前減量 7–10 天，騎車的時間減少 40–60%，保留少量強度。長跑與長騎不排在連續兩天；硬的騎車隔天不排跑步的強度課。",
+  "・每一堂寫出：種類、時間、目標（代號）、目的、完成的標準（例如「心率大多在 Z2」「最後一段仍能維持」），強度課附替代。",
+  "・這些規則由程式在存檔前檢查，只警告、不硬擋：要修改，或寫出理由才能存。",
+].join("\n");
+
+/** 選手練的運動（沒給時當成只跑步） */
+type MethodOptions = { multisport?: boolean; sports?: readonly (Sport | string)[] };
+const runs = (o: MethodOptions) => !o.sports || o.sports.includes("run");
+const rides = (o: MethodOptions) => !!o.sports?.includes("ride");
+
+/**
+ * 系統提示的原則：多運動開著時是 v5（加上交叉訓練），選手練騎車時再加上單車的教練方法；
+ * 只練騎車時不帶跑步的方法。關著時和 v3 一樣
+ */
+export function coachingMethod(options: MethodOptions = {}): string {
+  if (!options.multisport) return COACHING_METHOD;
+  if (!runs(options)) return rides(options) ? `${CYCLING_METHOD}\n${CYCLING_ONLY_SHARED}` : CYCLING_ONLY_SHARED;
+  const running = `${COACHING_METHOD.replace(`【教練方法 v${BASE_VERSION}】`, `【教練方法 v${COACHING_METHOD_VERSION}】`)}\n${CROSS_TRAINING_METHOD}`;
+  return rides(options) ? `${running}\n${CYCLING_METHOD}` : running;
+}
+
+/** 排課表的細則：多運動開著時是 v5（加上交叉訓練），練騎車時加上單車的排課規則；只練騎車時只有單車的。關著時和 v3 一樣 */
+export function planningRules(options: MethodOptions = {}): string {
+  if (!options.multisport) return PLANNING_RULES;
+  if (!runs(options)) return rides(options) ? `${CYCLING_RULES}\n${CROSS_TRAINING_RULES}` : CROSS_TRAINING_RULES;
+  const running = `${PLANNING_RULES.replace(`教練方法 v${BASE_VERSION}`, `教練方法 v${COACHING_METHOD_VERSION}`)}\n${CROSS_TRAINING_RULES}`;
+  return rides(options) ? `${running}\n${CYCLING_RULES}` : running;
+}

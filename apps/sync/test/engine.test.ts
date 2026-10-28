@@ -107,6 +107,39 @@ describe("兩台裝置同步", () => {
     expect((await b.db.getDistinctPairs()).has(`${Math.min(bw2, bw3)}-${Math.max(bw2, bw3)}`)).toBe(true);
   });
 
+  it("交叉訓練的運動與「做完了」帶到另一台；沒有這兩項的課內容不變（之前同步過的不重送）", async () => {
+    const root = newRootKey();
+    const a = await device();
+    const b = await device();
+    const engineA = new SyncEngine(a.db, api, root, () => clock);
+    const engineB = new SyncEngine(b.db, api, root, () => clock);
+    await engineA.ensureSpace();
+    const planId = await a.db.saveStructuredPlan(
+      { weekLabel: "2026-W43", weekStart: "2026-10-19", style: "fixed", reason: "這週", outline: null, notes: null, content: "" },
+      [
+        { date: "2026-10-20", kind: "strength", title: "肌力", steps: [{ duration_min: 20 }], purpose: "", success: "", fallback: null },
+        { date: "2026-10-21", kind: "cross", sport: "ride", title: "輕鬆騎", steps: [{ duration_min: 45, target: { zone: "Z2" } }], purpose: "", success: "", fallback: null },
+        { date: "2026-10-22", kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40 }], purpose: "", success: "", fallback: null },
+      ],
+    );
+    const [strength] = await a.db.getPlannedSessions(planId);
+    await a.db.updatePlannedSession(strength!.id, { done_at: "2026-10-20T12:00:00.000Z" });
+    await engineA.sync();
+    await engineB.sync();
+    const plan = await b.db.getActiveTrainingPlan();
+    expect((await b.db.getPlannedSessions(plan!.id)).map((s) => [s.title, s.sport, s.done_at])).toEqual([
+      ["肌力", null, "2026-10-20T12:00:00.000Z"],
+      ["輕鬆騎", "ride", null],
+      ["輕鬆跑", null, null],
+    ]);
+    // 取消「做完了」也帶過去
+    clock = new Date("2026-10-22T02:00:00Z");
+    await a.db.updatePlannedSession(strength!.id, { done_at: null });
+    expect(await engineA.sync()).toMatchObject({ sent: 1 });
+    await engineB.sync();
+    expect((await b.db.getPlannedSessions(plan!.id))[0]!.done_at).toBeNull();
+  });
+
   it("修改與刪除帶到另一台；同一筆兩台都改時，時間新的為準", async () => {
     const root = newRootKey();
     const a = await device();

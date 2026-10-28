@@ -204,12 +204,17 @@ describe("weather text", () => {
     expect(weatherNotice(forecast(), TODAY)).toBeNull();
     expect(weatherNotice(forecast({ rain: true }), TODAY)).toEqual({
       tone: "info",
-      title: "今天可能下雨（降雨機率 80%）",
+      title: "可能下雨",
+      tags: ["降雨 80%"],
+      summary: "今天可能下雨（降雨機率 80%）",
       detail: "路面濕滑時放慢、注意轉彎；也可以把課換到別天或改在室內。",
     });
+    // 看板的標題是短句，數字是標籤（規格 12.28）；完整的一句給問教練用
     const both = weatherNotice(forecast({ hot: true, rain: true }), TODAY)!;
     expect(both.tone).toBe("warn");
-    expect(both.title).toBe("今天濕熱（體感最高 37°C、露點 25°C），可能下雨（降雨機率 80%）");
+    expect(both.title).toBe("濕熱，可能下雨");
+    expect(both.tags).toEqual(["體感 37°C", "露點 25°C", "降雨 80%"]);
+    expect(both.summary).toBe("今天濕熱（體感最高 37°C、露點 25°C），可能下雨（降雨機率 80%）");
   });
 });
 

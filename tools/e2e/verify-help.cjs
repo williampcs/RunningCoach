@@ -23,23 +23,20 @@ let step = "start";
       check[`${tag}.allSections`] = all >= 20;
       await page.getByLabel("搜尋使用說明").fill("密碼");
       const filtered = await page.locator("section.help-section h2").allInnerTexts();
-      check[`${tag}.searchFilters`] = filtered.length > 0 && filtered.length < all && filtered.includes("保護 API key（密碼鎖）");
+      check[`${tag}.searchFilters`] = filtered.length > 0 && filtered.length < all && filtered.includes("密碼鎖");
       await page.getByLabel("搜尋使用說明").fill("");
       if (mobile) await page.screenshot({ path: `${E2E.OUT}/help-mobile.png` });
 
       step = "問教練";
-      await tab("設定");
-      await page.getByLabel("供應商").selectOption("openai-compatible");
-      await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-      await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-      await page.getByLabel("主對話模型").fill("mock-model");
-      await page.getByLabel("我了解並同意以上的資料流向").check();
-      await page.getByRole("button", { name: "儲存設定" }).click();
+      await E2E.setupMock(page, { mock: E2E.MOCK, intervals: false });
       await tab("對話");
       await page.getByLabel("訊息").fill("多裝置同步怎麼用？");
       await page.getByLabel("訊息").press("Enter");
       // 存好的回覆（不是串流中的）才有「參考了」
       check[`${tag}.coachUsedHelp`] = await page.locator(".msg.assistant .sources", { hasText: "App 的使用說明" }).last().waitFor({ timeout: 20000 }).then(() => true, () => false);
+      // 回覆有小標時，連結可能收在某一段裡（規格 12.30）：先把收起的段落打開
+      const closed = page.locator(".msg.assistant").last().locator(".reply-section:not([open]) > summary");
+      while (await closed.count()) await closed.first().click();
       const link = page.locator(".msg.assistant").last().locator("a", { hasText: "看完整說明" }).first();
       await link.click();
       step = "跳到那一段";

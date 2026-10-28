@@ -25,15 +25,7 @@ let step = "start";
       step = "設定";
       await page.goto(URL);
       await page.locator("nav.tabbar button").first().waitFor();
-      await tab("設定");
-      await page.getByLabel("供應商").selectOption("openai-compatible");
-      await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-      await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-      await page.getByLabel("主對話模型").fill("mock-model");
-      await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-      await page.getByLabel("我了解並同意以上的資料流向").check();
-      await page.getByRole("button", { name: "儲存設定" }).click();
-      await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+      await E2E.setupMock(page, { mock: E2E.MOCK });
 
       step = "對話 12 次（超過 20 則會整理）";
       await tab("對話");
@@ -46,7 +38,7 @@ let step = "start";
       };
       for (let i = 1; i <= 12; i++) await send(`第 ${i} 個問題`);
       // 壓縮在背景：等摘要出現
-      await tab("選手資料");
+      await E2E.profile(page, "教練記得的事");
       c.summaryShown = await page.locator(".summary-text", { hasText: "模擬摘要" }).waitFor({ timeout: 20000 }).then(() => true, () => false);
 
       step = "動態載入與分隔線";
@@ -98,7 +90,7 @@ let step = "start";
       c.searchSource = await page.locator(".bubble.assistant .sources", { hasText: "較早的對話" }).last().isVisible();
 
       step = "選手資料頁：記住的事";
-      await tab("選手資料");
+      await E2E.profile(page, "教練記得的事");
       const card = page.locator("section.memories");
       await card.locator(".memory-list li").nth(1).waitFor();
       c.listed = (await card.locator(".memory-text").allInnerTexts()).join("|") === "週三晚上要接小孩，不能練|鞋子跑到 600 公里要換";
@@ -117,7 +109,7 @@ let step = "start";
       step = "重新整理後還在";
       await page.reload();
       await page.locator("nav.tabbar button").first().waitFor();
-      await tab("選手資料");
+      await E2E.profile(page, "教練記得的事");
       await page.locator("section.memories .memory-text").nth(1).waitFor({ timeout: 5000 }).catch(() => undefined);
       c.persisted = (await page.locator("section.memories .memory-text").count()) === 2;
       c.noOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);

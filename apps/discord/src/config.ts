@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   OPENAI_COMPATIBLE_PRESETS,
   OpenAICompatibleProvider,
+  parseFeatures,
   roundPlace,
   type CoachSettings,
   type Effort,
@@ -110,6 +111,8 @@ export function loadConfig(env: Env): BotConfig {
       raceLookbackDays: int(env, "RACE_LOOKBACK_DAYS", DEFAULT_SETTINGS.raceLookbackDays),
       toolCallMaxRounds: int(env, "TOOL_CALL_MAX_ROUNDS", DEFAULT_SETTINGS.toolCallMaxRounds),
       maxResponseTokens: int(env, "MAX_RESPONSE_TOKENS", DEFAULT_SETTINGS.maxResponseTokens),
+      // 功能開關（規格 12.25）：預設全關；要試的話在 .env 寫 FEATURES=multisport
+      features: parseFeatures(env.FEATURES),
     },
   };
 }

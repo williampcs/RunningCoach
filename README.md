@@ -1,6 +1,6 @@
-# Running Coach 🏃
+# Zone2Mate 🏃
 
-AI 跑步教練。用自然語言對話，教練會結合 **Intervals.icu 的客觀數據**與**你自己的主觀感受**，給出個人化的訓練建議、賽事規劃與跑後分析。
+Zone2Mate 是 AI 跑步教練（之後會擴充到單車等耐力運動）。用自然語言對話，教練會結合 **Intervals.icu 的客觀數據**與**你自己的主觀感受**，給出個人化的訓練建議、賽事規劃與跑後分析。
 
 核心是一套 **五層記憶架構**：在有限的 context window 內維持長期記憶（選手資料、訓練歷史、賽事目標、對話重點），並透過 **Tool Use** 按需載入資料，把每次呼叫的 token 用量壓到最低。
 
@@ -203,3 +203,5 @@ Copyright (C) 2026 William
 本專案自 v2 起採用 GNU Affero General Public License v3.0（`AGPL-3.0-only`，見 [LICENSE](LICENSE)）。你可以自由使用、修改與散布；若散布修改後的版本，或以修改後的版本對外提供網路服務，必須以相同授權公開對應的原始碼。本程式不附任何擔保。
 
 v1.4 與更早的版本（commit `62ae45f` 為止）是以 MIT License 釋出，那些版本的授權不受影響。
+
+網頁版用到的第三方圖示：[Lucide](https://lucide.dev)（ISC License）與 [Tabler Icons](https://tabler.io/icons)（MIT License，跑步與游泳的圖示）。

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { matchTaiwanCities, openMeteoUrlsAt, searchPlaces, TAIWAN_CITIES, WEATHER_CREDIT, type PlaceCandidate } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { InfoTip } from "../ui";
 
 const geocodingUrl = import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL).geocoding : undefined;
 
@@ -49,29 +50,28 @@ export function WeatherCard() {
 
   return (
     <section className="card" id="weather">
-      <h2>天氣</h2>
-      <p className="small">
-        設定一個城市，教練就會參考那裡約略的天氣：今天的天氣、排課時未來幾天的預報、跑後分析時跑步當下的溫度與露點；濕熱、下雨或空氣品質差時，教練動態也會提醒。
+      <p className="row">
+        <span>教練會參考這個城市的天氣，濕熱、下雨或空氣差時提醒。</span>
+        <InfoTip label="這個城市只用來查天氣">
+          <ul className="weather-privacy">
+            <li>教練參考的是約略的天氣：今天的天氣、排課時未來幾天的預報、跑後分析時跑步當下的溫度與露點。</li>
+            <li>城市只存在這個瀏覽器的設定裡：不會存進訓練資料、不會同步到其他裝置，也不會給 AI 模型看，教練只看得到天氣的數字。</li>
+            <li>查天氣時，瀏覽器把約略的座標（四捨五入到約 10 公里）直接送到 Open-Meteo，Open-Meteo 也會看到你的 IP。選台灣的縣市不會送出名稱；搜尋其他地方時會送出你輸入的名稱。</li>
+            <li>和紀錄頁軌道上切換的「紀錄頁的里程碑」是分開的設定，互不影響。</li>
+          </ul>
+        </InfoTip>
       </p>
-      <div className="notice info">
-        <strong>這個城市只用來查天氣</strong>
-        <ul className="small weather-privacy">
-          <li>只存在這個瀏覽器的設定裡：不會存進訓練資料、不會同步到其他裝置，也不會給 AI 模型看，教練只看得到天氣的數字。</li>
-          <li>查天氣時，瀏覽器把約略的座標（四捨五入到約 10 公里）直接送到 Open-Meteo，Open-Meteo 也會看到你的 IP。選台灣的縣市不會送出名稱；搜尋其他地方時會送出你輸入的名稱。</li>
-          <li>和「選手資料」的「紀錄頁的里程碑」是分開的設定，互不影響。</li>
-        </ul>
-      </div>
       {current ? (
         <div className="row between">
           <span>
             目前：<strong>{current.label}</strong>
           </span>
-          <button className="small" onClick={() => void choose(null)}>
+          <button className="text" onClick={() => void choose(null)}>
             清除天氣的城市
           </button>
         </div>
       ) : (
-        <p className="muted small">還沒設定：教練不會參考天氣。</p>
+        <p className="muted">還沒設定：教練不會參考天氣。</p>
       )}
       <label>
         台灣的縣市
@@ -119,8 +119,8 @@ export function WeatherCard() {
       <p className="small muted">
         <a href={WEATHER_CREDIT.href} target="_blank" rel="noreferrer">
           {WEATHER_CREDIT.label}
-        </a>
-        （CC BY 4.0）：模型的預報與估計，約略，給教練評估用；要看精確的天氣請用氣象單位的預報。
+        </a>{" "}
+        CC BY 4.0：約略的預報，給教練評估用。
       </p>
     </section>
   );

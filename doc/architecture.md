@@ -84,15 +84,15 @@ flowchart LR
 flowchart TB
   coach["coach.ts<br/>Coach：外殼唯一要用的入口"]
   subgraph talk["對話"]
-    context["context.ts<br/>組系統提示與對話（五層）"]
+    context["context.ts<br/>組系統提示（不常變的在前）與對話（五層）"]
     tools["tools.ts<br/>教練能用的工具與執行"]
     llm["llm/<br/>各家 AI 的轉接、價格"]
     summarizer["summarizer.ts<br/>舊對話整理成摘要"]
     guide["app-guide/<br/>使用說明"]
   end
   subgraph domain["訓練的規則"]
-    tv["training-values.ts<br/>配速、心率區間、VDOT"]
-    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸"]
+    tv["training-values.ts / sports.ts / coaching-method.ts<br/>配速、心率區間、VDOT；各運動的區間；跑步與單車的教練方法"]
+    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、多運動的每週額度"]
     races["races.ts<br/>賽事的規則"]
     recovery["recovery.ts<br/>恢復狀況的判讀"]
     feed["feed.ts<br/>教練動態"]
@@ -143,6 +143,14 @@ sequenceDiagram
   C->>C: 對話太長時在背景整理成摘要
 ```
 
+**Prompt Caching**（規格 12.23 第 2 點）：API 沒有狀態，工具迴圈的每一輪都要重送整段請求（工具清單 → 系統提示 → 對話），快取讓重複的開頭只收約一成。
+
+- 系統提示分成兩段（`context.ts` 的 `buildSystemParts`）：不常變的在前（角色、教練方法、工具與回覆的規則，只依設定、功能開關與選手練的運動決定），每天或每次會變的在後（今天日期、選手資料、記住的事、賽事與距今天數、身體狀況、手錶資料、天氣）。
+- Claude（`llm/anthropic.ts`）：不常變的那段結尾放明確的快取斷點（工具清單在它前面，一起快取），請求上另外加 `cache_control`（自動快取，斷點跟著對話與工具迴圈往後移）。TTL 是預設的 5 分鐘。單次生成（跑後摘要、整理對話）不加。
+- OpenRouter 上的 Claude（`llm/openai-compatible.ts`，網址是 openrouter.ai、模型是 `anthropic/…`）：系統訊息分成兩個內容區塊，同樣的斷點與請求上的 `cache_control`；用量讀 `cache_write_tokens`。OpenAI、Gemini 自動快取，不帶標記。
+- 會讓快取失效的：工具清單（同一個設定下內容與順序固定）、不常變的那段（不放日期、時間、選手資料），有單元測試檢查（`packages/core/test/prompt-cache.test.ts`）。工具的結果在同一則回覆的每一輪都要重送，所以盡量精簡（例：`get_recent_workouts` 7 天以前的 AI 摘要只帶結論）。
+- 頁尾分開顯示快取的讀與寫，金額依各自的單價算（`llm/pricing.ts`）。模擬上游也依快取標記回傳快取的用量（E2E `verify-cache`）。
+
 ## 資料：存在哪裡
 
 | 資料 | 存在哪裡 | 會同步到其他裝置嗎 |
@@ -155,7 +163,7 @@ sequenceDiagram
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
-## 資料庫的 schema（目前是第 11 版）
+## 資料庫的 schema（目前是第 13 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -169,14 +177,16 @@ erDiagram
   conversations ||--o| summaries : "covers_up_to_id：摘要整理到哪一則"
   conversations ||--o| conversations : "reply_to：回覆哪一則（存摘錄）"
   pending_subjective }o--o| workouts : "同步時依日期配對"
+  activity_feedback |o--o| other_activities : "intervals_id：騎車等的體感"
+  races }o--o| other_activities : "result_activity = intervals_id：單車賽事當天那趟"
   daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
 ```
 
-（`planned_sessions` 和實際跑步的對應不存在資料庫裡，每次依日期與內容重新比對算出來。）
+（`planned_sessions` 和實際跑步、騎車的對應不存在資料庫裡，每次依日期與內容重新比對算出來。）
 
 **選手與目標**
-- `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）。
-- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容。
+- `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。
+- `races`：賽事。名稱、日期、距離、目標、已確認或考慮中；結局 `outcome`（完賽、沒有完賽、沒有出賽）、`outcome_reason`、個人成績 `result_time`、大會成績 `gun_time`、`result_source`、連到比賽當天跑步的 `result_activity`；`cancelled` 留給 v1 相容；賽事的運動 `sport`（`ride` 是單車的賽事，跑步是 NULL；schema 13，多運動）。
 - `memories`：記住的事（選手記的或教練記的）。
 
 **訓練紀錄**
@@ -184,14 +194,15 @@ erDiagram
 - `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
 - `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
-- `other_activities`：跑步以外的運動（騎車、游泳、肌力），只算疲勞，不算跑量。
+- `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
+- `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
-- `source_snapshots`：同步時存的 Intervals.icu 設定（閾值心率、區間）與最佳配速曲線，算訓練數值用。
+- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
-- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）。
 
 **對話**
 - `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。
@@ -200,7 +211,7 @@ erDiagram
 **多裝置同步的記帳**（不同步本身）
 - `sync_state`：上次同步時每一筆的雜湊、伺服器序號與版本號，用來判斷哪些要送出、拒絕被倒回的舊版本。
 - `sync_pending`：別台傳來、但這台還沒有對應紀錄的（例如那趟跑步還沒從 Intervals.icu 抓到）。
-- `sync_meta`：同步空間的 id 等設定。
+- `sync_meta`：同步空間的 id 等設定。換金鑰（規格 12.27）時清掉 `sync_state` 與 `sync_meta`、留著 `sync_pending`，在新的空間重新開始。
 
 ## 多裝置同步的資料
 
@@ -215,8 +226,43 @@ erDiagram
 | `m:sync_id` | 一則記住的事 |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
 | `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
+| `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 
-每一筆用同步金鑰加密後才送出（AES-GCM），伺服器的 D1 只有三張表：`spaces`（同步空間與存取憑證的雜湊）、`records`（加密後的每一筆與序號）、`pair_slots`（配對新裝置時的暫存，幾分鐘後過期）。
+每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
+- `spaces`：同步空間與存取憑證的雜湊。
+- `records`：加密後的每一筆與序號。
+- `pair_slots`：配對新裝置時的暫存，幾分鐘後過期。
+- 裝置（規格 12.27，功能開關 `devices`）：
+  - `space_modes`：哪些空間是裝置模式、從什麼時候開始。
+  - `devices`：每台的公開金鑰、加密的名稱、加入與最後同步的時間、移除的時間與證明、換金鑰後給它的新金鑰。
+  - `moves`：換過金鑰的空間搬到哪個新空間。
+  - `sig_nonces`：簽章用過的一次性亂數，十分鐘後過期。
+
+**裝置與換金鑰**（規格 12.27，`device-sync/device.ts`；網頁版在功能開關 `devices` 後面）
+
+```mermaid
+sequenceDiagram
+    participant A as 留下的裝置 A（換金鑰）
+    participant S as 同步服務
+    participant B as 留下的裝置 B
+    participant C as 被移除的 C
+    A->>S: 取回舊空間的全部紀錄（簽章）
+    A->>S: 建新空間、登記 A、用新金鑰重新加密送過去
+    A->>S: rekey：給 A／B 的加密新金鑰、C 的移除證明、A 簽的聲明
+    Note over S: 一個交易：搬 A／B、舊空間刪紀錄、記「搬到哪裡」與聲明
+    B->>S: 同步（舊空間）
+    S-->>B: 410 moved＋給 B 的加密新金鑰＋聲明
+    Note over B: 聲明是記得的裝置（A）簽的才解開、改用新空間
+    C->>S: 同步（舊空間）
+    S-->>C: 410 removed＋證明＋聲明
+    Note over C: 聲明是記得的裝置簽的、證明用舊同步金鑰驗得過，才清掉這台的資料
+```
+
+- 每台有自己的簽章與收件金鑰（P-256，私鑰不可匯出，網頁版存在 IndexedDB `zone2mate-device`）。每個請求簽方法、路徑、時間、一次性亂數與內容的雜湊；伺服器檢查時間在前後 5 分鐘內、亂數沒用過。
+- 登記：同步金鑰導出的舊憑證，加上這台的簽章。空間一旦有裝置登記（裝置模式），舊憑證只能用來登記，不能讀寫；沒有登記過的空間照舊（舊版的用戶端）。
+- 冷卻期由伺服器執行：加入未滿 24 小時的不能換金鑰、刪除雲端資料（升級時才登記的也一樣）。
+- 伺服器假造不出：裝置的名稱與公開金鑰（以同步金鑰加密並綁定）、給每台的新金鑰（混了舊同步金鑰導出的值）、移除的證明（舊同步金鑰的 HMAC）。換金鑰的聲明由換金鑰的那台簽章，每台只接受記得的裝置簽的（`sync_meta` 的 `known_devices`），只拿到復原碼的人也假造不出來。
+- 換金鑰先把資料複製到新空間，最後才一個交易切換：中途斷掉等於沒換。
 
 ## 部署與 CI
 
@@ -230,6 +276,7 @@ erDiagram
 兩個環境怎麼分（規格 12.19）：
 - 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
 - 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
+- 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。
 
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。

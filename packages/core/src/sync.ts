@@ -11,14 +11,15 @@
  * 沒有跑步時也更新，失敗不影響活動的同步
  */
 import { addDays } from "./dates";
+import { athleteSports } from "./sports";
 import type { Db, SaveResult } from "./db";
-import { IntervalsError } from "./intervals";
+import { IntervalsError, runSettingsOf } from "./intervals";
 import type { Llm } from "./llm";
 import { activityLabel } from "./activity-labels";
 import { planNoteFor } from "./planning";
 import { recoveryNoteFor } from "./recovery";
 import { generateWorkoutSummary } from "./tools";
-import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
+import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, SNAPSHOT_SPORT_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
 import type { ActivitySource, Activity, Logger } from "./types";
 import { runWeatherNote, type WeatherSource } from "./weather";
 
@@ -72,9 +73,20 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** 訓練數值用的跑步設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄 */
+/**
+ * 訓練數值用的運動設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄.
+ * 來源提供各運動的設定時只讀一次：跑步的設定從裡面取，其他運動（騎車等）的另外存（規格 12.24）
+ */
 async function refreshTrainingSnapshots(db: Db, activities: ActivitySource, logger: Logger): Promise<void> {
-  if (activities.fetchRunSettings) {
+  if (activities.fetchSportSettings) {
+    try {
+      const all = await activities.fetchSportSettings();
+      await db.saveSnapshot(SNAPSHOT_SPORT_SETTINGS, all);
+      await db.saveSnapshot(SNAPSHOT_RUN_SETTINGS, runSettingsOf(all));
+    } catch (e) {
+      logger.warn(`Sport settings fetch failed: ${message(e)}`);
+    }
+  } else if (activities.fetchRunSettings) {
     try {
       await db.saveSnapshot(SNAPSHOT_RUN_SETTINGS, await activities.fetchRunSettings());
     } catch (e) {
@@ -97,6 +109,8 @@ export async function runSync(deps: {
   activities: ActivitySource;
   weather?: WeatherSource | null;
   logger: Logger;
+  /** 多運動的開關：不跑步的選手（只練騎車等）沒有跑步時不當成問題 */
+  multisport?: boolean;
 }): Promise<string> {
   const { db, llm, activities, logger } = deps;
 
@@ -137,6 +151,9 @@ export async function runSync(deps: {
   await refreshTrainingSnapshots(db, activities, logger);
   const others = await syncOtherActivities(db, activities, logger);
 
+  if (!fetched.length && deps.multisport && others?.stored && !athleteSports(await db.getProfile()).includes("run")) {
+    return `✅ Intervals.icu 同步完成：其他運動 ${countsText(others.counts)}（教練會參考）${removedNote ? `，${removedNote}` : ""}${wellnessDays ? `，更新恢復資料 ${wellnessDays} 天` : ""}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
+  }
   if (!fetched.length) {
     // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明怎麼改，不必檢查上傳
     const othersNote = others

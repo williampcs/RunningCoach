@@ -5,17 +5,8 @@ const { chromium } = E2E;
 const OUT = E2E.OUT;
 const URL = E2E.URL;
 
-async function setup(page, { intervals }) {
-  await E2E.go(page, "設定");
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  if (intervals) await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
-  await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
-}
+// 設定的第一層是清單（規格 12.28）：用 env.cjs 的 setupMock 進到「AI 教練」「訓練紀錄」填好
+const setup = (page, { intervals, timeZone = null }) => E2E.setupMock(page, { mock: E2E.MOCK, intervals, timeZone });
 
 async function newPage(browser, problems) {
   // 每次用新的 context：OPFS 與 localStorage 都是空的，等同第一次使用
@@ -36,13 +27,11 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   const check = {};
   const page = await newPage(browser, problems);
   // 時區設成和模擬服務一樣，「今天」才對得上
-  await E2E.go(page, "設定");
-  await page.getByLabel("時區").fill("Asia/Taipei");
-  await setup(page, { intervals: true });
+  await setup(page, { intervals: true, timeZone: "Asia/Taipei" });
   await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
 
-  await E2E.go(page, "計畫與賽事");
+  await E2E.go(page, "計畫");
   const card = page.locator("#races");
   const addRace = async (name, date, km) => {
     await card.getByRole("button", { name: "新增賽事" }).click();
@@ -52,7 +41,7 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
     await card.getByRole("button", { name: "新增", exact: true }).click();
     await card.locator(".list li").filter({ hasText: name }).first().waitFor();
   };
-  const item = (name) => card.locator(".list li").filter({ has: page.locator("strong", { hasText: new RegExp(`^${name}$`) }) });
+  const item = (name) => card.locator(".list li").filter({ has: page.locator(".list-row-title", { hasText: new RegExp(`^${name}$`) }) });
 
   // 1. 重複：新增時先問；列出重複的提醒；刪除後提醒消失
   await addRace("春季半馬", "2027-03-01", 21.1);
@@ -84,7 +73,7 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   await other.waitFor();
   check.foldedByDefault = (await other.getAttribute("open")) === null && !(await item("春季半馬").isVisible());
   await other.locator("summary").click();
-  check.foldLabel = (await other.locator("summary").innerText()) === "其他紀錄（1 場）";
+  check.foldLabel = (await other.locator("summary").innerText()) === "其他紀錄 1 場";
   await item("春季半馬").getByText("沒有出賽（受傷或生病）").waitFor();
   check.dnsNoRestore = (await item("春季半馬").getByRole("button", { name: /不參加|記錄成績/ }).count()) === 0;
   await item("春季半馬").getByRole("button", { name: "編輯" }).click();
@@ -108,14 +97,14 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   await item("城市 10K").getByLabel("成績來源").selectOption("chip");
   await item("城市 10K").getByRole("button", { name: "儲存" }).click();
   await item("城市 10K").getByText("完賽 55:01").waitFor();
-  check.finished = (await item("城市 10K").innerText()).includes("大會成績 55:40｜晶片計時");
+  check.finished = (await item("城市 10K").innerText()).includes("大會成績 55:40 · 晶片計時");
   await page.screenshot({ path: `${OUT}/races-5-finished.png`, fullPage: true });
   await item("城市 10K").getByRole("button", { name: "修改成績" }).click();
   await item("城市 10K").getByLabel("沒有完賽").check();
   await item("城市 10K").getByLabel("說明（選填）").fill("8K 抽筋");
   await item("城市 10K").getByRole("button", { name: "儲存" }).click();
   await item("城市 10K").getByText("沒有完賽（8K 抽筋）").waitFor();
-  check.dnf = (await other.locator("summary").innerText()) === "其他紀錄（2 場）";
+  check.dnf = (await other.locator("summary").innerText()) === "其他紀錄 2 場";
 
   // 4. 還沒到的比賽不能記錄成績
   await addRace("秋季全馬", "2027-11-01", 42.195);

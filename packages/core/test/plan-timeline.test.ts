@@ -18,7 +18,10 @@ const plan = (weekStart: string, sessions: ActivePlan["sessions"], style = "fixe
   sessions,
   styleLabel: null,
   totalKm: 20,
+  extraOthers: [],
   runCount: sessions.filter((s) => s.isRun).length,
+  rideCount: 0,
+  rideMinutes: 0,
   coachNote: null,
   extras: [],
 });
@@ -63,7 +66,7 @@ describe("課表頁的時間軸（12.22）", () => {
     const tl = planTimeline(week(), next, [], TODAY)!;
     expect(tl.days.at(-1)!.date).toBe("2026-11-08");
     const first = tl.days.find((d) => d.date === "2026-11-02")!;
-    expect(first.nextWeek).toEqual({ range: "11/2 – 11/8", km: 20, runs: 1 });
+    expect(first.nextWeek).toEqual({ range: "11/2 – 11/8", km: 20, runs: 1, rides: 0, rideMinutes: 0 });
     expect(tl.days.find((d) => d.date === "2026-11-03")!.sessions[0]!.weekStart).toBe("2026-11-02");
   });
 
@@ -103,5 +106,15 @@ describe("課表頁的時間軸（12.22）", () => {
     expect(tl.thisWeek).toBe(false);
     expect(tl.days).toEqual([]);
     expect(tl.earlier).toHaveLength(6);
+  });
+  it("多運動：課表外的其他運動排進那天（今天以前的放在稍早）；開關關著時不放", () => {
+    const ride = (date: string, id: string) => ({ intervals_id: id, date, type: "Ride", duration_min: 60, distance_km: 25, avg_hr: 128, training_load: 38 });
+    const current = { ...week(), extraOthers: [ride("2026-10-26", "past"), ride("2026-10-27", "today")] };
+    const tl = planTimeline(current, null, [], TODAY, { others: true })!;
+    expect(tl.days[0]!.others.map((a) => a.intervals_id)).toEqual(["today"]);
+    expect(tl.earlierOthers.map((a) => a.intervals_id)).toEqual(["past"]);
+    const off = planTimeline(current, null, [], TODAY)!;
+    expect(off.days[0]!.others).toEqual([]);
+    expect(off.earlierOthers).toEqual([]);
   });
 });

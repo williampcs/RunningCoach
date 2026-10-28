@@ -7,6 +7,7 @@
  * 選項：
  *   --days 42        活動、恢復資料與行事曆往回查幾天（預設 42）
  *   --names-only     只列欄位名稱與有值的比例，不列數字的範圍
+ * 騎車等跑步以外的運動設定與活動（規格 12.24）也會列出；只想確認欄位時加 --names-only。
  * 結果印在終端機，也寫到 data/intervals-fields/（不進版控）。
  *
  * 輸出不含個人資訊：文字只印類型、單位這類列舉值，名稱、說明、email、金鑰與各種 id 一律不印；
@@ -274,6 +275,11 @@ report(
   { status: me.status, body: null },
   runSettings ? [runSettings] : [],
 );
+// 跑步以外的運動設定（騎車、游泳……，規格 12.24）：每組分開列，看 FTP、功率與心率區間的欄位
+for (const other of settings.filter((s) => s !== runSettings)) {
+  const types = Array.isArray(other.types) ? other.types.map(String) : [];
+  report(`GET /athlete/{id} 的 sportSettings（${types.join("、") || "沒有類型"}）`, "跑步以外的一組運動設定", { status: me.status, body: null }, [other]);
+}
 
 // 活動
 const acts = await get(`${athlete}/activities`, { oldest, newest: today });
@@ -287,6 +293,12 @@ report(
   acts,
   runs,
 );
+
+// 跑步以外的活動（騎車等）：課表外的運動與交叉訓練的完成度用（規格 12.24）
+const others = all.filter((a) => !isRun(a));
+if (others.length) {
+  report("GET /athlete/{id}/activities（跑步以外）", `最近 ${days} 天跑步以外的 ${others.length} 筆`, acts, others);
+}
 
 const latest = runs[0];
 const runId = latest ? encodeURIComponent(String(latest.id)) : null;

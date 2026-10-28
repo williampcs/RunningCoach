@@ -15,6 +15,8 @@ export interface PrivacyBuild {
   staging: boolean;
   /** 這次建置的同步服務網址（VITE_SYNC_URL）；沒有設定時為空 */
   syncUrl: string;
+  /** 功能開關 devices（裝置清單與移除，規格 12.27）開著：多寫伺服器多知道的事 */
+  devices?: boolean;
 }
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
@@ -38,6 +40,15 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
       ? '<div class="staging-banner"><strong>Staging</strong>：還沒上線的測試版，資料與同步都和正式版分開。</div>'
       : "",
     "<!--SYNC_HOST-->": host ? `<code>${escapeHtml(host)}</code>` : "這個版本沒有設定同步服務",
+    "<!--DEVICES-->": build.devices
+      ? "<li>每台裝置：隨機的裝置代號、這台的兩把公開金鑰（驗證這台的請求、換金鑰時把新的金鑰加密給它）、加入與最後同步的時間、是否已被移除；裝置的名稱與平台以同步金鑰加密，我們看不到。所以同步服務知道一個同步空間有幾台、各自什麼時候加入與最後同步，但不知道是哪些裝置、是誰的；</li>" +
+        "<li>換過金鑰（移除某台）的同步空間：要搬到哪個新的空間、給留下的每台加密後的新同步金鑰、被移除的裝置的證明、換金鑰的那台簽的聲明（只有裝置代號與雜湊；新金鑰都是加密的，我們解不開）；舊空間的資料在換金鑰時刪掉；</li>" +
+        "<li>每個請求的一次性亂數，用來擋下重送的請求，十分鐘後刪除。</li>"
+      : "",
+    "<!--DEVICES_NOTE-->": build.devices
+      ? "<li>移除某台裝置時，被移除的那台之後連不上同步，下次打開時會清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）；它在移除前已經下載的資料我們收不回來。</li>"
+      : "",
+    "<!--DEVICES_CHANGE-->": build.devices ? "<li>2026-10-27：多裝置同步可以看到有哪些裝置、移除某台（同步服務多記每台的公開金鑰與時間）。</li>" : "",
   };
   let html = read("page.html");
   for (const [mark, value] of Object.entries(replacements)) {

@@ -1,27 +1,68 @@
+/*
+ * Zone2Mate 的樣式（設計準則：doc/design-guidelines.md，規格 12.28）.
+ * 只用下面的變數：字級五級、間距六種、圓角三種；一種顏色只有一種意思。
+ */
 :root {
   color-scheme: light dark;
+
+  /* 字級：數字、標題、小標、內文、輔助 */
+  --fs-num: 28px;
+  --fs-title: 20px;
+  --fs-sub: 16px;
+  --fs-body: 15px;
+  --fs-aux: 13px;
+
+  /* 間距：同一行 8、卡片裡的區塊 12、卡片內距與畫面邊距 16、卡片之間 12、頁面的大段落 24–32 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* 圓角：欄位與標籤、卡片、全圓（按鈕、徽章） */
+  --r-field: 8px;
+  --r-card: 12px;
+  --r-pill: 999px;
+
+  /* 主要按鈕與可點的地方至少這麼高 */
+  --touch: 44px;
+
   --bg: #f8fafc;
   --surface: #ffffff;
   --text: #0f172a;
   --muted: #64748b;
   --border: #e2e8f0;
+  --line-strong: #cbd5e1;
+  /* 主色：主要按鈕、選中、今天 */
   --accent: #0f766e;
   --accent-text: #ffffff;
+  --accent-soft: #ccfbf1;
   --user-bubble: #ccfbf1;
-  --ok: #dcfce7;
-  --warn: #fef3c7;
-  --warn-strong: #d97706;
-  --error: #fee2e2;
-  --info: #e0f2fe;
-  --danger-text: #b91c1c;
-  /* 教練動態的看板：和對話背景、泡泡都不同的淡底色 */
+  /* 強度：低、中、高；課表與紀錄裡的顏色只代表強度 */
+  --int-low: #0f766e;
+  --int-mid: #d97706;
+  --int-high: #e5533d;
+  /* 不算強度的（休息、肌力、沒有目標的交叉訓練）：灰 */
+  --int-none: #cbd5e1;
+  /* 賽事 */
+  --race: #db2777;
+  /* 達成 */
+  --done: #15803d;
+  /* 危險：只給刪除、重設 */
+  --danger: #b91c1c;
+  /* 提示的整條色塊：要使用者動手的警告才用 */
+  --ok-bg: #dcfce7;
+  --warn-bg: #fef3c7;
+  --warn-strong: #b45309;
+  --error-bg: #fee2e2;
+  --info-bg: #e0f2fe;
+  /* 教練動態的看板 */
   --board: #e9eff6;
   --board-line: #d5deea;
-  --board-text: #475569;
-  /* 課表頁：不算強度的課（肌力、交叉訓練、休息）與賽事 */
-  --other: #7c3aed;
-  --race: #db2777;
+
   font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 
@@ -32,20 +73,25 @@
     --text: #e2e8f0;
     --muted: #94a3b8;
     --border: #24304a;
+    --line-strong: #334260;
     --accent: #2dd4bf;
     --accent-text: #042f2e;
+    --accent-soft: #123f3b;
     --user-bubble: #134e4a;
-    --ok: #14532d;
-    --warn: #57400a;
+    --int-low: #2dd4bf;
+    --int-mid: #fbbf24;
+    --int-high: #fb8a71;
+    --int-none: #3b4a66;
+    --race: #f9a8d4;
+    --done: #4ade80;
+    --danger: #fca5a5;
+    --ok-bg: #14532d;
+    --warn-bg: #57400a;
     --warn-strong: #fbbf24;
-    --error: #5b1d1d;
-    --info: #0c3a55;
-    --danger-text: #fca5a5;
+    --error-bg: #5b1d1d;
+    --info-bg: #0c3a55;
     --board: #16223a;
     --board-line: #263552;
-    --board-text: #a5b4cc;
-    --other: #a78bfa;
-    --race: #f9a8d4;
   }
 }
 
@@ -65,6 +111,83 @@ body {
   color: var(--text);
 }
 
+/* 字級：h1 與 .title 是標題、h2 是小標、h3 是粗的內文 */
+h1,
+.title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+h2 {
+  margin: 0;
+  font-size: var(--fs-sub);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+h3 {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.num {
+  font-size: var(--fs-num);
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: var(--fs-aux);
+}
+
+.center {
+  text-align: center;
+}
+
+.dim {
+  opacity: 0.55;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* 圖示：線條 2px，和旁邊的字對齊 */
+.icon {
+  flex: none;
+  vertical-align: -0.2em;
+}
+
+/* ---------------------------------------------------------------------------
+ * 版面：標題列、頁面、底部分頁（電腦是左側欄）
+ * ------------------------------------------------------------------------- */
+
 .shell {
   display: flex;
   flex-direction: column;
@@ -74,41 +197,34 @@ body {
 }
 
 .topbar {
+  position: relative;
+  z-index: 31;
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 12px 16px 8px;
-  padding-top: calc(12px + env(safe-area-inset-top));
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  padding-top: calc(var(--sp-2) + env(safe-area-inset-top));
+  background: var(--bg);
 }
 
 .topbar h1 {
-  margin: 0;
-  font-size: 1.15rem;
   color: var(--accent);
   white-space: nowrap;
 }
 
-/* 窄的手機：頁首放不下頁名，分頁列與按鈕本身已經標出在哪一頁 */
-@media (max-width: 420px) {
-  .topbar {
-    gap: 8px;
-  }
-
-  .topbar .page-label {
-    display: none;
-  }
+.topbar .page-label {
+  display: none;
 }
 
 /* 標題列的階段標籤：正式版之前標示 Beta（完整版號在設定頁最下面） */
 .version {
-  font-size: 0.7rem;
+  font-size: var(--fs-aux);
   font-weight: 600;
   color: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  padding: 0 var(--sp-2);
   white-space: nowrap;
-  align-self: center;
 }
 
 /* staging 的標示用提示色，一眼和正式版分得出來（規格 12.19） */
@@ -117,23 +233,34 @@ body {
   border-color: var(--warn-strong);
 }
 
+/* 標題列的說明與設定：只有圖示的按鈕 */
+.help-button {
+  margin-left: auto;
+}
+
+.help-button.active,
+.settings-button.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .page {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px 16px;
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
+}
+
+.chat-page {
+  overflow: hidden;
 }
 
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.chat-page {
-  overflow: hidden;
+  gap: var(--sp-3);
 }
 
 .tabbar {
@@ -149,16 +276,14 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 8px 2px;
+  min-height: 56px;
+  padding: var(--sp-2) 2px;
   border: 0;
   border-radius: 0;
   background: none;
   color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.tabbar button span {
-  font-size: 1.15rem;
+  font-size: var(--fs-aux);
+  font-weight: 500;
 }
 
 .tabbar button.active {
@@ -166,134 +291,118 @@ body {
   font-weight: 600;
 }
 
+/* 電腦：分頁改成左側欄，內容放寬 */
+@media (min-width: 900px) {
+  .shell {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    column-gap: var(--sp-6);
+    max-width: 1120px;
+    padding: 0 var(--sp-8);
+  }
+
+  .topbar {
+    grid-column: 1 / -1;
+    padding: var(--sp-4) 0 var(--sp-3);
+    background: none;
+  }
+
+  .notices {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  /* 留 4px 給對話頁輸入框的聚焦外框，避免被 overflow: hidden 裁掉 */
+  .page {
+    grid-column: 2;
+    grid-row: 3;
+    padding: var(--sp-1) var(--sp-1) var(--sp-6);
+  }
+
+  .tabbar {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    align-self: start;
+    flex-direction: column;
+    gap: var(--sp-1);
+    border: 0;
+    background: none;
+    padding: 0;
+    position: relative;
+    z-index: 31;
+  }
+
+  .tabbar button {
+    flex: none;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--sp-3);
+    min-height: var(--touch);
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-field);
+    color: var(--text);
+    font-size: var(--fs-body);
+  }
+
+  .tabbar button:hover {
+    background: var(--surface);
+  }
+
+  .tabbar button.active {
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 元件
+ * ------------------------------------------------------------------------- */
+
+/* 卡片：一種（底色、細框、圓角 12、內距 16）；卡片裡不套卡片 */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: var(--r-card);
+  padding: var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-p {
-  margin: 0;
-}
-
-label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.85rem;
-  color: var(--muted);
+  gap: var(--sp-3);
   min-width: 0;
 }
 
-label.check {
-  flex-direction: row;
+/* 卡片的標題列：左邊標題，右邊一個動作 */
+.card-head {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text);
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 32px;
 }
 
-input,
-select,
-textarea,
-button,
-.button {
-  font: inherit;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 8px 10px;
+.card-head > h2,
+.card-head > .title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
-input[type="checkbox"],
-input[type="radio"] {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-}
-
-input[type="range"] {
-  padding: 0;
-  accent-color: var(--accent);
-}
-
-textarea {
-  resize: vertical;
-  width: 100%;
-}
-
-/* 自動長高的輸入框（AutoGrowTextarea）：高度由程式算，不給拖拉 */
-textarea.autogrow {
-  resize: none;
-}
-
-button,
-.button {
-  cursor: pointer;
-  white-space: nowrap;
-  flex-direction: row;
-  font-size: 0.9rem;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
-  font-weight: 600;
-}
-
-button.danger {
-  color: var(--danger-text);
-  border-color: var(--danger-text);
-}
-
-button.link {
-  border: 0;
-  background: none;
-  color: var(--accent);
-  text-decoration: underline;
-  padding: 0 6px;
-}
-
-a {
-  color: var(--accent);
-}
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-}
-
-.grid .wide {
-  grid-column: 1 / -1;
+/* 卡片裡的分區：細線 */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
 }
 
 .row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .row.between {
@@ -302,6 +411,16 @@ a {
 
 .row > input {
   flex: 1;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-3);
+}
+
+.grid .wide {
+  grid-column: 1 / -1;
 }
 
 .list {
@@ -315,75 +434,19 @@ a {
 .list > li {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 0;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
   border-top: 1px solid var(--border);
 }
 
 .list > li:first-child {
   border-top: 0;
+  padding-top: 0;
 }
 
-.dim {
-  opacity: 0.55;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.small {
-  font-size: 0.82rem;
-}
-
-.center {
-  text-align: center;
-}
-
-.notice {
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 0.9rem;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-}
-
-.notice.ok {
-  background: var(--ok);
-}
-
-.notice.warn {
-  background: var(--warn);
-}
-
-.notice.error {
-  background: var(--error);
-}
-
-.notice.info {
-  background: var(--info);
-}
-
-.notice ul {
+.guide {
   margin: 0;
-  padding-left: 1.2em;
-}
-
-.notices {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0 16px 4px;
-}
-
-.notice.test-banner {
-  background: var(--warn);
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+  padding-left: 1.3em;
 }
 
 pre {
@@ -392,14 +455,615 @@ pre {
   font: inherit;
 }
 
+/* 按鈕：主要（實心，一塊最多一顆）→ 次要（外框，預設）→ 文字；危險是紅字 */
+input,
+select,
+textarea,
+button,
+.button {
+  font: inherit;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-field);
+  background: var(--surface);
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 0;
+}
+
+input,
+select {
+  min-height: var(--touch);
+}
+
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--touch);
+  padding: 0 var(--sp-4);
+  border-color: var(--line-strong);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* 文字按鈕：不重要的動作、取消 */
+button.text {
+  border-color: transparent;
+  background: none;
+  color: var(--accent);
+  padding: 0 var(--sp-2);
+}
+
+button.text.muted {
+  color: var(--muted);
+}
+
+/* 句子裡的連結樣式（不另外佔一行） */
+button.link {
+  display: inline;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0 var(--sp-1);
+  font-weight: inherit;
+  white-space: normal;
+}
+
+button.danger,
+button.text.danger,
+button.link.danger {
+  color: var(--danger);
+}
+
+button.danger:not(.text):not(.link) {
+  border-color: var(--danger);
+}
+
+/* 只有圖示的按鈕（✕ ? 設定 › ⓘ）：要有 aria-label */
+button.icon-button {
+  width: var(--touch);
+  padding: 0;
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+
+button.icon-button:hover {
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+input[type="range"] {
+  padding: 0;
+  min-height: var(--touch);
+  accent-color: var(--accent);
+}
+
+textarea {
+  resize: vertical;
+  width: 100%;
+}
+
+/* 自動長高的輸入框（AutoGrowTextarea）：高度由程式算，不給拖拉 */
+textarea.autogrow {
+  resize: none;
+}
+
+/* 表單：標籤在欄位上面 */
+label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  font-size: var(--fs-aux);
+  color: var(--muted);
+  min-width: 0;
+}
+
+label > input,
+label > select,
+label > textarea {
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+
+label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--touch);
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+
+/* 欄位的說明：一行小字 */
+.field-note {
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+legend {
+  padding: 0;
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+/* 標籤（chip）：只放屬性，最多三個 */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-aux);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-field);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 狀態徽章：達成打勾（綠），沒做、休息是灰，不用紅 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-aux);
+  font-weight: 600;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.badge.achieved,
+.badge.rested,
+.badge.on {
+  color: var(--done);
+  border-color: transparent;
+  background: var(--ok-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .badge.achieved,
+  .badge.rested,
+  .badge.on {
+    color: var(--text);
+  }
+}
+
+.badge.warn {
+  color: var(--warn-strong);
+  border-color: var(--warn-strong);
+  background: none;
+}
+
+/* 列表的一列：左邊圖示，中間標題加一行副標，右邊數字、狀態或 › */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: 56px;
+  padding: var(--sp-2) 0;
+  text-align: left;
+  color: var(--text);
+}
+
+button.list-row {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  white-space: normal;
+  font-weight: inherit;
+  justify-content: flex-start;
+}
+
+.list-row-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.list-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.list-row-sub {
+  font-size: var(--fs-aux);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.list-row-end {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--muted);
+  font-size: var(--fs-aux);
+  max-width: 45%;
+  text-align: right;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/* 收起的細節：全 App 同一個樣子（› 加「細節」或「為什麼」） */
+.disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 32px;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-body);
+}
+
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure > summary .chev {
+  transition: transform 0.15s;
+}
+
+.disclosure[open] > summary .chev {
+  transform: rotate(90deg);
+}
+
+.disclosure-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+}
+
+/* 按鈕版的「細節」（課卡裡、不能用 details 的地方） */
+button.disclosure-button {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  gap: var(--sp-1);
+  align-self: flex-start;
+  font-weight: inherit;
+}
+
+button.disclosure-button .chev {
+  transition: transform 0.15s;
+}
+
+button.disclosure-button[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+/* ⓘ：說明收起來，點了展開在下面 */
+.info-tip {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+button.info-button {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+button.info-button[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.info-pop {
+  font-size: var(--fs-aux);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-field);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.info-pop ul,
+.info-pop ol {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+/* 提示：要使用者動手的警告才用整條色塊 */
+.notice {
+  border-radius: var(--r-field);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-body);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+
+.notice.ok {
+  background: var(--ok-bg);
+}
+
+.notice.warn {
+  background: var(--warn-bg);
+}
+
+.notice.error {
+  background: var(--error-bg);
+}
+
+.notice.info {
+  background: var(--info-bg);
+}
+
+.notice ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+/* 一行的提示：圖示＋字＋（右邊的）動作 */
+.notice.inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.notice.inline > span:first-of-type {
+  flex: 1 1 200px;
+}
+
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0 var(--sp-4) var(--sp-1);
+}
+
+@media (min-width: 900px) {
+  .notices {
+    margin: 0 0 var(--sp-3);
+  }
+}
+
+.notice.test-banner {
+  background: var(--warn-bg);
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 欄位旁邊的錯誤：紅字一行 */
+.field-error {
+  font-size: var(--fs-aux);
+  color: var(--danger);
+}
+
+/* 畫面下方的小提示：存好了、同步完成，三秒後消失 */
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--sp-4));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-card);
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: 0 4px 16px rgb(15 23 42 / 0.25);
+  animation: toast-in 0.2s ease-out;
+}
+
+@media (min-width: 900px) {
+  .toasts {
+    bottom: var(--sp-8);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* 強度的色條（紀錄的強度分配、課卡的結構） */
+.split-bar {
+  display: flex;
+  height: 10px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--border);
+}
+
+.split-bar .low {
+  background: var(--int-low);
+}
+
+.split-bar .moderate {
+  background: var(--int-mid);
+}
+
+.split-bar .high {
+  background: var(--int-high);
+}
+
+.split-bar .other {
+  background: var(--int-none);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot.low {
+  background: var(--int-low);
+}
+
+.dot.moderate {
+  background: var(--int-mid);
+}
+
+.dot.high {
+  background: var(--int-high);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--sp-3);
+}
+
+.legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* 數字格：大數字＋小標 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-2);
+  margin: 0;
+}
+
+.stats > div {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.stats dt {
+  color: var(--muted);
+  font-size: var(--fs-aux);
+}
+
+.stats dd {
+  margin: 0;
+  font-size: var(--fs-num);
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 420px) {
+  .stats dd {
+    font-size: var(--fs-title);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 對話
+ * ------------------------------------------------------------------------- */
+
 .messages {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 12px;
-  padding-bottom: 8px;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-2);
   /* 往上捲到教練動態下方時淡出，而不是被硬切 */
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12px);
   mask-image: linear-gradient(to bottom, transparent, #000 12px);
@@ -410,21 +1074,21 @@ pre {
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 24px;
+  gap: var(--sp-2);
+  padding: var(--sp-6);
 }
 
 .bubble {
   max-width: 88%;
-  padding: 10px 14px;
-  border-radius: 16px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-card);
   overflow-wrap: anywhere;
 }
 
 .bubble.user {
   align-self: flex-end;
   background: var(--user-bubble);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--sp-1);
   white-space: pre-wrap;
 }
 
@@ -432,7 +1096,82 @@ pre {
   align-self: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--sp-1);
+}
+
+/* 教練的長回覆（規格 12.30）：結論一直顯示，每個小標收成一列，最後「全部展開」 */
+.coach-reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.reply-sections {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-1);
+}
+
+.reply-sections:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.reply-section > summary {
+  font-weight: 600;
+}
+
+.reply-section > .disclosure-body {
+  padding: 0 0 var(--sp-2) var(--sp-4);
+}
+
+/* 正在寫的那一列（邊寫邊收）：旁邊的「寫作中」一閃一閃；減少動態效果時不動 */
+.reply-writing {
+  margin-left: var(--sp-2);
+  font-size: var(--fs-aux);
+  font-weight: 400;
+  color: var(--muted);
+  animation: reply-writing 1.2s ease-in-out infinite;
+}
+
+@keyframes reply-writing {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 點開與收起：短的高度動畫（瀏覽器支援 ::details-content 時） */
+.coach-reply {
+  interpolate-size: allow-keywords;
+}
+
+.reply-section::details-content {
+  height: 0;
+  overflow: clip;
+  transition:
+    height 0.2s ease,
+    content-visibility 0.2s allow-discrete;
+}
+
+.reply-section[open]::details-content {
+  height: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reply-writing {
+    animation: none;
+  }
+
+  .reply-section::details-content {
+    transition: none;
+  }
+}
+
+button.text.reply-toggle-all {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0;
 }
 
 /* 一則訊息：引用、氣泡、動作 */
@@ -461,9 +1200,9 @@ pre {
 .msg-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 6px;
-  min-height: 1.5rem;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-2);
+  min-height: 24px;
 }
 
 .msg.user > .msg-meta {
@@ -471,7 +1210,7 @@ pre {
 }
 
 .msg-time {
-  font-size: 0.72rem;
+  font-size: var(--fs-aux);
   color: var(--muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -479,7 +1218,7 @@ pre {
 
 .msg-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -498,20 +1237,23 @@ pre {
 
 .msg-actions .link {
   color: var(--muted);
+  text-decoration: none;
   padding: 2px 0;
 }
 
 .quote {
   display: block;
   max-width: 100%;
+  min-height: 0;
   text-align: left;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--fs-aux);
   color: var(--muted);
   background: transparent;
   border: none;
   border-left: 3px solid var(--border);
-  padding: 2px 8px;
+  border-radius: 0;
+  padding: 2px var(--sp-2);
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -525,18 +1267,14 @@ span.quote {
 
 .quote-who {
   font-weight: 600;
-  margin-right: 6px;
+  margin-right: var(--sp-2);
 }
 
 .remember-edit {
   width: min(420px, 80vw);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.remember-edit textarea {
-  width: 100%;
+  gap: var(--sp-2);
 }
 
 /* 已整理進摘要的訊息淡一點；滑過或點按時恢復，原文仍然看得清楚 */
@@ -557,10 +1295,10 @@ span.quote {
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 14px 0 6px;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 var(--sp-2);
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--fs-aux);
 }
 
 .archived-divider::before,
@@ -575,19 +1313,35 @@ span.quote {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 4px 14px;
+  padding: var(--sp-1) var(--sp-3);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-card);
   background: var(--surface);
   color: var(--text);
   font-weight: 600;
   text-align: center;
 }
 
+.archived-divider > span > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
 .archived-sub {
   font-weight: 400;
   color: var(--muted);
-  font-size: 0.75rem;
+}
+
+.composer {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: var(--touch);
 }
 
 .composer.replying {
@@ -598,7 +1352,7 @@ span.quote {
   flex-basis: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
@@ -609,21 +1363,6 @@ span.quote {
 
 .footer {
   align-self: flex-start;
-}
-
-.composer {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.composer textarea {
-  flex: 1;
-}
-
-/* 「送出」和一行高的輸入框一樣高（輸入框長高時按鈕留在底部） */
-.composer button[type="submit"] {
-  min-height: calc(1.6rem + 18px);
 }
 
 .markdown > :first-child {
@@ -648,7 +1387,7 @@ span.quote {
 .markdown h1,
 .markdown h2,
 .markdown h3 {
-  font-size: 1rem;
+  font-size: var(--fs-sub);
   margin: 0.8em 0 0.3em;
 }
 
@@ -656,236 +1395,57 @@ span.quote {
   border-collapse: collapse;
   display: block;
   overflow-x: auto;
-  font-size: 0.88rem;
+  font-size: var(--fs-aux);
 }
 
 .markdown th,
 .markdown td {
   border: 1px solid var(--border);
-  padding: 4px 8px;
+  padding: var(--sp-1) var(--sp-2);
   text-align: left;
 }
 
 .markdown code {
   background: var(--bg);
-  border-radius: 4px;
-  padding: 0 4px;
+  border-radius: var(--sp-1);
+  padding: 0 var(--sp-1);
 }
 
-/* 新手引導 */
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.step {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.step-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.step-mark {
-  flex: none;
-  width: 1.6em;
-  height: 1.6em;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.step.done .step-mark {
-  background: var(--ok);
-  color: var(--text);
-}
-
-.step.done strong {
+/* 教練回覆的依據：這次讀過哪些資料 */
+.bubble .sources {
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-1);
+  border-top: 1px solid var(--border);
   color: var(--muted);
+  font-size: var(--fs-aux);
 }
 
-.step-body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding-left: calc(1.6em + 8px);
-}
+/* ---------------------------------------------------------------------------
+ * 教練動態：「今天的重點」看板（12.16 的 A 版，12.28 整理）
+ * 看起來是介面而不是訊息：滿版的一條、淡的底色，每則一列：圖示、標題、一行摘要、最多一顆主要按鈕，✕ 在右上角
+ * ------------------------------------------------------------------------- */
 
-.guide {
-  margin: 0;
-  padding-left: 1.3em;
-}
-
-/* 補填體感的表單 */
-.backfill {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-/* 桌面版：分頁改成左側欄，內容放寬；手機與平板直向維持原本的底部分頁列 */
-@media (min-width: 900px) {
-  .shell {
-    display: grid;
-    grid-template-columns: 180px minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
-    column-gap: 28px;
-    max-width: 1120px;
-    padding: 0 32px;
-  }
-
-  .topbar {
-    grid-column: 1 / -1;
-    padding: 20px 0 16px;
-  }
-
-  .topbar h1 {
-    font-size: 1.3rem;
-  }
-
-  /* 側欄已標示目前分頁 */
-  .topbar .page-label {
-    display: none;
-  }
-
-  .notices {
-    grid-column: 2;
-    grid-row: 2;
-    margin: 0 0 12px;
-  }
-
-  /* 留 4px 給對話頁輸入框的聚焦外框，避免被 overflow: hidden 裁掉 */
-  .page {
-    grid-column: 2;
-    grid-row: 3;
-    padding: 4px 4px 24px;
-  }
-
-  .tabbar {
-    grid-column: 1;
-    grid-row: 2 / 4;
-    align-self: start;
-    flex-direction: column;
-    gap: 4px;
-    border: 0;
-    background: none;
-    padding: 0;
-  }
-
-  .tabbar button {
-    flex: none;
-    flex-direction: row;
-    gap: 10px;
-    padding: 9px 12px;
-    border-radius: 8px;
-    color: var(--text);
-    font-size: 0.95rem;
-  }
-
-  .tabbar button span {
-    font-size: 1.05rem;
-  }
-
-  .tabbar button:hover {
-    background: var(--surface);
-  }
-
-  .tabbar button.active {
-    background: var(--surface);
-    box-shadow: inset 3px 0 0 var(--accent);
-  }
-
-  .bubble {
-    max-width: 75%;
-  }
-}
-
-/* 密碼鎖的解鎖畫面 */
-.unlock {
-  min-height: 100dvh;
-  justify-content: center;
-  align-items: center;
-}
-
-.unlock .card {
-  width: 100%;
-  max-width: 400px;
-}
-
-.unlock h1 {
-  margin: 0;
-  font-size: 1.15rem;
-  color: var(--accent);
-}
-
-/* 從其他 AI 帶入 */
-.import-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.import-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.import-item > input[type="checkbox"] {
-  flex: none;
-  margin-top: 4px;
-}
-
-.import-item > label {
-  flex: 1;
-}
-
-.import-plan {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-size: 0.9rem;
-}
-
-/* 測試模式 */
-.card.test-mode {
-  border-color: var(--warn);
-}
-
-/*
- * 教練動態：「今天的重點」看板（12.16 的 A 版），固定在對話上方。
- * 看起來是介面而不是訊息：滿版的一條、淡的底色，每則一列，不用卡片或泡泡的框與陰影。
- */
 .feed {
   flex: none;
   display: flex;
   flex-direction: column;
   /* 手機：貼齊畫面兩側 */
-  margin: -8px -16px 0;
-  padding: 0 16px 4px;
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-4)) 0;
+  padding: 0 var(--sp-4) var(--sp-1);
   background: var(--board);
   border-bottom: 1px solid var(--board-line);
   /* 展開就全部顯示；太多時在看板內捲動，最高約半個畫面 */
   max-height: 50vh;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+@media (min-width: 900px) {
+  .feed {
+    margin: 0 0 var(--sp-1);
+    border: 0;
+    border-radius: var(--r-card);
+  }
 }
 
 /* 捲動時日期那一行留在上面 */
@@ -895,25 +1455,20 @@ span.quote {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0 4px;
+  gap: var(--sp-2);
+  min-height: var(--touch);
   background: var(--board);
 }
 
 .feed-date {
-  font-size: 0.8rem;
+  font-size: var(--fs-aux);
   font-weight: 600;
-  color: var(--board-text);
-  letter-spacing: 0.02em;
+  color: var(--muted);
   white-space: nowrap;
 }
 
 .feed-head > :last-child {
   margin-left: auto;
-}
-
-.feed-head .link {
-  font-size: 0.8rem;
 }
 
 .feed-list {
@@ -926,121 +1481,145 @@ span.quote {
   border-top: 1px solid var(--board-line);
 }
 
-/* 一則一列：圖示、一句話、動作 */
+/* 一則一列：圖示、文字與動作、右上角的 ✕ */
 .feed-item {
-  display: flex;
-  gap: 8px;
-  padding: 6px 0;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  align-items: start;
+  column-gap: var(--sp-3);
+  padding: var(--sp-3) 0;
 }
 
-/* 需要留意的項目：圖示前一個提示色的小點，不整塊上色 */
-.feed-item.warn .feed-icon::before {
-  content: "";
-  position: absolute;
-  left: -7px;
-  top: 0.55em;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--warn-strong);
+/* 一行一項（今天的課）：運動的圖示＋課名與時間 */
+.feed-lines {
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.feed-lines li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.feed-lines .icon {
+  color: var(--muted);
+}
+
+.feed-tags {
+  margin: var(--sp-1) 0;
+}
+
+/* 右邊的數字：賽事的倒數 */
+.feed-badge {
+  align-self: center;
+  font-size: var(--fs-sub);
+  font-weight: 600;
+  color: var(--race);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .feed-icon {
   position: relative;
-  flex: none;
-  font-size: 0.95rem;
-  line-height: 1.5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--accent);
 }
 
-/* 文字在左、按鈕在右；寬度不夠時按鈕換到下一行 */
+.feed-item[data-kind="race"] .feed-icon {
+  color: var(--race);
+}
+
+/* 需要留意的項目：圖示右上角一個提示色的小點，不整塊上色 */
+.feed-item.warn .feed-icon::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn-strong);
+  border: 2px solid var(--board);
+}
+
 .feed-body {
-  flex: 1;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 12px;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 
 .feed-text {
-  flex: 1 1 240px;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  font-size: 0.9rem;
-  line-height: 1.5;
 }
 
-.feed-text strong {
+.feed-title {
   font-weight: 600;
+  line-height: 1.4;
 }
 
-/* 說明接在那一句後面，淡色小字 */
-.feed-text span,
-.feed-text a {
-  margin-left: 6px;
+/* 摘要最多兩行（說明兩行以內；完整的在滑鼠移上去的提示） */
+.feed-sub {
+  font-size: var(--fs-aux);
   color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 /* 資料來源的標示放在自己一行 */
 .feed-text .credit {
-  display: block;
+  font-size: var(--fs-aux);
+  color: var(--muted);
   width: fit-content;
-  margin-left: 0;
 }
 
 .feed-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
+  gap: var(--sp-2);
 }
 
-.feed-actions button {
-  font-size: 0.78rem;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: transparent;
-  border-color: var(--board-line);
+.feed-dismiss {
+  margin: calc(-1 * var(--sp-2)) calc(-1 * var(--sp-2)) 0 0;
 }
 
-.feed-actions button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-}
+/* 電腦：文字在左、按鈕靠右對齊 */
+@media (min-width: 900px) {
+  .feed-body {
+    flex-direction: row;
+    align-items: center;
+  }
 
-.feed-actions button.link {
-  padding: 0 4px;
-  border: 0;
-}
+  .feed-text {
+    flex: 1;
+  }
 
-.feed-body > .checkin {
-  flex-basis: 100%;
+  .feed-actions {
+    flex: none;
+    justify-content: flex-end;
+  }
 }
 
 .feed-more {
   align-self: flex-start;
-  margin: 2px 0 4px;
-  font-size: 0.8rem;
-}
-
-@media (max-width: 599px) {
-  .feed-text {
-    font-size: 0.85rem;
-  }
-
-  .feed-text span,
-  .feed-text a {
-    font-size: 0.78rem;
-  }
-}
-
-/* 桌面：看板佔滿內容欄，四角稍微圓一點 */
-@media (min-width: 900px) {
-  .feed {
-    margin: 0 0 4px;
-    padding: 0 16px 4px;
-    border: 0;
-    border-radius: 8px;
-  }
+  margin: 0 0 var(--sp-2);
 }
 
 /* 收起：一行，項目輪流出現 */
@@ -1049,18 +1628,19 @@ span.quote {
   overflow: hidden;
 }
 
-.feed-summary {
+button.feed-summary {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: var(--sp-2);
   width: 100%;
   border: 0;
   border-radius: 0;
   background: none;
   text-align: left;
-  padding: 7px 16px;
+  padding: 0 var(--sp-4);
   overflow: hidden;
-  font-size: 0.88rem;
+  font-weight: inherit;
 }
 
 .feed-ticker {
@@ -1068,294 +1648,145 @@ span.quote {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
-.feed-ticker.animate {
-  animation: feed-ticker-in 0.35s ease-out;
-}
-
-@keyframes feed-ticker-in {
-  from {
-    opacity: 0;
-    transform: translateY(60%);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.feed-summary-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.checkin {
-  flex-basis: 100%;
-}
-
-.feed-more {
-  align-self: flex-start;
-  margin: 0 0 6px;
-  font-size: 0.85rem;
-}
-
-@media (max-width: 599px) {
-  .feed-item {
-    padding: 8px 0;
-  }
-
-  .feed-text strong {
-    font-size: 0.9rem;
-  }
-
-  .feed-text span {
-    font-size: 0.8rem;
-  }
-}
-
-/* 收起：一行，項目輪流出現 */
-.feed.collapsed {
-  padding: 0;
-}
-
-.feed-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  background: none;
-  text-align: left;
-  padding: 8px 14px;
-  overflow: hidden;
-}
-
-.feed-ticker {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.feed-ticker.animate {
-  animation: feed-ticker-in 0.35s ease-out;
-}
-
-@keyframes feed-ticker-in {
-  from {
-    opacity: 0;
-    transform: translateY(60%);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.feed-summary-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.checkin {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-/* 跑後回報：選擇要回報的跑步 */
-.choices {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.choice {
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text);
-  font-size: 0.95rem;
-  cursor: pointer;
-}
-
-.choice.selected {
-  border-color: var(--accent);
-}
-
-.choice > input {
-  flex: none;
-  margin-top: 3px;
-}
-
-.choice > span {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* 只用 iPhone 或 Apple Watch 的上傳方式 */
-.phone-guide {
-  margin-top: 6px;
-}
-
-.phone-guide > summary {
-  cursor: pointer;
+.feed-ticker .icon {
   color: var(--accent);
 }
 
-.phone-guide > p {
-  margin: 6px 0 4px;
+.feed-ticker.animate {
+  animation: feed-ticker-in 0.35s ease-out;
 }
 
-/* 訓練數值 */
-.training-values h3 {
-  margin: 4px 0 0;
-  font-size: 0.9rem;
+@keyframes feed-ticker-in {
+  from {
+    opacity: 0;
+    transform: translateY(60%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.values {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 2px 12px;
-  margin: 0;
-  font-size: 0.9rem;
-}
-
-.values dt {
-  color: var(--muted);
-}
-
-.values dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 一組一組的值，不在中間斷行 */
-.values dd.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 12px;
-}
-
-.values dd.chips > span {
-  white-space: nowrap;
-}
-
-.split-bar {
-  display: flex;
-  height: 10px;
-  border-radius: 5px;
+.feed-summary-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  background: var(--border);
+  text-overflow: ellipsis;
 }
 
-.split-bar .low {
+.feed-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: var(--fs-aux);
+}
+
+/* 今天的身體狀況：三個 1–5 分加上備註 */
+.checkin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * 新手引導
+ * ------------------------------------------------------------------------- */
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.step-mark {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-aux);
+  font-weight: 600;
   background: var(--accent);
+  color: var(--accent-text);
 }
 
-.split-bar .moderate {
-  background: var(--warn-strong);
+.step.done .step-mark {
+  background: var(--ok-bg);
+  color: var(--done);
 }
 
-.split-bar .high {
-  background: var(--danger-text);
-}
-
-/* 教練回覆的依據：這次讀過哪些資料 */
-.bubble .sources {
-  margin-top: 6px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
+.step.done strong {
   color: var(--muted);
-  font-size: 0.8rem;
 }
 
-/* 結構化課表（12.22 的 B 版）：未來幾天的時間軸 */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+.step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding-left: calc(28px + var(--sp-2));
 }
+
+/* ---------------------------------------------------------------------------
+ * 課表（12.22 的 B 版時間軸，12.28 的課卡）
+ * ------------------------------------------------------------------------- */
 
 .plan-top {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 4px 12px;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
   flex-wrap: wrap;
 }
 
-.plan-range {
-  margin-top: -8px;
-}
-
-button.link-button {
-  border: 0;
-  background: none;
-  padding: 2px 0;
-  color: var(--accent);
-  align-self: flex-start;
-}
-
-button.link-button.muted {
-  color: var(--muted);
+.plan-week {
+  display: flex;
+  flex-direction: column;
 }
 
 .plan-why {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--bg);
-}
-
-.plan-why h3 {
-  margin: 4px 0 0;
-  font-size: 0.9rem;
-}
-
-.plan-earlier > summary {
-  cursor: pointer;
-  font-size: 0.9rem;
+  gap: var(--sp-2);
 }
 
 .plan-earlier-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--sp-2);
 }
 
 .plan-earlier-item {
   display: grid;
   grid-template-columns: 5.5em minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: start;
 }
 
 .plan-earlier-item .tl-label {
-  font-size: 0.8rem;
-  padding-top: 10px;
+  font-size: var(--fs-aux);
+  padding-top: var(--sp-3);
 }
 
 .timeline {
@@ -1369,7 +1800,7 @@ button.link-button.muted {
 .tl-row {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 /* 左邊的日期用一條直線串起來 */
@@ -1377,8 +1808,8 @@ button.link-button.muted {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 4px;
-  font-size: 0.8rem;
+  padding-top: var(--sp-1);
+  font-size: var(--fs-aux);
   color: var(--muted);
   line-height: 1.4;
 }
@@ -1387,13 +1818,12 @@ button.link-button.muted {
   content: "";
   flex: 1;
   width: 2px;
-  min-height: 12px;
-  margin-top: 6px;
+  min-height: var(--sp-3);
+  margin-top: var(--sp-2);
   background: var(--border);
 }
 
 .tl-date .tl-label {
-  font-size: 0.82rem;
   white-space: nowrap;
 }
 
@@ -1405,33 +1835,6 @@ button.link-button.muted {
 
 .wide-only {
   display: none;
-}
-
-/* 電腦上夠寬：日期欄寫成一行「10/27 星期二」 */
-@media (min-width: 900px) {
-  .tl-row {
-    grid-template-columns: 6.5rem minmax(0, 1fr);
-  }
-
-  .tl-when {
-    flex-direction: row;
-    gap: 4px;
-    white-space: nowrap;
-  }
-
-  .wide-only {
-    display: inline;
-  }
-
-  /* .tl-week 與 .tl-gap 的基本樣式寫在後面：加上 .timeline 才蓋得過 */
-  .timeline .tl-week {
-    margin-left: calc(6.5rem + 12px);
-  }
-
-  .timeline .tl-gap {
-    margin-left: calc(3.25rem - 1px);
-    padding-left: calc(3.25rem + 11px);
-  }
 }
 
 .tl-date.today {
@@ -1455,95 +1858,143 @@ button.link-button.muted {
 .tl-items {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 12px;
+  gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
   min-width: 0;
 }
 
 .tl-week {
-  margin: 4px 0 8px 56px;
-  padding-top: 8px;
+  margin: var(--sp-1) 0 var(--sp-2) 56px;
+  padding-top: var(--sp-2);
   border-top: 1px solid var(--border);
 }
 
 .tl-gap {
   margin-left: 21px;
-  padding: 0 0 14px 25px;
+  padding: 0 0 var(--sp-3) var(--sp-6);
   border-left: 2px dashed var(--border);
 }
 
+/* 電腦上夠寬：日期欄寫成一行「10/27 星期二」 */
+@media (min-width: 900px) {
+  .tl-row {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+
+  .tl-when {
+    flex-direction: row;
+    gap: var(--sp-1);
+    white-space: nowrap;
+  }
+
+  .wide-only {
+    display: inline;
+  }
+
+  .timeline .tl-week {
+    margin-left: calc(6.5rem + var(--sp-3));
+  }
+
+  .timeline .tl-gap {
+    margin-left: calc(3.25rem - 1px);
+    padding-left: calc(3.25rem + 11px);
+  }
+}
+
 .plan-rest {
-  padding: 3px 2px 6px;
   display: flex;
-  gap: 8px;
-  align-items: baseline;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+  color: var(--muted);
 }
 
-.bar {
-  flex: none;
-  width: 4px;
-  height: 20px;
-  border-radius: 2px;
-  background: var(--border);
-}
-
-.bar.low {
-  background: var(--accent);
-}
-
-.bar.moderate {
-  background: var(--warn-strong);
-}
-
-.bar.high {
-  background: var(--danger-text);
-}
-
-.bar.other {
-  background: var(--other);
-}
-
+/* 一堂課的卡（時間軸裡的一張；不是外層的 .card，只有細框） */
 .plan-session {
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: var(--r-card);
+  padding: var(--sp-3) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   background: var(--surface);
   cursor: pointer;
 }
 
 .plan-session.focus {
-  padding: 14px;
-  gap: 10px;
+  padding: var(--sp-4);
+  gap: var(--sp-3);
   border-color: var(--accent);
 }
 
 .plan-session-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-3);
   width: 100%;
   text-align: left;
 }
 
 button.plan-session-head {
   border: 0;
+  border-radius: 0;
   padding: 0;
+  min-height: 0;
   background: none;
   white-space: normal;
-  font-size: 1rem;
+  font-weight: inherit;
+  justify-content: flex-start;
+}
+
+/* 運動圖示：顏色是那堂課的強度 */
+.plan-sport-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  color: var(--int-none);
+}
+
+.plan-sport-icon.low {
+  color: var(--int-low);
+}
+
+.plan-sport-icon.moderate {
+  color: var(--int-mid);
+}
+
+.plan-sport-icon.high {
+  color: var(--int-high);
+}
+
+.plan-sport-icon.other {
+  color: var(--muted);
 }
 
 .plan-session-title {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-session-name {
+  font-weight: 600;
 }
 
 .plan-session-name.big {
-  font-size: 1.2rem;
+  font-size: var(--fs-title);
+  font-weight: 700;
   line-height: 1.3;
+}
+
+.plan-session-sub {
+  font-size: var(--fs-aux);
+  color: var(--muted);
 }
 
 .plan-session.skipped .plan-session-title {
@@ -1551,35 +2002,55 @@ button.plan-session-head {
   text-decoration: line-through;
 }
 
-.chips {
+/* 強度條：整堂課的結構（每段的長度是時間、顏色是強度），下面一行標暖身、主課、緩和 */
+.strip {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: var(--sp-1);
 }
 
-.chip {
-  font-size: 0.82rem;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+.strip .split-bar {
+  height: 12px;
+  gap: 2px;
+  background: none;
+}
+
+.strip .split-bar > span {
+  border-radius: 2px;
+  min-width: 3px;
+}
+
+.strip-labels {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--sp-2);
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+/* 一段一個說明，中間用「·」隔開；放不下時整段換到下一行，不截斷 */
+.strip-labels > span {
   white-space: nowrap;
 }
 
+.strip-labels > span + span::before {
+  content: "· ";
+}
+
+/* 步驟：一步一行（顏色點＋名稱＋目標＋長度） */
 .plan-steps {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 0.9rem;
+  gap: var(--sp-1);
 }
 
 .plan-step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .plan-step-name {
@@ -1589,12 +2060,14 @@ button.plan-session-head {
 
 .plan-step-length {
   white-space: nowrap;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .plan-repeat {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-1);
 }
 
 .plan-repeat-head {
@@ -1602,14 +2075,14 @@ button.plan-session-head {
 }
 
 .plan-repeat > .plan-steps {
-  padding-left: 12px;
+  padding-left: var(--sp-3);
   border-left: 2px solid var(--border);
 }
 
 .plan-details {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 10px;
+  gap: var(--sp-1) var(--sp-3);
   margin: 0;
 }
 
@@ -1621,117 +2094,819 @@ button.plan-session-head {
   margin: 0;
 }
 
+.plan-other {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+}
+
+/* 賽事在時間軸裡：粉紅的框 */
 button.plan-race {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: stretch;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--sp-3);
   text-align: left;
   white-space: normal;
   border: 1px solid var(--race);
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 1rem;
+  border-radius: var(--r-card);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  font-weight: inherit;
 }
 
-.plan-race-head {
-  display: flex;
+.plan-race-icon {
+  flex: none;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  color: var(--race);
 }
 
-.plan-race-head strong {
+.plan-race-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.plan-race-flag,
 .plan-race-days {
   color: var(--race);
-  display: inline-flex;
-}
-
-.plan-race-days {
-  font-size: 0.85rem;
+  font-size: var(--fs-aux);
   font-weight: 600;
   white-space: nowrap;
 }
 
-.badge {
-  font-size: 0.75rem;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--warn);
-}
-
 .session-actions {
+  display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-}
-
-.session-actions button {
-  font-size: 0.85rem;
+  gap: var(--sp-2);
 }
 
 .session-result {
   color: var(--text);
 }
 
-.badge.achieved,
-.badge.rested {
-  background: var(--ok);
+/* 賽事 */
+.race-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
 }
 
-.badge.partial,
-.badge.different,
-.badge.not_rested {
-  background: var(--info);
+.race-icon {
+  color: var(--race);
 }
 
-.badge.missed,
-.badge.skipped {
-  background: var(--border);
+/* ---------------------------------------------------------------------------
+ * 回報：哪一趟？體感 1–10、一句話的感受、存起來
+ * ------------------------------------------------------------------------- */
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 
-/* 標題列的設定（規格 12.9：設定不佔底部的分頁） */
-.settings-button {
-  margin-left: auto;
-  align-self: center;
-  border: 1px solid transparent;
-  background: none;
-  padding: 2px 8px;
-  font-size: 1.1rem;
-  line-height: 1.4;
+/* 選哪一趟：一列一張（圖示、時間、數字），選中的是主色的框與打勾；圓點藏起來（鍵盤照樣用） */
+label.choice {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 56px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  color: var(--text);
+  font-size: var(--fs-body);
+  cursor: pointer;
 }
 
-.settings-button.active,
-.help-button.active {
+label.choice > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+label.choice.selected {
   border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* 使用說明在設定的左邊；兩個一起靠右 */
-.help-button {
-  margin-left: auto;
-  align-self: center;
-  border: 1px solid transparent;
-  background: none;
-  padding: 2px 10px;
-  font-size: 1.1rem;
-  font-weight: 700;
-  line-height: 1.4;
+label.choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.choice-check {
   color: var(--accent);
 }
 
-.help-button + .settings-button {
-  margin-left: 0;
+/* 一顆滿寬的主要按鈕（表單的最後） */
+.actions.full > button {
+  flex: 1;
 }
 
-/* 說明與設定的面板（規格 12.17）：從右邊滑出，蓋在目前的分頁上；標題列留在上面，❓ 與 ⚙️ 再點一次就關閉 */
-.topbar {
-  position: relative;
-  z-index: 31;
-  background: var(--bg);
+.choice .list-row-icon {
+  color: var(--muted);
 }
+
+.choice.selected .list-row-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 體感 1–10：十格點選 */
+.effort-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.effort-cells {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: var(--sp-1);
+}
+
+button.effort-cell {
+  min-height: var(--touch);
+  padding: 0;
+  border-radius: var(--r-field);
+  border-color: var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+button.effort-cell[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.effort-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+/* 跑後的體感（唯讀）：預期的範圍是底色，選手的體感是實心的一格 */
+.effort-scale {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 3px;
+}
+
+.effort-scale span {
+  height: 10px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.effort-scale span.expected {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.effort-scale span.mark {
+  background: var(--accent);
+  outline: none;
+}
+
+.effort {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* ---------------------------------------------------------------------------
+ * 紀錄
+ * ------------------------------------------------------------------------- */
+
+.run-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.report-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.run-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+}
+
+.run-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+
+.runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.runs > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.runs > li.open {
+  padding-bottom: var(--sp-3);
+}
+
+button.run-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-1);
+  width: 100%;
+  min-height: 56px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: var(--sp-2) 0;
+  text-align: left;
+  color: var(--text);
+  white-space: normal;
+  font-weight: inherit;
+}
+
+.run-row .list-row-icon {
+  grid-row: span 2;
+}
+
+.run-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.run-main strong {
+  font-weight: 600;
+}
+
+.run-tags {
+  display: flex;
+  gap: var(--sp-1);
+  justify-self: end;
+}
+
+.run-row .intensity {
+  grid-column: 2 / -1;
+}
+
+.intensity.compact .split-bar {
+  height: 6px;
+}
+
+.backfill {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+/* 紀錄頁頁首的累積（規格 12.9）：只增不減的數字 */
+.totals {
+  gap: var(--sp-4);
+}
+
+.totals-hero {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-value {
+  color: var(--accent);
+}
+
+.hero-value small,
+.tile-value small {
+  font-size: var(--fs-aux);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.tile-label,
+.tile-sub {
+  color: var(--muted);
+  font-size: var(--fs-aux);
+}
+
+.tile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--sp-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border);
+}
+
+.tile.accent {
+  border-left-color: var(--accent);
+}
+
+.tile-value {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 每一趟一格：距離越長格子越大 */
+.blocks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.block {
+  border-radius: 2px;
+  background: var(--accent);
+  animation: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.block.s0 {
+  width: 7px;
+  height: 7px;
+  opacity: 0.45;
+}
+
+.block.s1 {
+  width: 9px;
+  height: 9px;
+  opacity: 0.65;
+}
+
+.block.s2 {
+  width: 11px;
+  height: 11px;
+  opacity: 0.85;
+}
+
+.block.s3 {
+  width: 13px;
+  height: 13px;
+}
+
+/* 這週的格子：同一個主色，加深的外框（顏色只代表強度與主色） */
+.block.recent {
+  opacity: 1;
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.blocks-more {
+  color: var(--muted);
+  font-size: var(--fs-aux);
+  margin-right: var(--sp-1);
+}
+
+/* 頁首的圖：四站的軌道、獎牌、台北 101、每一趟的格子；都從 0 長上來 */
+.journey {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-3);
+}
+
+.journey-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* 軌道上方：左邊是出發點，右邊切換里程碑的組（規格 12.30） */
+.journey-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 32px;
+}
+
+label.region-picker > select {
+  width: auto;
+  min-height: 32px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-aux);
+  color: var(--accent);
+}
+
+/* 軌道從第一欄的中間畫到最後一欄的中間（--cols 欄） */
+.journey-track {
+  padding: var(--sp-6) calc(50% / var(--cols)) 0;
+}
+
+.journey-line {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+}
+
+.journey-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.journey-stop {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+}
+
+.journey-stop.passed {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.journey-runner {
+  position: absolute;
+  bottom: 8px;
+  transform: translateX(-50%);
+  color: var(--accent);
+  transition: left 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: bob 0.5s ease-in-out infinite alternate;
+}
+
+/* 每站兩行：名稱、公里數 */
+.journey-stations {
+  list-style: none;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: var(--sp-1);
+  text-align: center;
+}
+
+.journey-stations li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.journey-name {
+  font-size: var(--fs-aux);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-stations li.passed .journey-name {
+  color: var(--muted);
+}
+
+@keyframes bob {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 0 -3px;
+  }
+}
+
+.showcases {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+
+.showcase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.medals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  color: var(--int-mid);
+}
+
+.medal {
+  display: inline-flex;
+  animation: pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 60ms);
+}
+
+.medals .more,
+.towers .more {
+  font-size: var(--fs-aux);
+  color: var(--muted);
+  margin-left: var(--sp-1);
+}
+
+.towers {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-1);
+  height: 56px;
+}
+
+.tower {
+  height: 52px;
+  width: auto;
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i) * 90ms);
+  transform-origin: bottom;
+}
+
+.tower-shape {
+  fill: var(--border);
+}
+
+.tower-shape.filled {
+  fill: var(--accent);
+}
+
+.tower-clip {
+  transition: y 1s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: scaleY(0.1);
+  }
+}
+
+/* 匯入完整歷史 */
+.import-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-3);
+}
+
+.import-history ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.indeterminate {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) var(--border);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: slide 1.2s linear infinite;
+}
+
+@keyframes slide {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+.year-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-fill,
+  .journey-runner,
+  .tower-clip {
+    transition: none;
+  }
+
+  .journey-runner,
+  .medal,
+  .tower,
+  .block,
+  .indeterminate,
+  .toast {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 選手資料
+ * ------------------------------------------------------------------------- */
+
+.values {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.values dt {
+  color: var(--muted);
+}
+
+.values dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 一組一組的值，不在中間斷行 */
+.values dd.chips {
+  gap: 0 var(--sp-3);
+}
+
+.values dd.chips > span {
+  white-space: nowrap;
+}
+
+.sports-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.sports-picker .row {
+  gap: 0 var(--sp-4);
+}
+
+/* 多運動的訓練偏好：共通的設定與每項運動一區（細線分開，不套卡片） */
+.pref-common,
+.sport-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.pref-common legend,
+.sport-card legend {
+  float: left;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--sp-3);
+}
+
+.pref-common legend + *,
+.sport-card legend + * {
+  clear: both;
+}
+
+.memory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.memory-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-1) var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border);
+}
+
+.memory-list li:first-child {
+  border-top: 0;
+}
+
+.memory-text {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+
+.memory-meta {
+  align-self: center;
+}
+
+.memory-actions {
+  display: flex;
+  gap: var(--sp-1);
+  justify-self: end;
+}
+
+.memory-edit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.memory-add {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.memory-add textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--touch);
+}
+
+.summary-text {
+  overflow-wrap: anywhere;
+}
+
+/* 從其他 AI 帶入 */
+.import-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.import-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.import-item > input[type="checkbox"] {
+  flex: none;
+  margin-top: var(--sp-1);
+}
+
+.import-item > label {
+  flex: 1;
+}
+
+.import-plan {
+  border-left: 2px solid var(--border);
+  padding-left: var(--sp-3);
+}
+
+/* ---------------------------------------------------------------------------
+ * 說明與設定的面板（規格 12.17）：從右邊滑出，蓋在目前的分頁上；標題列留在上面，? 與設定再點一次就關閉
+ * ------------------------------------------------------------------------- */
 
 .panel-backdrop {
   position: fixed;
@@ -1757,24 +2932,23 @@ button.plan-race {
 .side-panel-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-4);
+  min-height: 52px;
   border-bottom: 1px solid var(--border);
 }
 
 .side-panel-head h2 {
-  margin: 0;
-  font-size: 1rem;
+  font-size: var(--fs-title);
+  font-weight: 700;
+}
+
+.side-panel-head h2:focus {
+  outline: none;
 }
 
 .side-panel-close {
   margin-left: auto;
-  border: 0;
-  background: none;
-  padding: 2px 10px;
-  font-size: 1.05rem;
-  line-height: 1.4;
-  color: var(--muted);
 }
 
 /* 卡片之間的間距和分頁（.page）一樣 */
@@ -1782,14 +2956,10 @@ button.plan-race {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  padding: var(--sp-3) var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.side-panel-head h2:focus {
-  outline: none;
+  gap: var(--sp-3);
 }
 
 /* 關閉：往右滑出、暗幕淡出，動畫結束才移除（App.tsx）；滑出途中點不到，點擊落到底下的頁面 */
@@ -1837,21 +3007,11 @@ button.plan-race {
   }
 
   .side-panel-head {
-    padding: 8px 24px;
+    padding: 0 var(--sp-4) 0 var(--sp-6);
   }
 
   .side-panel-body {
-    padding: 16px 24px 24px;
-  }
-
-  /* 標題列與側邊的分頁在暗幕之上但透明：整個畫面一起變暗，按鈕與文字清楚、按得到 */
-  .topbar {
-    background: none;
-  }
-
-  .tabbar {
-    position: relative;
-    z-index: 31;
+    padding: var(--sp-4) var(--sp-6) var(--sp-6);
   }
 }
 
@@ -1864,20 +3024,137 @@ button.plan-race {
   }
 }
 
-/* 使用說明頁 */
+/* 選手頁（規格 12.30 第 1 點）：我的數字＋五列＋下一層 */
+button.my-numbers-head {
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--muted);
+  font-weight: inherit;
+  white-space: normal;
+}
+
+.my-numbers-head .list-row-title {
+  color: var(--text);
+}
+
+.my-numbers-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.my-numbers-values > span {
+  flex: 1 1 72px;
+  display: flex;
+  flex-direction: column;
+}
+
+.my-numbers-values .num {
+  font-size: var(--fs-num);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+}
+
+.list-row-sub .not-filled {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+button.text.import-button {
+  align-self: flex-start;
+  padding: 0;
+  gap: var(--sp-1);
+}
+
+.card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* 計畫頁的賽事卡片裡打開的「從其他 AI 帶入」：不再多一層卡片的框 */
+.card .card.import {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: none;
+}
+
+.sport-rows {
+  border-top: 1px solid var(--border);
+}
+
+.sport-rows > li + li {
+  border-top: 1px solid var(--border);
+}
+
+/* 設定：第一層是清單，點進去是那一項的欄位 */
+.settings-list {
+  padding: 0 var(--sp-4);
+}
+
+.settings-list .list-row-end {
+  max-width: 50%;
+}
+
+.list-row-end .status.ok {
+  color: var(--done);
+}
+
+.settings-list .list-row.danger .list-row-title,
+.settings-list .list-row.danger .list-row-icon {
+  color: var(--danger);
+}
+
+.subpage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.subpage-head h3 {
+  font-size: var(--fs-title);
+  font-weight: 700;
+}
+
+button.back-button {
+  padding: 0 var(--sp-3) 0 var(--sp-1);
+  border-color: transparent;
+  background: none;
+  color: var(--accent);
+}
+
+.advanced {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-2);
+}
+
+/* 使用說明 */
 .help-toc {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0 0;
+  gap: var(--sp-2);
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .help-toc button {
-  font-size: 0.85rem;
-  padding: 4px 10px;
-  border-radius: 999px;
+  min-height: 32px;
+  padding: 0 var(--sp-3);
 }
 
 .help-section {
@@ -1888,488 +3165,12 @@ button.plan-race {
   border-color: var(--accent);
 }
 
-/* 一趟跑步的卡片：跑後回報的結果與紀錄頁共用 */
-.run-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.report-result {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 4px;
-}
-
-.run-card-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-}
-
-.run-card p {
+/* 只用 iPhone 或 Apple Watch 的上傳方式 */
+.phone-guide ol {
   margin: 0;
 }
 
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.stats > div {
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 6px 8px;
-  min-width: 0;
-}
-
-.stats dt {
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.stats dd {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  line-height: 1.3;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-
-.intensity .legend {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 4px;
-  margin-top: 4px;
-}
-
-.intensity .dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 6px;
-}
-
-.intensity .dot:first-child {
-  margin-left: 0;
-}
-
-.dot.low {
-  background: var(--accent);
-}
-
-.dot.moderate {
-  background: var(--warn-strong);
-}
-
-.dot.high {
-  background: var(--danger-text);
-}
-
-.intensity.compact .split-bar {
-  height: 6px;
-}
-
-/* 體感 1–10：預期的範圍是底色，選手的體感是實心的一格 */
-.effort-scale {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 3px;
-}
-
-.effort-scale span {
-  height: 10px;
-  border-radius: 3px;
-  background: var(--border);
-}
-
-.effort-scale span.expected {
-  background: var(--info);
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.effort-scale span.mark {
-  background: var(--accent);
-  outline: none;
-}
-
-.effort p {
-  margin-top: 4px;
-}
-
-.run-summary details summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 0.85rem;
-}
-
-/* 紀錄頁：每一趟一列，點開看卡片 */
-.runs {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.runs > li {
-  border-top: 1px solid var(--border);
-  padding: 4px 0;
-}
-
-.runs > li:first-child {
-  border-top: none;
-}
-
-.runs > li.open {
-  padding-bottom: 12px;
-}
-
-.run-row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 3.2em minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 2px 10px;
-  border: 0;
-  background: none;
-  padding: 8px 0;
-  text-align: left;
-  color: var(--text);
-  font: inherit;
-}
-
-.run-row .run-date {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.run-row .run-main {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  min-width: 0;
-}
-
-.run-row .run-tags {
-  display: flex;
-  gap: 4px;
-}
-
-.run-row .intensity {
-  grid-column: 2 / -1;
-}
-
-.run-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-}
-
-.run-summary details summary {
-  width: fit-content;
-  padding: 4px 0;
-}
-
-.run-summary details[open] summary {
-  margin-bottom: 6px;
-}
-
-/* 紀錄頁頁首的累積（規格 12.9）：只增不減的數字 */
-.totals {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--surface)), var(--surface) 70%);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.totals-hero {
-  display: flex;
-  flex-direction: column;
-}
-
-.hero-value {
-  font-size: 2.6rem;
-  font-weight: 700;
-  line-height: 1.1;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.hero-value small,
-.tile-value small {
-  font-size: 0.45em;
-  font-weight: 500;
-  color: var(--muted);
-}
-
-.tile-label {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.tile-sub {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  gap: 8px;
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 10px;
-  min-width: 0;
-}
-
-.tile.accent {
-  border-color: var(--accent);
-}
-
-.tile-value {
-  font-size: 1.45rem;
-  font-weight: 700;
-  line-height: 1.25;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 每一趟一格：距離越長格子越大 */
-.blocks {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.block {
-  border-radius: 2px;
-  background: var(--accent);
-}
-
-.block.s0 {
-  width: 7px;
-  height: 7px;
-  opacity: 0.45;
-}
-
-.block.s1 {
-  width: 9px;
-  height: 9px;
-  opacity: 0.65;
-}
-
-.block.s2 {
-  width: 11px;
-  height: 11px;
-  opacity: 0.85;
-}
-
-.block.s3 {
-  width: 13px;
-  height: 13px;
-}
-
-.block.recent {
-  background: var(--warn-strong);
-  opacity: 1;
-}
-
-.blocks-more {
-  color: var(--muted);
-  font-size: 0.75rem;
-  margin-right: 4px;
-}
-
-/* 頁首的圖：路線、獎牌、台北 101、每一趟的格子；都從 0 長上來 */
-.journey {
-  margin-top: 10px;
-}
-
-.journey-track {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--border);
-  margin-top: 18px;
-}
-
-.journey-fill {
-  position: relative;
-  height: 100%;
-  border-radius: 4px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 45%, transparent), var(--accent));
-  transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.journey-runner {
-  position: absolute;
-  right: -10px;
-  bottom: 4px;
-  font-size: 1.25rem;
-  line-height: 1;
-  /* 表情符號的跑者面向左邊：翻過來往右跑 */
-  transform: scaleX(-1);
-  animation: bob 0.5s ease-in-out infinite alternate;
-}
-
-.journey-ends {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-@keyframes bob {
-  from {
-    translate: 0 0;
-  }
-  to {
-    translate: 0 -3px;
-  }
-}
-
-.showcases {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-}
-
-.showcase {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 10px;
-}
-
-.medals {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  font-size: 1.3rem;
-  line-height: 1.2;
-}
-
-.medal {
-  display: inline-block;
-  animation: pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i) * 60ms);
-}
-
-.medals .more,
-.towers .more {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-left: 4px;
-}
-
-.towers {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  height: 56px;
-}
-
-.tower {
-  height: 52px;
-  width: auto;
-  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: calc(var(--i) * 90ms);
-  transform-origin: bottom;
-}
-
-.tower-shape {
-  fill: var(--border);
-}
-
-.tower-shape.filled {
-  fill: var(--accent);
-}
-
-.tower-clip {
-  transition: y 1s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.block {
-  animation: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes pop {
-  from {
-    opacity: 0;
-    transform: scale(0.2);
-  }
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: scaleY(0.1);
-  }
-}
-
-/* 匯入完整歷史 */
-.import-history {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
-.import-history ul {
-  margin: 4px 0 0;
-  padding-left: 1.2em;
-}
-
-/* 賽事的成績與「不參加了」（Races） */
-.race-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.races-other {
-  margin-top: 8px;
-}
-
-.races-other > summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.9rem;
-  padding: 6px 0;
-}
-
-/* 天氣的城市（WeatherSettings） */
-.weather-privacy {
-  margin: 4px 0 0;
-  padding-left: 1.2em;
-}
-
+/* 天氣的城市 */
 .weather-search {
   align-items: flex-end;
 }
@@ -2385,79 +3186,21 @@ button.plan-race {
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-a.credit {
-  display: block;
-  margin-top: 2px;
+  gap: var(--sp-2);
 }
 
 /* 第一次抓紀錄的兩個選項（FirstSync） */
 .first-sync {
-  margin: 4px 0 8px;
+  margin: 0;
   padding-left: 1.2em;
 }
 
-.first-sync li + li {
-  margin-top: 4px;
-}
-
-.import-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.indeterminate {
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent) var(--border);
-  background-size: 40% 100%;
-  background-repeat: no-repeat;
-  animation: slide 1.2s linear infinite;
-}
-
-@keyframes slide {
-  from {
-    background-position: -40% 0;
-  }
-  to {
-    background-position: 140% 0;
-  }
-}
-
-.year-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 6px 0 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .journey-fill,
-  .tower-clip {
-    transition: none;
-  }
-
-  .journey-runner,
-  .medal,
-  .tower,
-  .block,
-  .indeterminate {
-    animation: none;
-  }
-}
-
-.import-history .notice p {
-  margin: 0;
-}
-
 /* 多裝置同步（規格 12.10） */
-.pairing {
+.pairing,
+.confirm-identity form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .pairing ol {
@@ -2469,8 +3212,8 @@ a.credit {
   width: 200px;
   height: 200px;
   background: #ffffff;
-  border-radius: 8px;
-  padding: 6px;
+  border-radius: var(--r-field);
+  padding: var(--sp-2);
 }
 
 .pair-code,
@@ -2482,82 +3225,62 @@ a.credit {
 
 .pair-code,
 .pair-confirm {
-  font-size: 1.3rem;
+  font-size: var(--fs-title);
 }
 
 .recovery-code {
   display: block;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-field);
   background: var(--bg);
   border: 1px solid var(--border);
   word-break: break-all;
   user-select: all;
 }
 
-button.link.danger {
-  color: var(--danger-text);
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 
-/* 記住的事 */
-.memory-list {
+.device-list ul {
   list-style: none;
   padding: 0;
-  margin: 8px 0;
+  margin: 0;
+}
+
+.device-list li.device {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border);
 }
 
-.memory-list li {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+.device-list li.device:first-child {
+  border-top: 0;
 }
 
-.memory-text {
-  grid-column: 1 / -1;
-  overflow-wrap: anywhere;
+.device-list li.device.fresh {
+  box-shadow: inset 3px 0 0 var(--warn-strong);
+  padding-left: var(--sp-3);
 }
 
-.memory-actions {
+.device-head {
   display: flex;
-  gap: 12px;
-  justify-self: end;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
-.memory-edit {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.memory-edit textarea {
-  width: 100%;
-}
-
-.memory-add {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-.memory-add textarea {
+.device-list li.device form.row input {
   flex: 1;
   min-width: 0;
 }
 
-.memory-add button {
-  min-height: calc(1.6rem + 18px);
-}
-
-.summary-text {
-  overflow-wrap: anywhere;
-  margin: 8px 0;
+.new-device-banner {
+  flex-wrap: wrap;
 }
 
 /* 有新版本的提示（規格 12.18）：整條的文字都可以點，右邊的 ✕ 關掉 */
@@ -2565,6 +3288,7 @@ button.link.danger {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
+  padding-right: 0;
 }
 
 .notice.update-banner .link {
@@ -2572,23 +3296,31 @@ button.link.danger {
   text-align: left;
   font-weight: 600;
   padding: 0;
-  white-space: normal;
-}
-
-.update-dismiss {
-  background: none;
-  border: 0;
-  padding: 2px 6px;
 }
 
 /* 舊網址的搬家提示（規格 12.19） */
-.notice.moved {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
 .notice.moved a {
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* 測試模式 */
+.card.test-mode {
+  border-color: var(--warn-strong);
+}
+
+/* 密碼鎖的解鎖畫面 */
+.unlock {
+  min-height: 100dvh;
+  justify-content: center;
+  align-items: center;
+}
+
+.unlock .card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.unlock h1 {
+  color: var(--accent);
 }

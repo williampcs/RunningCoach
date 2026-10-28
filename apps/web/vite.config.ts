@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
+import { parseFeatures } from "../../packages/core/src/features";
 import { PRIVACY_CSS_FILE, PRIVACY_HTML_FILE, privacyCss, renderPrivacyPage } from "./privacy/render";
 
 /** 對外的版本號與建置資訊：版本來自 repo 根目錄的 package.json（唯一的來源，規格 12.19）；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
@@ -86,7 +87,12 @@ function privacyPage(): Plugin {
     name: "privacy-page",
     apply: "build",
     generateBundle() {
-      const build = { staging: process.env.VITE_STAGING === "1", syncUrl: process.env.VITE_SYNC_URL ?? "" };
+      const staging = process.env.VITE_STAGING === "1";
+      const build = {
+        staging,
+        syncUrl: process.env.VITE_SYNC_URL ?? "",
+        devices: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("devices"),
+      };
       this.emitFile({ type: "asset", fileName: PRIVACY_HTML_FILE, source: renderPrivacyPage(build) });
       this.emitFile({ type: "asset", fileName: PRIVACY_CSS_FILE, source: privacyCss() });
     },

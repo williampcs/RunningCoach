@@ -1,9 +1,16 @@
+import { parseFeatures, type Feature } from "@running-coach/core";
+
 /**
  * 這次建置是哪個環境（規格 12.19）：
  * - staging（`VITE_STAGING`）：`v2` 推上去自動部署，連 staging 自己的同步服務，資料和正式版分開。
  * - 正式版：`VITE_WEB_URL` 是正式的網址；從其他網址（例如舊的 pages.dev）打開時顯示搬家的提示。
  */
 export const IS_STAGING = import.meta.env.VITE_STAGING === "1";
+
+/** 開著的功能（規格 12.25）：staging 一律全開；正式版只開 VITE_FEATURES 列出來的（預設全關） */
+export const FEATURES_ON: Feature[] = parseFeatures(import.meta.env.VITE_FEATURES, { staging: IS_STAGING });
+
+export const featureEnabled = (feature: Feature) => FEATURES_ON.includes(feature);
 
 /** 正式的網址（只取來源，結尾沒有 /）；沒有設定或格式不對時為 null */
 export function canonicalOrigin(webUrl: string | undefined): string | null {

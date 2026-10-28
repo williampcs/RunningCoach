@@ -1,8 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, regionOf, REGIONS, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+
+import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
+import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
 
 /** 最多畫幾格；更早的以「+N」表示 */
 const MAX_BLOCKS = 300;
@@ -46,15 +49,15 @@ function useMounted(): boolean {
 }
 
 const number = (n: number, digits = 0) => n.toLocaleString("zh-TW", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-/** 里程碑的名稱附上距離，例：「台北到東京（2,100 km）」；名稱本身不一定說得出距離 */
-const placeText = (place: { name: string; km: number }) => `${place.name}（${number(place.km)} km）`;
+/** 里程碑的名稱附上距離，例：「從台灣飛到東京（約 2,118 km）」；名稱本身不一定說得出距離 */
+const placeText = (place: { name: string; km: number; approx: boolean }) => `${place.name}（${place.approx ? "約 " : ""}${number(place.km)} km）`;
 
-function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: string; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
+function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: LucideIcon | "run"; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
   const shown = useCountUp(value);
   return (
     <div className={accent ? "tile accent" : "tile"}>
       <span className="tile-label">
-        <span aria-hidden="true">{icon}</span> {label}
+        {icon === "run" ? <SportIcon sport="run" size={14} /> : <Icon as={icon} size={14} />} {label}
       </span>
       <span className="tile-value">
         {number(shown, digits)}
@@ -65,28 +68,94 @@ function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { i
   );
 }
 
-/** 從已經超過的一站到下一站的路線，跑者停在現在的位置 */
+/** 一站的距離：用座標算的標「約」；短的路線寫到小數一位（全馬 42.2 km） */
+const stationKm = (p: { km: number; approx: boolean }) =>
+  `${p.approx ? "約 " : ""}${number(p.km, p.km < 100 && !Number.isInteger(p.km) ? 1 : 0)} km`;
+
+/**
+ * 四站的軌道（規格 12.29）：等距排，過了的站打勾，跑者停在現在的位置（這一段的進度照公里數算）.
+ * 走完軌道的最後一站整組往前移兩站，除了一開始都在中段或後段
+ */
+/**
+ * 紀錄頁的里程碑用哪一組（原本在選手頁，規格 12.30 第 1 點搬到這裡）：軌道上方直接切換.
+ * 選手資料的 region：空的是通用、auto 是依時區自動判斷、TW 是台灣
+ */
+function RegionPicker() {
+  const { coach, revision, touch, toast } = useApp();
+  const [value, setValue] = useState<string | null>(null);
+  useEffect(() => {
+    void coach.db.getProfile().then((p) => setValue(p.region ?? ""));
+  }, [coach, revision]);
+  if (value === null) return null;
+  const change = async (next: string) => {
+    setValue(next);
+    if (next) await coach.db.setProfileKey("region", next);
+    else await coach.db.deleteProfileKey("region");
+    toast("已儲存");
+    touch();
+  };
+  return (
+    <label className="region-picker">
+      <select aria-label="紀錄頁的里程碑" value={value} onChange={(e) => void change(e.target.value)}>
+        <option value="">通用</option>
+        {Object.entries(REGION_CHOICES).map(([v, text]) => (
+          <option key={v} value={v}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Journey({ totals }: { totals: Accumulation }) {
   const mounted = useMounted();
-  if (!totals.next) return null;
-  const from = totals.passed?.km ?? 0;
-  const pct = Math.min(100, Math.max(2, ((totals.km - from) / (totals.next.km - from)) * 100));
+  const { stations, at, fraction, origin } = totals.track;
+  if (stations.length < 2) return null;
+  const last = stations.length - 1;
+  const pos = Math.min(1, (at + fraction) / last);
+  const here = stations[at]!;
+  const ahead = stations[at + 1];
+  const label = ahead
+    ? `在${here.name}和${ahead.name}之間，這一段跑了 ${Math.round(fraction * 10)} 成`
+    : `已經到了${here.name}`;
   return (
-    <div
-      className="journey"
-      role="img"
-      aria-label={`從${totals.passed ? placeText(totals.passed) : "起點"}往${placeText(totals.next)}，已經跑了這段的 ${Math.round(pct)}%`}
-    >
-      <div className="journey-track">
-        <div className="journey-fill" style={{ width: mounted ? `${pct}%` : "0%" }}>
-          <span className="journey-runner" aria-hidden="true">
-            🏃
-          </span>
-        </div>
+    <div className="journey">
+      <div className="journey-head">
+        <span className="journey-origin small muted">
+          {origin && (
+            <>
+              <Icon as={MapPin} size={14} /> {origin}
+            </>
+          )}
+        </span>
+        <RegionPicker />
       </div>
-      <div className="journey-ends small">
-        <span>📍 {totals.passed ? placeText(totals.passed) : "起點"}</span>
-        <span>🏁 {placeText(totals.next)}</span>
+      <div className="journey-body" role="img" aria-label={label}>
+        {/* 軌道從第一欄的中間畫到最後一欄的中間，站點和下面的字對齊 */}
+        <div className="journey-track" style={{ "--cols": stations.length } as CSSProperties}>
+          <div className="journey-line">
+            <div className="journey-fill" style={{ width: mounted ? `${pos * 100}%` : "0%" }} />
+            {stations.map((s, i) => (
+              <span key={s.name} className={s.passed ? "journey-stop passed" : "journey-stop"} style={{ left: `${(i / last) * 100}%` }}>
+                {s.passed && <Icon as={Check} size={12} />}
+              </span>
+            ))}
+            <span className="journey-runner" style={{ left: mounted ? `${pos * 100}%` : "0%" }}>
+              <SportIcon sport="run" size={18} />
+            </span>
+          </div>
+        </div>
+        <ol className="journey-stations" style={{ "--cols": stations.length } as CSSProperties}>
+          {stations.map((s) => (
+            <li key={s.name} className={s.passed ? "passed" : ""}>
+              <span className="journey-name" title={s.name}>
+                {s.short}
+              </span>
+              {s.km > 0 && <span className="small muted">{stationKm(s)}</span>}
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );
@@ -102,7 +171,7 @@ function Medals({ count }: { count: number }) {
       <div className="medals" role="img" aria-label={`相當於 ${number(count, 1)} 場全馬`}>
         {Array.from({ length: shown }, (_, i) => (
           <span key={i} className="medal" style={{ "--i": i } as CSSProperties}>
-            🏅
+            <Icon as={Medal} />
           </span>
         ))}
         {whole > shown && <span className="more">+{number(whole - shown)}</span>}
@@ -210,11 +279,9 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           </span>
         </div>
       ) : (
-        <div className="row">
-          <button className="small" onClick={() => void run()}>
-            {result ? "再匯入一次" : "匯入 Intervals.icu 的完整歷史"}
-          </button>
-          {!result && <span className="muted small">只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</span>}
+        <div className="actions">
+          <button onClick={() => void run()}>{result ? "再匯入一次" : "匯入完整歷史"}</button>
+          {!result && <InfoTip label="匯入完整歷史的說明">把 Intervals.icu 上更早的跑步全部存進來：只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</InfoTip>}
         </div>
       )}
       {error && <div className="notice error">匯入失敗：{error}（再按一次會從頭重抓，已存的不會重複）</div>}
@@ -241,8 +308,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           )}
         </div>
       )}
-      <details className="small">
-        <summary>更早的跑步沒有出現？</summary>
+      <Disclosure summary="更早的跑步沒有出現？" className="small">
         <ul>
           <li>這裡只讀得到 Intervals.icu 上已經有的紀錄。Garmin 連上 Intervals.icu 時，Garmin 只讓它補抓約一年的舊資料，所以更早的常常不在 Intervals.icu 上。</li>
           <li>
@@ -251,7 +317,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           <li>匯出檔太大時曾有人匯入失敗或顯示 0 筆；論壇上的做法是只保留壓縮檔裡的 DI_CONNECT 資料夾再上傳。以上依 Intervals.icu 論壇的說明，我們沒有實測。</li>
           <li>從 Strava 匯入 Intervals.icu 的活動，Intervals.icu 不經 API 提供；改上傳 Strava 的「匯出帳戶資料」檔案就沒有這個限制。</li>
         </ul>
-      </details>
+      </Disclosure>
     </div>
   );
 }
@@ -280,9 +346,9 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
   };
   return (
     <p className="region-hint small muted">
-      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在「選手資料」改。
+      你的時區在{REGIONS[byTimeZone]}，要改用當地的里程碑嗎？之後可以在軌道右上方改。
       <button
-        className="link"
+        className="text"
         onClick={() =>
           void coach.db.setProfileKey("region", "auto").then(() => {
             dismiss();
@@ -292,7 +358,7 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
       >
         依時區自動判斷
       </button>
-      <button className="link" onClick={dismiss}>
+      <button className="text" onClick={dismiss}>
         維持通用
       </button>
     </p>
@@ -312,22 +378,22 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
     <section className="card totals">
       <div className="totals-hero">
         <span className="tile-label">累積跑了</span>
-        <span className="hero-value">
+        <span className="num hero-value">
           {number(km, 1)}
           <small> km</small>
         </span>
-        {totals.passed && <span className="tile-sub">已經超過{placeText(totals.passed)}</span>}
+        {totals.passed && <span className="tile-sub">已經超過{placeText(totals.track.stations[totals.track.at]!)}</span>}
         <Journey totals={totals} />
         <RegionHint region={totals.region} />
       </div>
       <div className="tiles">
         {totals.thisWeek && (
-          <Tile accent icon="🔥" label="這週" value={totals.thisWeek.km} digits={1} unit="km" sub={`${totals.thisWeek.runs} 趟・${number(totals.thisWeek.minutes)} 分鐘`} />
+          <Tile accent icon={Flame} label="這週" value={totals.thisWeek.km} digits={1} unit="km" sub={`${totals.thisWeek.runs} 趟・${number(totals.thisWeek.minutes)} 分鐘`} />
         )}
-        <Tile icon="👟" label="跑了" value={totals.runs} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
-        <Tile icon="⏱️" label="時間" value={hours} digits={hours < 10 ? 1 : 0} unit="小時" />
-        {totals.thisYearKm !== null && <Tile icon="📅" label={`${today.slice(0, 4)} 年`} value={totals.thisYearKm} digits={1} unit="km" />}
-        {totals.longest && <Tile icon="📏" label="最長的一趟" value={totals.longest.km} digits={1} unit="km" sub={totals.longest.date} />}
+        <Tile icon="run" label="跑了" value={totals.runs} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
+        <Tile icon={Timer} label="時間" value={hours} digits={hours < 10 ? 1 : 0} unit="小時" />
+        {totals.thisYearKm !== null && <Tile icon={CalendarDays} label={`${today.slice(0, 4)} 年`} value={totals.thisYearKm} digits={1} unit="km" />}
+        {totals.longest && <Tile icon={Ruler} label="最長的一趟" value={totals.longest.km} digits={1} unit="km" sub={shortDateLabel(totals.longest.date)} />}
       </div>
       <div className="showcases">
         <Medals count={totals.marathons} />
@@ -345,7 +411,7 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
           />
         ))}
       </div>
-      {totals.since && <p className="muted small">從 {totals.since} 起已存進 App 的跑步；每一格是一趟，越長的格子越大，這週的是另一個顏色。</p>}
+      {totals.since && <p className="muted small">從 {totals.since} 起，每一格是一趟，越長的格子越大，有外框的是這週。</p>}
       <ImportHistory onDone={onImported} />
     </section>
   );

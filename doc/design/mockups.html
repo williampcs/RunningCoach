@@ -1,0 +1,594 @@
+<title>Zone2Mate 設計準則</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 版面：一欄的準則文件，每節「規則 → 範例」；範例是手機寬的畫面，電腦上改前改後並排 */
+:root {
+  /* App 本身的色票（沿用 apps/web/src/styles.css），準則頁也用它 */
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --sunken: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #0f766e;
+  --accent-text: #ffffff;
+  --accent-soft: #ccfbf1;
+  --low: #0d9488;
+  --mid: #d97706;
+  --high: #e11d48;
+  --race: #db2777;
+  --ok: #15803d;
+  --skip: #94a3b8;
+  --danger: #b91c1c;
+  --bad-bg: #fef2f2;
+  --bad-line: #fecaca;
+  --good-bg: #f0fdf4;
+  --good-line: #bbf7d0;
+  --font: "Noto Sans TC", system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1220; --surface: #131c2e; --sunken: #0e1626; --text: #e2e8f0; --muted: #94a3b8; --border: #24304a;
+    --accent: #2dd4bf; --accent-text: #042f2e; --accent-soft: #134e4a;
+    --low: #2dd4bf; --mid: #fbbf24; --high: #fb7185; --race: #f9a8d4; --ok: #4ade80; --skip: #64748b; --danger: #fca5a5;
+    --bad-bg: #2a1418; --bad-line: #5b1d2a; --good-bg: #0f2418; --good-line: #1f5133;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1220; --surface: #131c2e; --sunken: #0e1626; --text: #e2e8f0; --muted: #94a3b8; --border: #24304a;
+  --accent: #2dd4bf; --accent-text: #042f2e; --accent-soft: #134e4a;
+  --low: #2dd4bf; --mid: #fbbf24; --high: #fb7185; --race: #f9a8d4; --ok: #4ade80; --skip: #64748b; --danger: #fca5a5;
+  --bad-bg: #2a1418; --bad-line: #5b1d2a; --good-bg: #0f2418; --good-line: #1f5133;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.65;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+.doc { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; line-height: 1.3; }
+h1 { font-size: 30px; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 700; }
+p { margin: 0; max-width: 62ch; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+section { display: flex; flex-direction: column; gap: 20px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; color: var(--accent); font-weight: 700; }
+header.top { display: flex; flex-direction: column; gap: 12px; }
+header.top .lead { font-size: 17px; color: var(--muted); max-width: 60ch; }
+
+/* 原則 */
+.principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.principle { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; gap: 12px; }
+.principle .ic { flex: none; width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.principle .ic svg { width: 20px; height: 20px; }
+.principle div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.principle strong { font-size: 15px; }
+.principle span { font-size: 14px; color: var(--muted); }
+
+/* 規則表 */
+.rules { display: grid; grid-template-columns: 1fr; gap: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.rule { display: grid; grid-template-columns: 140px 1fr; gap: 16px; padding: 14px 16px; border-top: 1px solid var(--border); }
+.rule:first-child { border-top: 0; }
+.rule > b { font-size: 14px; }
+.rule > div { min-width: 0; font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 560px) { .rule { grid-template-columns: 1fr; gap: 4px; } }
+
+/* 字級 */
+.scale { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.scale-row { display: grid; grid-template-columns: 120px 1fr auto; gap: 16px; align-items: baseline; padding: 12px 16px; border-top: 1px solid var(--border); }
+.scale-row:first-child { border-top: 0; }
+.scale-row > * { min-width: 0; }
+@media (max-width: 560px) { .scale-row { grid-template-columns: 1fr; gap: 2px; } }
+.t-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.t-title { font-size: 20px; font-weight: 700; }
+.t-head { font-size: 16px; font-weight: 600; }
+.t-body { font-size: 15px; }
+.t-cap { font-size: 13px; color: var(--muted); }
+
+/* 色票 */
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.sw { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sw i { display: block; height: 32px; border-radius: 8px; }
+.sw b { font-size: 13px; }
+.sw span { font-size: 12px; color: var(--muted); }
+
+/* 間距與圓角 */
+.spaces { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+.space { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.space i { display: block; background: var(--accent); border-radius: 2px; height: 12px; }
+.radii { display: flex; flex-wrap: wrap; gap: 16px; }
+.radius { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.radius i { display: block; width: 72px; height: 44px; border: 2px solid var(--accent); }
+
+/* 圖示 */
+.icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.icon-cell { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; }
+.icon-cell svg { width: 24px; height: 24px; }
+
+/* 改前改後 */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; align-items: start; }
+.panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.tag { align-self: flex-start; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 10px; }
+.tag.before { background: var(--bad-bg); color: var(--danger); border: 1px solid var(--bad-line); }
+.tag.after { background: var(--good-bg); color: var(--ok); border: 1px solid var(--good-line); }
+.notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+
+/* 手機畫面：App 的樣子 */
+.phone { width: 100%; max-width: 380px; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 14px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 1px 0 var(--border); }
+.app-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.row > .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row .title { font-size: 15px; font-weight: 600; }
+.row .sub { font-size: 13px; color: var(--muted); }
+.lead-ic { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--sunken); color: var(--text); }
+.lead-ic svg { width: 20px; height: 20px; }
+.lead-ic.race { color: var(--race); }
+.lead-ic.low { color: var(--low); }
+.divider { height: 1px; background: var(--border); }
+.btn { font: inherit; font-size: 15px; font-weight: 600; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.text { border-color: transparent; color: var(--muted); padding: 0 8px; font-weight: 500; }
+.btn.danger { border-color: transparent; color: var(--danger); }
+.btn.sm { min-height: 36px; font-size: 14px; padding: 0 14px; }
+.btn svg { width: 18px; height: 18px; }
+.btn:focus-visible, .x:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.x { flex: none; width: 32px; height: 32px; border-radius: 999px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.x svg { width: 18px; height: 18px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; background: var(--sunken); border-radius: 8px; padding: 3px 8px; font-variant-numeric: tabular-nums; }
+.chip svg { width: 14px; height: 14px; color: var(--muted); }
+.bar { display: flex; gap: 2px; height: 10px; }
+.bar span { border-radius: 2px; }
+.legend { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+details.more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: var(--muted); }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary svg { width: 16px; height: 16px; transition: transform 0.15s; }
+details.more[open] > summary svg { transform: rotate(90deg); }
+details.more > div { margin-top: 8px; font-size: 14px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { details.more > summary svg { transition: none; } }
+
+/* 底部分頁 */
+.tabbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--border); padding-top: 8px; text-align: center; font-size: 11px; color: var(--muted); }
+.tabbar span { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.tabbar svg { width: 22px; height: 22px; }
+.tabbar .on { color: var(--accent); font-weight: 700; }
+.tabbar.emoji span b { font-size: 20px; font-weight: 400; line-height: 1.2; }
+
+/* 改前的樣子（照截圖重畫） */
+.old { font-size: 14px; display: flex; flex-direction: column; gap: 10px; }
+.old .item { display: flex; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.old .item:first-child { border-top: 0; padding-top: 0; }
+.old .item > div { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.old .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.old .acts .btn { min-height: 32px; font-size: 13px; padding: 0 10px; }
+.old .link { color: var(--accent); text-decoration: underline; font-size: 13px; }
+
+/* 體感 */
+.rpe { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.rpe button { font: inherit; font-size: 14px; font-variant-numeric: tabular-nums; min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; padding: 0; }
+.rpe button.sel { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
+.input { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 15px; color: var(--muted); background: var(--surface); }
+.pick { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+.pick.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.check { color: var(--accent); }
+.check svg { width: 20px; height: 20px; }
+.chev { color: var(--muted); }
+.chev svg { width: 18px; height: 18px; }
+.status { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.status.ok { color: var(--ok); }
+
+/* 檢查清單與步驟 */
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px; }
+.checklist li { display: flex; gap: 10px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+.checklist li svg { flex: none; width: 18px; height: 18px; color: var(--accent); margin-top: 3px; }
+.phases { display: flex; flex-direction: column; gap: 0; border-left: 2px solid var(--border); margin-left: 8px; }
+.phase { position: relative; padding: 0 0 20px 20px; display: flex; flex-direction: column; gap: 4px; }
+.phase::before { content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); }
+.phase:last-child { padding-bottom: 0; }
+.phase p { font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="doc">
+  <header class="top">
+    <span class="eyebrow">ZONE2MATE · 設計準則 v1 提案</span>
+    <h1>先看得懂，再讀得到</h1>
+    <p class="lead">每個畫面先用數字、圖示和顏色回答「現在要做什麼」，說明收在後面。下面是規則，以及照規則重畫的四個畫面。</p>
+  </header>
+
+  <section>
+    <h2>五個原則</h2>
+    <div class="principles">
+      <div class="principle"><span class="ic"><i data-lucide="eye"></i></span><div><strong>一眼回答一個問題</strong><span>每個區塊只回答一件事：今天練什麼、這趟怎麼樣、還差多少。</span></div></div>
+      <div class="principle"><span class="ic"><i data-lucide="shapes"></i></span><div><strong>圖示和數字先說</strong><span>能用圖示、色條、數字表達的就不寫句子；文字只補圖示說不清的。</span></div></div>
+      <div class="principle"><span class="ic"><i data-lucide="mouse-pointer-click"></i></span><div><strong>一塊一個主要動作</strong><span>每張卡最多一顆實心按鈕。其他動作降級成外框或文字按鈕。</span></div></div>
+      <div class="principle"><span class="ic"><i data-lucide="copy"></i></span><div><strong>同一種東西長一樣</strong><span>課、紀錄、賽事在每一頁都用同一張卡、同樣的顏色和位置。</span></div></div>
+      <div class="principle"><span class="ic"><i data-lucide="chevrons-down-up"></i></span><div><strong>長的說明先收起來</strong><span>超過兩行的說明收進「細節」或 ⓘ，打開才看得到。</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>字：只用五級</h2>
+    <p class="muted">現在的樣式表裡有 20 種字級。統一成五級，新的畫面不再加新的大小。</p>
+    <div class="scale">
+      <div class="scale-row"><span class="mono">數字 28 / 粗</span><span class="t-num">1:05:30</span><span class="small muted">時間、距離、心率等主要數字</span></div>
+      <div class="scale-row"><span class="mono">標題 20 / 粗</span><span class="t-title">輕鬆跑 + 4 趟加速跑</span><span class="small muted">頁名、今天的課</span></div>
+      <div class="scale-row"><span class="mono">小標 16 / 中粗</span><span class="t-head">這週的額度</span><span class="small muted">卡片標題、列表的主文字</span></div>
+      <div class="scale-row"><span class="mono">內文 15</span><span class="t-body">教練的回覆、表單、句子</span><span class="small muted">預設</span></div>
+      <div class="scale-row"><span class="mono">輔助 13 / 淡色</span><span class="t-cap">10/27（二）· 平均心率 142</span><span class="small muted">日期、單位、次要資訊</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>顏色：一種顏色只有一種意思</h2>
+    <p class="muted">主色只給主要按鈕和「選中」。課表與紀錄裡的顏色一律代表強度；運動種類用圖示分，不用顏色分。</p>
+    <div class="swatches">
+      <div class="sw"><i style="background: var(--accent)"></i><b>主色</b><span>主要按鈕、選中、今天</span></div>
+      <div class="sw"><i style="background: var(--low)"></i><b>低強度</b><span>輕鬆、長跑、耐力騎</span></div>
+      <div class="sw"><i style="background: var(--mid)"></i><b>中強度</b><span>閾值、馬拉松配速、甜蜜點</span></div>
+      <div class="sw"><i style="background: var(--high)"></i><b>高強度</b><span>間歇、衝刺、比賽</span></div>
+      <div class="sw"><i style="background: var(--race)"></i><b>賽事</b><span>賽事與倒數</span></div>
+      <div class="sw"><i style="background: var(--ok)"></i><b>達成</b><span>只用打勾，不用大色塊</span></div>
+      <div class="sw"><i style="background: var(--skip)"></i><b>沒做 / 休息</b><span>灰色，不用紅色</span></div>
+      <div class="sw"><i style="background: var(--danger)"></i><b>危險</b><span>只給刪除、重設</span></div>
+    </div>
+    <p class="small muted">「沒做」用灰色不用紅色：一長串紅色的「沒做」會讓人挫折，課表是建議，不是考核。</p>
+  </section>
+
+  <section>
+    <h2>間距與圓角</h2>
+    <div class="spaces">
+      <div class="space"><i style="width: 4px"></i>4</div>
+      <div class="space"><i style="width: 8px"></i>8</div>
+      <div class="space"><i style="width: 12px"></i>12</div>
+      <div class="space"><i style="width: 16px"></i>16</div>
+      <div class="space"><i style="width: 24px"></i>24</div>
+      <div class="space"><i style="width: 32px"></i>32</div>
+    </div>
+    <p class="small muted">間距只用這六種：同一行的東西 8、卡片裡的區塊 12、卡片內距與畫面邊距 16、卡片之間 12、頁面的大段落 24 到 32。</p>
+    <div class="radii">
+      <div class="radius"><i style="border-radius: 8px"></i>8：欄位、標籤</div>
+      <div class="radius"><i style="border-radius: 12px"></i>12：卡片</div>
+      <div class="radius"><i style="border-radius: 999px"></i>全圓：按鈕、徽章</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>圖示：一套線條圖示取代 emoji</h2>
+    <p class="muted">emoji 在每支手機上長得不一樣，彩色的也會和強度的顏色打架。改用一套開源的線條圖示（Lucide，ISC 授權，只打包用到的幾十個），線條 2px，分頁 22、行內 20、標籤裡 14。</p>
+    <div class="icons">
+      <div class="icon-cell"><i data-lucide="message-circle"></i>對話</div>
+      <div class="icon-cell"><i data-lucide="square-pen"></i>回報</div>
+      <div class="icon-cell"><i data-lucide="book-open"></i>紀錄</div>
+      <div class="icon-cell"><i data-lucide="calendar-days"></i>計畫</div>
+      <div class="icon-cell"><i data-lucide="user"></i>選手</div>
+      <div class="icon-cell"><i data-lucide="footprints"></i>跑步</div>
+      <div class="icon-cell"><i data-lucide="bike"></i>騎車</div>
+      <div class="icon-cell"><i data-lucide="dumbbell"></i>肌力</div>
+      <div class="icon-cell"><i data-lucide="waves"></i>游泳</div>
+      <div class="icon-cell"><i data-lucide="flag"></i>賽事</div>
+      <div class="icon-cell"><i data-lucide="heart-pulse"></i>身體狀況</div>
+      <div class="icon-cell"><i data-lucide="moon"></i>休息</div>
+    </div>
+    <p class="small muted">只有圖示、沒有字的按鈕只留給大家都認得的：✕ 關閉、? 說明、齒輪設定、› 進入。其他的圖示旁邊都要有字。</p>
+  </section>
+
+  <section>
+    <h2>元件</h2>
+    <div class="rules">
+      <div class="rule"><b>按鈕</b><div>
+        <div class="row" style="flex-wrap: wrap; gap: 8px"><button class="btn primary" type="button">回報</button><button class="btn" type="button">查看計畫</button><button class="btn text" type="button">之後再說</button><button class="btn danger" type="button">刪除</button></div>
+        <span class="muted">主要（實心，一塊最多一顆）→ 次要（外框）→ 文字（不重要的、取消）。危險動作用紅字並再確認一次。按的範圍至少 44 高。按鈕上的字用動詞，六個字以內。</span>
+      </div></div>
+      <div class="rule"><b>卡片</b><div><span class="muted">一種卡片：底色、細框、圓角 12、內距 16。卡片裡不再套卡片；要分區用細線或間距。</span></div></div>
+      <div class="rule"><b>列表的一列</b><div>
+        <div class="row"><span class="lead-ic low"><i data-lucide="footprints"></i></span><span class="grow"><span class="title">輕鬆跑</span><span class="sub">10/29（四）· 40 分鐘</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+        <span class="muted">左邊圖示，中間標題加一行副標，右邊數字、狀態或 ›。全 App 的列表都這樣排。</span>
+      </div></div>
+      <div class="rule"><b>標籤</b><div>
+        <div class="chips"><span class="chip"><i data-lucide="timer"></i>35 分</span><span class="chip"><i data-lucide="heart-pulse"></i>≤150</span><span class="chip">4 × 20 秒</span></div>
+        <span class="muted">只放屬性，最多三個，不重複標題已經寫的。</span>
+      </div></div>
+      <div class="rule"><b>收起的細節</b><div>
+        <details class="more"><summary><i data-lucide="chevron-right"></i>細節</summary><div><span>目的：讓腿習慣快的步頻，不累積疲勞。</span><span>狀況不好時：只跑 30 分鐘，不做加速。</span></div></details>
+        <span class="muted">全 App 都用同一個樣子：› 加上「細節」或「為什麼」。</span>
+      </div></div>
+      <div class="rule"><b>提示</b><div><span class="muted">存好了、同步完成：畫面下方的小提示，三秒後自己消失，不用大色塊。錯誤：寫在出錯的欄位旁邊，說怎麼修。要你動手的警告才用整條色塊。</span></div></div>
+      <div class="rule"><b>表單</b><div><span class="muted">標籤在欄位上面；說明最多一行小字，多的放 ⓘ。很少改的（模型名稱、思考強度）收進「進階」。</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>文字的規則</h2>
+    <div class="rules">
+      <div class="rule"><b>長度</b><div><span class="muted">標題十二個字以內；副標一行；說明兩行以內，超過就收起來。</span></div></div>
+      <div class="rule"><b>數字</b><div><span class="muted">距離到小數一位（21.1 km，常見的距離寫「半馬」「全馬」）；時間 1:05:30 或 45 分；配速 5:30/km；日期 10/27（二），今天、明天直接寫。</span></div></div>
+      <div class="rule"><b>括號</b><div><span class="muted">一句最多一組括號，不疊括號。「4 ×（20 秒（加速跑…）+ 1 分鐘（…））」這種改成圖或分行。</span></div></div>
+      <div class="rule"><b>用詞</b><div><span class="muted">用跑者自己會說的話：「同步」「體感」「輕鬆跑」；不用「供應商」「Rolling Window」這種內部的詞。</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">範例 1</span>
+    <h2>今天的重點</h2>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <div class="item"><span>🙂</span><div><b>今天身體感覺如何？</b><span class="muted">花 10 秒回報精神、痠痛與睡眠，教練會依你的感受調整建議。</span><div class="acts"><button class="btn primary" type="button">回報身體狀況</button></div></div></div>
+          <div class="item"><span>🏁</span><div><b>距離初半馬賽事 zepro run新竹場還有 12 天</b><span class="muted">2026-11-08，21.0975 km，目標 3:30:00</span><div class="acts"><button class="btn primary" type="button">查看計畫</button><span class="link">知道了</span></div></div></div>
+          <div class="item"><span>📅</span><div><b>今天：輕鬆跑「30 分鐘輕鬆跑＋4 趟加速跑」</b><span class="muted">30 分鐘 能聊天的強度（體感 2–4/10）（心率超過就改走…）｜4 ×（20 秒（加速跑約 20 秒，輕快不衝刺）+ 1 分鐘（走路或慢跑恢復））。狀況不好時：左膝緊…</span><div class="acts"><button class="btn primary" type="button">查看計畫</button><button class="btn" type="button">想改輕鬆一點</button><span class="link">知道了</span></div></div></div>
+          <div class="item"><span>📅</span><div><b>今天：肌力訓練「肌力 20 分鐘」</b><span class="muted">20 分鐘（深蹲、弓箭步、單腳提踵、臀橋、核心，各 2–3 組；膝蓋痛的動作跳過）…</span><div class="acts"><button class="btn primary" type="button">查看計畫</button><button class="btn" type="button">想改輕鬆一點</button><span class="link">知道了</span></div></div></div>
+        </div></div>
+        <ul class="notes"><li>四列、八個按鈕，三種樣式混在一起</li><li>整堂課的步驟塞進看板</li><li>肌力也有「想改輕鬆一點」</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">照準則</span>
+        <div class="phone"><div class="app-card">
+          <div class="row"><span class="lead-ic"><i data-lucide="heart-pulse"></i></span><span class="grow"><span class="title">今天身體如何？</span><span class="sub">10 秒，教練依你的感受調整</span></span><button class="btn primary sm" type="button">回報</button></div>
+          <div class="divider"></div>
+          <div class="row"><span class="lead-ic race"><i data-lucide="flag"></i></span><span class="grow"><span class="title">初半馬 · 新竹場</span><span class="sub">11/8（日）· 半馬 · 目標 3:30</span></span><span class="t-head" style="color: var(--race); white-space: nowrap">12 天</span><button class="x" type="button" aria-label="今天不再顯示"><i data-lucide="x"></i></button></div>
+          <div class="divider"></div>
+          <div class="row" style="align-items: flex-start"><span class="lead-ic low"><i data-lucide="calendar-days"></i></span><span class="grow" style="gap: 8px"><span class="title">今天的課</span>
+            <span class="row" style="gap: 8px"><i data-lucide="footprints" style="width: 16px; height: 16px; color: var(--muted)"></i><span class="sub" style="color: var(--text)">輕鬆跑 30 分 + 4 趟加速</span></span>
+            <span class="row" style="gap: 8px"><i data-lucide="dumbbell" style="width: 16px; height: 16px; color: var(--muted)"></i><span class="sub" style="color: var(--text)">肌力 20 分</span></span>
+            <span class="row" style="gap: 8px; flex-wrap: wrap"><button class="btn sm" type="button">查看計畫</button><button class="btn text sm" type="button">想改輕鬆一點</button></span>
+          </span></div>
+        </div></div>
+        <ul class="notes"><li>三列，每列最多一顆主要按鈕</li><li>同一天的課合成一列，步驟留在課表頁</li><li>「知道了」都在同一個位置，用 ✕</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">範例 2</span>
+    <h2>課表的一堂課</h2>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <b>🚴 5 × 4 分鐘 <span class="muted">最大攝氧間歇</span></b>
+          <div class="acts"><span class="chip">65 分鐘</span><span class="chip">體感 8–9/10（短間歇，心率跟不上；後段心率到 Z5）</span><span class="chip">5 × 4 分鐘</span></div>
+          <span>輕鬆 心率 Z2（136–142）· 15 分鐘</span><b>重複 5 次</b><span>高強度 體感 8–9/10（短間歇，心率跟不上；後段心率到 Z5）· 4 分鐘</span><span>輕鬆踩 · 4 分鐘</span><span>輕鬆 心率 Z1（≤135）· 10 分鐘</span>
+        </div></div>
+        <ul class="notes"><li>同一段說明出現兩次</li><li>標籤重複標題的「5 × 4 分鐘」</li><li>步驟要一行一行讀</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">照準則</span>
+        <div class="phone"><div class="app-card">
+          <div class="row"><span class="lead-ic"><i data-lucide="bike"></i></span><span class="grow"><span class="t-title" style="font-size: 18px">5 × 4 分鐘</span><span class="sub">最大攝氧間歇 · 10/26（一）</span></span><span class="status">沒做</span></div>
+          <div class="chips"><span class="chip"><i data-lucide="timer"></i>65 分</span><span class="chip"><i data-lucide="activity"></i>體感 8–9</span></div>
+          <div class="bar" aria-label="課的結構：暖身 15 分、5 組 4 分鐘高強度與 4 分鐘恢復、緩和 10 分">
+            <span style="flex: 15; background: var(--low)"></span>
+            <span style="flex: 4; background: var(--high)"></span><span style="flex: 4; background: var(--low); opacity: 0.45"></span>
+            <span style="flex: 4; background: var(--high)"></span><span style="flex: 4; background: var(--low); opacity: 0.45"></span>
+            <span style="flex: 4; background: var(--high)"></span><span style="flex: 4; background: var(--low); opacity: 0.45"></span>
+            <span style="flex: 4; background: var(--high)"></span><span style="flex: 4; background: var(--low); opacity: 0.45"></span>
+            <span style="flex: 4; background: var(--high)"></span>
+            <span style="flex: 10; background: var(--low)"></span>
+          </div>
+          <div class="legend"><span>暖身 15′ · Z2</span><span>4′ 硬 × 5</span><span>緩和 10′</span></div>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>細節</summary><div><span>硬的那段看體感：短間歇心率跟不上，後段到 Z5 就對了。</span><span>組間輕鬆踩 4 分鐘。</span><span>錯過了就跳過，不要補。</span></div></details>
+          <div class="row" style="gap: 8px"><button class="btn sm" type="button">改用替代</button><button class="btn sm" type="button">移到別天</button></div>
+        </div></div>
+        <ul class="notes"><li>一條強度條看懂整堂課的結構</li><li>說明只出現一次，收在「細節」</li><li>運動用圖示，顏色只代表強度</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">範例 3</span>
+    <h2>運動回報</h2>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <b>運動回報</b><span class="muted">選一趟跑步或騎車，填上體感。騎車要先同步才會出現；更早的可以在「紀錄」補填。</span>
+          <span>◉ 今天 06:30　10.02 km・55.1 分・5:30/km</span><span>○ 這一趟還沒同步　手錶還沒上傳的話，先存起來，之後同步時配對到今天的跑步。</span>
+          <span>體感強度：5 / 10　━━━━━●━━━━</span><span class="muted">主觀感受</span>
+          <div class="acts"><button class="btn primary" type="button">存到今天 06:30 的 10.02 km</button><button class="btn" type="button">同步最近 14 天</button></div>
+        </div></div>
+        <ul class="notes"><li>開頭一段說明</li><li>滑桿不好點準</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">照準則</span>
+        <div class="phone"><div class="app-card">
+          <div class="row"><span class="grow"><span class="t-title" style="font-size: 18px">哪一趟？</span></span><button class="btn text sm" type="button"><i data-lucide="refresh-cw"></i>同步</button></div>
+          <div class="pick sel"><div class="row"><span class="lead-ic low"><i data-lucide="footprints"></i></span><span class="grow"><span class="title">今天 06:30</span><span class="sub">10.0 km · 55 分 · 5:30/km</span></span><span class="check"><i data-lucide="circle-check"></i></span></div></div>
+          <div class="pick"><div class="row"><span class="lead-ic"><i data-lucide="clock"></i></span><span class="grow"><span class="title">還沒同步的這一趟</span><span class="sub">先存，同步後自動配對</span></span></div></div>
+          <div class="t-head">體感</div>
+          <div class="rpe" role="radiogroup" aria-label="體感 1 到 10">
+            <button type="button">1</button><button type="button">2</button><button type="button">3</button><button type="button">4</button><button type="button" class="sel" aria-checked="true">5</button><button type="button">6</button><button type="button">7</button><button type="button">8</button><button type="button">9</button><button type="button">10</button>
+          </div>
+          <div class="legend"><span>很輕鬆</span><span>普通</span><span>全力</span></div>
+          <div class="input">一句話：腿重？哪裡痠？</div>
+          <button class="btn primary" type="button">存起來</button>
+        </div></div>
+        <ul class="notes"><li>開頭不放說明，標題就是問題</li><li>體感用十格點選，下面標三個字</li><li>只有一顆主要按鈕</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">範例 4</span>
+    <h2>設定</h2>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <b>AI 模型</b><span>◉ 使用自己的 API key　○ 訂閱（經代理）</span><span class="muted">供應商</span><span class="input">其他 OpenAI 相容服務</span><span class="muted">API key</span><span class="input">••••••••</span><span class="muted">服務網址 · 主對話模型 · 跑後摘要模型 · 對話壓縮模型 · 主對話思考強度</span><span class="muted">請填入該供應商目前可用的模型 ID；思考強度會對應到 low / medium / high。</span><span class="muted">資料會送到哪裡：你的對話、選手資料與訓練紀錄會從這個瀏覽器直接送到…</span>
+        </div></div>
+        <ul class="notes"><li>一打開就是七個欄位</li><li>很少改的和常用的放在一起</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">照準則</span>
+        <div class="phone"><div class="app-card" style="gap: 0; padding: 4px 16px">
+          <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="sparkles"></i></span><span class="grow"><span class="title">AI 教練</span><span class="sub">Claude · 自己的 key</span></span><span class="status ok">可用</span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="divider"></div>
+          <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="watch"></i></span><span class="grow"><span class="title">訓練紀錄</span><span class="sub">Intervals.icu</span></span><span class="status">2 小時前</span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="divider"></div>
+          <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="smartphone"></i></span><span class="grow"><span class="title">多裝置同步</span><span class="sub">3 台裝置</span></span><span class="status ok">已同步</span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="divider"></div>
+          <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="lock"></i></span><span class="grow"><span class="title">密碼鎖</span><span class="sub">保護 API key</span></span><span class="status">關</span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="divider"></div>
+          <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="cloud-sun"></i></span><span class="grow"><span class="title">天氣</span><span class="sub">台北</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+        </div></div>
+        <ul class="notes"><li>第一層只列項目和狀態，點進去才是欄位</li><li>模型名稱、思考強度收進 AI 教練裡的「進階」</li><li>「資料會送到哪裡」改成 ⓘ</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">範例 5</span>
+    <h2>底部的分頁</h2>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="tabbar emoji"><span><b>💬</b>對話</span><span><b>🏃</b>運動回報</span><span><b>📖</b>紀錄</span><span class="on"><b>📅</b>計畫與賽事</span><span><b>👤</b>選手資料</span></div></div>
+      </div>
+      <div class="panel">
+        <span class="tag after">照準則</span>
+        <div class="phone"><div class="tabbar"><span><i data-lucide="message-circle"></i>對話</span><span><i data-lucide="square-pen"></i>回報</span><span><i data-lucide="book-open"></i>紀錄</span><span class="on"><i data-lucide="calendar-days"></i>計畫</span><span><i data-lucide="user"></i>選手</span></div></div>
+        <ul class="notes"><li>同一套線條圖示，選中的用主色</li><li>分頁名稱兩個字，手機上不會擠</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">提案 6（2026-10-28）</span>
+    <h2>選手頁：摘要 ＋ 清單 ＋ 下一層</h2>
+    <p class="muted">和設定同一套做法。第一層只看得到「填了什麼」，點進去才是欄位；教練算出來的數字放最上面，因為那是選手最常回來看的。</p>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <b>訓練數值</b><span class="muted">心率 · 配速（Daniels）· 最近 28 天的強度分配 · 推算完賽……</span>
+          <b>從其他 AI 帶入</b>
+          <b>目標與狀況</b><span class="muted">長期目標 · 每週目標里程 · 傷病注意 · 紀錄頁的里程碑</span>
+          <b>個人最佳</b><span class="muted">5km · 10km · 半馬 · 全馬</span>
+          <b>生理資料</b><span class="muted">性別 · 出生年 · 身高 · 體重 · 體脂 · 最大心率 · 靜息心率</span>
+          <b>訓練偏好</b><span class="muted">練哪些運動 · 共通的設定（6 欄）· 跑步（5 欄）· 騎車（5 欄）</span>
+          <b>記住的事</b><b>對話摘要</b>
+        </div></div>
+        <ul class="notes"><li>一頁 30 多個欄位，要一直往下捲</li><li>「紀錄頁的里程碑」放在「目標與狀況」裡，找不到</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">提案</span>
+        <div class="phone">
+          <div class="app-card">
+            <div class="row"><span class="grow"><span class="t-head">我的數字</span><span class="sub">依最近的紀錄算，Intervals.icu 的心率設定</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="row" style="gap: 16px; flex-wrap: wrap">
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">40.1</span><span class="sub">VDOT</span></span>
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">5:05</span><span class="sub">閾值 /km</span></span>
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">151</span><span class="sub">輕鬆跑上限</span></span>
+            </div>
+            <div class="bar"><span style="flex: 77; background: var(--low)"></span><span style="flex: 23; background: var(--mid)"></span><span style="flex: 1; background: var(--high)"></span></div>
+            <div class="legend"><span>最近 28 天：低 77%</span><span>中 23%</span><span>高 0%</span></div>
+          </div>
+          <div class="app-card" style="gap: 0; padding: 4px 16px">
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="target"></i></span><span class="grow"><span class="title">目標</span><span class="sub">全馬破四 · 每週 40 km</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="sliders-horizontal"></i></span><span class="grow"><span class="title">練什麼、怎麼練</span><span class="sub">跑步、騎車 · 主要跑步 · 每週 5 天</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="trophy"></i></span><span class="grow"><span class="title">個人最佳</span><span class="sub">半馬 1:52:10 · 全馬 4:05:00</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="heart-pulse"></i></span><span class="grow"><span class="title">身體</span><span class="sub">最大心率 190 · 右膝舊傷</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="bookmark"></i></span><span class="grow"><span class="title">教練記得的事</span><span class="sub">3 則 · 對話摘要 10/25</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          </div>
+          <button class="btn text" type="button" style="align-self: flex-start"><i data-lucide="import"></i>從其他 AI 帶入</button>
+        </div>
+        <ul class="notes"><li>第一層一眼看完：上面是教練算的數字，下面五列是你填的</li><li>沒填的列，副標寫「還沒填」，灰色</li><li>「傷病注意」併進「身體」；里程碑的地區搬到紀錄頁的軌道上直接切換</li></ul>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag after">點進「練什麼、怎麼練」</span>
+        <div class="phone"><div class="app-card">
+          <div class="row"><button class="btn text sm" type="button"><i data-lucide="chevron-left"></i>選手</button></div>
+          <div class="t-head">練哪些運動</div>
+          <div class="chips"><span class="chip" style="background: var(--accent-soft)"><i data-lucide="check"></i>跑步</span><span class="chip" style="background: var(--accent-soft)"><i data-lucide="check"></i>騎車</span><span class="chip">游泳</span><span class="chip">肌力</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow"><span class="title">主要運動</span></span><span class="status">跑步</span></div>
+          <div class="row"><span class="grow"><span class="title">每週最多練幾天</span></span><span class="status">5</span></div>
+          <div class="row"><span class="grow"><span class="title">休息日</span></span><span class="status">週一</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="lead-ic low"><i data-lucide="footprints"></i></span><span class="grow"><span class="title">跑步</span><span class="sub">完賽 · 適度 · 每週 4 次 · 長跑週日</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="row"><span class="lead-ic"><i data-lucide="bike"></i></span><span class="grow"><span class="title">騎車</span><span class="sub">保持健康 · 每週 3 小時</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>更多：節奏、偏好時段、其他活動</summary><div><span>節奏：固定 · 時段：清晨 · 其他活動：登山</span></div></details>
+        </div></div>
+        <ul class="notes"><li>常用的設定直接在這層改，每項運動再一層</li><li>改了就存，不用捲到最下面按「儲存」</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">提案 7（2026-10-28）</span>
+    <h2>對話：長回覆先給結論，細節收起來</h2>
+    <p class="muted">教練照樣寫完整的內容，不砍細節；畫面上先看到結論，每個小標收成一列，想看哪段點哪段。</p>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old" style="gap: 6px">
+          <b>這週的狀況</b><span class="muted">你這週跑了 32 km，比前三週平均多 12%，心率漂移在長跑後段有點大……（八行）</span>
+          <b>週四的閾值課</b><span class="muted">建議改成 3 × 1.5 km，因為昨天的 HRV 比平常低 23%，睡眠只有 6 小時……（六行）</span>
+          <b>週末的長跑</b><span class="muted">維持 16 km，但前 10 km 控制在輕鬆跑心率 151 以下……（七行）</span>
+          <b>補給</b><span class="muted">天氣濕熱，每 20 分鐘喝水……（五行）</span>
+        </div></div>
+        <ul class="notes"><li>一則回覆要捲兩三個畫面</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">提案</span>
+        <div class="phone"><div class="app-card">
+          <span class="t-body"><b>週四的閾值課縮短成 3 × 1.5 km，週末長跑照排。</b>這週量比平常多一成，昨晚睡不好，先保留強度、少一組。</span>
+          <div class="divider"></div>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>這週的狀況</summary><div><span>你這週跑了 32 km，比前三週平均多 12%……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>週四的閾值課</summary><div><span>建議改成 3 × 1.5 km……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>週末的長跑</summary><div><span>維持 16 km……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>補給</summary><div><span>天氣濕熱……</span></div></details>
+          <div class="row" style="gap: 8px"><button class="btn text sm" type="button">全部展開</button></div>
+        </div></div>
+        <ul class="notes"><li>教練先寫一兩句結論，再分小標（系統提示要求）</li><li>小標以下收起，短回覆（沒有小標）照舊整段顯示</li><li>正在寫的時候全部展開，寫完才收起</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>每次改畫面前的檢查</h2>
+    <ul class="checklist">
+      <li><i data-lucide="check"></i>每張卡最多一顆實心按鈕</li>
+      <li><i data-lucide="check"></i>沒有新的字級、間距或圓角</li>
+      <li><i data-lucide="check"></i>沒有 emoji；圖示旁邊有字（✕ ? 齒輪 › 例外）</li>
+      <li><i data-lucide="check"></i>超過兩行的說明收起來了</li>
+      <li><i data-lucide="check"></i>數字和日期照格式寫</li>
+      <li><i data-lucide="check"></i>同一種東西和別頁長一樣</li>
+      <li><i data-lucide="check"></i>手機與電腦、淺色與深色都截圖看過</li>
+      <li><i data-lucide="check"></i>沒有疊在一起的括號</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>怎麼改上去</h2>
+    <div class="phases">
+      <div class="phase"><h3>1. 基礎</h3><p>字級、間距、圓角寫成樣式表的變數；換成線條圖示（分頁、運動、看板）；按鈕三種樣式。畫面大致不變，只是統一。</p></div>
+      <div class="phase"><h3>2. 今天的重點</h3><p>照範例 1 改看板（原本的工作單併進來）。</p></div>
+      <div class="phase"><h3>3. 課表與回報</h3><p>課卡的強度條與「細節」、運動回報的十格體感（範例 2、3）。</p></div>
+      <div class="phase"><h3>4. 選手資料與設定</h3><p>設定改成清單加下一層；很少改的收進「進階」；說明改 ⓘ（範例 4）。</p></div>
+      <div class="phase"><h3>5. 其他頁面</h3><p>紀錄、對話、說明、新手引導照檢查清單過一遍。</p></div>
+    </div>
+  </section>
+</div>
+
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script>
+  try { if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 2 } }); } catch (e) {}
+</script>

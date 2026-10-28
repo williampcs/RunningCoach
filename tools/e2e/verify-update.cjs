@@ -2,6 +2,7 @@
 // 版本相同不提示；伺服器的 version.json 換成別的 commit 後，回到前景時出現提示、不自動重新載入（打到一半的字還在）、
 // 關掉後同一個版本不再出現（重新整理後也是）、更新的版本又出現、點了才重新載入；讀不到（離線、404、回傳網頁）時不提示也不報錯；
 // 設定頁「資料」顯示資料保護的三種狀態；標題列只顯示 Beta、設定頁最下面是完整的版號（規格 12.19）；
+// App 的名稱是 Zone2Mate：標題列、<title>、manifest、隱私說明頁（規格 12.24）；
 // 手機與電腦、淺色與深色的截圖
 const path = require("path");
 
@@ -48,6 +49,14 @@ const bannerShown = async (page, expected) => {
     check.settingsShowsFullVersion = settingsText.includes(`v${version} Beta（${actual.commit}，`);
     check.topbarShowsOnlyBeta = (await page.locator(".topbar .version").innerText()).trim() === "Beta";
     check.topbarTitleHasFullVersion = ((await page.locator(".topbar .version").getAttribute("title")) ?? "").startsWith(`v${version} Beta（`);
+    // App 的名稱（規格 12.24）
+    check.topbarName = (await page.locator(".topbar h1").innerText()).trim() === "Zone2Mate";
+    check.documentTitle = (await page.title()) === "Zone2Mate";
+    const manifest = await (await page.request.get(new URL("manifest.webmanifest", E2E.URL).href)).json();
+    check.manifestName = manifest.name === "Zone2Mate" && manifest.short_name === "Zone2Mate";
+    await page.goto(new URL("privacy", E2E.URL).href);
+    check.privacyPageName = (await page.title()) === "隱私說明｜Zone2Mate" && (await page.locator(".back a").innerText()).includes("Zone2Mate");
+    check.noOldName = !(await page.content()).includes("Running Coach");
     await context.close();
   }
 
@@ -81,18 +90,11 @@ const bannerShown = async (page, expected) => {
         await page.locator("nav.tabbar button").first().waitFor();
         check[`${tag}.sameNoBanner`] = !(await bannerShown(page, false));
         check[`${tag}.checkedOnOpen`] = fetches >= 1;
+        await page.locator(".topbar").screenshot({ path: path.join(E2E.OUT, `update-topbar-${tag}.png`) });
 
         step = "設定";
         // 對話的輸入框要設定好 AI 才出現
-        await E2E.go(page, "設定");
-        await page.getByLabel("時區").fill("Asia/Taipei");
-        await page.getByLabel("供應商").selectOption("openai-compatible");
-        await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-        await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-        await page.getByLabel("主對話模型").fill("mock-model");
-        await page.getByLabel("我了解並同意以上的資料流向").check();
-        await page.getByRole("button", { name: "儲存設定" }).click();
-        await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+        await E2E.setupMock(page, { mock: E2E.MOCK, intervals: false, timeZone: "Asia/Taipei" });
         await page.locator("#side-panel").getByRole("button", { name: "關閉設定" }).click();
         await page.locator(".getting-started").getByRole("button", { name: "先略過" }).click().catch(() => undefined);
 
@@ -182,7 +184,12 @@ const bannerShown = async (page, expected) => {
       try {
         await page.goto(E2E.URL);
         await page.locator("nav.tabbar button").first().waitFor();
+        // 設定的第一層：「資料」那一列右邊是狀態；點進去才是完整的說明（規格 12.28）
         await E2E.go(page, "設定");
+        const row = page.locator("#side-panel .settings-list").getByRole("button", { name: "資料", exact: true });
+        await row.locator(".list-row-end", { hasText: /\S/ }).waitFor({ timeout: 5000 });
+        check[`${tag}.protectionRow-${state}`] = (await row.locator(".list-row-end").innerText()).includes(state === "persisted" ? "已受保護" : "可能被清掉");
+        await E2E.settings(page, "資料");
         const note = page.locator(".storage-protection");
         await note.waitFor({ timeout: 5000 });
         check[`${tag}.protection-${state}`] = (await note.getAttribute("data-state")) === state && (await note.innerText()).includes(expectedText[state]);

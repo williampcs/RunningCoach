@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { appGuide } from "@running-coach/core";
 
+import { FEATURES_ON } from "../environment";
 import { Markdown } from "../Markdown";
 import { PrivacyLink } from "./PrivacyLink";
 
 /** 使用說明（規格 12.12）：和教練查的是同一份；可以搜尋，從教練回覆的連結打開時捲到那一段 */
 export function HelpView({ topic }: { topic: { id: string } | null }) {
-  const sections = appGuide("web");
+  // 開關關著的功能的段落不列（規格 12.25）
+  const sections = useMemo(() => appGuide("web", FEATURES_ON), []);
   const [query, setQuery] = useState("");
   const shown = useMemo(() => {
     const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);

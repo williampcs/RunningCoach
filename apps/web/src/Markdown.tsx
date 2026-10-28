@@ -1,5 +1,9 @@
 import ReactMarkdown from "react-markdown";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkGfm from "remark-gfm";
+
+// 中文標點旁的粗體（「**照排。**這週」）：CommonMark 的規則不算結尾，會直接顯示星號；remark-cjk-friendly 修正這點（規格 12.30）
+const PLUGINS = [remarkGfm, remarkCjkFriendly];
 
 /**
  * 模型回覆與訓練計畫都是 Markdown；react-markdown 不會執行內容中的 HTML.
@@ -10,7 +14,7 @@ export function Markdown({ children }: { children: string }) {
   return (
     <div className="markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={PLUGINS}
         disallowedElements={["img"]}
         components={{
           a: ({ node: _node, href, ...props }) =>

@@ -1,12 +1,12 @@
 import { NO_RUNS_HINT } from "@running-coach/core";
 
+import { Disclosure, EmojiText } from "../ui";
 import type { Notice } from "../use-sync";
 
 /** 沒有 Garmin 等手錶、只用 iPhone 或 Apple Watch 時，把跑步送進 Intervals.icu 的方式 */
 export function PhoneGuide() {
   return (
-    <details className="phone-guide small">
-      <summary>只用 iPhone 或 Apple Watch？</summary>
+    <Disclosure summary="只用 iPhone 或 Apple Watch？" className="phone-guide small">
       <p>瀏覽器讀不到 iPhone「健康」的資料，要先用其他 App 把跑步上傳到 Intervals.icu：</p>
       <ol className="guide">
         <li>
@@ -14,7 +14,7 @@ export function PhoneGuide() {
           <a href="https://apps.apple.com/app/id6739638454" target="_blank" rel="noreferrer">
             Intervals.icu Companion
           </a>
-          。這是第三方 App，與 Running Coach 無關；免費下載，部分功能需要內購。我們還沒有實測過。
+          。這是第三方 App，與 Zone2Mate 無關；免費下載，部分功能需要內購。我們還沒有實測過。
         </li>
         <li>
           用 Intervals.icu 帳號登入，開啟運動的同步。有 Apple Watch 的話，也開啟每日健康資料（HRV、睡眠、靜息心率）的同步，教練就能參考恢復狀況。
@@ -27,16 +27,26 @@ export function PhoneGuide() {
       <p>
         已經用 Garmin 等手錶直接連 Intervals.icu 的話，不要再開 Companion 的運動同步：手錶的紀錄也會寫進「健康」，同一趟會傳兩次。萬一重複了，教練會自動合併，只算一次。
       </p>
-    </details>
+    </Disclosure>
   );
+}
+
+/**
+ * 同步的結果要不要留在原地：成功的只用畫面下方的小提示（useSync 送出），
+ * 失敗、或同步不到跑步（要使用者動手，附 iPhone 的上傳方式）才留著（規格 12.28）
+ */
+export function syncNoticeShown(message: Notice | null): message is Notice {
+  return !!message && (message.kind === "error" || message.text.includes(NO_RUNS_HINT));
 }
 
 /** 同步結果；同步不到跑步時附上 iPhone 的上傳方式 */
 export function SyncNotice({ message }: { message: Notice | null }) {
-  if (!message) return null;
+  if (!syncNoticeShown(message)) return null;
   return (
-    <div className={`notice ${message.kind}`}>
-      {message.text}
+    <div className={`notice ${message.kind === "error" ? "error" : "warn"}`}>
+      <span>
+        <EmojiText text={message.text} />
+      </span>
       {message.text.includes(NO_RUNS_HINT) && <PhoneGuide />}
     </div>
   );

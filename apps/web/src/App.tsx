@@ -12,14 +12,19 @@ import {
   type Logger,
 } from "@running-coach/core";
 
-import { AppContext, errorText, type AppState, type Panel, type Tab } from "./app-context";
+import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settings as SettingsIcon, SquarePen, User, X, type LucideIcon } from "lucide-react";
+
+import { AppContext, errorText, type AppState, type Panel, type SettingsSection, type Tab } from "./app-context";
+import { EmojiText, Icon, ICON_TAB } from "./ui";
 import { HelpView } from "./views/Help";
-import { IS_STAGING, MOVED_TO } from "./environment";
+import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
 import { MovedBanner } from "./views/Moved";
 import { StagingBanner } from "./views/Staging";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
-import { buildProvider, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, resolvedModels, saveSettings, type AppSettings } from "./settings";
+import { deleteDeviceIdentity } from "./device-identity";
+import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
   clockOffsetMs,
   loadTestMode,
@@ -39,15 +44,16 @@ import { SettingsView } from "./views/Settings";
 import { requestPersistentStorage, useNewVersion } from "./update-check";
 import { BUILD, BUILD_DETAIL, STAGE_LABEL } from "./version";
 
-// 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "chat", label: "對話", icon: "💬" },
-  { id: "report", label: "跑後回報", icon: "🏃" },
-  { id: "history", label: "紀錄", icon: "📖" },
-  { id: "plan", label: "計畫與賽事", icon: "📅" },
-  { id: "profile", label: "選手資料", icon: "👤" },
+// 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）；線條圖示＋兩個字（規格 12.28）
+const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+  { id: "chat", label: "對話", icon: MessageCircle },
+  { id: "report", label: "回報", icon: SquarePen },
+  { id: "history", label: "紀錄", icon: BookOpen },
+  { id: "plan", label: "計畫", icon: CalendarDays },
+  { id: "profile", label: "選手", icon: User },
 ];
-const PAGE_LABELS = Object.fromEntries(TABS.map((t) => [t.id, t.label])) as Record<Tab, string>;
+/** 小提示留在畫面上多久 */
+const TOAST_MS = 3000;
 const PANEL_LABELS: Record<Panel, string> = { help: "使用說明", settings: "設定" };
 
 /** 面板記在瀏覽器的歷史紀錄裡，手機的返回（上一頁）就是關閉面板 */
@@ -116,7 +122,7 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
           urls: import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL) : undefined,
         })
       : null,
-    settings: { timeZone: settings.timeZone, shell: "web" },
+    settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
   };
 }
 
@@ -236,7 +242,7 @@ export function App() {
   }, [panel, closePanel]);
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
-  const [reportPreselect, setReportPreselect] = useState<number | null>(null);
+  const [reportPreselect, setReportPreselect] = useState<number | string | null>(null);
   // 用手機掃了另一台顯示的 QR code：網址的 #pair= 後面是配對碼（不會送到伺服器）
   const [pairFromLink, setPairFromLink] = useState<string | null>(readPairLink);
   // 已經開著的分頁貼上配對連結：只有 # 後面改變，頁面不會重新載入
@@ -278,7 +284,60 @@ export function App() {
 
   const touch = useCallback(() => setRevision((r) => r + 1), []);
   const newVersion = useNewVersion(BUILD.commit);
-  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch);
+  // 別台換了金鑰：同步引擎取得新的同步金鑰後存進設定（規格 12.27）
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const saveSyncKey = useCallback(async (key: string) => {
+    const next = { ...settingsRef.current, sync: { ...settingsRef.current.sync, key } };
+    await saveSettings(next);
+    settingsRef.current = next;
+    setSettings(next);
+  }, []);
+  // 這台已從同步移除（聲明與證明都對得上，規格 12.27）：清掉同步金鑰、API key 與這台的裝置金鑰；
+  // 訓練資料、選手資料、對話留著，由使用者決定要清除、匯出，或用這台的資料重新開始同步
+  const onRemoved = useCallback(() => {
+    void (async () => {
+      const current = settingsRef.current;
+      const next: AppSettings = {
+        ...current,
+        apiKey: "",
+        proxy: { ...current.proxy, token: "" },
+        intervals: { ...current.intervals, apiKey: "" },
+        sync: { ...current.sync, key: "" },
+      };
+      try {
+        await saveSettings(next);
+      } catch {
+        // 密碼鎖沒解開時存不了：連加密的憑證一起刪掉
+        forgetLockedSecrets();
+        saveSettings({ ...next }).catch(() => undefined);
+      }
+      await deleteDeviceIdentity();
+      markRemoved();
+      location.reload();
+    })();
+  }, []);
+  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch, saveSyncKey, onRemoved);
+  // 新裝置加入的提醒點「查看」：打開設定並捲到多裝置同步
+  const [devicesFocus, setDevicesFocus] = useState(0);
+  // 打開設定時直接到哪一項；n 讓同一項再打開一次也有反應
+  const [settingsSection, setSettingsSection] = useState<{ id: SettingsSection | null; n: number }>({ id: null, n: 0 });
+  const openSettings = useCallback(
+    (section?: SettingsSection) => {
+      setSettingsSection((current) => ({ id: section ?? null, n: current.n + 1 }));
+      openPanel("settings");
+    },
+    [openPanel],
+  );
+  // 畫面下方的小提示（規格 12.28）
+  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const toastId = useRef(0);
+  const toast = useCallback((text: string) => {
+    const id = ++toastId.current;
+    setToasts((list) => [...list, { id, text }]);
+    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), TOAST_MS);
+  }, []);
+  const [removed, setRemoved] = useState(removedHere);
 
   const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
 
@@ -340,31 +399,40 @@ export function App() {
       },
       goTo(next, draft) {
         if (draft) setOutbox(draft);
-        if (next === "help" || next === "settings") {
-          if (next === "help") setHelpTopic(null);
+        if (next === "settings") openSettings();
+        else if (next === "help") {
+          setHelpTopic(null);
           openPanel(next);
         } else showTab(next);
       },
-      openReport(workoutId) {
-        setReportPreselect(workoutId ?? null);
+      openReport(target) {
+        setReportPreselect(target ?? null);
         showTab("report");
       },
       deviceSync,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
+      devicesFocus,
+      showDevices() {
+        setDevicesFocus((n) => n + 1);
+        openSettings("sync");
+      },
+      openSettings,
+      toast,
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
 
-  // 從配對連結打開：直接打開設定，到同步區塊
+  // 從配對連結打開：直接打開設定，到同步那一項
   useEffect(() => {
-    if (pairFromLink) openPanel("settings");
-  }, [pairFromLink, openPanel]);
+    if (pairFromLink) openSettings("sync");
+  }, [pairFromLink, openSettings]);
 
   // 同一個按鈕再點一次就關閉；開著另一個面板時直接換過去
   const togglePanel = (next: Panel) => {
     if (panel === next) closePanel();
+    else if (next === "settings") openSettings();
     else {
-      if (next === "help") setHelpTopic(null);
+      setHelpTopic(null);
       openPanel(next);
     }
   };
@@ -382,33 +450,32 @@ export function App() {
     <AppContext.Provider value={state}>
       <div className="shell">
         <header className="topbar" ref={topbar}>
-          <h1>Running Coach</h1>
+          <h1>Zone2Mate</h1>
           <span className={IS_STAGING ? "version staging" : "version"} title={BUILD_DETAIL}>
             {STAGE_LABEL}
           </span>
-          <span className="page-label muted small">{PAGE_LABELS[tab]}</span>
           <button
-            className={panel === "help" ? "help-button active" : "help-button"}
+            className={panel === "help" ? "icon-button help-button active" : "icon-button help-button"}
             aria-label="使用說明"
             aria-expanded={panel === "help"}
             aria-controls="side-panel"
             title="使用說明"
             onClick={() => togglePanel("help")}
           >
-            <span aria-hidden="true">?</span>
+            <Icon as={CircleHelp} size={ICON_TAB} />
           </button>
           <button
-            className={panel === "settings" ? "settings-button active" : "settings-button"}
+            className={panel === "settings" ? "icon-button settings-button active" : "icon-button settings-button"}
             aria-label="設定"
             aria-expanded={panel === "settings"}
             aria-controls="side-panel"
             title="設定"
             onClick={() => togglePanel("settings")}
           >
-            <span aria-hidden="true">⚙️</span>
+            <Icon as={SettingsIcon} size={ICON_TAB} />
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit) && (
+        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0) && (
           <div className="notices" inert={!!panel}>
             {newVersion.commit && (
               // 不自動重新載入：打到一半的字會不見，由使用者決定什麼時候更新（規格 12.18）
@@ -416,13 +483,15 @@ export function App() {
                 <button className="link" onClick={() => location.reload()}>
                   有新版本，點這裡更新
                 </button>
-                <button className="update-dismiss" aria-label="先不要更新" title="先不要更新" onClick={newVersion.dismiss}>
-                  <span aria-hidden="true">✕</span>
+                <button className="icon-button update-dismiss" aria-label="先不要更新" title="先不要更新" onClick={newVersion.dismiss}>
+                  <Icon as={X} />
                 </button>
               </div>
             )}
             <MovedBanner />
             <StagingBanner />
+            {removed && <RemovedBanner onDismiss={() => setRemoved(false)} />}
+            <NewDevicesBanner />
             {!state.db.persistent && (
               <div className="notice warn">
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。
@@ -431,10 +500,10 @@ export function App() {
             {testMode.enabled && (
               <div className="notice test-banner">
                 <span>
-                  🧪 測試模式：使用假資料與另一個資料庫，正式資料不受影響。
+                  <Icon as={FlaskConical} size={16} /> 測試模式：用假資料，正式資料不受影響。
                   {testMode.today ? `模擬日期 ${testMode.today}。` : ""}
                 </span>
-                <button className="link" onClick={() => openPanel("settings")}>
+                <button className="text" onClick={() => openSettings("testmode")}>
                   測試設定
                 </button>
               </div>
@@ -451,7 +520,7 @@ export function App() {
         <nav className="tabbar" aria-label="主要分頁" inert={!!panel && !wide}>
           {TABS.map((t) => (
             <button key={t.id} className={t.id === tab ? "active" : ""} aria-current={t.id === tab} onClick={() => showTab(t.id)}>
-              <span aria-hidden="true">{t.icon}</span>
+              <Icon as={t.icon} size={ICON_TAB} />
               {t.label}
             </button>
           ))}
@@ -474,14 +543,21 @@ export function App() {
                 <h2 ref={panelTitle} tabIndex={-1}>
                   {PANEL_LABELS[shown]}
                 </h2>
-                <button className="side-panel-close" aria-label={`關閉${PANEL_LABELS[shown]}`} title="關閉" onClick={closePanel}>
-                  <span aria-hidden="true">✕</span>
+                <button className="icon-button side-panel-close" aria-label={`關閉${PANEL_LABELS[shown]}`} title="關閉" onClick={closePanel}>
+                  <Icon as={X} />
                 </button>
               </div>
-              <div className="side-panel-body">{shown === "settings" ? <SettingsView /> : <HelpView topic={helpTopic} />}</div>
+              <div className="side-panel-body">{shown === "settings" ? <SettingsView section={settingsSection} /> : <HelpView topic={helpTopic} />}</div>
             </aside>
           </>
         )}
+        <div className="toasts" aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.id} className="toast" role="status">
+              <EmojiText text={t.text} />
+            </div>
+          ))}
+        </div>
       </div>
     </AppContext.Provider>
   );

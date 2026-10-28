@@ -12,6 +12,8 @@ interface ImportMetaEnv {
   readonly VITE_STAGING?: string;
   /** 正式的網址（Variables 的 WEB_URL）；從其他網址打開時顯示搬家的提示（規格 12.19） */
   readonly VITE_WEB_URL?: string;
+  /** 功能開關（規格 12.25）：逗號分隔的名稱或 all；staging 的建置不論設定都全開 */
+  readonly VITE_FEATURES?: string;
   /** 開發用：把 Intervals.icu 指向本機的模擬服務 */
   readonly VITE_INTERVALS_BASE_URL?: string;
   /** 開發用：把 Open-Meteo 指向本機的模擬服務（{base}/v1/forecast…） */

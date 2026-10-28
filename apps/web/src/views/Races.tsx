@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
 import {
+  distanceText,
   DNS_REASONS,
+  shortDateLabel,
   duplicateGroups,
   isAfterRace,
   raceOutcome,
@@ -15,7 +17,12 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { Import } from "lucide-react";
+
+import { Disclosure, Icon, SportIcon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { featureEnabled } from "../environment";
+import { ImportFromAi } from "./ImportFromAi";
 
 interface RaceForm {
   id: number | null;
@@ -27,6 +34,8 @@ interface RaceForm {
   target: string;
   confirmed: boolean;
   notes: string;
+  /** 賽事的運動（多運動）：run 跑步、ride 騎車 */
+  sport: "run" | "ride";
 }
 
 const EMPTY_RACE: RaceForm = {
@@ -38,6 +47,7 @@ const EMPTY_RACE: RaceForm = {
   target: "",
   confirmed: true,
   notes: "",
+  sport: "run",
 };
 
 interface ResultForm {
@@ -61,6 +71,8 @@ export function RacesCard() {
   const { coach, revision, touch } = useApp();
   const [races, setRaces] = useState<Race[]>([]);
   const [form, setForm] = useState<RaceForm | null>(null);
+  // 從其他 AI 帶入（賽事是它帶入的範圍之一；確認畫面照舊列出全部，規格 12.30）
+  const [importing, setImporting] = useState(false);
   const [resultFor, setResultFor] = useState<ResultForm | null>(null);
   const [dnsFor, setDnsFor] = useState<{
     id: number;
@@ -111,6 +123,8 @@ export function RacesCard() {
         target_time: f.target.trim(),
         confirmed: f.confirmed ? 1 : 0,
         notes: f.notes.trim(),
+        // 多運動：單車的賽事；開關關著時不寫（和原本一樣）
+        ...(featureEnabled("multisport") ? { sport: f.sport } : {}),
       };
       if (f.id === null) await coach.db.addRace(fields);
       else await coach.editRace(f.id, fields);
@@ -157,10 +171,19 @@ export function RacesCard() {
 
   return (
     <section className="card" id="races">
-      <div className="row between">
+      <div className="card-head">
         <h2>賽事</h2>
-        {form === null && <button onClick={() => setForm(EMPTY_RACE)}>新增賽事</button>}
+        {form === null && !importing && (
+          <span className="card-head-actions">
+            <button className="text import-button" onClick={() => setImporting(true)}>
+              <Icon as={Import} size={18} />
+              從其他 AI 帶入
+            </button>
+            <button onClick={() => setForm(EMPTY_RACE)}>新增賽事</button>
+          </span>
+        )}
       </div>
+      {importing && <ImportFromAi startOpen onClose={() => setImporting(false)} />}
       {error && <div className="notice error">{error}</div>}
       {dups.length > 0 && (
         <div className="notice warn small">
@@ -185,6 +208,15 @@ export function RacesCard() {
             <p className="small muted wide">賽後只能改名稱與備註；成績用「修改成績」。</p>
           ) : (
             <>
+              {featureEnabled("multisport") && (
+                <label>
+                  運動
+                  <select value={form.sport} onChange={(e) => setForm({ ...form, sport: e.target.value as RaceForm["sport"] })}>
+                    <option value="run">跑步</option>
+                    <option value="ride">騎車（公路賽、百公里等）</option>
+                  </select>
+                </label>
+              )}
               <label>
                 日期
                 <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
@@ -212,11 +244,11 @@ export function RacesCard() {
             備註
             <AutoGrowTextarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </label>
-          <div className="row wide">
+          <div className="actions wide">
             <button type="submit" className="primary">
               {form.id === null ? "新增" : "儲存變更"}
             </button>
-            <button type="button" onClick={() => setForm(null)}>
+            <button className="text" type="button" onClick={() => setForm(null)}>
               取消
             </button>
           </div>
@@ -225,10 +257,9 @@ export function RacesCard() {
       {races.length === 0 && !form && <p className="muted">還沒有賽事。</p>}
       <ul className="list">{[...upcoming, ...awaiting, ...finished].map(renderRace)}</ul>
       {others.length > 0 && (
-        <details className="races-other">
-          <summary>其他紀錄（{others.length} 場）</summary>
+        <Disclosure className="races-other" summary={`其他紀錄 ${others.length} 場`}>
           <ul className="list">{others.map(renderRace)}</ul>
-        </details>
+        </Disclosure>
       )}
     </section>
   );
@@ -239,17 +270,30 @@ export function RacesCard() {
     const raceDayOrLater = race.date <= today;
     return (
       <li key={race.id}>
-        <div className="row between">
-          <strong>{race.name}</strong>
-          <span className="small">{raceStatusText(race, today)}</span>
+        <div className="list-row">
+          <span className="list-row-icon race-icon">
+            <SportIcon sport={featureEnabled("multisport") && race.sport === "ride" ? "ride" : "race"} />
+          </span>
+          <span className="list-row-text">
+            <span className="list-row-title">{race.name}</span>
+            <span className="list-row-sub">
+              {[
+                featureEnabled("multisport") && race.sport === "ride" ? "騎車" : null,
+                shortDateLabel(race.date),
+                distanceText(race.distance_km * 1000),
+                `目標 ${race.target_time || "完賽"}`,
+                ...(outcome === "finished" ? resultDetail(race) : []),
+                race.notes || null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </span>
+          <span className="list-row-end">{raceStatusText(race, today)}</span>
         </div>
-        <div className="muted small">
-          {race.date}｜{race.distance_km}km｜目標 {race.target_time || "完賽"}
-          {outcome === "finished" && resultDetail(race).map((d) => `｜${d}`)}
-          {race.notes && `｜${race.notes}`}
-        </div>
-        <div className="row">
+        <div className="actions">
           <button
+            className="text"
             onClick={() =>
               setForm({
                 id: race.id,
@@ -260,16 +304,20 @@ export function RacesCard() {
                 target: race.target_time ?? "",
                 confirmed: Boolean(race.confirmed),
                 notes: race.notes ?? "",
+                sport: race.sport === "ride" ? "ride" : "run",
               })
             }
           >
             編輯
           </button>
           {raceDayOrLater && outcome !== "dns" && resultFor?.id !== race.id && (
-            <button onClick={() => openResult(race)}>{outcome ? "修改成績" : "記錄成績"}</button>
+            <button className={race.date < today && !outcome ? "primary" : "text"} onClick={() => openResult(race)}>
+              {outcome ? "修改成績" : "記錄成績"}
+            </button>
           )}
           {outcome === null && dnsFor?.id !== race.id && (
             <button
+              className="text"
               onClick={() => {
                 setResultFor(null);
                 setDnsFor({ id: race.id, reason: "injury", note: "" });
@@ -279,7 +327,7 @@ export function RacesCard() {
             </button>
           )}
           <button
-            className="link danger"
+            className="text danger"
             onClick={() => {
               if (confirm(`確定要刪除「${race.name}」嗎？刪除後無法復原。`)) void run(() => coach.deleteRace(race.id));
             }}
@@ -313,11 +361,11 @@ export function RacesCard() {
               <AutoGrowTextarea value={dnsFor.note} placeholder="例：右膝不適" onChange={(e) => setDnsFor({ ...dnsFor, note: e.target.value })} />
             </label>
             <p className="small muted">記下後不能恢復；紀錄會保留，教練之後會參考原因。</p>
-            <div className="row">
+            <div className="actions">
               <button type="submit" className="primary">
                 {race.date < today ? "確定沒有出賽" : "確定不參加"}
               </button>
-              <button type="button" onClick={() => setDnsFor(null)}>
+              <button className="text" type="button" onClick={() => setDnsFor(null)}>
                 取消
               </button>
             </div>
@@ -391,11 +439,11 @@ export function RacesCard() {
                 />
               </label>
             )}
-            <div className="row">
+            <div className="actions">
               <button type="submit" className="primary">
                 儲存
               </button>
-              <button type="button" onClick={() => setResultFor(null)}>
+              <button className="text" type="button" onClick={() => setResultFor(null)}>
                 取消
               </button>
             </div>

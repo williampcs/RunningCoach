@@ -15,6 +15,7 @@ import {
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { InfoTip } from "../ui";
 import { useSync } from "../use-sync";
 
 type Notice = { kind: "ok" | "error"; text: string };
@@ -53,12 +54,13 @@ export function TestModeCard() {
   if (!testMode.enabled) {
     return (
       <section className="card">
-        <h2>測試模式</h2>
-        <p className="muted small">
-          用假的跑步紀錄測試教練在各種情況下的反應，例如過度訓練、受傷中斷、賽前減量。測試模式使用另一個資料庫，正式的對話與訓練紀錄不受影響；也不連線
-          Intervals.icu，不會在那裡留下任何資料。AI 模型照常使用你的設定，會正常計費。
+        <p className="row">
+          <span>用假的跑步紀錄測試教練的反應。</span>
+          <InfoTip label="測試模式的說明">
+            例如過度訓練、受傷中斷、賽前減量。測試模式使用另一個資料庫，正式的對話與訓練紀錄不受影響；也不連線 Intervals.icu，不會在那裡留下任何資料。AI 模型照常使用你的設定，會正常計費。
+          </InfoTip>
         </p>
-        <div className="row">
+        <div className="actions">
           <button
             onClick={() => {
               if (confirm("切換到測試模式？頁面會重新載入，改用測試用的資料庫。")) updateTestMode({ ...testMode, enabled: true });
@@ -164,7 +166,7 @@ export function TestModeCard() {
     setRun({ date: "", distance: "", duration: "", avgHr: "", maxHr: "", elevation: "" });
     setMessage({
       kind: "ok",
-      text: `已新增 ${activity.date} ${activity.distance_km} 公里（${activity.avg_pace}）。可以到「跑後回報」回報這次的感受，或按「同步」帶入。`,
+      text: `已新增 ${activity.date} ${activity.distance_km} 公里（${activity.avg_pace}）。可以到「回報」記下這次的感受，或按「同步」帶入。`,
     });
   }
 
@@ -176,13 +178,12 @@ export function TestModeCard() {
 
   return (
     <section className="card test-mode">
-      <h2>測試模式</h2>
       <p className="small">
         目前使用測試資料庫與假資料。{testMode.spec ? `情境「${FAKE_SCENARIOS[testMode.spec.scenario].label}」（${FAKE_DEVICES[testMode.spec.device ?? "garmin"].label}），${testMode.spec.weeks} 週，共 ${all.length} 筆，產生到 ${testMode.spec.endDate}。` : "還沒產生假資料。"}
         {testMode.custom.length ? `手動新增 ${testMode.custom.length} 筆。` : ""}
       </p>
 
-      <strong>產生一段期間的紀錄</strong>
+      <h3>產生一段期間的紀錄</h3>
       <div className="grid">
         <label className="wide">
           情境
@@ -239,16 +240,16 @@ export function TestModeCard() {
         <button className="primary" disabled={busy} onClick={() => void generate()}>
           {busy ? "產生中…" : "產生（會清空測試資料庫）"}
         </button>
-        <button disabled={busy} onClick={() => setSeed(String(Math.floor(Math.random() * 100000)))}>
+        <button className="text" disabled={busy} onClick={() => setSeed(String(Math.floor(Math.random() * 100000)))}>
           換一組亂數
         </button>
         <button disabled={sync.busy} onClick={() => void sync.run()}>
           {sync.busy ? "同步中…" : "同步最近 14 天"}
         </button>
       </div>
-      {sync.message && <div className={`notice ${sync.message.kind}`}>{sync.message.text}</div>}
+      {sync.message?.kind === "error" && <div className="notice error">{sync.message.text}</div>}
 
-      <strong>新增一筆</strong>
+      <h3 className="section">新增一筆</h3>
       <div className="grid">
         <label>
           日期
@@ -279,6 +280,7 @@ export function TestModeCard() {
         <button onClick={addRun}>新增</button>
         {testMode.custom.length > 0 && (
           <button
+            className="text"
             onClick={() => {
               updateTestMode({ ...testMode, custom: [] });
               setMessage({ kind: "ok", text: "已清空手動新增的紀錄（已同步進資料庫的不受影響）。" });
@@ -289,7 +291,7 @@ export function TestModeCard() {
         )}
       </div>
 
-      <strong>模擬今天的日期</strong>
+      <h3 className="section">模擬今天的日期</h3>
       <p className="muted small">
         目前是 {today}。往後移就像時間過去：之後日期的假資料會陸續出現、賽事倒數也跟著變。
       </p>
@@ -298,13 +300,16 @@ export function TestModeCard() {
         <button disabled={!simDate} onClick={() => applyDate(simDate)}>
           套用
         </button>
-        {testMode.today && <button onClick={() => applyDate(null)}>回到實際日期</button>}
+        {testMode.today && (
+          <button className="text" onClick={() => applyDate(null)}>
+            回到實際日期
+          </button>
+        )}
       </div>
 
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
       <div className="row">
         <button
-          className="danger"
           onClick={() => {
             if (confirm("停用測試模式，回到正式資料？測試資料庫會保留，下次啟用時還在。")) {
               updateTestMode({ ...testMode, enabled: false, today: null });

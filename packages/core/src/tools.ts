@@ -1,15 +1,17 @@
 /** 主對話可用的工具：定義（供模型呼叫）與執行器. */
 import { RECENT_WORKOUT_DAYS } from "./context";
-import { addDays, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
+import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
 import { changeSession, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import { MEMORY_MAX_CHARS, type Db, type RaceUpdate } from "./db";
 import type { Llm, ToolDef } from "./llm";
-import { otherActivitiesText } from "./activity-labels";
+import { activityLabel, otherActivitiesText } from "./activity-labels";
+import { sportOfType, SPORT_LABELS } from "./sports";
 import { findGuide, guideTopics } from "./app-guide";
 import type { Activity, ActivitySource, CoachSettings, Logger } from "./types";
+import { featureOn } from "./features";
 import {
   DNS_REASONS,
   duplicateGroups,
@@ -31,6 +33,10 @@ const RACE_ID_HINT =
 /** 恢復狀況的判讀要和前幾天比較，查詢時多取幾天的手錶資料 */
 const BASELINE_EXTRA_DAYS = 35;
 
+/** get_recent_workouts：最多查幾天；最近幾天的 AI 摘要全文帶入，更早的只帶第一行的結論（工具的結果在工具迴圈的每一輪都要重送） */
+const RECENT_WORKOUT_MAX_DAYS = 90;
+const FULL_SUMMARY_DAYS = 7;
+
 /** search_conversations 最多回傳幾則、每則帶入多少字 */
 const SEARCH_MAX = 20;
 const SEARCH_EXCERPT = 200;
@@ -47,6 +53,27 @@ const WEATHER_TOOL: ToolDef = {
     type: "object",
     properties: { date: { type: "string", description: "要看逐時天氣的日期 YYYY-MM-DD（今天起 7 天內，選填）" } },
     required: [],
+  },
+};
+
+/** 單車的課的種類（save_training_plan 的 kind） */
+const RIDE_KIND_LIST = ["ride_recovery", "ride_endurance", "ride_long", "ride_tempo", "ride_sweetspot", "ride_threshold", "ride_vo2", "ride_anaerobic"];
+
+/** 多運動：騎車等跑步以外的運動的體感（運動回報） */
+const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
+  name: "save_activity_feedback",
+  description:
+    "記下一趟跑步以外的運動（騎車、游泳等，已從 Intervals.icu 同步）的體感與感受。選手回報騎完了、說了體感時呼叫；跑步用 save_workout。" +
+    "不給 date 時是今天；那天有好幾趟時用 sport 指定，仍有好幾趟時記到最新的一趟。",
+  input_schema: {
+    type: "object",
+    properties: {
+      date: { type: "string", description: "那趟的日期 YYYY-MM-DD，預設今天" },
+      sport: { type: "string", enum: ["ride", "swim", "strength", "other"], description: "哪種運動，預設 ride" },
+      perceived_effort: { type: "integer", description: "體感強度 1-10" },
+      subjective_notes: { type: "string", description: "主觀感受，例：腿很重，最後一組撐不住" },
+    },
+    required: ["perceived_effort"],
   },
 };
 
@@ -266,7 +293,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       input_schema: {
         type: "object",
         properties: {
-          days: { type: "integer", description: `查詢天數，預設 ${RECENT_WORKOUT_DAYS}` },
+          days: { type: "integer", description: `查詢天數，預設 ${RECENT_WORKOUT_DAYS}，最多 ${RECENT_WORKOUT_MAX_DAYS}` },
         },
         required: [],
       },
@@ -344,7 +371,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "get_app_help",
       description:
-        "查 App 的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
+        "查這個 App（Zone2Mate）的功能說明（分頁、按鈕、設定、同步、資料存在哪裡）。選手問 App 怎麼用時呼叫，不要憑印象回答。" +
         "topic 用系統提示【App 的使用方式】列的代號，或選手問的關鍵字。",
       input_schema: {
         type: "object",
@@ -372,7 +399,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     {
       name: "remember",
       description:
-        "記下一件要長期記住的事（每次對話都會帶給你，選手在「選手資料」頁看得到、改得了）。" +
+        "記下一件要長期記住的事（每次對話都會帶給你，選手在「選手」頁看得到、改得了）。" +
         "選手說「記住…」，或提到長期有效、選手資料欄位放不下的事時呼叫；記完要在回覆裡說「已記下：…」。" +
         "給 replace_id 時改寫那一條。",
       input_schema: {
@@ -435,8 +462,52 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       },
     },
   ];
+  if (featureOn(settings, "multisport")) multisportTools(tools);
   if (options.weather) tools.push(WEATHER_TOOL);
   return tools;
+}
+
+type Schema = { properties: Record<string, { description?: string; enum?: string[]; items?: Schema } & Record<string, unknown>> };
+
+/**
+ * 多運動（功能開關，規格 12.24）：選手資料加上練哪些運動與各自的目標；交叉訓練的課寫運動，目標用那項運動的區間；
+ * 肌力與交叉訓練的課可以記下做完了。開關關著時工具和原本一樣
+ */
+function multisportTools(tools: ToolDef[]): void {
+  const props = (name: string) => (tools.find((t) => t.name === name)!.input_schema as unknown as Schema).properties;
+  const profileKey = props("update_athlete_profile").key!;
+  profileKey.description +=
+    "\n・練哪些運動：pref_sports（逗號分隔：run 跑步、ride 騎車、swim 游泳、strength 肌力訓練、other 其他，例：run,ride,strength）；" +
+    "主要運動：pref_primary_sport（run、ride，或空白表示不選）；每週最多練幾天：pref_days_per_week（整數）；pref_other 是其他活動（不排課，只讓教練知道）；" +
+    "跑步的卡沿用 pref_goal、pref_intensity、pref_runs_per_week、pref_max_minutes、pref_long_run_day；" +
+    "騎車的卡：pref_goal_ride（health 保持健康／ftp 提升 FTP／distance 長距離／race 準備比賽）、pref_intensity_ride（easy／moderate／challenge）、" +
+    "pref_ride_hours（每週騎幾小時，數字）、pref_ride_max_minutes（每次最多幾分鐘）、pref_long_ride_day（長騎日，例：週六）；" +
+    "其他運動的目標：pref_goal_swim、pref_goal_strength、pref_goal_other（文字）";
+  const session = props("save_training_plan").sessions!.items!.properties;
+  // 單車的課（多運動的第 3 階段）：選手練騎車時照單車的教練方法排
+  session.kind!.enum = [...(session.kind!.enum ?? []), ...RIDE_KIND_LIST];
+  session.kind!.description =
+    "cross 交叉訓練（要寫 sport）、strength 肌力訓練：steps 寫時間，動作寫在 note；" +
+    "ride_* 是單車的課（選手練騎車時，照單車的排課規則）：ride_recovery 恢復騎、ride_endurance 耐力騎、ride_long 長騎、ride_tempo 節奏騎、" +
+    "ride_sweetspot 甜蜜點、ride_threshold 閾值騎、ride_vo2 最大攝氧間歇、ride_anaerobic 無氧與衝刺";
+  session.sport = {
+    type: "string",
+    enum: ["ride", "swim", "other"],
+    description: "交叉訓練（kind=cross）是哪種運動：ride 騎車、swim 游泳、other 其他（橢圓機、划船等）。心率與功率的目標用那項運動自己的設定換算",
+  };
+  session.steps!.description +=
+    '；交叉訓練的 {"zone":"Z2"}、{"hr":"easy"} 用那項運動自己的心率區間（沒有設定時程式改成體感並提示）；' +
+    '騎車另外可以寫 {"power":"Z2"}（功率區間，有 FTP 時才換算，沒有時改看心率）；單車的課的甜蜜點寫 {"zone":"SS"} 或 {"power":"SS"}';
+  // 賽事的運動
+  for (const name of ["add_race", "update_race"]) {
+    props(name).sport = { type: "string", enum: ["run", "ride"], description: "賽事的運動：run 跑步（預設）、ride 騎車（公路賽、百公里等）" };
+  }
+  tools.push(ACTIVITY_FEEDBACK_TOOL);
+  const action = props("update_planned_session").action!;
+  action.enum = [...(action.enum ?? []), "done", "undone"];
+  action.description = "done：選手說肌力或交叉訓練做完了（沒有手錶紀錄也算完成）；undone：取消做完了的回報";
+  const update = tools.find((t) => t.name === "update_planned_session")!;
+  update.description += "選手說肌力或交叉訓練做完了（手錶沒有記錄）時，用 action=done 記下。";
 }
 
 /** 產生摘要用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -563,6 +634,7 @@ export type ToolExecutor = (name: string, input: Record<string, unknown>) => Pro
 export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
   const { db, llm, activities, settings, today, logger } = deps;
   const weather = deps.weather ?? null;
+  const multisport = featureOn(settings, "multisport");
 
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
@@ -628,7 +700,8 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "get_recent_workouts": {
-        const days = toInt(input.days ?? RECENT_WORKOUT_DAYS, "days");
+        const days = Math.min(RECENT_WORKOUT_MAX_DAYS, toInt(input.days ?? RECENT_WORKOUT_DAYS, "days"));
+        const fullFrom = addDays(today(), -(FULL_SUMMARY_DAYS - 1));
         const [workouts, others] = await Promise.all([db.getRecentWorkouts(days), db.getOtherActivities(days)]);
         if (!workouts.length && !others.length) return `最近 ${days} 天無訓練紀錄。`;
         const lines = [workouts.length ? `最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：` : `最近 ${days} 天沒有跑步。`];
@@ -638,7 +711,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
             `\n【${w.date}】${w.distance_km}km｜${w.avg_pace ?? "?"}｜` +
               `${heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}${subj}`,
           );
-          if (w.summary) lines.push(`  AI摘要：${w.summary}`);
+          const summary = w.summary && (w.date >= fullFrom ? w.summary : w.summary.trim().split("\n")[0]);
+          if (summary) lines.push(`  AI摘要：${summary}`);
+        }
+        if (workouts.some((w) => w.date < fullFrom && w.summary)) {
+          lines.push("", `（${FULL_SUMMARY_DAYS} 天以前的 AI 摘要只列第一行的結論）`);
         }
         if (others.length) lines.push("", otherActivitiesText(others));
         return lines.join("\n");
@@ -668,11 +745,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "get_training_plan":
-        return planTextForTool(db, today());
+        return planTextForTool(db, today(), { multisport });
 
       case "get_training_values": {
         const weeks = Math.min(12, Math.max(1, input.weeks === undefined ? 4 : toInt(input.weeks, "weeks")));
-        return formatTrainingValues(await computeTrainingValues(db, today(), weeks));
+        return formatTrainingValues(await computeTrainingValues(db, today(), weeks), { multisport });
       }
 
       case "get_recovery_status": {
@@ -719,8 +796,8 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
 
       case "get_app_help": {
         const topic = str(input.topic);
-        const found = findGuide(settings.shell, topic);
-        if (!found.length) return `找不到「${topic}」的說明。可查的主題：${guideTopics(settings.shell)}`;
+        const found = findGuide(settings.shell, topic, settings.features);
+        if (!found.length) return `找不到「${topic}」的說明。可查的主題：${guideTopics(settings.shell, settings.features)}`;
         return found
           .map((g) => `## ${g.title}\n\n${g.body}${settings.shell === "web" ? `\n\n說明頁連結：[看完整說明](#help/${g.id})` : ""}`)
           .join("\n\n");
@@ -792,8 +869,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           target_time: str(input.target_time),
           confirmed: toInt(input.confirmed ?? 1, "confirmed"),
           notes: str(input.notes),
+          sport: multisport && input.sport === "ride" ? "ride" : null,
         });
-        return `賽事已新增（id=${raceId}）：${date} ${raceName}`;
+        return `賽事已新增（id=${raceId}）：${date} ${raceName}${multisport && input.sport === "ride" ? "（單車）" : ""}`;
       }
 
       case "list_races": {
@@ -808,7 +886,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           lines.push(
             "",
             "看起來重複的（同一天、距離相近）：" + dups.map((g) => g.map((r) => `[${r.id}]`).join("、")).join("；"),
-            "你不能刪除賽事；請選手在「計畫與賽事」頁的賽事上按「刪除」刪掉多的那筆。",
+            "你不能刪除賽事；請選手在「計畫」頁的賽事上按「刪除」刪掉多的那筆。",
           );
         }
         return lines.join("\n");
@@ -860,14 +938,32 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
       }
 
       case "save_training_plan":
-        return savePlanFromTool(db, today(), input);
+        return savePlanFromTool(db, today(), input, { multisport });
+
+      case "save_activity_feedback": {
+        if (!multisport) return `未知的 tool：${name}`;
+        const date = str(input.date).trim() || today();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`date 格式要是 YYYY-MM-DD：${date}`);
+        const effort = toInt(input.perceived_effort, "perceived_effort");
+        if (effort < 1 || effort > 10) throw new Error("perceived_effort 必須是 1–10");
+        const sport = str(input.sport) || "ride";
+        const sameDay = (await db.getOtherActivities(Math.max(1, daysBetween(date, today()) + 1))).filter((a) => a.date === date);
+        const found = sameDay.find((a) => sportOfType(a.type) === sport) ?? (sameDay.length === 1 ? sameDay[0] : undefined);
+        if (!found) {
+          return `${date} 沒有同步到${SPORT_LABELS[sport as keyof typeof SPORT_LABELS] ?? "這項運動"}的紀錄（可能手錶還沒上傳到 Intervals.icu）。請選手同步後再回報，或之後在「運動回報」填。`;
+        }
+        await db.setActivityFeedback(found.intervals_id, effort, str(input.subjective_notes).trim() || null);
+        return `已記下 ${date} ${activityLabel(found.type)}（${Math.round(found.duration_min ?? 0)} 分鐘）的體感 ${effort}/10。`;
+      }
 
       case "update_planned_session": {
         const action = str(input.action);
-        if (!["move", "skip", "fallback", "restore"].includes(action)) throw new Error("action 只能是 move、skip、fallback、restore");
+        const actions = multisport ? ["move", "skip", "fallback", "restore", "done", "undone"] : ["move", "skip", "fallback", "restore"];
+        if (!actions.includes(action)) throw new Error(`action 只能是 ${actions.join("、")}`);
         return changeSession(db, today(), toInt(input.session_id, "session_id"), action as SessionAction, {
           date: input.date === undefined ? undefined : str(input.date) || null,
           reason: str(input.reason),
+          multisport,
         });
       }
 
@@ -878,6 +974,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           const value = input[key];
           if (typeof value === "string" || typeof value === "number") fields[key] = value;
         }
+        if (multisport && (input.sport === "run" || input.sport === "ride")) fields.sport = input.sport;
         const race = await editRace(db, today(), raceId, fields);
         const changed = Object.entries(fields)
           .map(([k, v]) => `${k}=${v}`)

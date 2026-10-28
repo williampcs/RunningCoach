@@ -441,6 +441,7 @@ describe("端對端：核心的 Claude 轉接 → 代理 → 上游", () => {
       model: "claude-sonnet-5-5",
       max_tokens: 16000,
       system: "你是教練",
+      cache_control: { type: "ephemeral" },
       messages: [{ role: "user", content: "明天練什麼？" }],
       output_config: { effort: "medium" },
     });

@@ -13,6 +13,8 @@ export interface OpenAICompatibleOptions {
   maxTokensParam?: "max_completion_tokens" | "max_tokens";
   /** 是否送出 reasoning_effort。非推理模型會拒絕這個參數，預設不送 */
   reasoningEffort?: boolean;
+  /** Claude 的模型（anthropic/…）帶快取標記；未設定時依 baseURL 判斷是不是 OpenRouter */
+  anthropicCacheControl?: boolean;
   fetch?: typeof fetch;
 }
 
@@ -40,7 +42,8 @@ interface CompletionData {
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
-    prompt_tokens_details?: { cached_tokens?: number };
+    /** cache_write_tokens：OpenRouter 上有明確快取的模型（Claude）才有 */
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
   } | null;
 }
 
@@ -72,8 +75,12 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   startChat(request: ChatRequest): ChatSession {
     const { options, fetchImpl } = this;
+    const anthropicCache =
+      Boolean(request.system) &&
+      (options.anthropicCacheControl ?? isOpenRouter(options.baseURL)) &&
+      request.model.trim().toLowerCase().startsWith("anthropic/");
     const messages: WireMessage[] = [
-      ...(request.system ? [{ role: "system", content: request.system }] : []),
+      ...(request.system ? [{ role: "system", content: systemContent(request, anthropicCache) }] : []),
       ...request.messages.map((m) => ({ role: m.role, content: m.content })),
     ];
     const tools = request.tools?.map((t) => ({
@@ -95,6 +102,8 @@ export class OpenAICompatibleProvider implements LlmProvider {
           if (opts.disableTools) body.tool_choice = "none";
         }
         if (options.reasoningEffort) body.reasoning_effort = toReasoningEffort(request.effort);
+        // OpenRouter 的自動快取：斷點放在最後一個可快取的區塊，對話越長自動往後移（TTL 預設 5 分鐘）
+        if (anthropicCache) body.cache_control = { type: "ephemeral" };
         if (opts.onText) {
           body.stream = true;
           body.stream_options = { include_usage: true };
@@ -126,20 +135,45 @@ export class OpenAICompatibleProvider implements LlmProvider {
         }));
 
         const cached = data.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+        const cacheWrite = data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
         return {
           text: typeof message.content === "string" ? message.content : "",
           toolCalls,
           finish: finishOf(choice?.finish_reason, toolCalls.length > 0, message.refusal),
           usage: {
-            input: (data.usage?.prompt_tokens ?? 0) - cached,
+            input: (data.usage?.prompt_tokens ?? 0) - cached - cacheWrite,
             cacheRead: cached,
-            cacheWrite: 0,
+            cacheWrite,
             output: data.usage?.completion_tokens ?? 0,
           },
         };
       },
     };
   }
+}
+
+/**
+ * OpenRouter 上的 Claude 要帶快取標記才會快取（OpenAI、Gemini 自動快取，不用帶）。
+ * 依 OpenRouter 的 Prompt Caching 文件：內容區塊的 cache_control 是明確的斷點，請求上的 cache_control 是自動快取
+ */
+function isOpenRouter(baseURL: string): boolean {
+  try {
+    const host = new URL(baseURL).hostname;
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
+  }
+}
+
+/** 要快取時，系統提示分成兩個區塊，在不常變的那段結尾放斷點（見 anthropic.ts） */
+function systemContent(request: ChatRequest, anthropicCache: boolean): string | Record<string, unknown>[] {
+  const { system = "", systemStableChars: stableChars } = request;
+  if (!anthropicCache || stableChars === undefined) return system;
+  const dynamic = system.slice(stableChars).replace(/^\n+/, "");
+  return [
+    { type: "text", text: system.slice(0, stableChars), cache_control: { type: "ephemeral" } },
+    ...(dynamic ? [{ type: "text", text: dynamic }] : []),
+  ];
 }
 
 interface WireDelta {

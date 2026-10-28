@@ -74,6 +74,14 @@ describe("隱私說明頁（規格 12.20）", () => {
     expect(page).not.toContain("noindex");
   });
 
+  it("裝置清單（功能開關 devices）開著時才寫伺服器多知道的事", () => {
+    const on = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, devices: true });
+    expect(on).toContain("加入與最後同步的時間");
+    expect(on).toContain("已經下載的資料我們收不回來");
+    expect(on).not.toMatch(/<!--[A-Z_]+-->/);
+    expect(page).not.toContain("加入與最後同步的時間");
+  });
+
   it("沒有設定同步服務時照實寫", () => {
     expect(renderPrivacyPage({ staging: false, syncUrl: "" })).toContain("這個版本沒有設定同步服務");
     expect(page).toContain(`<code>${host(SYNC_URL)}</code>`);

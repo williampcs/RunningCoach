@@ -11,6 +11,7 @@
  */
 import { daysBetween } from "./dates";
 import type { Db, RaceUpdate } from "./db";
+import { sportOfType } from "./sports";
 import { parseDuration } from "./training-values";
 import type { Race } from "./types";
 
@@ -162,8 +163,14 @@ export async function markRaceNotStarted(db: Db, id: number, reason: string, not
 export async function raceActivity(
   db: Db,
   race: Race,
-): Promise<{ time: string; distanceKm: number | null; workoutId: number; intervalsId: string | null } | null> {
-  const runs = (await db.getWorkoutsOn(race.date)).filter((w) => w.distance_km != null);
+): Promise<{ time: string; distanceKm: number | null; workoutId: number | null; intervalsId: string | null } | null> {
+  // 單車的賽事：比賽當天的騎車（其他運動）
+  const runs =
+    race.sport === "ride"
+      ? (await db.getOtherActivities(Math.max(1, daysBetween(race.date, db.today()) + 1)))
+          .filter((a) => a.date === race.date && sportOfType(a.type) === "ride" && a.distance_km != null)
+          .map((a) => ({ ...a, id: null as number | null }))
+      : (await db.getWorkoutsOn(race.date)).filter((w) => w.distance_km != null);
   const best = runs
     .filter((w) => Math.abs(w.distance_km! - race.distance_km) <= race.distance_km * 0.25)
     .sort((a, b) => Math.abs(a.distance_km! - race.distance_km) - Math.abs(b.distance_km! - race.distance_km))[0];
@@ -191,7 +198,7 @@ export function resultDetail(r: Race): string[] {
 /** 教練看到的一行，例：[3] 2026-11-01 半馬 21.1km｜目標 1:58:00｜還有 8 天 */
 export function raceLineForCoach(r: Race, today: string): string {
   return (
-    `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km｜目標 ${r.target_time || "完賽"}｜${raceStatusText(r, today)}` +
+    `- [${r.id}] ${r.date} ${r.name} ${r.distance_km}km${r.sport === "ride" ? "（單車）" : ""}｜目標 ${r.target_time || "完賽"}｜${raceStatusText(r, today)}` +
     (raceOutcome(r) === "finished" ? resultDetail(r).map((d) => `｜${d}`).join("") : "") +
     (r.notes ? `｜備註：${r.notes}` : "")
   );

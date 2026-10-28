@@ -42,7 +42,7 @@ export function MovedBanner() {
       <span className="small">
         這裡的資料不會自動搬過去。開了多裝置同步的話，在新網址用配對或復原碼加入；沒開的話，先到設定頁「匯出資料庫」，再到新網址「匯入資料庫」。API key 要在新網址重新填；加到主畫面的，從新網址重新加入主畫面。
       </span>
-      <button className="link small" onClick={() => goTo("settings")}>
+      <button className="text" onClick={() => goTo("settings")}>
         搬好了，清除這裡的資料
       </button>
     </div>
@@ -116,7 +116,7 @@ export function MovedCard() {
               {deviceSync.error ? `（${deviceSync.error}）` : ""}
             </p>
           )}
-          <div className="row wrap">
+          <div className="actions">
             {deviceSync.enabled && (
               <button disabled={deviceSync.busy || busy} onClick={() => void deviceSync.run()}>
                 {deviceSync.busy ? "同步中…" : "立即同步裝置"}

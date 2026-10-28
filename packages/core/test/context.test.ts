@@ -32,15 +32,31 @@ describe("ContextManager", () => {
     const past = await coach.db.addRace({ name: "上週 10K", date: "2026-10-04", distance_km: 10 });
 
     const prompt = await context.buildSystemPrompt();
+    const { stable, dynamic } = await context.buildSystemParts();
+    // 不常變的在前，會變的在後（規格 12.23 第 2 點）
+    expect(prompt).toBe(`${stable}\n\n${dynamic}`);
+    expect(stable.split("\n").slice(0, 4)).toEqual([
+      "你是一位專業跑步教練。",
+      "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
+        "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
+      "",
+      "請根據選手資料給予個人化的跑步訓練建議。回應使用繁體中文。",
+    ]);
+    expect(stable).toContain("【跑後回報】");
+    // 長的回覆先給結論、細節分小標（網頁版把小標以下收起，規格 12.30）
+    expect(stable).toContain("先用一兩句寫結論");
+    expect(stable).toContain("用「## 小標」分段");
+    expect(stable).toContain(
+      "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看下面的清單就說沒有。" +
+        "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
+        "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
+    );
     // 記住的事另外測（見下面）
-    const head = prompt.split("\n請根據選手資料")[0]!.replace(/\n\n【記住的事】[\s\S]*?(?=\n\n近期目標賽事)/, "");
-    expect(head).toBe(
+    expect(dynamic.replace(/\n\n【記住的事】[\s\S]*?(?=\n\n近期目標賽事)/, "")).toBe(
       [
         "今天日期：2026-10-10（星期六）｜時區：Asia/Taipei（UTC+8）｜以星期一為一週的第一天",
-        "對話中選手每則訊息的開頭標有傳送時間，格式為 [日期（星期）時:分，今天／昨天／N 天前]。" +
-          "訊息裡的「今天」「明天」「這週」以那則訊息的傳送時間為準；回覆時不要加上這種標記。",
         "",
-        "你是一位專業跑步教練，以下是選手資料：",
+        "以下是選手資料：",
         "",
         "長期目標：全馬破四",
         "個人最佳：10km 48:30 / 半馬 1:52:10",
@@ -58,15 +74,10 @@ describe("ContextManager", () => {
         "",
         "待記錄成績的賽事（已結束、尚未回報成績）：",
         `- [${past}] 2026-10-04 上週 10K 10km｜目標完賽｜6 天前`,
-        "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看上面的清單就說沒有。" +
-          "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +
-          "選手說不參加了，用 mark_race_not_started 記下原因。你不能刪除賽事，看到重複的請選手在賽事頁刪除。談到沒有完賽或沒有出賽時語氣平常、不責備，重點放在接下來怎麼做。",
         "",
         "沒有天氣資料（選手沒有設定天氣的城市）。選手問天氣時請他看天氣預報。",
-        "",
       ].join("\n"),
     );
-    expect(prompt).toContain("【跑後回報】");
   });
 
   it("沒有實測最大心率時以年齡推算；資料不是數字時略過", async () => {
@@ -99,7 +110,7 @@ describe("ContextManager", () => {
     );
     expect(ctx.messages.slice(4).map((m) => m.content)).toEqual([sent + "y".repeat(700), "z".repeat(700), sent + "w".repeat(700)]);
     expect(ctx.layerChars).toEqual({
-      layer1: ctx.system.length,
+      layer1: ctx.system.stable.length + 2 + ctx.system.dynamic.length,
       layer4: ctx.messages[0]!.content.length,
       layer5: ctx.messages[2]!.content.length + 2 + 700 * 3 + sent.length * 2,
     });

@@ -1,6 +1,6 @@
 /** Intervals.icu — API 連線、活動拉取、資料正規化. */
 import { addDays } from "./dates";
-import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
+import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, SportSettings, WellnessDay } from "./types";
 
 /** 預設的 API 網址（隱私說明頁列出網頁版會連的網址，測試會對照） */
 export const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
@@ -62,6 +62,37 @@ function isUnavailable(activity: RawActivity): boolean {
 
 function byStartDesc(a: RawActivity, b: RawActivity): number {
   return String(b.start_date_local ?? "").localeCompare(String(a.start_date_local ?? ""));
+}
+
+const positiveList = (value: unknown): number[] | null => {
+  const list = Array.isArray(value) ? value.map(positive).filter((z): z is number => z !== null) : [];
+  return list.length ? list : null;
+};
+
+/**
+ * Intervals.icu 的一組運動設定 → 只留閾值與區間. 欄位依 Intervals.icu 的 API 說明與它的網頁版
+ * （types、lthr、max_hr、hr_zones、ftp、indoor_ftp、power_zones、threshold_pace），騎車的欄位還沒以真實帳號確認
+ * （tools/intervals-fields.ts 的 settings 可以在本機列出欄位名稱）
+ */
+export function sportSettingsOf(raw: Record<string, unknown>): SportSettings | null {
+  const types = Array.isArray(raw.types) ? raw.types.filter((t): t is string => typeof t === "string") : [];
+  if (!types.length) return null;
+  return {
+    types,
+    lthr: positive(raw.lthr),
+    max_hr: positive(raw.max_hr),
+    hr_zones: positiveList(raw.hr_zones),
+    ftp: positive(raw.ftp),
+    indoor_ftp: positive(raw.indoor_ftp),
+    power_zones: positiveList(raw.power_zones),
+    threshold_pace: positive(raw.threshold_pace),
+  };
+}
+
+/** 各運動的設定中包含 Run 的那組 → 跑步的設定 */
+export function runSettingsOf(all: SportSettings[]): RunSettings | null {
+  const run = all.find((s) => s.types.includes("Run"));
+  return run ? { lthr: run.lthr, max_hr: run.max_hr, hr_zones: run.hr_zones, threshold_pace: run.threshold_pace } : null;
 }
 
 export class IntervalsClient implements ActivitySource {
@@ -140,19 +171,14 @@ export class IntervalsClient implements ActivitySource {
 
   /** 跑步的運動設定（包含 Run 的那組）；只取閾值與區間，選手的其他資料（姓名、email 等）不留 */
   async fetchRunSettings(): Promise<RunSettings | null> {
+    return runSettingsOf(await this.fetchSportSettings());
+  }
+
+  /** 各運動的設定（跑步、騎車、游泳……）；只取閾值與區間，選手的其他資料（姓名、email、器材等）不留 */
+  async fetchSportSettings(): Promise<SportSettings[]> {
     const athlete = await this.getJson("");
     const all = (athlete as { sportSettings?: unknown } | null)?.sportSettings;
-    const run = Array.isArray(all)
-      ? (all as Record<string, unknown>[]).find((s) => Array.isArray(s.types) && s.types.includes("Run"))
-      : undefined;
-    if (!run) return null;
-    const zones = Array.isArray(run.hr_zones) ? run.hr_zones.map(positive).filter((z): z is number => z !== null) : [];
-    return {
-      lthr: positive(run.lthr),
-      max_hr: positive(run.max_hr),
-      hr_zones: zones.length ? zones : null,
-      threshold_pace: positive(run.threshold_pace),
-    };
+    return Array.isArray(all) ? (all as Record<string, unknown>[]).flatMap((s) => sportSettingsOf(s) ?? []) : [];
   }
 
   /** 最近 N 天跑步的最佳配速曲線：Intervals.icu 擬合的臨界速度，以及標準距離的最佳成績 */

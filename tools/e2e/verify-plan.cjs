@@ -58,32 +58,24 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
 
   step = "設定";
   await page.goto(URL);
-  await tab("設定");
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
-  await tab("跑後回報");
+  await E2E.setupMock(page, { mock: E2E.MOCK });
+  await tab("回報");
   await page.getByRole("button", { name: /同步/ }).last().click();
-  await page.locator(".notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
+  await page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
 
   step = "訓練偏好";
-  await tab("選手資料");
-  // 選手資料讀取完成前改的值，會被讀回來的資料蓋掉：等訓練數值卡片出現（同一時間讀取）
-  await page.locator("section.training-values").waitFor({ timeout: 10000 });
+  // 選手頁的「練什麼、怎麼練」（規格 12.30）：改了就存；節奏收在「更多」
+  await E2E.profile(page, "練什麼、怎麼練");
   await page.waitForTimeout(300);
-  await field("強度", "select").selectOption("moderate");
-  await field("節奏", "select").selectOption("fixed");
-  await field("每週最多幾次", "input").fill("4");
-  await page.getByRole("button", { name: "儲存選手資料" }).click();
-  await page.locator(".notice.ok", { hasText: "已儲存" }).waitFor({ timeout: 5000 });
+  await E2E.profileSave(page, () => field("強度", "select").selectOption("moderate"));
+  await page.locator(".profile-more > summary").click();
+  await E2E.profileSave(page, () => field("節奏", "select").selectOption("fixed"));
+  await E2E.profileSave(page, () => field("每週最多幾次", "input").fill("4"));
+  await page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).first().waitFor({ timeout: 5000 });
 
   step = "賽事";
   // 下週六的半馬排在時間軸的那天；40 天後的接在最後面；比完的不放
-  await tab("計畫與賽事");
+  await tab("計畫");
   const racesCard = page.locator("section#races");
   const addRace = async (name, date, km) => {
     await racesCard.getByRole("button", { name: "新增賽事" }).click();
@@ -104,7 +96,7 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   check.coachSaved = (await page.locator(".bubble.assistant").last().innerText()).includes("課表已儲存");
 
   step = "課表頁";
-  await tab("計畫與賽事");
+  await tab("計畫");
   const card = page.locator("section.plan-card");
   const sessions = card.locator(".plan-session");
   await sessions.first().waitFor({ timeout: 10000 });
@@ -139,14 +131,20 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   const focus = card.locator(".plan-session.focus");
   const focusText = await focus.innerText();
   check.oneFocus = (await focus.count()) === 1 && focusText.includes("輕鬆跑");
-  check.focusSteps = (await focus.locator(".plan-step").count()) >= 3 && (await focus.getByRole("button", { name: "跳過" }).count()) === 1;
-  check.seconds = focusText.includes("20 秒") && !/0\.\d 分鐘/.test(cardText);
+  // 放大的課卡（規格 12.28）：圖示、標籤最多三個、一條強度條；步驟收在「細節」
+  check.focusCard =
+    (await focus.locator(".plan-sport-icon svg").count()) === 1 &&
+    (await focus.locator(".chip").count()) <= 3 &&
+    (await focus.locator(".strip .split-bar").count()) === 1 &&
+    (await focus.getByRole("button", { name: "跳過" }).count()) === 1;
+  check.stepsInDetails = (await focus.locator(".plan-step").count()) === 0;
   const tuesday = card.locator(`.tl-day[data-date="${plusDays(NEXT_MONDAY, 1)}"]`);
   check.twoOnSameDay = (await tuesday.locator(".plan-session").count()) === 2 && (await tuesday.locator(".tl-date").count()) === 1;
   // 細節（目的、完成的標準）預設收起
   check.detailsCollapsed = !focusText.includes("完成的標準");
   await focus.getByRole("button", { name: /細節/ }).click();
-  check.detailsOpen = (await focus.innerText()).includes("完成的標準");
+  check.detailsOpen = (await focus.innerText()).includes("完成的標準") && (await focus.locator(".plan-step").count()) >= 3;
+  check.seconds = (await focus.innerText()).includes("20 秒") && !/0\.\d 分鐘/.test(cardText);
   // 其他天收起：只有課名與小標籤
   const others = card.locator(".plan-session:not(.focus)");
   check.othersCollapsed = (await others.locator(".plan-steps").count()) === 0 && (await others.getByRole("button", { name: "跳過" }).count()) === 0;
@@ -158,7 +156,7 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   check.restNoButton = (await rests.count()) >= 1 && (await card.locator(".tl-day").filter({ has: page.locator(".plan-rest") }).locator("button").count()) === 0;
   // 賽事：下週六在時間軸上，40 天後的接在虛線後面
   const raceDay = card.locator(`.tl-day[data-date="${plusDays(NEXT_MONDAY, 5)}"]`);
-  check.raceOnDay = (await raceDay.locator(".plan-race", { hasText: "下週的半馬" }).count()) === 1 && (await raceDay.innerText()).includes("21.1 km");
+  check.raceOnDay = (await raceDay.locator(".plan-race", { hasText: "下週的半馬" }).count()) === 1 && (await raceDay.innerText()).includes("半馬");
   check.laterRace = (await card.locator(".tl-gap", { hasText: "之後的課表還沒排" }).count()) === 1 && (await card.locator(".plan-race", { hasText: "秋季全馬" }).count()) === 1;
   const lastDates = await card.locator(".timeline > li").evaluateAll((els) => els.map((e) => e.className));
   check.laterRaceAfterGap = lastDates.at(-1).includes("tl-day") && lastDates.at(-2).includes("tl-gap");
@@ -167,29 +165,33 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   step = "展開其他天";
   const t = sessions.filter({ hasText: "4×1 km 閾值" });
   await t.locator("button.plan-session-head").click();
+  // 強度條：暖身、主課、緩和
+  check.structureLabels = /^暖身\d+分主課\d+分緩和\d+分$/.test((await t.locator(".strip-labels").innerText()).replace(/\s+/g, ""));
+  await t.getByRole("button", { name: /細節/ }).click();
   const tText = await t.innerText();
   check.expandOther = (await t.locator(".plan-step").count()) >= 3 && /\d:\d\d–\d:\d\d\/km/.test(tText) && /心率 ≤\d+/.test(tText);
-  await t.getByRole("button", { name: /細節/ }).click();
-  check.fallbackInDetails = (await t.innerText()).includes("改成 40 分鐘輕鬆跑");
+  check.fallbackInDetails = tText.includes("改成 40 分鐘輕鬆跑");
 
   step = "點整張卡片展開與收合";
   // 點卡片裡標題以外的地方（小標籤）就展開；點卡片裡的按鈕不會收合；再點空白處收合
   const strengthCard = sessions.filter({ hasText: "肌力" });
-  await strengthCard.locator(".chips").click();
-  check.cardClickExpands = (await strengthCard.locator(":scope > .plan-steps").count()) === 1 && (await strengthCard.locator("button.plan-session-head").getAttribute("aria-expanded")) === "true";
+  const expanded = async (loc) => (await loc.locator("button.plan-session-head").getAttribute("aria-expanded")) === "true";
+  // 卡片的內距（標題以外的地方）
+  await strengthCard.click({ position: { x: 4, y: 4 } });
+  check.cardClickExpands = (await expanded(strengthCard)) && (await strengthCard.locator(".strip").count()) === 1;
   await strengthCard.getByRole("button", { name: /細節/ }).click();
-  check.buttonKeepsOpen = (await strengthCard.locator(":scope > .plan-steps").count()) === 1 && (await strengthCard.innerText()).includes("完成的標準");
-  await strengthCard.locator(":scope > .plan-steps").click();
-  check.cardClickCollapses = (await strengthCard.locator(":scope > .plan-steps").count()) === 0 && (await strengthCard.locator("button.plan-session-head").getAttribute("aria-expanded")) === "false";
+  check.buttonKeepsOpen = (await expanded(strengthCard)) && (await strengthCard.innerText()).includes("完成的標準");
+  await strengthCard.locator(".strip").click();
+  check.cardClickCollapses = !(await expanded(strengthCard)) && (await strengthCard.locator(".strip").count()) === 0;
   // 放大的那張也可以點來收合、再展開
-  await focus.locator(":scope > .plan-steps").click();
-  const focusCollapsed = (await focus.locator(":scope > .plan-steps").count()) === 0;
-  await focus.locator(".chips").click();
-  check.focusToggles = focusCollapsed && (await focus.locator(":scope > .plan-steps").count()) === 1;
+  await focus.locator(".strip").click();
+  const focusCollapsed = !(await expanded(focus));
+  await focus.click({ position: { x: 4, y: 4 } });
+  check.focusToggles = focusCollapsed && (await expanded(focus));
   // 鍵盤：標題是真正的按鈕
   await strengthCard.locator("button.plan-session-head").focus();
   await page.keyboard.press("Enter");
-  check.keyboardToggles = (await strengthCard.locator(":scope > .plan-steps").count()) === 1;
+  check.keyboardToggles = await expanded(strengthCard);
   await page.keyboard.press("Enter");
 
   step = "為什麼這樣排";
@@ -240,11 +242,11 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
 
   step = "重新整理後";
   await page.reload();
-  await tab("計畫與賽事");
+  await tab("計畫");
   await sessions.first().waitFor({ timeout: 10000 });
   check.persisted = await until(async () => (await t.locator(".badge").innerText()) === "改用替代");
   check.prefsPersisted = await (async () => {
-    await tab("選手資料");
+    await E2E.profile(page, "練什麼、怎麼練");
     // 選手資料是非同步讀取的：等值出現
     for (let i = 0; i < 25; i++) {
       if ((await field("強度", "select").inputValue()) === "moderate" && (await field("每週最多幾次", "input").inputValue()) === "4") return true;
@@ -258,7 +260,7 @@ const md = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`;
   await page.getByPlaceholder("輸入訊息…").fill("幫我排這週的課表");
   await page.getByRole("button", { name: "送出" }).click();
   await page.locator('.msg.user:has-text("幫我排這週的課表") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
-  await tab("計畫與賽事");
+  await tab("計畫");
   await card.locator(".plan-week", { hasText: "這週" }).waitFor({ timeout: 10000 });
   // 先排的下週接在這週後面
   check.nextWeekAppended = (await card.locator(".tl-week", { hasText: `下週 ${md(NEXT_MONDAY)} – ` }).count()) === 1;

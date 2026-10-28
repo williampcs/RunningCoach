@@ -443,6 +443,10 @@ export interface WeatherAlert {
   tone: "warn" | "info";
   /** 接在「今天」後面，例：濕熱（體感最高 36°C、露點 24°C） */
   title: string;
+  /** 看板用的短句，例：濕熱；數字另外放在 facts（規格 12.28） */
+  label: string;
+  /** 看板的標籤，例：體感 36°C、露點 24°C */
+  facts: string[];
   detail: string;
 }
 
@@ -463,6 +467,8 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
       kind: "heat",
       tone: apparent !== null && apparent >= 36 ? "warn" : "info",
       title: `濕熱（${facts}）`,
+      label: "濕熱",
+      facts: [apparent !== null ? `體感 ${deg(apparent)}` : null, dew !== null ? `露點 ${deg(dew)}` : null].filter((x): x is string => x !== null),
       detail: "配速放慢、以心率或體感為準，跑前跑中補水；可以改在清晨或傍晚跑。",
     });
   }
@@ -471,6 +477,8 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
       kind: "rain",
       tone: "info",
       title: `可能下雨（降雨機率 ${Math.round(day.precipProb)}%）`,
+      label: "可能下雨",
+      facts: [`降雨 ${Math.round(day.precipProb)}%`],
       detail: "路面濕滑時放慢、注意轉彎；也可以把課換到別天或改在室內。",
     });
   }
@@ -480,19 +488,29 @@ export function weatherAlerts(f: WeatherForecast, today: string): WeatherAlert[]
       kind: "air",
       tone: aqi > 150 ? "warn" : "info",
       title: `空氣品質${aqiLabel(aqi)}（US AQI 最高 ${Math.round(aqi)}）`,
+      label: `空氣品質${aqiLabel(aqi)}`,
+      facts: [`AQI ${Math.round(aqi)}`],
       detail: aqi > 150 ? "建議減少戶外的高強度訓練，改輕鬆跑、室內或休息。" : "呼吸道比較敏感的話，避開空氣最差的時段或降低強度。",
     });
   }
   return alerts;
 }
 
-/** 教練動態的天氣：幾種情況合成一則，例：今天濕熱（…），可能下雨（…） */
-export function weatherNotice(f: WeatherForecast, today: string): { tone: "warn" | "info"; title: string; detail: string } | null {
+/**
+ * 教練動態的天氣：幾種情況合成一則. 標題是短句（例：濕熱，可能下雨），數字放在 tags（規格 12.28）；
+ * summary 是完整的一句（例：今天濕熱（…），可能下雨（…）），問教練時用
+ */
+export function weatherNotice(
+  f: WeatherForecast,
+  today: string,
+): { tone: "warn" | "info"; title: string; tags: string[]; summary: string; detail: string } | null {
   const alerts = weatherAlerts(f, today);
   if (!alerts.length) return null;
   return {
     tone: alerts.some((a) => a.tone === "warn") ? "warn" : "info",
-    title: `今天${alerts.map((a) => a.title).join("，")}`,
+    title: alerts.map((a) => a.label).join("，"),
+    tags: alerts.flatMap((a) => a.facts),
+    summary: `今天${alerts.map((a) => a.title).join("，")}`,
     detail: alerts.map((a) => a.detail).join(""),
   };
 }

@@ -59,6 +59,8 @@ jobs:
         env:
           VITE_SYNC_URL: ${{ vars.SYNC_URL }}
           VITE_WEB_URL: ${{ vars.WEB_URL }}
+          # 功能開關（規格 12.25）：正式版只開使用者說要上線的，逗號分隔（例：multisport）；沒設定時全關
+          VITE_FEATURES: ${{ vars.WEB_FEATURES }}
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

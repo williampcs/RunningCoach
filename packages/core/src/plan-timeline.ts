@@ -5,7 +5,7 @@
 import { addDays, daysBetween, weekdayIndex } from "./dates";
 import type { ActivePlan } from "./planning";
 import { raceOutcome } from "./races";
-import type { Race } from "./types";
+import type { OtherActivity, Race } from "./types";
 
 export type TimelineSession = ActivePlan["sessions"][number] & {
   /** 這堂課所在那週的星期一：移到別天只能在同一週 */
@@ -19,6 +19,9 @@ export interface TimelineWeek {
   range: string;
   km: number;
   runs: number;
+  /** 單車的課（多運動）：堂數與分鐘 */
+  rides: number;
+  rideMinutes: number;
 }
 
 export interface TimelineDay {
@@ -29,6 +32,8 @@ export interface TimelineDay {
   weekday: string;
   sessions: TimelineSession[];
   races: Race[];
+  /** 這天課表外的其他運動（騎車等，多運動；planTimeline 的 others 開著時才有） */
+  others: OtherActivity[];
   /** 下一份課表從這天開始：前面加一條分隔（下週的範圍與總量） */
   nextWeek: TimelineWeek | null;
 }
@@ -39,6 +44,8 @@ export interface PlanTimeline {
   thisWeek: boolean;
   /** 這週今天以前的課（有比對的結果） */
   earlier: TimelineSession[];
+  /** 這週今天以前、課表外的其他運動（多運動） */
+  earlierOthers: OtherActivity[];
   /** 彈性的課表（菜單）沒有日期的課 */
   undated: TimelineSession[];
   days: TimelineDay[];
@@ -63,7 +70,14 @@ function dayLabel(date: string, today: string): string {
 
 const isRest = (s: TimelineSession) => s.kind === "rest";
 
-export function planTimeline(current: ActivePlan, next: ActivePlan | null, races: Race[], today: string): PlanTimeline | null {
+/** options.others：把課表外的其他運動（騎車等）也排進時間軸（多運動的開關） */
+export function planTimeline(
+  current: ActivePlan,
+  next: ActivePlan | null,
+  races: Race[],
+  today: string,
+  options: { others?: boolean } = {},
+): PlanTimeline | null {
   const start = current.plan.week_start;
   if (!start) return null;
   const tag = (plan: ActivePlan) =>
@@ -76,6 +90,8 @@ export function planTimeline(current: ActivePlan, next: ActivePlan | null, races
   const upcoming = races.filter((r) => raceOutcome(r) === null && r.date >= first).sort((a, b) => a.date.localeCompare(b.date));
   const flexibleWeeks = new Set(plans.filter((p) => p.plan.style === "flexible").map((p) => p.plan.week_start!));
   const weekOf = (date: string) => addDays(date, -weekdayIndex(date));
+  const others = options.others ? plans.flatMap((p) => p.extraOthers) : [];
+  const weekOfPlan = (p: ActivePlan) => ({ range: weekRange(p.plan.week_start!), km: p.totalKm, runs: p.runCount, rides: p.rideCount, rideMinutes: p.rideMinutes });
 
   const days: TimelineDay[] = [];
   for (let date = first; date <= end; date = addDays(date, 1)) {
@@ -85,11 +101,11 @@ export function planTimeline(current: ActivePlan, next: ActivePlan | null, races
       weekday: WEEKDAY_SHORT[weekdayIndex(date)]!,
       sessions: sessions.filter((s) => s.date === date),
       races: upcoming.filter((r) => r.date === date),
-      nextWeek:
-        next?.plan.week_start === date && date !== first ? { range: weekRange(date), km: next.totalKm, runs: next.runCount } : null,
+      others: others.filter((a) => a.date === date),
+      nextWeek: next?.plan.week_start === date && date !== first ? weekOfPlan(next) : null,
     };
     // 彈性的課表沒有日期：空的日子不是休息日，不列出來
-    if (!day.sessions.length && !day.races.length && flexibleWeeks.has(weekOf(date)) && !day.nextWeek) continue;
+    if (!day.sessions.length && !day.races.length && !day.others.length && flexibleWeeks.has(weekOf(date)) && !day.nextWeek) continue;
     days.push(day);
   }
 
@@ -105,9 +121,10 @@ export function planTimeline(current: ActivePlan, next: ActivePlan | null, races
   const later = upcoming.filter((r) => r.date > end);
   const soon = later.filter((r) => daysBetween(today, r.date) <= LATER_RACE_DAYS).slice(0, 2);
   return {
-    week: { range: weekRange(start), km: current.totalKm, runs: current.runCount },
+    week: weekOfPlan(current),
     thisWeek: today >= start && today <= addDays(start, 6),
     earlier,
+    earlierOthers: others.filter((a) => a.date < first).sort((a, b) => a.date.localeCompare(b.date)),
     undated,
     days,
     focus,

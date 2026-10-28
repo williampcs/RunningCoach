@@ -105,6 +105,7 @@ describe("AnthropicProvider", () => {
       model: "claude-opus-5-5",
       max_tokens: 16000,
       system: "你是教練",
+      cache_control: { type: "ephemeral" },
       messages: [{ role: "user", content: "這週怎麼練？" }],
       tools,
       output_config: { effort: "medium" },
@@ -115,6 +116,37 @@ describe("AnthropicProvider", () => {
       { role: "assistant", content: [thinking, toolUse] },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "計畫內容" }] },
     ]);
+  });
+
+  it("Prompt Caching：系統提示分成兩個區塊，不常變的那段結尾放斷點，請求上加自動快取；單次生成不加", async () => {
+    const { baseURL, captured } = await mockApi([
+      anthropicMessage([{ type: "text", text: "好" }], "end_turn"),
+      anthropicMessage([{ type: "text", text: "摘要" }], "end_turn"),
+    ]);
+    const provider = new AnthropicProvider({ apiKey: "k", baseURL });
+    const stable = "你是教練。\n規則";
+    await provider
+      .startChat({
+        model: "claude-opus-5-5",
+        system: `${stable}\n\n今天日期：2026-10-27`,
+        systemStableChars: stable.length,
+        messages: [{ role: "user", content: "hi" }],
+        tools,
+        maxTokens: 2000,
+        effort: "low",
+      })
+      .next();
+    await provider.startChat({ model: "claude-opus-5-5", messages: [{ role: "user", content: "摘要" }], maxTokens: 2000, effort: "low" }).next();
+
+    expect(captured[0]!.body.system).toEqual([
+      { type: "text", text: stable, cache_control: { type: "ephemeral" } },
+      { type: "text", text: "今天日期：2026-10-27" },
+    ]);
+    expect(captured[0]!.body.cache_control).toEqual({ type: "ephemeral" });
+    // 工具清單照原樣送（在系統提示前面，一起快取）
+    expect(captured[0]!.body.tools).toEqual(tools);
+    expect(captured[1]!.body).not.toHaveProperty("cache_control");
+    expect(captured[1]!.body).not.toHaveProperty("system");
   });
 
   it("不支援 effort 的舊模型不送 output_config；拒絕與截斷對應到 finish", async () => {
@@ -290,6 +322,54 @@ describe("OpenAICompatibleProvider", () => {
       assistantWithCall,
       { role: "tool", tool_call_id: "call_1", content: "計畫內容" },
     ]);
+  });
+
+  it("OpenRouter 上的 Claude：系統提示的斷點、請求上的自動快取、快取寫入的用量；其他模型不帶", async () => {
+    const reply = (usage: Record<string, unknown>) => ({
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "好" } }],
+      usage,
+    });
+    const { baseURL, captured } = await mockApi([
+      reply({ prompt_tokens: 3000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 2500 } }),
+      reply({ prompt_tokens: 3000, completion_tokens: 10 }),
+    ]);
+    const provider = new OpenAICompatibleProvider({ apiKey: "k", baseURL, anthropicCacheControl: true });
+    const stable = "你是教練。";
+    const request = {
+      system: `${stable}\n\n今天日期：2026-10-27`,
+      systemStableChars: stable.length,
+      messages: [{ role: "user" as const, content: "hi" }],
+      maxTokens: 500,
+      effort: "low" as const,
+    };
+
+    const turn = await provider.startChat({ ...request, model: "anthropic/claude-sonnet-5.5" }).next();
+    expect(turn.usage).toEqual({ input: 500, cacheRead: 0, cacheWrite: 2500, output: 10 });
+    expect(captured[0]!.body.cache_control).toEqual({ type: "ephemeral" });
+    expect(captured[0]!.body.messages[0]).toEqual({
+      role: "system",
+      content: [
+        { type: "text", text: stable, cache_control: { type: "ephemeral" } },
+        { type: "text", text: "今天日期：2026-10-27" },
+      ],
+    });
+
+    await provider.startChat({ ...request, model: "openai/gpt-5" }).next();
+    expect(captured[1]!.body).not.toHaveProperty("cache_control");
+    expect(captured[1]!.body.messages[0]).toEqual({ role: "system", content: request.system });
+
+    // 沒有指定時依網址判斷
+    const bodies: Record<string, unknown>[] = [];
+    const fetchStub: typeof fetch = async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json(reply({ prompt_tokens: 10, completion_tokens: 1 }));
+    };
+    for (const url of ["https://openrouter.ai/api/v1", "https://api.openai.com/v1"]) {
+      await new OpenAICompatibleProvider({ apiKey: "k", baseURL: url, fetch: fetchStub })
+        .startChat({ ...request, model: "anthropic/claude-sonnet-5.5" })
+        .next();
+    }
+    expect(bodies.map((b) => b.cache_control)).toEqual([{ type: "ephemeral" }, undefined]);
   });
 
   it("預設不送 reasoning_effort；內容過濾視為拒絕，length 視為截斷", async () => {

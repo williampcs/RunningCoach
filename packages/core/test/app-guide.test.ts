@@ -58,11 +58,11 @@ describe("功能說明", () => {
     });
     await coach.chat("密碼鎖怎麼用？");
     const system = provider.calls[0]!.request.system;
-    expect(system).toContain("key-lock（保護 API key（密碼鎖））");
-    expect(system).toContain("到「跑後回報」按「同步最近 14 天」");
+    expect(system).toContain("key-lock（密碼鎖）");
+    expect(system).toContain("到「回報」按「同步最近 14 天」");
     expect(system).not.toContain("/sync");
     const result = provider.calls[1]!.toolResults![0]!.content;
-    expect(result).toContain("## 保護 API key（密碼鎖）");
+    expect(result).toContain("## 密碼鎖");
     expect(result).toContain("[看完整說明](#help/key-lock)");
 
     const bot = await makeCoach([turn({ text: "好" })]);

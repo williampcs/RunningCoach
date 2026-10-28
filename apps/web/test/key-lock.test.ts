@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createLock, openLock, sealSecrets, WrongPasswordError, type Secrets } from "../src/key-lock";
+import { createLock, openLock, passwordMatches, sealSecrets, WrongPasswordError, type Secrets } from "../src/key-lock";
 
 // 測試用較少的迭代次數；正式值見 PBKDF2_ITERATIONS
 const ITERATIONS = 1000;
@@ -45,5 +45,12 @@ describe("key-lock", () => {
   it("keeps the derived key non-extractable", async () => {
     const { session } = await createLock("correct horse", SECRETS, ITERATIONS);
     expect(session.key.extractable).toBe(false);
+  });
+
+  it("re-checks the password before showing the recovery code (spec 12.26)", async () => {
+    const { sealed } = await createLock("correct horse", SECRETS, ITERATIONS);
+    expect(await passwordMatches(sealed, "correct horse")).toBe(true);
+    expect(await passwordMatches(sealed, "wrong horse")).toBe(false);
+    expect(await passwordMatches(sealed, "")).toBe(false);
   });
 });

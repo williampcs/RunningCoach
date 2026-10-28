@@ -20,18 +20,15 @@ let failPage = null;
   step = "分頁";
   await page.goto(E2E.URL);
   await page.locator("nav.tabbar button").first().waitFor({ timeout: 15000 });
-  check.fiveTabs = (await page.locator("nav.tabbar button").allInnerTexts()).map((t) => t.replace(/\s+/g, "")).join(",") === "💬對話,🏃跑後回報,📖紀錄,📅計畫與賽事,👤選手資料";
+  // 線條圖示＋兩個字（規格 12.28）
+  check.fiveTabs =
+    (await page.locator("nav.tabbar button").allInnerTexts()).map((t) => t.replace(/\s+/g, "")).join(",") === "對話,回報,紀錄,計畫,選手" &&
+    (await page.locator("nav.tabbar button svg").count()) === 5;
   await E2E.go(page, "設定");
-  check.gearOpensSettings = (await page.getByRole("heading", { name: "LLM 服務" }).count()) > 0 || (await page.getByLabel("供應商").count()) === 1;
+  check.gearOpensSettings = await page.locator("#side-panel .settings-list").isVisible();
 
   step = "設定";
-  await page.getByLabel("供應商").selectOption("openai-compatible");
-  await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-  await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-  await page.getByLabel("主對話模型").fill("mock-model");
-  await page.getByLabel("API key", { exact: true }).last().fill("mock-intervals-key");
-  await page.getByLabel("我了解並同意以上的資料流向").check();
-  await page.getByRole("button", { name: "儲存設定" }).click();
+  await E2E.setupMock(page, { mock: E2E.MOCK });
 
   step = "排這週的課表";
   await tab("對話");
@@ -40,17 +37,17 @@ let failPage = null;
   await page.locator('.msg.user:has-text("幫我排這週的課表") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
 
   step = "跑後回報的結果卡片";
-  await tab("跑後回報");
+  await tab("回報");
   await page.getByRole("button", { name: /同步/ }).last().click();
-  await page.locator(".notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
+  await page.locator(".toast, .notice", { hasText: /同步完成|已是最新/ }).first().waitFor({ timeout: 30000 });
   await page.locator("fieldset.choices .choice").first().click();
-  await page.locator('input[type="range"]').fill("7");
+  await page.getByRole("button", { name: "體感 7", exact: true }).click();
   await page.getByPlaceholder("例如：腿有點重").fill("後段有點喘");
-  await page.getByRole("button", { name: /^存到/ }).click();
+  await page.getByRole("button", { name: "存起來" }).click();
   const result = page.locator(".report-result .run-card");
   await result.waitFor({ timeout: 30000 });
   const resultText = await result.innerText();
-  check.resultStats = /距離 km\s*10\.02/.test(resultText) && /配速 \/km\s*5:30/.test(resultText) && /心率\s*152/.test(resultText);
+  check.resultStats = /距離\s*10\s*km/.test(resultText) && /配速\s*5:30\s*\/km/.test(resultText) && /心率\s*152/.test(resultText);
   check.resultEffort = resultText.includes("體感 7/10") && (await result.locator(".effort-scale span.mark").count()) === 1;
   check.resultNotes = resultText.includes("「後段有點喘」");
   check.resultBar = (await result.locator(".split-bar").count()) === 1;
@@ -67,6 +64,13 @@ let failPage = null;
   const totals = await page.locator("section.totals").innerText();
   console.log("TOTALS", totals.replace(/\s+/g, " "));
   check.totalsShown = /累積跑了\s*18(\.0)?\s*km/.test(totals) && totals.includes("跑了") && (await page.locator("section.totals .block").count()) === 2;
+  // 里程碑的軌道（規格 12.29）：四站、等距、每站兩行；18 km 在起點與全馬之間
+  const journey = page.locator("section.totals .journey");
+  check.trackFourStations =
+    (await journey.locator(".journey-stations li").count()) === 4 &&
+    (await journey.locator(".journey-stations li").first().innerText()).startsWith("起點") &&
+    /^在起點和一場全馬之間，這一段跑了 \d+ 成$/.test(await journey.locator(".journey-body").getAttribute("aria-label"));
+  check.trackFirstPassedOnly = (await journey.locator(".journey-stop.passed").count()) === 1;
   check.collapsedByDefault = (await page.locator("ul.runs .run-card").count()) === 0;
   const older = rows.nth(1);
   const olderRow = await older.locator(".run-row").innerText();
@@ -90,8 +94,8 @@ let failPage = null;
   check.noDuplicateHead = (await older.locator(".run-card-head").count()) === 0;
   check.noEffortYet = (await older.innerText()).includes("還沒填體感");
   await older.getByRole("button", { name: "補填體感" }).click();
-  await older.locator('input[type="range"]').fill("8");
-  await older.getByLabel("主觀感受").fill("最後兩公里很喘");
+  await older.getByRole("button", { name: "體感 8", exact: true }).click();
+  await older.getByLabel("一句話的感受").fill("最後兩公里很喘");
   await older.getByRole("button", { name: "儲存並重新分析" }).click();
   await older.getByRole("button", { name: "請教練分析" }).waitFor({ timeout: 20000 });
   const text = await older.innerText();
@@ -107,7 +111,7 @@ let failPage = null;
   step = "匯入完整歷史";
   await tab("紀錄");
   const totalsCard = page.locator("section.totals");
-  await totalsCard.getByRole("button", { name: "匯入 Intervals.icu 的完整歷史" }).click();
+  await totalsCard.getByRole("button", { name: "匯入完整歷史", exact: true }).click();
   const done = totalsCard.locator(".notice.ok", { hasText: "匯入完成" });
   await done.waitFor({ timeout: 60000 });
   const doneText = await done.innerText();
@@ -119,6 +123,13 @@ let failPage = null;
   check.totalsGrew = /從 2024-01-05 起/.test(after) && (await totalsCard.locator(".block").count()) > 100;
   check.medalsAndTowers = (await totalsCard.locator(".medal").count()) > 0 && (await totalsCard.locator("svg.tower").count()) > 0;
   check.journey = (await totalsCard.locator(".journey-runner").count()) === 1;
+  // 匯入之後跑得遠：軌道往前移過，選手不在軌道的第一站（除了一開始都在中段或後段）
+  {
+    const stops = await totalsCard.locator(".journey-stop").evaluateAll((els) => els.map((e) => e.classList.contains("passed")));
+    const label = await totalsCard.locator(".journey-body").getAttribute("aria-label");
+    console.log("TRACK", label, stops.join(","));
+    check.trackMoved = stops.length === 4 && stops[0] && stops[1] && !(await totalsCard.locator(".journey-stations li").first().innerText()).startsWith("起點");
+  }
   check.importRerun = (await totalsCard.getByRole("button", { name: "再匯入一次" }).count()) === 1;
   await page.screenshot({ path: `${E2E.OUT}/history-${width}-${scheme}-4-imported.png` });
   // 重跑不重複

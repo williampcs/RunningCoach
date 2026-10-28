@@ -40,7 +40,7 @@ export function UnlockView({ onUnlocked }: { onUnlocked: () => void }) {
           void submit();
         }}
       >
-        <h1>Running Coach</h1>
+        <h1>Zone2Mate</h1>
         <p className="small">API key 已用密碼鎖保護，輸入密碼解鎖。</p>
         <label>
           密碼

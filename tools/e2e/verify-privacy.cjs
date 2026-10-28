@@ -97,21 +97,22 @@ async function opensPrivacy(context, link) {
       check[`${tag}.link.helpSection`] = await opensPrivacy(context, page.locator("#help-privacy").getByRole("link", { name: "隱私說明" }));
 
       step = "設定";
-      await E2E.go(page, "設定");
+      // 設定的每一項裡，說明收在 ⓘ（規格 12.28）：打開那一項的 ⓘ 再點連結
       const panel = page.locator("#side-panel");
-      check[`${tag}.link.dataFlow`] = await opensPrivacy(context, panel.locator(".notice", { hasText: "資料會送到哪裡" }).getByRole("link", { name: "隱私說明" }));
-      check[`${tag}.link.intervals`] = await opensPrivacy(context, panel.locator("section.card", { has: page.getByRole("heading", { name: "Intervals.icu" }) }).getByRole("link", { name: "隱私說明" }));
-      check[`${tag}.link.deviceSync`] = await opensPrivacy(context, panel.locator("section.card", { has: page.getByRole("heading", { name: "多裝置同步" }) }).getByRole("link", { name: "隱私說明" }));
+      const viaInfo = async (section, info) => {
+        await E2E.settings(page, section);
+        await panel.getByRole("button", { name: info }).click();
+        return opensPrivacy(context, panel.locator(".info-pop").getByRole("link", { name: "隱私說明" }));
+      };
+      check[`${tag}.link.dataFlow`] = await viaInfo("AI 教練", "資料會送到哪裡");
+      check[`${tag}.link.intervals`] = await viaInfo("訓練紀錄", "怎麼取得 API key");
+      check[`${tag}.link.deviceSync`] = await viaInfo("多裝置同步", "同步哪些資料");
+      await panel.locator(".back-button").click();
       check[`${tag}.link.settingsFooter`] = await opensPrivacy(context, panel.locator("p.center").getByRole("link", { name: "隱私說明" }));
       if (mobile) await page.screenshot({ path: `${E2E.OUT}/privacy-settings-mobile.png` });
 
       step = "問教練";
-      await page.getByLabel("供應商").selectOption("openai-compatible");
-      await page.getByLabel("API key", { exact: true }).first().fill("mock-key");
-      await page.getByLabel("服務網址").fill(`${E2E.MOCK}/v1`);
-      await page.getByLabel("主對話模型").fill("mock-model");
-      await page.getByLabel("我了解並同意以上的資料流向").check();
-      await page.getByRole("button", { name: "儲存設定" }).click();
+      await E2E.setupMock(page, { mock: E2E.MOCK, intervals: false });
       await E2E.go(page, "對話");
       await page.getByLabel("訊息").fill("隱私說明在哪裡？");
       await page.getByLabel("訊息").press("Enter");

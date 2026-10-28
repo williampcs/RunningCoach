@@ -8,14 +8,14 @@
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="stylesheet" href="/privacy.css" />
     <!--HEAD-->
-    <title>隱私說明｜Running Coach</title>
+    <title>隱私說明｜Zone2Mate</title>
   </head>
   <body>
     <!--STAGING-->
     <main>
-      <p class="back"><a href="/">← 回到 Running Coach</a></p>
+      <p class="back"><a href="/">← 回到 Zone2Mate</a></p>
       <h1>隱私說明</h1>
-      <p class="lead">這一頁說明 Running Coach 網頁版（使用你自己的 AI API key）的資料存在哪裡、會送到哪裡。提供者：Zone2Mate（個人開發的專案）。</p>
+      <p class="lead">這一頁說明 Zone2Mate 網頁版（使用你自己的 AI API key）的資料存在哪裡、會送到哪裡。提供者：Zone2Mate（個人開發的專案）。</p>
 
       <section class="summary" aria-labelledby="summary">
         <h2 id="summary">重點</h2>
@@ -33,7 +33,7 @@
         <ul>
           <li><strong>瀏覽器裡的資料庫</strong>（SQLite，存在瀏覽器給這個網站的儲存空間）：對話與對話摘要、選手資料、記住的事、賽事、課表、每日自評、跑步紀錄與教練的分析、恢復資料（例如靜息心率、HRV、睡眠）、跑步以外的運動。瀏覽器不提供這個儲存空間時（例如無痕視窗），資料只在記憶體裡，關掉分頁就沒了。</li>
           <li><strong>瀏覽器的 localStorage</strong>：設定，包括 AI 服務與模型、AI 的 API key、Intervals.icu 的 API key 與 Athlete ID、時區、天氣的城市、多裝置同步的金鑰、你確認過的資料流向；以及幾個畫面的小狀態，例如是否略過新手引導、教練動態裡按過「知道了」的項目。</li>
-          <li><strong>密碼鎖（選用）</strong>：在設定的「保護 API key」啟用後，API key、Intervals.icu 的 key 與同步金鑰會用你的密碼加密後才保存；沒有啟用時是以明文保存。對話與訓練資料不會加密。</li>
+          <li><strong>密碼鎖（選用）</strong>：在設定的「密碼鎖」啟用後，API key、Intervals.icu 的 key 與同步金鑰會用你的密碼加密後才保存；沒有啟用時是以明文保存。對話與訓練資料不會加密。</li>
           <li>設定裡「匯出資料庫」匯出的檔案不含 API key。</li>
         </ul>
       </section>
@@ -84,9 +84,11 @@
               <li>每一筆加密後的內容、它的代號（由金鑰算出，看不出是哪一種資料）與序號；</li>
               <li>資料的總大小、建立與最後更新的時間；</li>
               <li>配對新裝置時，暫存雙方臨時的公開金鑰與加密後的同步金鑰，十分鐘後失效。</li>
+              <!--DEVICES-->
             </ul>
           </li>
           <li>不需要帳號、email 或名字。同步服務的程式不記錄 IP 位址，我們也沒有開啟 Workers 的請求紀錄功能。</li>
+          <!--DEVICES_NOTE-->
         </ul>
       </section>
 
@@ -109,7 +111,7 @@
           <li><strong>刪除雲端的同步資料</strong>：設定 →「多裝置同步」→「刪除雲端的資料」。</li>
           <li><strong>撤銷或更換 key</strong>：AI 的 API key 到該服務的後台撤銷；Intervals.icu 的 key 在它的設定頁重新產生。</li>
           <li><strong>停用天氣</strong>：設定 →「天氣」→「清除天氣的城市」。</li>
-          <li><strong>保護 key</strong>：設定 →「保護 API key」啟用密碼鎖。</li>
+          <li><strong>保護 key</strong>：設定 →「密碼鎖」啟用。</li>
         </ul>
       </section>
 
@@ -138,6 +140,7 @@
         <h2 id="changes">異動紀錄</h2>
         <ul>
           <li>2026-10-25：第一版。</li>
+          <!--DEVICES_CHANGE-->
         </ul>
       </footer>
     </main>

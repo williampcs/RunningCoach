@@ -1,6 +1,7 @@
 export {
   buildExtractionPrompt,
   IMPORT_PROMPT,
+  importPrompt,
   parseExtraction,
   PROFILE_FIELDS,
   type ImportedRace,
@@ -35,7 +36,25 @@ export {
   type FakeSpec,
 } from "./fake-activities";
 export { buildFeed, type FeedAction, type FeedItem } from "./feed";
-export { accumulate, REGION_CHOICES, regionOf, REGIONS, splitSummary, type Accumulation, type Region, type RunCard } from "./history";
+export {
+  accumulate,
+  accumulateRides,
+  cityDistanceKm,
+  landmarks,
+  landmarkTrack,
+  REGION_CHOICES,
+  regionOf,
+  REGIONS,
+  splitSummary,
+  type Accumulation,
+  type Landmark,
+  type Region,
+  type RideAccumulation,
+  type RideCard,
+  type RunCard,
+  type Track,
+  type TrackStation,
+} from "./history";
 export { type ImportProgress, type ImportResult } from "./history-import";
 export {
   DNS_REASONS,
@@ -65,6 +84,7 @@ export {
   type WeatherPlace,
   type WeatherSource,
 } from "./weather";
+export { splitReplySections, type ReplySection, type ReplySections } from "./reply-sections";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
 export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
 export {
@@ -119,8 +139,12 @@ export { NO_RUNS_HINT, SYNC_DAYS } from "./sync";
 export {
   minutesText,
   EXPECTED_RPE,
+  isQualityKind,
   QUALITY_KINDS,
+  RIDE_KINDS,
+  RIDE_QUALITY_KINDS,
   SESSION_KINDS,
+  sessionSport,
   STATUS_LABELS,
   type PlannedSession,
   type PlanStyle,
@@ -129,12 +153,24 @@ export {
   type SessionView,
   type StepIntensity,
   type StepRow,
+  type StructureSegment,
 } from "./plan";
 export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
-export type { OtherActivity } from "./types";
+export type { OtherActivity, Sport, SportSettings } from "./types";
+export { ALL_FEATURES, featureOn, FEATURES, parseFeatures, type Feature } from "./features";
+export {
+  athleteSports,
+  SPORT_CHOICES,
+  SPORT_LABELS,
+  sportGoalKey,
+  sportOfType,
+  sportTargets,
+  sportTargetsText,
+  type SportTargets,
+} from "./sports";
 export {
   computeTrainingValues,
   danielsPaces,

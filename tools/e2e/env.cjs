@@ -35,8 +35,78 @@ async function go(page, label) {
   await button.click();
 }
 
+/**
+ * 設定的第一層是清單，點進去才是欄位（規格 12.28）：打開設定並進到某一項（例：「AI 教練」「訓練紀錄」「天氣」）.
+ * 已經在那一項就不再點；在別項時先按「設定」回到清單
+ */
+async function settings(page, section) {
+  await go(page, "設定");
+  const panel = page.locator("#side-panel");
+  const current = panel.locator(".subpage");
+  if (await current.count()) {
+    if ((await panel.locator(".subpage .title").innerText()) === section) return;
+    await panel.locator(".back-button").click();
+  }
+  await panel.locator(".settings-list").getByRole("button", { name: section, exact: true }).click();
+  await panel.locator(".subpage .title", { hasText: section }).waitFor();
+}
+
+/**
+ * 用模擬上游設定 AI 與 Intervals.icu（多數腳本的第一步）：開放相容服務、模擬的模型、同意資料流向；
+ * intervals 為 false 時不填 Intervals.icu 的 key；timeZone 有值時填時區（訓練紀錄的「進階」）
+ */
+async function setupMock(page, { mock, intervals = true, timeZone = null } = {}) {
+  await settings(page, "AI 教練");
+  const panel = page.locator("#side-panel");
+  await panel.getByLabel("供應商").selectOption("openai-compatible");
+  await panel.getByLabel("API key", { exact: true }).fill("mock-key");
+  await panel.getByLabel("服務網址").fill(`${mock}/v1`);
+  await panel.getByLabel("主對話模型").fill("mock-model");
+  await panel.getByLabel("我了解並同意以上的資料流向").check();
+  if (intervals || timeZone) {
+    await settings(page, "訓練紀錄");
+    if (intervals) await panel.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
+    if (timeZone) {
+      await panel.locator("details.advanced > summary").click();
+      await panel.getByLabel("時區").fill(timeZone);
+    }
+  }
+  await panel.getByRole("button", { name: "儲存設定" }).click();
+  await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
+}
+
+/**
+ * 選手頁（規格 12.30）：第一層是「我的數字」＋五列，點進去才是欄位。進到某一列（例：「目標」「身體」「練什麼、怎麼練」）；
+ * 沒給 row 時回到第一層。在下一層時先按左上角的返回（每項運動那一層要按兩次）
+ */
+async function profile(page, row) {
+  await go(page, "選手");
+  const back = page.locator(".profile-subpage .back-button");
+  for (let i = 0; i < 3 && (await back.count()); i++) await back.first().click();
+  await page.locator(".profile-list").waitFor({ timeout: 10000 });
+  if (!row) return;
+  await page.locator(".profile-list").getByRole("button", { name: row, exact: true }).click();
+  await page.locator(".profile-subpage .title", { hasText: row }).waitFor();
+}
+
+/** 選手資料改了就存：做完 action（填欄位、選選單）後離開欄位，等畫面下方出現新的「已儲存」 */
+async function profileSave(page, action) {
+  // 只算「已儲存」（「設定已儲存在這個瀏覽器。」不算）
+  const saved = () => page.locator(".toast", { hasText: /^\s*已儲存\s*$/ }).count();
+  const before = await saved();
+  if (action) await action();
+  await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page
+    .waitForFunction((n) => [...document.querySelectorAll(".toast")].filter((t) => t.textContent.trim() === "已儲存").length > n, before, { timeout: 5000 })
+    .catch(() => undefined);
+}
+
 module.exports = {
   go,
+  settings,
+  profile,
+  profileSave,
+  setupMock,
   chromium: loadPlaywright().chromium,
   /** vite preview 的網址 */
   URL: process.env.E2E_URL || "http://localhost:4173/",

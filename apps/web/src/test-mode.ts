@@ -17,6 +17,8 @@ import {
   type WellnessDay,
 } from "@running-coach/core";
 
+import { featureEnabled } from "./environment";
+
 const KEY = "running-coach.test-mode.v1";
 export const TEST_DB_FILE = "/coach-test.db";
 
@@ -32,10 +34,18 @@ export interface TestMode {
 
 const OFF: TestMode = { enabled: false, spec: null, custom: [], today: null };
 
-export function loadTestMode(): TestMode {
+/**
+ * 存著的測試模式設定 → 這次用的. 功能開關 testmode 關著（正式版）時一律是關著的：
+ * 之前開過測試模式的瀏覽器回到正式的資料庫；存著的設定與測試的資料庫都不刪，開關開回來時還在
+ */
+export function effectiveTestMode(stored: Partial<TestMode> | null, available: boolean): TestMode {
+  if (!stored || !available) return OFF;
+  return { ...OFF, ...stored, custom: stored.custom ?? [] };
+}
+
+export function loadTestMode(available = featureEnabled("testmode")): TestMode {
   try {
-    const stored = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TestMode> | null;
-    return stored ? { ...OFF, ...stored, custom: stored.custom ?? [] } : OFF;
+    return effectiveTestMode(JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<TestMode> | null, available);
   } catch {
     return OFF;
   }

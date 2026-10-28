@@ -5,16 +5,19 @@
  *   POST /v1/chat/completions                 模擬 OpenAI 相容的 Chat Completions（同一套規則；支援串流）
  *   GET  /intervals/athlete/:id/activities    模擬 Intervals.icu（今天與三天前各一筆跑步；匯入完整歷史時另有 2024 年起的舊紀錄）
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
- *   GET  /intervals/athlete/:id               選手與運動設定（跑步的閾值心率與區間）
+ *   GET  /intervals/athlete/:id               選手與運動設定（跑步與騎車的閾值心率與區間，騎車的 FTP 與功率區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
  *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
- *   GET  /_mock/requests                      最近送到模擬服務的模型請求與天氣查詢（E2E 檢查送出了什麼）
+ *   GET  /_mock/requests                      最近送到模擬服務的模型請求（與回傳的用量）、天氣查詢（E2E 檢查送出了什麼）
+ *
+ * 請求帶快取標記（cache_control）時模擬 Prompt Caching，回傳快取的讀與寫（見 cachedUsage）。
  *
  * 回覆前先停頓一段時間模擬思考；串流時思考內容不回傳（同新模型的預設），之後逐段送出文字。
  *
  * 搭配方式見 README 的「本機開發」。
  */
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { openNodeSqlite } from "@running-coach/sqlite-node";
@@ -26,6 +29,8 @@ const PORT = Number(process.env.MOCK_PORT ?? 8788);
 // 模擬思考的停頓與串流時每段文字的間隔（毫秒）
 const THINK_MS = Number(process.env.MOCK_THINK_MS ?? 800);
 const CHUNK_MS = Number(process.env.MOCK_CHUNK_MS ?? 25);
+// 長回覆寫慢一點（約 10 秒）：E2E 要在串流中點開段落、看「寫作中」（規格 12.30）
+const chunkMs = (text: string) => (text === LONG_REPLY ? CHUNK_MS * 4 : CHUNK_MS);
 
 type Block = { type: string; [key: string]: unknown };
 type Message = { role: string; content: string | Block[] };
@@ -53,6 +58,11 @@ function wellness() {
 /** 跑步的閾值心率與 Intervals.icu 預設的 7 區（各區的上限） */
 const LTHR = 170;
 const HR_ZONES = [144, 151, 160, 168, 173, 180, 190];
+/** 騎車自己的閾值心率與區間（比跑步低一些）、FTP 與 Coggan 的 7 區（FTP 的百分比）：交叉訓練的目標換算用（規格 12.24） */
+const RIDE_LTHR = 160;
+const RIDE_HR_ZONES = [135, 142, 150, 158, 163, 170, 185];
+const RIDE_FTP = 200;
+const POWER_ZONES = [55, 75, 90, 105, 120, 150, 999];
 
 /**
  * 匯入完整歷史用的舊紀錄：2024-01 起每 4 天一趟，到 45 天前為止（一般的同步只抓 14 天，碰不到）；
@@ -101,7 +111,47 @@ function activities() {
       icu_ctl: 38,
       icu_atl: 52,
     },
-    { id: "i-mock-ride", type: "Ride", start_date_local: `${daysAgo(1)}T18:00:00`, distance: 30000, moving_time: 3600 },
+    // 今天傍晚一趟課表外的騎車（輕鬆，心率區間是騎車自己的）：多運動的「要不要調整接下來的課」（規格 12.24）；
+    // 放在今天，不論星期幾都在這週的課表裡
+    {
+      id: "i-mock-ride",
+      type: "Ride",
+      start_date_local: `${today()}T17:30:00`,
+      distance: 30000,
+      moving_time: 3600,
+      average_heartrate: 128,
+      icu_training_load: 38,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [2400, 1200, 0, 0, 0, 0, 0],
+    },
+    // 之前的騎車（多運動的第 3 階段）：紀錄頁的騎車、長騎的增幅有依據；都不到 90 分鐘、負荷 60 以下
+    // （不觸發「前一天騎很久」，開關關著的腳本不受影響）
+    {
+      id: "i-mock-ride-4d",
+      type: "Ride",
+      start_date_local: `${daysAgo(4)}T07:00:00`,
+      distance: 32000,
+      moving_time: 4500,
+      average_heartrate: 141,
+      icu_training_load: 58,
+      icu_eftp: 205,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [900, 1200, 1500, 900, 0, 0, 0],
+    },
+    {
+      id: "i-mock-ride-8d",
+      type: "VirtualRide",
+      start_date_local: `${daysAgo(8)}T20:00:00`,
+      distance: 38000,
+      moving_time: 5100,
+      average_heartrate: 130,
+      icu_training_load: 52,
+      lthr: RIDE_LTHR,
+      icu_hr_zones: RIDE_HR_ZONES,
+      icu_hr_zone_times: [2400, 2400, 300, 0, 0, 0, 0],
+    },
     {
       id: "i-mock-3d",
       type: "Run",
@@ -119,8 +169,11 @@ function activities() {
   ];
 }
 
-/** 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由） */
-function samplePlan(text: string) {
+/**
+ * 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由）.
+ * multisport：工具有交叉訓練的 sport 時（多運動的開關開著），週六加一堂 Z2 的騎車，今天加一堂肌力（回報做完了用）
+ */
+function samplePlan(text: string, multisport = false) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
   const start = /下週/.test(text) ? 7 : 0;
@@ -156,9 +209,95 @@ function samplePlan(text: string) {
         fallback: "改成 40 分鐘輕鬆跑",
       },
       { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: 10, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
+      ...(multisport
+        ? [
+            {
+              date: day(5),
+              kind: "cross",
+              sport: "ride",
+              title: "輕鬆騎車",
+              steps: [{ duration_min: 45, target: { zone: "Z2" } }, { duration_min: 10, target: { power: "Z3" } }],
+              purpose: "不增加衝擊的有氧量",
+              success: "心率維持在騎車的 Z2",
+            },
+            ...(start === 0
+              ? [{ date: today(), kind: "strength", title: "今天的肌力", steps: [{ duration_min: 20, note: "深蹲、弓箭步、單腳提踵" }], purpose: "減少受傷", success: "動作確實" }]
+              : []),
+          ]
+        : []),
     ],
   };
 }
+
+/**
+ * 跑步＋騎車（或只騎車）的課表（多運動的第 3 階段）：今天一堂耐力騎（配對今天傍晚的騎車）、相鄰兩天甜蜜點與 T、
+ * 再一堂最大攝氧間歇——第一次不設 accept_warnings，檢查器會回跨運動的警告（兩項合計的數量、不連排）。
+ * rideOnly：只練騎車（耐力、甜蜜點、長騎），照規則排、沒有警告
+ */
+function cyclingPlan(rideOnly: boolean, accept = false) {
+  const t = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const at = (index: number) => daysAgo(t - index);
+  const zone = (z: string, minutes: number) => ({ duration_min: minutes, target: { zone: z } });
+  const endurance = { date: today(), kind: "ride_endurance", title: "耐力騎", steps: [zone("Z2", 60)], purpose: "有氧基礎", success: "心率大多在騎車的 Z2" };
+  const sweetspot = (date: string) => ({
+    date,
+    kind: "ride_sweetspot",
+    title: "甜蜜點 2 × 15 分鐘",
+    steps: [zone("Z2", 15), { repeat: 2, steps: [zone("SS", 15), { duration_min: 5 }] }, zone("Z1", 10)],
+    purpose: "提高 FTP",
+    success: "第二組仍能維持",
+    fallback: "改成 60 分鐘耐力騎",
+  });
+  if (rideOnly) {
+    const [a, b] = t <= 3 ? [t + 2, 6] : [t - 3, t === 6 ? 5 : 6];
+    return {
+      week_start: at(0),
+      style: "fixed",
+      reason: "（模擬）只練騎車：耐力為主，一堂甜蜜點",
+      // 週五以後甜蜜點會排在今天以前（past_date 的提醒）：一律寫理由存
+      accept_warnings: true,
+      warning_notes: "（模擬）測試用的課表",
+      sessions: [endurance, sweetspot(at(a)), { date: at(b), kind: "ride_long", title: "長騎", steps: [zone("Z2", 95)], purpose: "耐力", success: "補給與心率穩定" }],
+    };
+  }
+  const [a, b] = t <= 4 ? [t + 1, t + 2] : [t - 2, t - 1];
+  const free = [0, 1, 2, 3, 4, 5, 6].filter((i) => ![t, a, b].includes(i));
+  return {
+    week_start: at(0),
+    style: "fixed",
+    reason: "（模擬）跑步＋騎車",
+    ...(accept ? { accept_warnings: true, warning_notes: "（模擬）測試跨運動的警告" } : {}),
+    sessions: [
+      endurance,
+      sweetspot(at(a)),
+      {
+        date: at(b),
+        kind: "threshold",
+        title: "20 分鐘 T",
+        steps: [{ duration_min: 15, target: { hr: "easy" } }, { duration_min: 20, target: { pace: "T" } }, { duration_min: 10, target: { hr: "easy" } }],
+        purpose: "提高閾值",
+        success: "配速穩定",
+        fallback: "改成 40 分鐘輕鬆跑",
+      },
+      {
+        date: at(free.find((i) => Math.abs(i - a) > 1 && Math.abs(i - b) > 1 && i !== t) ?? free[0]!),
+        kind: "ride_vo2",
+        title: "5 × 4 分鐘",
+        steps: [zone("Z2", 15), { repeat: 5, steps: [zone("Z5", 4), { duration_min: 4 }] }, zone("Z1", 10)],
+        purpose: "最大攝氧量",
+        success: "最後一趟仍能完成",
+        fallback: "改成 60 分鐘耐力騎",
+      },
+      { date: at(free.at(-1)!), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 40, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" },
+    ],
+  };
+}
+
+/** 工具清單有單車的課（多運動的第 3 階段） */
+const hasCycling = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("ride_sweetspot");
+
+/** 工具清單有交叉訓練的 sport（多運動的開關開著） */
+const hasMultisport = (tools: unknown[] | undefined) => JSON.stringify(tools ?? []).includes("交叉訓練（kind=cross）是哪種運動");
 
 const textOf = (m: Message | undefined) =>
   !m ? "" : typeof m.content === "string" ? m.content : m.content.map((b) => String(b.text ?? b.content ?? "")).join("\n");
@@ -171,6 +310,13 @@ const toolUse = (name: string, input: Record<string, unknown> = {}): Block => ({
 });
 
 /** 依對話內容決定模擬教練的下一步 */
+/** 模擬的長回覆：結論＋三個小標（程式碼區塊裡的 ## 不算小標） */
+const LONG_REPLY =
+  "（模擬回覆）**週四的閾值課縮短成 3 × 1.5 km，週末長跑照排。**這週量比平常多一成，先保留強度、少一組。\n\n" +
+  "## 這週的狀況\n這週跑了 32 km，比前三週平均多 12%；長跑後段的心率漂移有點大。\n\n" +
+  "## 週四的閾值課\n改成 3 × 1.5 km，組間慢跑 2 分鐘。\n\n```\n## 這行在程式碼區塊裡，不是小標\n```\n\n" +
+  "## 週末的長跑\n維持 16 km，前 10 km 控制在輕鬆跑的心率以下。";
+
 function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { type: string } }): Block[] {
   const last = body.messages.at(-1);
   const lastText = textOf(last);
@@ -201,6 +347,10 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (body.tool_choice?.type === "none") return [{ type: "text", text: "（模擬回覆）已達工具呼叫上限，先回覆到這裡。" }];
 
   if (isToolResult) {
+    // 跑步＋騎車的課表有跨運動的警告：寫理由再存一次
+    if (lastText.includes("尚未儲存") && lastText.includes("跑步與騎車")) {
+      return [toolUse("save_training_plan", cyclingPlan(false, true))];
+    }
     if (lastText.includes("✅ 是今天的活動")) {
       return [toolUse("save_workout", { perceived_effort: 7, subjective_notes: "腿有點重" })];
     }
@@ -216,13 +366,25 @@ function reply(body: { messages: Message[]; tools?: unknown[]; tool_choice?: { t
   if (/之前聊過|上次說/.test(lastText)) return [toolUse("search_conversations", { from: daysAgo(7), to: today() })];
   if (/跑完|剛跑/.test(lastText) && !lastText.includes("已經存檔")) return [toolUse("fetch_latest_activity")];
   if (/比賽|賽事/.test(lastText)) return [toolUse("list_races")];
-  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText))];
+  if (/騎完|剛騎/.test(lastText) && hasCycling(body.tools)) {
+    return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
+  }
+  if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
+    return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
+  }
+  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
+  // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
+  if (/調整這週接下來的課/.test(lastText)) {
+    return [toolUse("save_training_plan", { ...samplePlan("", hasMultisport(body.tools)), reason: "（模擬）依課表外的騎車調整" })];
+  }
   if (/配速|強度|心率區間/.test(lastText)) return [toolUse("get_training_values")];
   // Anthropic 的工具是 { name }，OpenAI 相容的是 { function: { name } }
   const toolNames = (body.tools ?? []).map((t) => (t as { name?: string; function?: { name?: string } }).name ?? (t as { function?: { name?: string } }).function?.name);
   if (/天氣|下雨/.test(lastText) && toolNames.includes("get_weather")) {
     return [toolUse("get_weather", { date: daysAgo(-1) })];
   }
+  // 長回覆（規格 12.30）：先一兩句結論、細節分小標；E2E 檢查小標以下收起、串流時全部展開
+  if (/長一點|詳細說明/.test(lastText)) return [{ type: "text", text: LONG_REPLY }];
   if (/計畫|課表/.test(lastText)) return [toolUse("get_training_plan")];
   if (/最近|狀態|疲勞/.test(lastText)) return [toolUse("get_recent_workouts")];
   return [
@@ -252,9 +414,73 @@ function pieces(text: string, size = 3): string[] {
   return out;
 }
 
-const estimateUsage = (body: { messages: unknown; system?: unknown }, content: Block[]) => ({
-  input: Math.round((JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length) / 2),
-  output: Math.round(JSON.stringify(content).length / 2),
+type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+/** 用量以字元數 / 2 估算；請求帶快取標記時另外算快取的讀與寫 */
+function estimateUsage(body: CacheableBody, content: Block[]): Usage {
+  const output = Math.round(JSON.stringify(content).length / 2);
+  const cached = cachedUsage(body);
+  if (cached) return { ...cached, output };
+  const input = Math.round((JSON.stringify(body.messages).length + JSON.stringify(body.system ?? "").length) / 2);
+  return { input, output, cacheRead: 0, cacheWrite: 0 };
+}
+
+type CacheableBody = { messages: unknown[]; system?: unknown; tools?: unknown[]; cache_control?: unknown };
+const CACHE_TTL_MS = 5 * 60_000;
+/** 快取的前綴（雜湊）→ 到期時間 */
+const promptCache = new Map<string, number>();
+
+/**
+ * 模擬 Prompt Caching：只在請求上有 cache_control 時（Anthropic 的自動快取，或 OpenRouter 上 Claude 的寫法）。
+ * 依 tools → system → messages 的順序把請求接成一串；斷點是帶 cache_control 的系統提示區塊結尾與整段的結尾。
+ * 5 分鐘內在斷點寫過的最長前綴（任一區塊的邊界）算讀取，讀取到最後一個斷點之間算寫入，其餘照一般輸入；命中與寫入都重新計時。
+ */
+function cachedUsage(body: CacheableBody): Omit<Usage, "output"> | null {
+  if (!body.cache_control) return null;
+  const parts: { text: string; breakpoint: boolean }[] = [{ text: JSON.stringify(body.tools ?? []), breakpoint: false }];
+  const systemParts = (system: unknown) => {
+    if (typeof system === "string") parts.push({ text: system, breakpoint: false });
+    else if (Array.isArray(system)) {
+      for (const b of system as { text?: string; cache_control?: unknown }[]) parts.push({ text: b.text ?? "", breakpoint: Boolean(b.cache_control) });
+    }
+  };
+  systemParts(body.system);
+  for (const m of body.messages as { role: string; content: unknown }[]) {
+    if (m.role === "system") systemParts(m.content);
+    else parts.push({ text: JSON.stringify(m), breakpoint: false });
+  }
+  parts.at(-1)!.breakpoint = true;
+
+  const now = Date.now();
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  let prefix = "";
+  let read = 0;
+  const breakpoints: { key: string; chars: number }[] = [];
+  for (const part of parts) {
+    prefix += part.text;
+    const key = hash(prefix);
+    // 斷點往前找之前寫過的區塊邊界（真實的 API 往前找最多 20 個區塊）
+    if ((promptCache.get(key) ?? 0) > now) read = prefix.length;
+    if (part.breakpoint) breakpoints.push({ key, chars: prefix.length });
+  }
+  for (const { key } of breakpoints) promptCache.set(key, now + CACHE_TTL_MS);
+  const tokens = (chars: number) => Math.round(chars / 2);
+  const cacheRead = tokens(read);
+  const cacheWrite = tokens(breakpoints.at(-1)!.chars) - cacheRead;
+  return { input: tokens(prefix.length) - cacheRead - cacheWrite, cacheRead, cacheWrite };
+}
+
+const anthropicUsage = (u: Usage) => ({
+  input_tokens: u.input,
+  output_tokens: u.output,
+  ...(u.cacheRead || u.cacheWrite ? { cache_read_input_tokens: u.cacheRead, cache_creation_input_tokens: u.cacheWrite } : {}),
+});
+
+/** OpenAI 相容的用量：prompt_tokens 含快取；cache_write_tokens 只有帶快取標記時才有（同 OpenRouter） */
+const openAIUsage = (u: Usage) => ({
+  prompt_tokens: u.input + u.cacheRead + u.cacheWrite,
+  completion_tokens: u.output,
+  ...(u.cacheRead || u.cacheWrite ? { prompt_tokens_details: { cached_tokens: u.cacheRead, cache_write_tokens: u.cacheWrite } } : {}),
 });
 
 function readJson(req: IncomingMessage): Promise<any> {
@@ -272,7 +498,7 @@ function readJson(req: IncomingMessage): Promise<any> {
 }
 
 /** Anthropic 格式的串流：一段不回傳內容的思考，接著逐段送出文字與工具呼叫 */
-async function streamAnthropic(res: ServerResponse, model: string, content: Block[], usage: { input: number; output: number }) {
+async function streamAnthropic(res: ServerResponse, model: string, content: Block[], usage: Usage) {
   res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
   const send = (type: string, data: Record<string, unknown> = {}) =>
     res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
@@ -286,7 +512,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
       content: [],
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: usage.input, output_tokens: 1 },
+      usage: { ...anthropicUsage(usage), output_tokens: 1 },
     },
   });
   send("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
@@ -300,7 +526,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
       send("content_block_start", { index, content_block: { type: "text", text: "" } });
       for (const text of pieces(String(block.text))) {
         send("content_block_delta", { index, delta: { type: "text_delta", text } });
-        await sleep(CHUNK_MS);
+        await sleep(chunkMs(String(block.text)));
       }
     } else {
       send("content_block_start", { index, content_block: { ...block, input: {} } });
@@ -339,7 +565,7 @@ function toOpenAI(content: Block[]) {
   return { text, toolCalls, finishReason: toolCalls.length ? "tool_calls" : "stop" };
 }
 
-async function streamOpenAI(res: ServerResponse, content: Block[], usage: { input: number; output: number }, includeUsage: boolean) {
+async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage, includeUsage: boolean) {
   res.writeHead(200, { "content-type": "text/event-stream", ...CORS });
   const send = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`);
   const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) =>
@@ -350,14 +576,14 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: { inpu
   await sleep(THINK_MS);
   for (const piece of pieces(text)) {
     chunk({ content: piece });
-    await sleep(CHUNK_MS);
+    await sleep(chunkMs(text));
   }
   for (const [index, call] of toolCalls.entries()) {
     chunk({ tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: "" } }] });
     chunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
   }
   chunk({}, finishReason);
-  if (includeUsage) send({ id: "chatcmpl-mock", choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output } });
+  if (includeUsage) send({ id: "chatcmpl-mock", choices: [], usage: openAIUsage(usage) });
   res.write("data: [DONE]\n\n");
   res.end();
 }
@@ -365,7 +591,13 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: { inpu
 // 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空
 const syncStore = new SyncStore(openNodeSqlite(":memory:"));
 await syncStore.init();
-const syncHandle = createSyncHandler({ store: syncStore, allowedOrigins: ["*"] });
+// 冷卻期（規格 12.27）預設和正式的一樣 24 小時；E2E 用 MOCK_SYNC_COOLDOWN_MS 縮短
+const syncCooldown = Number(process.env.MOCK_SYNC_COOLDOWN_MS);
+const syncHandle = createSyncHandler({
+  store: syncStore,
+  allowedOrigins: ["*"],
+  cooldownMs: Number.isFinite(syncCooldown) && syncCooldown >= 0 && process.env.MOCK_SYNC_COOLDOWN_MS ? syncCooldown : undefined,
+});
 
 function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   const chunks: Buffer[] = [];
@@ -418,7 +650,7 @@ function mockWeather(url: URL) {
 }
 
 /** E2E 用：最近的模型請求與天氣查詢 */
-const recent: { kind: "llm" | "weather"; body: unknown }[] = [];
+const recent: { kind: "llm" | "weather"; body: unknown; usage?: Usage }[] = [];
 function record(kind: "llm" | "weather", body: unknown) {
   recent.push({ kind, body });
   if (recent.length > 50) recent.shift();
@@ -473,7 +705,7 @@ createServer((req, res) => {
       name: "Mock Runner",
       email: "mock@example.com",
       sportSettings: [
-        { types: ["Ride", "VirtualRide"], ftp: 200 },
+        { types: ["Ride", "VirtualRide"], ftp: RIDE_FTP, power_zones: POWER_ZONES, lthr: RIDE_LTHR, max_hr: 185, hr_zones: RIDE_HR_ZONES },
         { types: ["Run", "VirtualRun", "TrailRun"], lthr: LTHR, max_hr: 190, hr_zones: HR_ZONES, threshold_pace: null },
       ],
     });
@@ -505,6 +737,7 @@ createServer((req, res) => {
       record("llm", body);
       const content = reply(body);
       const usage = estimateUsage(body, content);
+      recent.at(-1)!.usage = usage;
       console.log(`${new Date().toISOString()} /v1/messages model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
       if (body.stream) return streamAnthropic(res, body.model, content, usage);
       await sleep(THINK_MS);
@@ -516,7 +749,7 @@ createServer((req, res) => {
         content,
         stop_reason: content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: usage.input, output_tokens: usage.output },
+        usage: anthropicUsage(usage),
       });
     }, () => send(400, { type: "error", error: { type: "invalid_request_error", message: "invalid JSON" } }));
     return;
@@ -526,6 +759,7 @@ createServer((req, res) => {
       record("llm", body);
       const content = reply(fromOpenAI(body));
       const usage = estimateUsage(body, content);
+      recent.at(-1)!.usage = usage;
       console.log(`${new Date().toISOString()} /v1/chat/completions model=${body.model}${body.stream ? " stream" : ""} → ${content[0]?.type}`);
       if (body.stream) return streamOpenAI(res, content, usage, Boolean(body.stream_options?.include_usage));
       await sleep(THINK_MS);
@@ -541,7 +775,7 @@ createServer((req, res) => {
             message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
           },
         ],
-        usage: { prompt_tokens: usage.input, completion_tokens: usage.output },
+        usage: openAIUsage(usage),
       });
     }, () => send(400, { error: { message: "invalid JSON" } }));
     return;
