@@ -203,3 +203,5 @@ Copyright (C) 2026 William
 本專案自 v2 起採用 GNU Affero General Public License v3.0（`AGPL-3.0-only`，見 [LICENSE](LICENSE)）。你可以自由使用、修改與散布；若散布修改後的版本，或以修改後的版本對外提供網路服務，必須以相同授權公開對應的原始碼。本程式不附任何擔保。
 
 v1.4 與更早的版本（commit `62ae45f` 為止）是以 MIT License 釋出，那些版本的授權不受影響。
+
+網頁版用到的第三方圖示：[Lucide](https://lucide.dev)（ISC License）與 [Tabler Icons](https://tabler.io/icons)（MIT License，跑步與游泳的圖示）。

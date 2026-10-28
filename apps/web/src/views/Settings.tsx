@@ -700,7 +700,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
             <br />
           </>
         )}
-        Zone2Mate 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。
+        Zone2Mate 是自由軟體，以 AGPL-3.0 授權、不附任何擔保。圖示：Lucide（ISC）、Tabler Icons（MIT）。
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼
         </a>

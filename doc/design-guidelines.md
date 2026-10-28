@@ -23,7 +23,7 @@
   - 賽事：粉紅。
   - 狀態：達成用打勾（綠），沒做、休息用灰色，**不用紅色**（「一長串 DNF 會讓人挫折」，課表是建議不是考核）。
   - 危險（紅）：只給刪除、重設。
-- 圖示：一套線條圖示取代 emoji（Lucide，ISC 授權，只把用到的 SVG 打包進來，不從 CDN 載入，CSP 照舊）。線條 2px；分頁 22、行內 20、標籤裡 14。跑步用 footprints、騎車 bike、肌力 dumbbell、游泳 waves、賽事 flag、身體狀況 heart-pulse、休息 moon。只有圖示、沒有字的按鈕只留給 ✕、?、齒輪、›，其他的旁邊都要有字；純圖示的按鈕要有 `aria-label`。
+- 圖示：一套線條圖示取代 emoji（Lucide，ISC 授權，只把用到的 SVG 打包進來，不從 CDN 載入，CSP 照舊）。線條 2px；分頁 22、行內 20、標籤裡 14。跑步用跑步的人、騎車 bike、肌力 dumbbell、游泳用游泳的人、賽事 flag、身體狀況 heart-pulse、休息 moon。Lucide 沒有的運動圖示（跑步、游泳）用 Tabler Icons（MIT，`IconRun`、`IconSwimming`），風格相同（24 格、2px 線條、圓角端點），一樣只打包用到的。只有圖示、沒有字的按鈕只留給 ✕、?、齒輪、›，其他的旁邊都要有字；純圖示的按鈕要有 `aria-label`。
 
 ## 元件
 
@@ -55,7 +55,7 @@
 - **變數**（`apps/web/src/styles.css` 的 `:root`）：字級 `--fs-num`（28）、`--fs-title`（20）、`--fs-sub`（16）、`--fs-body`（15）、`--fs-aux`（13）；間距 `--sp-1`…`--sp-8`（4、8、12、16、24、32）；圓角 `--r-field`（8）、`--r-card`（12）、`--r-pill`；可以點的高度 `--touch`（44）。顏色：主色 `--accent`、強度 `--int-low`／`--int-mid`／`--int-high`、不算強度的 `--int-none`（灰）、賽事 `--race`、達成 `--done`、危險 `--danger`；整條提示的底色 `--ok-bg`、`--warn-bg`、`--error-bg`、`--info-bg`。淺色與深色各一組。
 - **字的樣式**：`h1`／`.title` 是標題、`h2` 是小標、`h3` 是粗的內文、`.num` 是數字、`.small` 是輔助；表單的標籤自動是輔助。
 - **按鈕**：沒有 class 的 `button` 就是次要（外框）；`.primary` 主要、`.text` 文字按鈕、`.danger` 紅字（加在外框或文字按鈕上）、`.link` 是句子裡的連結、`.icon-button` 是只有圖示的（要有 `aria-label`）。一列的按鈕放在 `.actions` 裡；表單最後一顆滿寬的主要按鈕用 `.actions.full`。
-- **共用元件**（`apps/web/src/ui.tsx`）：`Icon`（Lucide 的圖示，`aria-hidden`）、`SportIcon`（跑步 footprints、騎車 bike、肌力 dumbbell、游泳 waves、其他 activity、休息 moon、賽事 flag）、`Disclosure`（› 加「細節」，原生的 details）、`DisclosureButton`（卡片裡的「細節」）、`InfoTip`（ⓘ，按鈕的名稱就是說明的標題）、`ListRow`（列表的一列）、`EffortPicker`（體感 1–10 十格）、`EmojiText`（核心給 Discord 也用的文字開頭的 ✅❌📊 換成線條圖示：成功、失敗、統計）、`stripEmoji`（去掉其他的 emoji）。
+- **共用元件**（`apps/web/src/ui.tsx`）：`Icon`（Lucide 的圖示，`aria-hidden`）、`SportIcon`（跑步 Tabler 的 run、騎車 bike、肌力 dumbbell、游泳 Tabler 的 swimming、其他 activity、休息 moon、賽事 flag）、`Disclosure`（› 加「細節」，原生的 details）、`DisclosureButton`（卡片裡的「細節」）、`InfoTip`（ⓘ，按鈕的名稱就是說明的標題）、`ListRow`（列表的一列）、`EffortPicker`（體感 1–10 十格）、`EmojiText`（核心給 Discord 也用的文字開頭的 ✅❌📊 換成線條圖示：成功、失敗、統計）、`stripEmoji`（去掉其他的 emoji）。
 - **小提示**：`useApp().toast("已儲存。…")`，畫面下方三秒後消失（`.toast`）；同步成功也是小提示（`useSync` 送出），失敗或要使用者動手的（同步不到跑步、附 iPhone 的上傳方式）留在原地。
 - **設定**：第一層是清單（`ListRow`：圖示、名稱、一行副標、右邊的狀態，好的狀態是綠色）；點進去是那一項（`Subpage`，最上面「‹ 設定」回到清單）。要直接打開某一項用 `useApp().openSettings("sync")`。很少改的收進那一項的「進階」（`details.advanced`）。
 - **看板的一列**：圖示、標題、一行摘要（今天的課是每堂課一行，前面是運動的圖示）、右邊的數字（賽事的倒數）；整張看板最多一顆實心按鈕（還沒回報身體狀況時給身體狀況，之後給排第一、要動手的那列），其他列的第一個動作是外框、其餘是文字按鈕；「知道了」是右上角的 ✕；標題是短句，數字放成標籤（例：天氣「濕熱，可能下雨」＋體感 36°C、露點 24°C、降雨 70%）。

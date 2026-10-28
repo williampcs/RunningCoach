@@ -13,13 +13,13 @@ import {
   CircleCheck,
   Dumbbell,
   Flag,
-  Footprints,
   Info,
   Moon,
-  Waves,
   type LucideIcon,
   type LucideProps,
 } from "lucide-react";
+// Lucide 沒有的運動圖示（跑步的人、游泳的人）用 Tabler Icons（MIT）：同樣 24 格、2px 線條、圓角端點
+import { IconRun, IconSwimming, type Icon as TablerIcon } from "@tabler/icons-react";
 
 /** 圖示的大小：分頁 22、行內 20、標籤裡 14 */
 export const ICON_TAB = 22;
@@ -34,11 +34,11 @@ export function Icon({ as: Shape, size = ICON_INLINE, ...props }: { as: LucideIc
 /** 運動種類用圖示分，不用顏色分：跑步、騎車、肌力、游泳、其他；休息與賽事也有自己的圖示 */
 export type SportKey = "run" | "ride" | "strength" | "swim" | "other" | "rest" | "race";
 
-const SPORT_SHAPES: Record<SportKey, LucideIcon> = {
-  run: Footprints,
+const SPORT_SHAPES: Record<SportKey, LucideIcon | TablerIcon> = {
+  run: IconRun,
   ride: Bike,
   strength: Dumbbell,
-  swim: Waves,
+  swim: IconSwimming,
   other: Activity,
   rest: Moon,
   race: Flag,
@@ -54,8 +54,15 @@ export const SPORT_NAMES: Record<SportKey, string> = {
   race: "賽事",
 };
 
+const TABLER = new Set<unknown>([IconRun, IconSwimming]);
+
 export function SportIcon({ sport, size = ICON_INLINE }: { sport: SportKey; size?: number }) {
-  return <Icon as={SPORT_SHAPES[sport]} size={size} />;
+  const Shape = SPORT_SHAPES[sport];
+  if (TABLER.has(Shape)) {
+    const T = Shape as TablerIcon;
+    return <T size={size} stroke={2} className="icon" aria-hidden="true" focusable="false" />;
+  }
+  return <Icon as={Shape as LucideIcon} size={size} />;
 }
 
 /** 收起的細節：全 App 同一個樣子（› 加「細節」或「為什麼」）；用原生的 details，鍵盤與螢幕閱讀器都照常 */

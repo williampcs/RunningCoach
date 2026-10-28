@@ -2,10 +2,10 @@ import { useEffect, useState, type CSSProperties } from "react";
 
 import { addDays, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
-import { CalendarDays, Flag, Flame, Footprints, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
+import { CalendarDays, Flag, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
-import { Disclosure, Icon, InfoTip } from "../ui";
+import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
 
 /** 最多畫幾格；更早的以「+N」表示 */
 const MAX_BLOCKS = 300;
@@ -52,12 +52,12 @@ const number = (n: number, digits = 0) => n.toLocaleString("zh-TW", { minimumFra
 /** 里程碑的名稱附上距離，例：「台北到東京（2,100 km）」；名稱本身不一定說得出距離 */
 const placeText = (place: { name: string; km: number }) => `${place.name}（${number(place.km)} km）`;
 
-function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: LucideIcon; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
+function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: LucideIcon | "run"; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
   const shown = useCountUp(value);
   return (
     <div className={accent ? "tile accent" : "tile"}>
       <span className="tile-label">
-        <Icon as={icon} size={14} /> {label}
+        {icon === "run" ? <SportIcon sport="run" size={14} /> : <Icon as={icon} size={14} />} {label}
       </span>
       <span className="tile-value">
         {number(shown, digits)}
@@ -83,7 +83,7 @@ function Journey({ totals }: { totals: Accumulation }) {
       <div className="journey-track">
         <div className="journey-fill" style={{ width: mounted ? `${pct}%` : "0%" }}>
           <span className="journey-runner">
-            <Icon as={Footprints} size={18} />
+            <SportIcon sport="run" size={18} />
           </span>
         </div>
       </div>
@@ -328,7 +328,7 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
         {totals.thisWeek && (
           <Tile accent icon={Flame} label="這週" value={totals.thisWeek.km} digits={1} unit="km" sub={`${totals.thisWeek.runs} 趟・${number(totals.thisWeek.minutes)} 分鐘`} />
         )}
-        <Tile icon={Footprints} label="跑了" value={totals.runs} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
+        <Tile icon="run" label="跑了" value={totals.runs} unit="趟" sub={`${number(totals.weeks)} 週有跑步`} />
         <Tile icon={Timer} label="時間" value={hours} digits={hours < 10 ? 1 : 0} unit="小時" />
         {totals.thisYearKm !== null && <Tile icon={CalendarDays} label={`${today.slice(0, 4)} 年`} value={totals.thisYearKm} digits={1} unit="km" />}
         {totals.longest && <Tile icon={Ruler} label="最長的一趟" value={totals.longest.km} digits={1} unit="km" sub={shortDateLabel(totals.longest.date)} />}
