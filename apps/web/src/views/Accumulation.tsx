@@ -49,8 +49,8 @@ function useMounted(): boolean {
 }
 
 const number = (n: number, digits = 0) => n.toLocaleString("zh-TW", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-/** 里程碑的名稱附上距離，例：「台北到東京（2,100 km）」；名稱本身不一定說得出距離 */
-const placeText = (place: { name: string; km: number }) => `${place.name}（${number(place.km)} km）`;
+/** 里程碑的名稱附上距離，例：「從台灣飛到東京（約 2,118 km）」；名稱本身不一定說得出距離 */
+const placeText = (place: { name: string; km: number; approx: boolean }) => `${place.name}（${place.approx ? "約 " : ""}${number(place.km)} km）`;
 
 function Tile({ icon, label, value, digits = 0, unit, sub, accent = false }: { icon: LucideIcon | "run"; label: string; value: number; digits?: number; unit: string; sub?: string; accent?: boolean }) {
   const shown = useCountUp(value);
@@ -91,7 +91,7 @@ function Journey({ totals }: { totals: Accumulation }) {
     <div className="journey" role="img" aria-label={label}>
       {origin && (
         <span className="journey-origin small muted">
-          <Icon as={MapPin} size={14} /> 從{origin}出發
+          <Icon as={MapPin} size={14} /> {origin}
         </span>
       )}
       {/* 軌道從第一欄的中間畫到最後一欄的中間，站點和下面的字對齊 */}
@@ -343,7 +343,7 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
           {number(km, 1)}
           <small> km</small>
         </span>
-        {totals.passed && <span className="tile-sub">已經超過{placeText(totals.passed)}</span>}
+        {totals.passed && <span className="tile-sub">已經超過{placeText(totals.track.stations[totals.track.at]!)}</span>}
         <Journey totals={totals} />
         <RegionHint region={totals.region} />
       </div>

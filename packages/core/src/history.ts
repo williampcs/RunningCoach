@@ -193,7 +193,7 @@ export async function runCards(db: Db, today: string, days: number): Promise<Run
 /** 累積的里程碑（距離都是約略值；國外的是直線距離）：只說到過哪裡與下一站（規格 12.5：休息不會失去任何東西） */
 /**
  * 紀錄頁的里程碑（12.5）. 預設是不依賴所在地的一組；選手在「選手資料」選了所在地區時，換成那個地區的
- * （距離都從那個地區的大城市算）. 名稱本身要說得出距離（「台北到東京」而不是「東京」），畫面上再附上公里數
+ * （距離都從那個地區的大城市算）. 名稱本身要說得出距離（「從台灣飛到東京」而不是「東京」），畫面上再附上公里數
  */
 export const REGIONS = { TW: "台灣" } as const;
 /** 空字串是通用（不依賴所在地） */
@@ -208,7 +208,7 @@ export const REGION_CHOICES: Record<string, string> = { auto: "依時區自動�
 /** 時區對應的地區（依時區自動判斷時用） */
 const TIME_ZONE_REGIONS: Record<string, Region> = { "Asia/Taipei": "TW" };
 
-/** 一站：名稱說得出距離（「台北到東京」）；short 是手機上軌道寫的短名稱；approx 是用座標算的（畫面標「約」） */
+/** 一站：名稱說得出距離（「從台灣飛到東京」）；short 是手機上軌道寫的短名稱；approx 是用座標算的（畫面標「約」） */
 export interface Landmark {
   name: string;
   short: string;
@@ -218,8 +218,8 @@ export interface Landmark {
 
 interface Landmarks {
   places: Landmark[];
-  /** 從哪裡出發（軌道上方寫一次）；通用的沒有 */
-  origin: string | null;
+  /** 從哪裡出發（軌道上方寫一次）：到 untilKm 為止用這一段的說法；通用的沒有 */
+  legs: { label: string; untilKm: number }[];
   /** 爬升的比較對象 */
   climb: { name: string; meters: number; kind: "mountain" | "tower" };
 }
@@ -227,24 +227,7 @@ interface Landmarks {
 /** 城市的座標（緯度、經度）：站與站的距離用大圓距離算，不手填（規格 12.29） */
 const CITIES: Record<string, [number, number]> = {
   台北: [25.033, 121.5654],
-  基隆: [25.1276, 121.7392],
-  桃園: [24.9936, 121.301],
-  中壢: [24.9653, 121.225],
-  楊梅: [24.9078, 121.145],
-  湖口: [24.9035, 121.0446],
-  新竹: [24.8138, 120.9675],
-  竹南: [24.6866, 120.8783],
-  苗栗: [24.5602, 120.8214],
-  豐原: [24.2525, 120.7166],
-  台中: [24.1477, 120.6736],
-  斗六: [23.7114, 120.5436],
-  嘉義: [23.4801, 120.4491],
-  台南: [22.9997, 120.227],
-  高雄: [22.6273, 120.3014],
-  墾丁: [21.948, 120.7797],
-  台州: [28.6564, 121.4208],
-  寧波: [29.8683, 121.544],
-  那霸: [26.2124, 127.6809],
+  桃園機場: [25.0797, 121.2342],
   香港: [22.3193, 114.1694],
   馬尼拉: [14.5995, 120.9842],
   首爾: [37.5665, 126.978],
@@ -285,8 +268,11 @@ export function cityDistanceKm(from: string, to: string): number {
 const route = (name: string, short: string, km: number): Landmark => ({ name, short, km, approx: false });
 /** 兩個城市之間（用座標算，標「約」）；short 沒給時是目的地 */
 const between = (from: string, to: string, short = to): Landmark => ({ name: `${from}到${to}`, short, km: cityDistanceKm(from, to), approx: true });
-/** 從台北出發的一站 */
-const fromTaipei = (to: string) => between("台北", to);
+/** 環島之旅的一站：沿國道一號從基隆南下、經墾丁沿東部回到基隆，km 是沿路累積的公路里程（各段加總，標「約」） */
+const aroundIsland = (city: string, km: number): Landmark => ({ name: `環島到${city}`, short: city, km, approx: true });
+/** 環島之後：從台灣飛出去（桃園機場的座標算大圓距離） */
+const flyFromTaiwan = (to: string): Landmark => ({ name: `從台灣飛到${to}`, short: to, km: cityDistanceKm("桃園機場", to), approx: true });
+const ISLAND_KM = 1000;
 const EARTH_KM = 40075;
 
 /**
@@ -295,7 +281,7 @@ const EARTH_KM = 40075;
  */
 const LANDMARKS: Record<Region, Landmarks> = {
   "": {
-    origin: null,
+    legs: [],
     places: [
       route("一場全馬", "全馬", 42.195),
       route("雙洋超馬（南非）", "雙洋超馬", 56),
@@ -332,45 +318,51 @@ const LANDMARKS: Record<Region, Landmarks> = {
     climb: { name: "聖母峰", meters: 8849, kind: "mountain" },
   },
   TW: {
-    origin: "台北",
+    legs: [
+      { label: "環島：從基隆出發", untilKm: ISLAND_KM },
+      { label: "從台灣（桃園機場）出發", untilKm: Infinity },
+    ],
     places: [
-      fromTaipei("基隆"),
-      fromTaipei("桃園"),
-      fromTaipei("中壢"),
-      fromTaipei("楊梅"),
-      fromTaipei("湖口"),
-      fromTaipei("新竹"),
-      fromTaipei("竹南"),
-      fromTaipei("苗栗"),
-      fromTaipei("豐原"),
-      fromTaipei("台中"),
-      fromTaipei("斗六"),
-      fromTaipei("嘉義"),
-      fromTaipei("台南"),
-      fromTaipei("高雄"),
-      fromTaipei("墾丁"),
-      fromTaipei("台州"),
-      fromTaipei("寧波"),
-      fromTaipei("那霸"),
-      fromTaipei("香港"),
-      route("環島一圈", "環島", 1000),
-      fromTaipei("馬尼拉"),
-      fromTaipei("首爾"),
-      fromTaipei("北京"),
-      fromTaipei("東京"),
-      fromTaipei("曼谷"),
-      fromTaipei("新加坡"),
-      fromTaipei("雅加達"),
-      fromTaipei("德里"),
-      fromTaipei("孟買"),
-      fromTaipei("杜拜"),
-      fromTaipei("雪梨"),
-      fromTaipei("倫敦"),
-      fromTaipei("紐約"),
-      fromTaipei("邁阿密"),
-      fromTaipei("利馬"),
+      aroundIsland("台北", 25),
+      aroundIsland("五股", 33),
+      aroundIsland("林口", 41),
+      aroundIsland("桃園", 49),
+      aroundIsland("中壢", 62),
+      aroundIsland("楊梅", 69),
+      aroundIsland("湖口", 83),
+      aroundIsland("新竹", 95),
+      aroundIsland("頭份", 110),
+      aroundIsland("苗栗", 132),
+      aroundIsland("三義", 150),
+      aroundIsland("台中", 178),
+      aroundIsland("彰化", 198),
+      aroundIsland("斗南", 240),
+      aroundIsland("嘉義", 264),
+      aroundIsland("台南", 327),
+      aroundIsland("高雄", 370),
+      aroundIsland("枋寮", 430),
+      aroundIsland("墾丁", 480),
+      aroundIsland("台東", 620),
+      aroundIsland("花蓮", 785),
+      aroundIsland("宜蘭", 900),
+      route("環島一圈（回到基隆）", "環島一圈", ISLAND_KM),
+      flyFromTaiwan("馬尼拉"),
+      flyFromTaiwan("首爾"),
+      flyFromTaiwan("北京"),
+      flyFromTaiwan("東京"),
+      flyFromTaiwan("曼谷"),
+      flyFromTaiwan("新加坡"),
+      flyFromTaiwan("雅加達"),
+      flyFromTaiwan("德里"),
+      flyFromTaiwan("孟買"),
+      flyFromTaiwan("杜拜"),
+      flyFromTaiwan("雪梨"),
+      flyFromTaiwan("倫敦"),
+      flyFromTaiwan("紐約"),
+      flyFromTaiwan("邁阿密"),
+      flyFromTaiwan("利馬"),
       route("地球半圈", "地球半圈", EARTH_KM / 2),
-      { name: "台北到紐約來回", short: "紐約來回", km: cityDistanceKm("台北", "紐約") * 2, approx: true },
+      { name: "從台灣飛到紐約再飛回來", short: "紐約來回", km: cityDistanceKm("桃園機場", "紐約") * 2, approx: true },
       route("地球四分之三圈", "四分之三圈", (EARTH_KM * 3) / 4),
       route("地球一圈", "地球一圈", EARTH_KM),
     ],
@@ -391,7 +383,7 @@ export interface TrackStation extends Landmark {
 /**
  * 紀錄頁的軌道（規格 12.29）：一次四站、等距排；起點是第一站。走完軌道的最後一站，整組往前移兩站
  * （起點 A B C → 過了 C 是 B C D E → 過了 E 是 D E F G），所以除了一開始，選手都在軌道的中段或後段.
- * at 是最後一個過了的站在 stations 裡的位置，fraction 是往下一站的這一段跑了幾成
+ * at 是最後一個過了的站在 stations 裡的位置，fraction 是往下一站的這一段跑了幾成；origin 是軌道上方的說法（「環島：從基隆出發」）
  */
 export interface Track {
   origin: string | null;
@@ -401,7 +393,7 @@ export interface Track {
 }
 
 export function landmarkTrack(km: number, region: Region): Track {
-  const { places, origin } = LANDMARKS[region];
+  const { places, legs } = LANDMARKS[region];
   const all: Landmark[] = [{ name: "起點", short: "起點", km: 0, approx: false }, ...places];
   const last = all.filter((p) => km >= p.km).length - 1;
   // 視窗的起點：偶數、而且視窗的最後一站還沒過（p ≤ 2 時從起點開始）
@@ -410,6 +402,8 @@ export function landmarkTrack(km: number, region: Region): Track {
   const stations = all.slice(start, start + 4).map((p) => ({ ...p, passed: km >= p.km }));
   const next = all[last + 1];
   const fraction = next ? Math.min(1, Math.max(0, (km - all[last]!.km) / (next.km - all[last]!.km))) : 1;
+  // 軌道上方的說法：選手正在跑的這一段屬於哪一段旅程（環島，或從台灣飛出去）
+  const origin = legs.find((l) => (next ?? all[last]!).km <= l.untilKm)?.label ?? null;
   return { origin, stations, at: last - start, fraction: next ? fraction : 0 };
 }
 
