@@ -19,8 +19,9 @@
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-markdown": "*",
-    "remark-gfm": "*"
+    "react-markdown": "10.1.0",
+    "remark-cjk-friendly": "2.3.2",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

@@ -56,6 +56,8 @@ let step = "start";
       step = "寫完：結論顯示、小標收起";
       const sections = reply.locator(".reply-section");
       c.leadShown = await reply.getByText("週四的閾值課縮短成 3 × 1.5 km").isVisible();
+      // 中文標點旁的粗體（「…照排。**這週」）顯示成粗體、沒有星號
+      c.cjkBold = (await reply.locator("strong", { hasText: "週末長跑照排。" }).count()) === 1 && !(await reply.innerText()).includes("**");
       c.threeSections = (await sections.count()) === 3;
       c.titles = JSON.stringify(await sections.locator("summary").allInnerTexts()) === JSON.stringify(["這週的狀況", "週四的閾值課", "週末的長跑"]);
       c.collapsed = (await reply.locator(".reply-section[open]").count()) === 0 && !(await reply.getByText("組間慢跑 2 分鐘").isVisible());
