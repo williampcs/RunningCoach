@@ -464,6 +464,105 @@ details.more > div { margin-top: 8px; font-size: 14px; color: var(--muted); disp
   </section>
 
   <section>
+    <span class="eyebrow">提案 6（2026-10-28）</span>
+    <h2>選手頁：摘要 ＋ 清單 ＋ 下一層</h2>
+    <p class="muted">和設定同一套做法。第一層只看得到「填了什麼」，點進去才是欄位；教練算出來的數字放最上面，因為那是選手最常回來看的。</p>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old">
+          <b>訓練數值</b><span class="muted">心率 · 配速（Daniels）· 最近 28 天的強度分配 · 推算完賽……</span>
+          <b>從其他 AI 帶入</b>
+          <b>目標與狀況</b><span class="muted">長期目標 · 每週目標里程 · 傷病注意 · 紀錄頁的里程碑</span>
+          <b>個人最佳</b><span class="muted">5km · 10km · 半馬 · 全馬</span>
+          <b>生理資料</b><span class="muted">性別 · 出生年 · 身高 · 體重 · 體脂 · 最大心率 · 靜息心率</span>
+          <b>訓練偏好</b><span class="muted">練哪些運動 · 共通的設定（6 欄）· 跑步（5 欄）· 騎車（5 欄）</span>
+          <b>記住的事</b><b>對話摘要</b>
+        </div></div>
+        <ul class="notes"><li>一頁 30 多個欄位，要一直往下捲</li><li>「紀錄頁的里程碑」放在「目標與狀況」裡，找不到</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">提案</span>
+        <div class="phone">
+          <div class="app-card">
+            <div class="row"><span class="grow"><span class="t-head">我的數字</span><span class="sub">依最近的紀錄算，Intervals.icu 的心率設定</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="row" style="gap: 16px; flex-wrap: wrap">
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">40.1</span><span class="sub">VDOT</span></span>
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">5:05</span><span class="sub">閾值 /km</span></span>
+              <span class="grow" style="flex: 1 1 70px"><span class="t-num" style="font-size: 24px">151</span><span class="sub">輕鬆跑上限</span></span>
+            </div>
+            <div class="bar"><span style="flex: 77; background: var(--low)"></span><span style="flex: 23; background: var(--mid)"></span><span style="flex: 1; background: var(--high)"></span></div>
+            <div class="legend"><span>最近 28 天：低 77%</span><span>中 23%</span><span>高 0%</span></div>
+          </div>
+          <div class="app-card" style="gap: 0; padding: 4px 16px">
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="target"></i></span><span class="grow"><span class="title">目標</span><span class="sub">全馬破四 · 每週 40 km</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="sliders-horizontal"></i></span><span class="grow"><span class="title">練什麼、怎麼練</span><span class="sub">跑步、騎車 · 主要跑步 · 每週 5 天</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="trophy"></i></span><span class="grow"><span class="title">個人最佳</span><span class="sub">半馬 1:52:10 · 全馬 4:05:00</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="heart-pulse"></i></span><span class="grow"><span class="title">身體</span><span class="sub">最大心率 190 · 右膝舊傷</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+            <div class="divider"></div>
+            <div class="row" style="padding: 12px 0"><span class="lead-ic"><i data-lucide="bookmark"></i></span><span class="grow"><span class="title">教練記得的事</span><span class="sub">3 則 · 對話摘要 10/25</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          </div>
+          <button class="btn text" type="button" style="align-self: flex-start"><i data-lucide="import"></i>從其他 AI 帶入</button>
+        </div>
+        <ul class="notes"><li>第一層一眼看完：上面是教練算的數字，下面五列是你填的</li><li>沒填的列，副標寫「還沒填」，灰色</li><li>「傷病注意」併進「身體」；里程碑的地區搬到紀錄頁的軌道上直接切換</li></ul>
+      </div>
+    </div>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag after">點進「練什麼、怎麼練」</span>
+        <div class="phone"><div class="app-card">
+          <div class="row"><button class="btn text sm" type="button"><i data-lucide="chevron-left"></i>選手</button></div>
+          <div class="t-head">練哪些運動</div>
+          <div class="chips"><span class="chip" style="background: var(--accent-soft)"><i data-lucide="check"></i>跑步</span><span class="chip" style="background: var(--accent-soft)"><i data-lucide="check"></i>騎車</span><span class="chip">游泳</span><span class="chip">肌力</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow"><span class="title">主要運動</span></span><span class="status">跑步</span></div>
+          <div class="row"><span class="grow"><span class="title">每週最多練幾天</span></span><span class="status">5</span></div>
+          <div class="row"><span class="grow"><span class="title">休息日</span></span><span class="status">週一</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="lead-ic low"><i data-lucide="footprints"></i></span><span class="grow"><span class="title">跑步</span><span class="sub">完賽 · 適度 · 每週 4 次 · 長跑週日</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <div class="row"><span class="lead-ic"><i data-lucide="bike"></i></span><span class="grow"><span class="title">騎車</span><span class="sub">保持健康 · 每週 3 小時</span></span><span class="chev"><i data-lucide="chevron-right"></i></span></div>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>更多：節奏、偏好時段、其他活動</summary><div><span>節奏：固定 · 時段：清晨 · 其他活動：登山</span></div></details>
+        </div></div>
+        <ul class="notes"><li>常用的設定直接在這層改，每項運動再一層</li><li>改了就存，不用捲到最下面按「儲存」</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">提案 7（2026-10-28）</span>
+    <h2>對話：長回覆先給結論，細節收起來</h2>
+    <p class="muted">教練照樣寫完整的內容，不砍細節；畫面上先看到結論，每個小標收成一列，想看哪段點哪段。</p>
+    <div class="compare">
+      <div class="panel">
+        <span class="tag before">現在</span>
+        <div class="phone"><div class="app-card old" style="gap: 6px">
+          <b>這週的狀況</b><span class="muted">你這週跑了 32 km，比前三週平均多 12%，心率漂移在長跑後段有點大……（八行）</span>
+          <b>週四的閾值課</b><span class="muted">建議改成 3 × 1.5 km，因為昨天的 HRV 比平常低 23%，睡眠只有 6 小時……（六行）</span>
+          <b>週末的長跑</b><span class="muted">維持 16 km，但前 10 km 控制在輕鬆跑心率 151 以下……（七行）</span>
+          <b>補給</b><span class="muted">天氣濕熱，每 20 分鐘喝水……（五行）</span>
+        </div></div>
+        <ul class="notes"><li>一則回覆要捲兩三個畫面</li></ul>
+      </div>
+      <div class="panel">
+        <span class="tag after">提案</span>
+        <div class="phone"><div class="app-card">
+          <span class="t-body"><b>週四的閾值課縮短成 3 × 1.5 km，週末長跑照排。</b>這週量比平常多一成，昨晚睡不好，先保留強度、少一組。</span>
+          <div class="divider"></div>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>這週的狀況</summary><div><span>你這週跑了 32 km，比前三週平均多 12%……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>週四的閾值課</summary><div><span>建議改成 3 × 1.5 km……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>週末的長跑</summary><div><span>維持 16 km……</span></div></details>
+          <details class="more"><summary><i data-lucide="chevron-right"></i>補給</summary><div><span>天氣濕熱……</span></div></details>
+          <div class="row" style="gap: 8px"><button class="btn text sm" type="button">全部展開</button></div>
+        </div></div>
+        <ul class="notes"><li>教練先寫一兩句結論，再分小標（系統提示要求）</li><li>小標以下收起，短回覆（沒有小標）照舊整段顯示</li><li>正在寫的時候全部展開，寫完才收起</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>每次改畫面前的檢查</h2>
     <ul class="checklist">
       <li><i data-lucide="check"></i>每張卡最多一顆實心按鈕</li>
