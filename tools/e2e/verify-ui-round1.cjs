@@ -26,6 +26,9 @@ async function setup(page) {
   await page.locator("#side-panel").getByRole("button", { name: "同步最近 14 天" }).click();
   await page.getByText(/同步完成/).waitFor({ timeout: 30000 });
   await tab("對話");
+  // 每天第一次打開是收起的（2026-10-28 使用者）：先確認收成一行，再展開
+  await page.locator(".feed-summary").waitFor();
+  await page.locator(".feed-summary").click();
   await page.locator(".feed-item").first().waitFor();
 }
 

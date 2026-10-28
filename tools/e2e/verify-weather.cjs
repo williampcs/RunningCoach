@@ -74,6 +74,9 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   // 教練動態：濕熱的提醒與來源標示
   await E2E.go(page, "對話");
   // 標題是短句（濕熱，可能下雨），數字是標籤（規格 12.28）
+  // 看板每天第一次打開是收起的：先展開
+  await page.locator(".feed-summary, .feed-list").first().waitFor({ timeout: 10000 });
+  if (await page.locator(".feed-summary").count()) await page.locator(".feed-summary").click();
   const heat = page.locator(".feed-item").filter({ has: page.locator(".feed-title", { hasText: /^濕熱/ }) });
   await heat.waitFor({ timeout: 10000 });
   // 濕熱與下雨合成一則

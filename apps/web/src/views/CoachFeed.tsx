@@ -40,7 +40,7 @@ function loadState(today: string): FeedState {
   } catch {
     // 無法存取時用預設值
   }
-  return { date: today, dismissed: [], collapsed: false };
+  return { date: today, dismissed: [], collapsed: true };
 }
 
 function saveState(state: FeedState): void {
