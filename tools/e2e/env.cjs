@@ -52,7 +52,7 @@ async function settings(page, section) {
 }
 
 /**
- * 用模擬上游設定 AI 與 Intervals.icu（多數腳本的第一步）：開放相容服務、模擬的模型、同意資料流向；
+ * 用模擬上游設定 AI 與 Intervals.icu（多數腳本的第一步）：開放相容服務、模擬的模型、同意資料流向與使用須知；
  * intervals 為 false 時不填 Intervals.icu 的 key；timeZone 有值時填時區（訓練紀錄的「進階」）
  */
 async function setupMock(page, { mock, intervals = true, timeZone = null } = {}) {
@@ -63,6 +63,7 @@ async function setupMock(page, { mock, intervals = true, timeZone = null } = {})
   await panel.getByLabel("服務網址").fill(`${mock}/v1`);
   await panel.getByLabel("主對話模型").fill("mock-model");
   await panel.getByLabel("我了解並同意以上的資料流向").check();
+  await panel.getByLabel("我已閱讀使用須知").check();
   if (intervals || timeZone) {
     await settings(page, "訓練紀錄");
     if (intervals) await panel.getByLabel("API key", { exact: true }).fill("mock-intervals-key");

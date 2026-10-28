@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
-import { formatStatus, type Effort, type Purpose } from "@running-coach/core";
+import { formatStatus, TERMS_VERSION, type Effort, type Purpose } from "@running-coach/core";
 
 import { errorText, useApp, type SettingsSection } from "../app-context";
 import { featureEnabled } from "../environment";
@@ -19,6 +19,7 @@ import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
+import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard } from "./TestMode";
 import {
   clearSettings,
@@ -29,6 +30,7 @@ import {
   PROVIDER_LABELS,
   PROVIDER_RECIPIENT,
   suggestedModels,
+  termsAccepted,
   type AppSettings,
   type ProviderKind,
 } from "../settings";
@@ -251,6 +253,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
   const syncNext = !dirty && llmProblem === null && activitiesReady && workouts === 0;
   const consented = draft.consents.includes(consentKey(draft));
+  const termsChecked = termsAccepted(draft);
   const claudeOnly = draft.llmMode === "proxy" || draft.provider === "anthropic";
   const showAdvanced = advanced || !draft.models.chat.trim();
 
@@ -262,6 +265,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     const key = consentKey(draft);
     const consents = draft.consents.filter((c) => c !== key);
     setDraft({ ...draft, consents: checked ? [...consents, key] : consents });
+  }
+
+  // 使用須知（規格 12.32）：和資料流向一起勾，記下確認的版本與日期（只在這個瀏覽器）
+  function toggleTerms(checked: boolean) {
+    setDraft({ ...draft, terms: checked ? { version: TERMS_VERSION, date: coach.today() } : null });
   }
 
   async function save() {
@@ -465,6 +473,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
             <label className="check">
               <input type="checkbox" checked={consented} onChange={(e) => toggleConsent(e.target.checked)} />
               我了解並同意以上的資料流向
+            </label>
+            <TermsShort className="small muted" />
+            <label className="check">
+              <input type="checkbox" checked={termsChecked} onChange={(e) => toggleTerms(e.target.checked)} />
+              我已閱讀使用須知
             </label>
           </div>
           {saveRow}
@@ -704,7 +717,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
         <a href={SOURCE_URL} target="_blank" rel="noreferrer">
           原始碼
         </a>
-        ・<PrivacyLink />
+        ・<PrivacyLink />・<TermsLink />
       </p>
     </>
   );

@@ -10,7 +10,7 @@ import {
 
 import { formatStatus, type Coach, type Logger, type UsageStats } from "@running-coach/core";
 
-import { replyParts } from "./messages";
+import { helpText, replyParts } from "./messages";
 import { VERSION_LABEL } from "./version";
 
 const TYPING_INTERVAL_MS = 8_000;
@@ -29,13 +29,14 @@ const COMMANDS = [
     )
     .addStringOption((o) => o.setName("value").setDescription("欄位值").setRequired(true)),
   new SlashCommandBuilder().setName("status").setDescription("顯示版本、模型設定與五層記憶狀態"),
+  new SlashCommandBuilder().setName("help").setDescription("教練的自我介紹、指令與使用須知"),
 ];
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function createBot(coach: Coach, allowedChannelId: string, logger: Logger): Client {
+export function createBot(coach: Coach, allowedChannelId: string, logger: Logger, termsUrl: string): Client {
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
@@ -114,6 +115,10 @@ export function createBot(coach: Coach, allowedChannelId: string, logger: Logger
       }
       case "status": {
         await interaction.reply(formatStatus(await coach.status(), coach.describeModels(), coach.settings, VERSION_LABEL));
+        return;
+      }
+      case "help": {
+        await interaction.reply(helpText(termsUrl));
         return;
       }
     }

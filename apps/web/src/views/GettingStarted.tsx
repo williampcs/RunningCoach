@@ -11,6 +11,7 @@ import { useSync } from "../use-sync";
 import { FirstSync } from "./FirstSync";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
+import { TermsShort } from "./TermsLink";
 
 const DISMISS_KEY = "running-coach.getting-started.dismissed";
 
@@ -160,6 +161,7 @@ export function GettingStarted() {
           <p className="small muted">
             選 AI 供應商、填你自己的 API key，費用由你的帳號支付。資料存在你的裝置上，見 <PrivacyLink />。
           </p>
+          <TermsShort className="small muted" />
           <button className="primary" onClick={() => openSettings("ai")}>
             前往設定
           </button>

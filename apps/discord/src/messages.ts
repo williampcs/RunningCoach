@@ -1,4 +1,4 @@
-import { formatTokenFooter, type UsageStats } from "@running-coach/core";
+import { formatTokenFooter, TERMS_SHORT, type UsageStats } from "@running-coach/core";
 
 export const DISCORD_MSG_LIMIT = 2000;
 
@@ -28,4 +28,15 @@ export function replyParts(reply: string, stats: UsageStats | null, sources: str
   const last = parts.pop() ?? "";
   if (last.length + 1 + line.length <= DISCORD_MSG_LIMIT) return [...parts, last ? `${last}\n${line}` : line];
   return [...parts, last, line];
+}
+
+/** `/help`：bot 的自我介紹、指令，最後是使用須知的精簡版與完整版的連結（規格 12.32） */
+export function helpText(termsUrl: string): string {
+  return [
+    "我是 Zone2Mate 的 AI 跑步教練。在這個頻道直接傳訊息就是和我聊訓練，跑完也可以直接說“剛跑完 8K，體感 7”。",
+    "",
+    "指令：`/sync` 同步 Intervals.icu、`/plan` 更新本週計畫、`/profile` 設定選手資料、`/status` 版本與記憶的狀態、`/help` 這段說明。",
+    "",
+    `${TERMS_SHORT}使用須知：${termsUrl}`,
+  ].join("\n");
 }

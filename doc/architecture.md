@@ -285,7 +285,7 @@ sequenceDiagram
 
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
 
-網頁版的建置另外輸出隱私說明頁 `privacy.html`（Cloudflare Pages 提供在 `/privacy`）：不用 JavaScript 的靜態頁，範本在 `apps/web/privacy/`，建置時填入 staging 的標示與同步服務的網址；測試會檢查網頁版預設會連的外部網址都寫在上面（規格 12.20）。資料流向（存在哪裡、送到哪裡）改了時要一起改這一頁。
+網頁版的建置另外輸出隱私說明頁 `privacy.html`（Cloudflare Pages 提供在 `/privacy`）：不用 JavaScript 的靜態頁，範本在 `apps/web/privacy/`，建置時填入 staging 的標示與同步服務的網址；測試會檢查網頁版預設會連的外部網址都寫在上面（規格 12.20）。資料流向（存在哪裡、送到哪裡）改了時要一起改這一頁。同樣的方式另外輸出使用須知 `terms.html`（`/terms`，範本在 `apps/web/terms/`，共用 `privacy.css`）；精簡版與版本號在 `packages/core/src/terms.ts`，網頁版與 Discord 共用（規格 12.32）。
 
 網頁版的建置另外輸出 `version.json`（這次建置的 commit 與日期，`_headers` 設成不快取）。網頁打開時、回到前景時、前景中每 30 分鐘讀一次，和自己的 commit 不同就在上方提示「有新版本，點這裡更新」，點了才重新載入；讀不到時不提示（規格 12.18）。
 

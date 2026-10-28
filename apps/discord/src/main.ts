@@ -32,7 +32,7 @@ const coach = new Coach({
 await coach.init();
 logger.info(`DB initialized at ${config.dbPath}`);
 
-const bot = createBot(coach, config.allowedChannelId, logger);
+const bot = createBot(coach, config.allowedChannelId, logger, config.termsUrl);
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {

@@ -16,6 +16,7 @@ import { Archive, X } from "lucide-react";
 import { errorText, useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
+import { TermsShort } from "./TermsLink";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
@@ -350,8 +351,9 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     <>
       <CoachFeed collapseSignal={sentCount} />
       <div className="messages" ref={list}>
-        <GettingStarted />
+        {/* 讀更早的對話的觸發點放在最上面：新手引導比畫面還高時（手機上），捲到最上面也要觸發得到 */}
         <div ref={top} />
+        <GettingStarted />
         {hasOlder && (
           <button className="text" disabled={loadingOlder} onClick={loadOlder}>
             {loadingOlder ? "讀取中…" : "載入更早的對話"}
@@ -497,6 +499,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           </button>
         </form>
       )}
+      {/* 精簡版的使用須知一直顯示在輸入框下方（規格 12.32） */}
+      <TermsShort />
     </>
   );
 }

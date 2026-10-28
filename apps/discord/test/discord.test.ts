@@ -105,3 +105,14 @@ describe("版號", () => {
     expect(VERSION_LABEL).toBe(`v${rootPackage.version} Beta`);
   });
 });
+
+describe("/help（規格 12.32）", () => {
+  it("自我介紹、指令，最後是使用須知的精簡版與連結；網址可以用 TERMS_URL 換掉", async () => {
+    const { helpText } = await import("../src/messages");
+    const { TERMS_SHORT } = await import("@running-coach/core");
+    const text = helpText(loadConfig(base).termsUrl);
+    expect(text).toContain("/help");
+    expect(text.trim().split("\n").at(-1)).toBe(`${TERMS_SHORT}使用須知：https://app.zone2mate.com/terms`);
+    expect(loadConfig({ ...base, TERMS_URL: "https://example.org/terms" }).termsUrl).toBe("https://example.org/terms");
+  });
+});

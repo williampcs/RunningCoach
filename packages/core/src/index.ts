@@ -209,3 +209,4 @@ export {
 } from "./recovery";
 export * from "./device-sync";
 export { appGuide, findGuide, type GuideSection, type Shell } from "./app-guide";
+export { TERMS_SHORT, TERMS_UPDATED, TERMS_VERSION } from "./terms";

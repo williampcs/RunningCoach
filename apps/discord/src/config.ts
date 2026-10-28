@@ -15,6 +15,9 @@ import {
 
 type Env = Record<string, string | undefined>;
 
+/** 使用須知的完整版（規格 12.32）：網頁版的 /terms；自己部署時可以用 TERMS_URL 換成自己的網址 */
+export const DEFAULT_TERMS_URL = "https://app.zone2mate.com/terms";
+
 const EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 
 export interface BotConfig {
@@ -27,6 +30,8 @@ export interface BotConfig {
   settings: CoachSettings;
   /** 查天氣用的座標（WEATHER_LOCATION），已四捨五入；沒設定時為 null */
   weather: WeatherPlace | null;
+  /** 使用須知的網址（`/help` 附上） */
+  termsUrl: string;
 }
 
 function required(env: Env, name: string): string {
@@ -100,6 +105,7 @@ export function loadConfig(env: Env): BotConfig {
     },
     llm: loadLlm(env),
     weather: weatherPlace(env),
+    termsUrl: env.TERMS_URL?.trim() || DEFAULT_TERMS_URL,
     settings: {
       timeZone: env.TIMEZONE?.trim() || DEFAULT_SETTINGS.timeZone,
       shell: "discord",

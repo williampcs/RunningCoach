@@ -1,6 +1,7 @@
 /** 使用者設定 — 存在這個瀏覽器的 localStorage，不會上傳. */
 import {
   AnthropicProvider,
+  TERMS_VERSION,
   OPENAI_COMPATIBLE_PRESETS,
   OpenAICompatibleProvider,
   type Effort,
@@ -41,6 +42,8 @@ export interface AppSettings {
   weather: { label: string; lat: number; lon: number } | null;
   /** 使用者已確認過資料流向的組合，例：byok:anthropic */
   consents: string[];
+  /** 使用者確認過的使用須知（規格 12.32）：版本與日期，只存在這個瀏覽器；版本比 TERMS_VERSION 舊時再請他確認一次 */
+  terms: { version: number; date: string } | null;
 }
 
 export const PROVIDER_LABELS: Record<ProviderKind, string> = {
@@ -78,6 +81,7 @@ export function defaultSettings(): AppSettings {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
     weather: null,
     consents: [],
+    terms: null,
   };
 }
 
@@ -204,6 +208,15 @@ export function suggestedModels(mode: AppSettings["llmMode"], provider: Provider
 
 export const consentKey = (s: AppSettings) => (s.llmMode === "proxy" ? "proxy" : `byok:${s.provider}`);
 
+/** 已確認過這一版的使用須知（規格 12.32） */
+export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERSION;
+
+/**
+ * 用過 App 的人（確認過資料流向）還沒確認過這一版的使用須知：打開時請他確認一次（App 只在打開時看）.
+ * 第一次用的人在設定的「AI 教練」和資料流向一起勾選，不另外問
+ */
+export const needsTermsConfirm = (s: AppSettings) => s.consents.length > 0 && !termsAccepted(s);
+
 /** LLM 設定是否完整到可以開始對話；不完整時回傳缺少的項目 */
 export function llmProblem(s: AppSettings): string | null {
   if (s.llmMode === "proxy") {
@@ -214,6 +227,7 @@ export function llmProblem(s: AppSettings): string | null {
   }
   if (!s.models.chat.trim()) return "尚未填寫主對話模型";
   if (!s.consents.includes(consentKey(s))) return "尚未確認資料流向";
+  if (!termsAccepted(s)) return "尚未確認使用須知";
   return null;
 }
 

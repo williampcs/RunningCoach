@@ -3497,3 +3497,34 @@ button.back-button {
 .unlock h1 {
   color: var(--accent);
 }
+
+/* 使用須知的精簡版（規格 12.32）：對話輸入框下方一直顯示，一行、輔助字級、淡色；手機放不下時換行，不截斷 */
+.terms-short {
+  margin: calc(-1 * var(--sp-2)) 0 0;
+  font-size: var(--fs-aux);
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.terms-line a {
+  margin-left: var(--sp-1);
+}
+
+/* 用過 App、還沒確認這一版使用須知時的確認（規格 12.32）：蓋在整個畫面上 */
+.terms-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: rgb(15 23 42 / 0.45);
+}
+
+.terms-gate .card {
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}

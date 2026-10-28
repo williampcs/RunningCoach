@@ -6,6 +6,7 @@ import { defineConfig, type Plugin } from "vite";
 
 import { parseFeatures } from "../../packages/core/src/features";
 import { PRIVACY_CSS_FILE, PRIVACY_HTML_FILE, privacyCss, renderPrivacyPage } from "./privacy/render";
+import { renderTermsPage, TERMS_HTML_FILE } from "./terms/render";
 
 /** 對外的版本號與建置資訊：版本來自 repo 根目錄的 package.json（唯一的來源，規格 12.19）；commit 在 GitHub Actions 取 GITHUB_SHA，本機取 git，都沒有時為 dev */
 function buildInfo() {
@@ -81,7 +82,7 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
-/** 隱私說明頁（規格 12.20）：不用 JavaScript 的靜態頁，Cloudflare Pages 提供在 /privacy；staging 的版本有 Staging 標示 */
+/** 隱私說明頁（規格 12.20）與使用須知（12.32）：不用 JavaScript 的靜態頁，Cloudflare Pages 提供在 /privacy、/terms；staging 的版本有 Staging 標示 */
 function privacyPage(): Plugin {
   return {
     name: "privacy-page",
@@ -95,6 +96,8 @@ function privacyPage(): Plugin {
       };
       this.emitFile({ type: "asset", fileName: PRIVACY_HTML_FILE, source: renderPrivacyPage(build) });
       this.emitFile({ type: "asset", fileName: PRIVACY_CSS_FILE, source: privacyCss() });
+      // 使用須知（規格 12.32）：同一種靜態頁，共用 privacy.css，提供在 /terms
+      this.emitFile({ type: "asset", fileName: TERMS_HTML_FILE, source: renderTermsPage({ staging }) });
     },
   };
 }

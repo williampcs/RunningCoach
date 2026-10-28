@@ -53,6 +53,7 @@ let step = "start";
         await page.getByLabel("主對話模型").fill("anthropic/claude-sonnet-5.5");
       }
       await page.getByLabel("我了解並同意以上的資料流向").check();
+      await page.getByLabel("我已閱讀使用須知").check();
       await E2E.settings(page, "訓練紀錄");
       await page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
       await page.getByRole("button", { name: "儲存設定" }).click();
