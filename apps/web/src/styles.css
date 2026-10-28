@@ -3573,3 +3573,89 @@ button.back-button {
   flex-direction: column;
   gap: var(--sp-1);
 }
+
+/* 同一時間只有一個分頁用資料庫（KI-046）：「已經在另一個分頁開著」與「已經在另一個分頁使用」 */
+.tab-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+}
+
+.tab-gate .card {
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* 使用須知與隱私說明在面板裡（KI-046）：內容是靜態頁的 <main>，每一節照 App 的卡片 */
+.legal-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.legal-page section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.legal-page section.summary {
+  background: var(--info-bg);
+  border-color: transparent;
+}
+
+.legal-page section.urgent {
+  background: var(--warn-bg);
+  border-color: transparent;
+}
+
+.legal-page .lead,
+.legal-page footer {
+  color: var(--muted);
+}
+
+.legal-page footer {
+  font-size: var(--fs-aux);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.legal-page footer h2 {
+  color: var(--text);
+}
+
+.legal-page ul {
+  margin: 0;
+  padding-left: 1.3em;
+}
+
+.legal-page li + li,
+.legal-page li ul {
+  margin-top: var(--sp-1);
+}
+
+/* 確認使用須知的畫面（.terms-gate）開著時，從那裡打開的使用須知蓋在它上面 */
+.panel-backdrop.over-gate {
+  z-index: 51;
+}
+
+.side-panel.over-gate {
+  z-index: 52;
+  top: 0;
+  padding-top: env(safe-area-inset-top);
+}
+
+/* 使用須知或隱私說明蓋在上面時，底下的說明或設定留著但不顯示（App.tsx） */
+.side-panel-body[hidden] {
+  display: none;
+}

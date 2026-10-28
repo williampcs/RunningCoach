@@ -1,6 +1,7 @@
 // 驗證使用須知（規格 12.32）：
 // - /terms 關掉 JavaScript 也看得到全部 16 節、樣式套用、沒有腳本與外部請求、不左右捲動；和隱私說明頁互相連結
-// - 對話輸入框下方一直有精簡版（設定好之前與之後），「使用須知」在新分頁打開 /terms；手機上不截斷、不左右捲動
+// - 對話輸入框下方一直有精簡版（設定好之前與之後），「使用須知」在 App 的面板打開（KI-046，不開新分頁）；手機上不截斷、不左右捲動
+// - 面板裡的使用須知：16 節、沒有「回到 Zone2Mate」、點「隱私說明」換到隱私說明、返回回到使用須知；加到主畫面（standalone）時一樣
 // - 第一次用：設定的「AI 教練」只勾資料流向還不能對話，兩個都勾才行；記下確認的版本與日期
 // - 用過的人（確認過資料流向、沒確認過使用須知）打開時先確認一次，勾了才能按「繼續」，確認前底下不能操作；
 //   版本變了再確認一次；確認後重新整理不再出現
@@ -20,14 +21,8 @@ const viewports = {
   1280: { viewport: { width: 1280, height: 900 } },
 };
 
-/** 點連結，確認在新分頁打開使用須知 */
-async function opensTerms(context, link) {
-  const [popup] = await Promise.all([context.waitForEvent("page", { timeout: 5000 }), link.click()]);
-  await popup.waitForLoadState();
-  const ok = popup.url() === TERMS && (await popup.getByRole("heading", { name: "使用須知", level: 1 }).isVisible());
-  await popup.close();
-  return ok;
-}
+/** 點連結，確認在 App 的面板打開使用須知、沒有新分頁（KI-046） */
+const opensTerms = (context, link) => E2E.opensLegalPanel(link.page(), link, "使用須知");
 
 const storedTerms = (page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "{}").terms ?? null, SETTINGS_KEY);
 
@@ -106,6 +101,30 @@ async function shortLine(page) {
       check[`${tag}.shortLinkBeforeSetup`] = line.visible && (await opensTerms(context, line.link));
       check[`${tag}.link.gettingStarted`] = await opensTerms(context, page.locator(".getting-started").getByRole("link", { name: "使用須知" }));
       check[`${tag}.noOverflow`] = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+
+      step = "面板裡的使用須知";
+      const head = page.locator("#side-panel .side-panel-head h2");
+      await line.link.click();
+      await head.filter({ hasText: /^使用須知$/ }).waitFor();
+      const legal = page.locator("#side-panel .legal-page");
+      const numbered = (await legal.locator("section h2").allInnerTexts()).filter((h) => /^\d+\. /.test(h));
+      check[`${tag}.panel.sixteenSections`] = numbered.length === 16;
+      check[`${tag}.panel.short`] = (await legal.locator("section.summary").innerText()).includes(SHORT);
+      check[`${tag}.panel.emergency`] = (await legal.locator("section.urgent").innerText()).includes("緊急狀況請撥 119");
+      check[`${tag}.panel.updated`] = /最後更新：\d{4}-\d{2}-\d{2}（第 \d+ 版）/.test(await legal.locator("footer").innerText());
+      check[`${tag}.panel.noOverflow`] = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+      // 外部的網站在新分頁打開，不離開 App
+      check[`${tag}.panel.mailNewTab`] = (await legal.locator('a[href^="mailto:"]').first().getAttribute("target")) === "_blank";
+      await page.waitForTimeout(400); // 滑入的動畫
+      await page.screenshot({ path: `${E2E.OUT}/terms-panel-${tag}.png` });
+      await legal.getByRole("link", { name: "隱私說明" }).first().click();
+      check[`${tag}.panel.toPrivacy`] = await head.filter({ hasText: /^隱私說明$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+      check[`${tag}.panel.privacyContent`] = (await page.locator("#side-panel .legal-page").innerText()).includes("資料存在哪裡");
+      check[`${tag}.panel.onePage`] = context.pages().length === 1;
+      await page.goBack();
+      check[`${tag}.panel.backToTerms`] = await head.filter({ hasText: /^使用須知$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+      await page.goBack();
+      check[`${tag}.panel.closedByBack`] = await page.locator("#side-panel").waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
 
       step = "只勾資料流向";
       const panel = page.locator("#side-panel");
@@ -191,6 +210,14 @@ async function shortLine(page) {
       await E2E.go(page, "使用說明");
       check[`${tag}.link.helpTop`] = await opensTerms(context, panel.locator(".card").first().getByRole("link", { name: "使用須知" }));
       check[`${tag}.link.helpSection`] = await opensTerms(context, page.locator("#help-terms").getByRole("link", { name: "使用須知" }));
+      // 從使用說明點進來，✕ 回到使用說明（捲動的位置還在）
+      check[`${tag}.link.backToHelp`] = await page.locator("#help-terms").isVisible();
+
+      step = "加到主畫面";
+      check[`${tag}.standalone`] = await E2E.emulateStandalone(page);
+      await E2E.go(page, "對話");
+      check[`${tag}.standalone.shortLink`] = await opensTerms(context, page.locator(".chat-page .terms-short").getByRole("link", { name: "使用須知" }));
+      check[`${tag}.standalone.onePage`] = context.pages().length === 1;
     } catch (e) {
       console.error(`FAILED [${tag}] at [${step}]:`, e.message.split("\n").slice(0, 3).join(" | "));
       check[`${tag}.completed`] = false;

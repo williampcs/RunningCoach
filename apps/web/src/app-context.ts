@@ -48,8 +48,8 @@ export interface AppState {
 export type SettingsSection = "ai" | "records" | "weather" | "sync" | "lock" | "data" | "testmode" | "reset" | "status";
 
 export type Tab = "chat" | "report" | "history" | "plan" | "profile";
-/** 蓋在目前畫面上的面板（規格 12.17）：關閉後回到打開前的樣子 */
-export type Panel = "help" | "settings";
+/** 蓋在目前畫面上的面板（規格 12.17）：關閉後回到打開前的樣子；使用須知與隱私說明也在面板裡（KI-046） */
+export type Panel = "help" | "settings" | "terms" | "privacy";
 
 export const AppContext = createContext<AppState | null>(null);
 

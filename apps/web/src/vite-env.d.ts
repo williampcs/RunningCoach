@@ -19,3 +19,9 @@ interface ImportMetaEnv {
   /** 開發用：把 Open-Meteo 指向本機的模擬服務（{base}/v1/forecast…） */
   readonly VITE_WEATHER_BASE_URL?: string;
 }
+
+/** 使用須知與隱私說明在面板裡的內容（KI-046）：建置時由靜態頁產生（vite.config.ts 的 legalPagesModule） */
+declare module "virtual:legal-pages" {
+  export const TERMS_HTML: string;
+  export const PRIVACY_HTML: string;
+}

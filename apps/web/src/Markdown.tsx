@@ -8,7 +8,7 @@ const PLUGINS = [remarkGfm, remarkCjkFriendly];
 /**
  * 模型回覆與訓練計畫都是 Markdown；react-markdown 不會執行內容中的 HTML.
  * 不顯示圖片：模型回覆若被誘導放進外部圖片，載入圖片時網址就能把資料帶出去。
- * 連結：App 裡的 #help/… 照常切換；其他（例如隱私說明頁）在新分頁打開，不離開 App。
+ * 連結：App 裡的 #help/… 照常切換；使用須知與隱私說明由 App.tsx 攔下來在面板打開（KI-046）；其他在新分頁打開，不離開 App。
  */
 export function Markdown({ children }: { children: string }) {
   return (

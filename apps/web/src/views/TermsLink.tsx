@@ -1,11 +1,14 @@
 import { TERMS_SHORT } from "@running-coach/core";
 
-/** 使用須知（規格 12.32）：建置時另外輸出的靜態頁，在新分頁打開，App 裡打到一半的東西不受影響 */
+/**
+ * 使用須知（規格 12.32）：建置時另外輸出的靜態頁. App 裡點這個連結時，App.tsx 攔下來在面板打開（KI-046），
+ * 不開新分頁；同一份內容，從外面直接打開的人看靜態頁
+ */
 export const TERMS_URL = `${import.meta.env.BASE_URL}terms`;
 
 export function TermsLink({ children = "使用須知" }: { children?: string }) {
   return (
-    <a href={TERMS_URL} target="_blank" rel="noreferrer">
+    <a href={TERMS_URL}>
       {children}
     </a>
   );
