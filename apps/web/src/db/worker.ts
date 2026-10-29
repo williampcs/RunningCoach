@@ -11,23 +11,37 @@ export type DbRequest =
   | { id: number; method: "run" | "all"; sql: string; params: (string | number | null)[] }
   | { id: number; method: "export" }
   | { id: number; method: "import"; bytes: Uint8Array }
-  | { id: number; method: "reset" };
+  | { id: number; method: "reset" }
+  | { id: number; method: "close" };
 
 let sqlite3: Sqlite3Static;
 let pool: SAHPoolUtil | null = null;
 let db: Database;
 
+/** 另一個分頁剛交出資料庫（KI-046）或剛重新載入時，它的 OPFS 檔案可能還要一下子才放開：在這段時間內重試 */
+const OPEN_RETRY_MS = 1500;
+
 async function open(file?: string): Promise<{ persistent: boolean; reason?: string }> {
   if (file) dbFile = file;
   sqlite3 = await sqlite3InitModule();
-  try {
-    pool = await sqlite3.installOpfsSAHPoolVfs({ name: "running-coach" });
-    db = new pool.OpfsSAHPoolDb(dbFile);
-    return { persistent: true };
-  } catch (e) {
-    // OPFS 無法使用（例如無痕視窗，或同一個網站已在另一個分頁開啟）時退回記憶體資料庫
-    db = new sqlite3.oo1.DB(":memory:");
-    return { persistent: false, reason: e instanceof Error ? e.message : String(e) };
+  const deadline = Date.now() + OPEN_RETRY_MS;
+  for (;;) {
+    try {
+      // 型別定義還沒有 forceReinitIfPreviouslyFailed：沒有它，失敗過一次之後每次都回同一個失敗
+      pool = await sqlite3.installOpfsSAHPoolVfs({ name: "running-coach", forceReinitIfPreviouslyFailed: true } as Parameters<Sqlite3Static["installOpfsSAHPoolVfs"]>[0]);
+      db = new pool.OpfsSAHPoolDb(dbFile);
+      return { persistent: true };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      // 瀏覽器根本沒有 OPFS（例如無痕視窗）時不用等
+      if (Date.now() < deadline && !reason.includes("Missing required OPFS APIs")) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        continue;
+      }
+      // OPFS 無法使用時退回記憶體資料庫
+      db = new sqlite3.oo1.DB(":memory:");
+      return { persistent: false, reason };
+    }
   }
 }
 
@@ -70,13 +84,24 @@ async function handle(request: DbRequest): Promise<unknown> {
       db.exec("VACUUM");
       return null;
     }
+    case "close": {
+      // 交給另一個分頁（KI-046）：關掉資料庫並放開 OPFS 的檔案，那個分頁才打得開
+      db.close();
+      pool?.pauseVfs();
+      return null;
+    }
   }
 }
 
+// 一則做完才做下一則：匯入（非同步）做到一半時，交給另一個分頁的 close 不會插進來（KI-046）
+let queue: Promise<unknown> = Promise.resolve();
+
 self.onmessage = (event: MessageEvent<DbRequest>) => {
   const { id } = event.data;
-  handle(event.data).then(
-    (result) => self.postMessage({ id, result }),
-    (e) => self.postMessage({ id, error: e instanceof Error ? e.message : String(e) }),
+  queue = queue.then(() =>
+    handle(event.data).then(
+      (result) => self.postMessage({ id, result }),
+      (e) => self.postMessage({ id, error: e instanceof Error ? e.message : String(e) }),
+    ),
   );
 };

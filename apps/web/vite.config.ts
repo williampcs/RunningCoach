@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 import { parseFeatures } from "../../packages/core/src/features";
+import { pageForApp } from "./privacy/in-app";
 import { PRIVACY_CSS_FILE, PRIVACY_HTML_FILE, privacyCss, renderPrivacyPage } from "./privacy/render";
 import { renderTermsPage, TERMS_HTML_FILE } from "./terms/render";
 
@@ -82,22 +83,44 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
+/** 這次建置的隱私說明頁與使用須知的內容（依環境、同步服務的網址與功能開關） */
+function legalPages() {
+  const staging = process.env.VITE_STAGING === "1";
+  const build = {
+    staging,
+    syncUrl: process.env.VITE_SYNC_URL ?? "",
+    devices: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("devices"),
+  };
+  return { privacy: renderPrivacyPage(build), terms: renderTermsPage({ staging }) };
+}
+
 /** 隱私說明頁（規格 12.20）與使用須知（12.32）：不用 JavaScript 的靜態頁，Cloudflare Pages 提供在 /privacy、/terms；staging 的版本有 Staging 標示 */
 function privacyPage(): Plugin {
   return {
     name: "privacy-page",
     apply: "build",
     generateBundle() {
-      const staging = process.env.VITE_STAGING === "1";
-      const build = {
-        staging,
-        syncUrl: process.env.VITE_SYNC_URL ?? "",
-        devices: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("devices"),
-      };
-      this.emitFile({ type: "asset", fileName: PRIVACY_HTML_FILE, source: renderPrivacyPage(build) });
+      const pages = legalPages();
+      this.emitFile({ type: "asset", fileName: PRIVACY_HTML_FILE, source: pages.privacy });
       this.emitFile({ type: "asset", fileName: PRIVACY_CSS_FILE, source: privacyCss() });
       // 使用須知（規格 12.32）：同一種靜態頁，共用 privacy.css，提供在 /terms
-      this.emitFile({ type: "asset", fileName: TERMS_HTML_FILE, source: renderTermsPage({ staging }) });
+      this.emitFile({ type: "asset", fileName: TERMS_HTML_FILE, source: pages.terms });
+    },
+  };
+}
+
+/** App 裡的面板用的使用須知與隱私說明（KI-046）：和靜態頁同一份內容，import "virtual:legal-pages" */
+function legalPagesModule(): Plugin {
+  const id = "virtual:legal-pages";
+  return {
+    name: "legal-pages-module",
+    resolveId: (source) => (source === id ? `\0${id}` : null),
+    load(resolved) {
+      if (resolved !== `\0${id}`) return null;
+      const pages = legalPages();
+      // 範本改了要重新產生
+      for (const file of ["privacy/page.html", "terms/page.html"]) this.addWatchFile(new URL(`./${file}`, import.meta.url).pathname);
+      return `export const TERMS_HTML = ${JSON.stringify(pageForApp(pages.terms, "terms"))};\nexport const PRIVACY_HTML = ${JSON.stringify(pageForApp(pages.privacy, "privacy"))};\n`;
     },
   };
 }
@@ -116,7 +139,7 @@ function versionFile(build: ReturnType<typeof buildInfo>): Plugin {
 const BUILD = buildInfo();
 
 export default defineConfig({
-  plugins: [react(), contentSecurityPolicy(), versionFile(BUILD), privacyPage()],
+  plugins: [react(), contentSecurityPolicy(), versionFile(BUILD), privacyPage(), legalPagesModule()],
   define: { __APP_BUILD__: JSON.stringify(BUILD) },
   server: { port: 5173, strictPort: true },
   worker: { format: "es" },

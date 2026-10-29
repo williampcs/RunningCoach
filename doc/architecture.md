@@ -164,6 +164,10 @@ sequenceDiagram
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
+OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-lock.ts` 用 Web Locks（鎖的名稱 `zone2mate-db`）記哪個分頁在用：拿到鎖才打開 App（`views/TabGate.tsx`）；拿不到時顯示「已經在另一個分頁開著」。按「在這裡使用」時先排進鎖的佇列，再用 BroadcastChannel（`zone2mate-tabs`）請正在用的分頁交出來；那個分頁先收起 App、關掉資料庫並放開 OPFS 的檔案（worker 的 `close`：`db.close()` 與 `pauseVfs()`，`db/driver.ts` 的 `closeBrowserDb`），才放開鎖，所以不會兩邊同時寫。被接手的分頁按「在這裡繼續」時重新載入並直接接手。瀏覽器沒有這兩個 API 時照舊直接打開；真的沒有 OPFS（例如無痕視窗）才退回記憶體資料庫。
+
+使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
+
 ## 資料庫的 schema（目前是第 17 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。

@@ -102,8 +102,73 @@ async function profileSave(page, action) {
     .catch(() => undefined);
 }
 
+/**
+ * 點使用須知或隱私說明的連結（KI-046）：在 App 的面板打開（標題、內容），沒有開新分頁、還在同一頁；
+ * 看完按 ✕ 回到點之前的地方（從說明或設定點進來的回到那裡）
+ */
+async function opensLegalPanel(page, link, title) {
+  const context = page.context();
+  let popup = false;
+  const onPage = () => (popup = true);
+  context.on("page", onPage);
+  const before = page.url().split("#")[0];
+  await link.click();
+  const head = page.locator("#side-panel .side-panel-head h2", { hasText: new RegExp(`^${title}$`) });
+  const opened = await head.waitFor({ timeout: 5000 }).then(() => true, () => false);
+  const content = opened && (await page.locator("#side-panel .legal-page section").count()) >= 4;
+  const noBackLink = (await page.locator("#side-panel .legal-page a", { hasText: "回到 Zone2Mate" }).count()) === 0;
+  await page.waitForTimeout(300);
+  context.off("page", onPage);
+  const samePage = page.url().split("#")[0] === before;
+  if (opened) {
+    await page.locator("#side-panel .side-panel-close").click();
+    await head.waitFor({ state: "detached", timeout: 5000 }).catch(() => undefined);
+  }
+  return opened && content && noBackLink && samePage && !popup;
+}
+
+/**
+ * 從 link 打開 first（使用須知或隱私說明），再在兩頁之間依序切換：first → 另一頁 → first → 另一頁（KI-046）.
+ * 回傳每一步都換到對的面板；結束時停在另一頁，由呼叫的人按 ✕ 或返回
+ */
+async function hopLegal(page, link, first) {
+  const other = first === "使用須知" ? "隱私說明" : "使用須知";
+  const head = page.locator("#side-panel .side-panel-head h2");
+  const at = (title) => head.filter({ hasText: new RegExp(`^${title}$`) }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+  await link.click();
+  let ok = await at(first);
+  for (const title of [other, first, other]) {
+    await page.locator("#side-panel .legal-page").getByRole("link", { name: title }).first().click();
+    ok = (await at(title)) && ok;
+  }
+  return ok;
+}
+
+/**
+ * 模擬加到主畫面（display-mode: standalone）：先用 Chromium 的 CDP，不支援時把 matchMedia 的 display-mode 換成 standalone.
+ * 只模擬 App 看得到的部分；真的加到主畫面時的視窗由使用者在手機上試
+ */
+async function emulateStandalone(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "display-mode", value: "standalone" }] }).catch(() => undefined);
+  return page.evaluate(() => {
+    if (!matchMedia("(display-mode: standalone)").matches) {
+      const original = window.matchMedia.bind(window);
+      window.matchMedia = (query) => {
+        const result = original(query);
+        if (!/display-mode:\s*standalone/.test(query)) return result;
+        return Object.create(result, { matches: { value: true }, media: { value: query } });
+      };
+    }
+    return matchMedia("(display-mode: standalone)").matches;
+  });
+}
+
 module.exports = {
   go,
+  opensLegalPanel,
+  hopLegal,
+  emulateStandalone,
   settings,
   profile,
   profileSave,

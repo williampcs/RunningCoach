@@ -15,6 +15,8 @@ import {
 
 import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settings as SettingsIcon, SquarePen, User, X, type LucideIcon } from "lucide-react";
 
+import { PRIVACY_HTML, TERMS_HTML } from "virtual:legal-pages";
+
 import { AppContext, errorText, type AppState, type Panel, type SettingsSection, type Tab } from "./app-context";
 import { EmojiText, Icon, ICON_TAB } from "./ui";
 import { HelpView } from "./views/Help";
@@ -58,12 +60,25 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
 ];
 /** 小提示留在畫面上多久 */
 const TOAST_MS = 3000;
-const PANEL_LABELS: Record<Panel, string> = { help: "使用說明", settings: "設定" };
+const PANEL_LABELS: Record<Panel, string> = { help: "使用說明", settings: "設定", terms: "使用須知", privacy: "隱私說明" };
+/** 使用須知與隱私說明（KI-046）：從說明或設定點進來時，✕ 與返回回到那個面板；兩頁之間切換不疊加 */
+const LEGAL_PANELS: Panel[] = ["terms", "privacy"];
 
 /** 面板記在瀏覽器的歷史紀錄裡，手機的返回（上一頁）就是關閉面板 */
 function panelInHistory(): Panel | null {
   const panel = (history.state as { panel?: unknown } | null)?.panel;
-  return panel === "help" || panel === "settings" ? panel : null;
+  return typeof panel === "string" && panel in PANEL_LABELS ? (panel as Panel) : null;
+}
+
+/** App 裡指到使用須知、隱私說明靜態頁的連結（TermsLink、PrivacyLink、教練回覆、兩頁之間的連結）：改在面板打開 */
+function legalPanelOf(target: EventTarget | null): Panel | null {
+  const link = target instanceof Element ? target.closest("a[href]") : null;
+  if (!(link instanceof HTMLAnchorElement) || link.origin !== location.origin) return null;
+  const path = link.pathname.replace(/\.html$/, "").replace(/\/$/, "");
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  if (path === `${base}/terms`) return "terms";
+  if (path === `${base}/privacy`) return "privacy";
+  return null;
 }
 
 /** LLM 尚未設定時的替身：資料頁照常可用，需要模型的動作會得到明確的錯誤 */
@@ -154,8 +169,14 @@ export function App() {
   const [panel, setPanel] = useState<Panel | null>(panelInHistory);
   // 打開時在歷史紀錄加一筆，返回就關閉；已經開著另一個面板時直接換掉那一筆。
   // here：目前這一筆就是剛點的連結（#help/…），換成面板，返回時回到點連結之前
+  // 從說明或設定點進使用須知、隱私說明：說明或設定留在底下（不卸載），返回時回到原本的地方
+  const [under, setUnder] = useState<Panel | null>(null);
   const openPanel = useCallback((next: Panel, here = false) => {
-    if (here || panelInHistory()) history.replaceState({ panel: next }, "");
+    const current = panelInHistory();
+    if (LEGAL_PANELS.includes(next) && current && !LEGAL_PANELS.includes(current)) setUnder(current);
+    // 使用須知與隱私說明之間互相切換時取代目前這頁，不疊上去：✕ 與返回一次就回到第一次打開它的地方
+    const between = current && LEGAL_PANELS.includes(current) && LEGAL_PANELS.includes(next);
+    if (here || between || (current && !LEGAL_PANELS.includes(next))) history.replaceState({ panel: next }, "");
     else history.pushState({ panel: next }, "");
     setPanel(next);
   }, []);
@@ -171,6 +192,19 @@ export function App() {
     },
     [closePanel],
   );
+  // 使用須知與隱私說明的連結在面板打開，不開新分頁：新分頁裡再回到 App 會開出第二個 App（KI-046）.
+  // 按著 Ctrl／⌘ 等要開新分頁的點法照瀏覽器的做法
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      const next = legalPanelOf(e.target);
+      if (!next) return;
+      e.preventDefault();
+      if (panelInHistory() !== next) openPanel(next);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [openPanel]);
   useEffect(() => {
     const onPop = () => setPanel(panelInHistory());
     window.addEventListener("popstate", onPop);
@@ -192,6 +226,7 @@ export function App() {
     return () => observer.disconnect();
     // 標題列在資料庫開好後才出現
   }, [panel, coach]);
+  if (under && (!panel || !LEGAL_PANELS.includes(panel))) setUnder(null);
   // 畫面上的面板：關閉後先留著滑出（leaving），動畫結束才移除；滑出途中再打開就直接換回來（規格 12.17 的後續）
   const [shown, setShown] = useState<Panel | null>(panel);
   const [leaving, setLeaving] = useState(false);
@@ -413,7 +448,8 @@ export function App() {
         else if (next === "help") {
           setHelpTopic(null);
           openPanel(next);
-        } else showTab(next);
+        } else if (next === "terms" || next === "privacy") openPanel(next);
+        else showTab(next);
       },
       openReport(target) {
         setReportPreselect(target ?? null);
@@ -439,7 +475,8 @@ export function App() {
 
   // 同一個按鈕再點一次就關閉；開著另一個面板時直接換過去
   const togglePanel = (next: Panel) => {
-    if (panel === next) closePanel();
+    // 從說明點進使用須知時再點 ?：回到底下的說明（返回），不在歷史紀錄裡多疊一筆
+    if (panel === next || (panel && LEGAL_PANELS.includes(panel) && under === next)) closePanel();
     else if (next === "settings") openSettings();
     else {
       setHelpTopic(null);
@@ -459,6 +496,8 @@ export function App() {
   // 用過 App、還沒確認過這一版的使用須知：打開時先確認，底下的畫面不能操作（規格 12.32）.
   // 只看打開時的設定：第一次設定時只勾了資料流向的人，在設定頁勾使用須知就好，不跳出來打斷
   const termsGate = termsAtOpen && !termsAccepted(settings);
+  // 面板裡的說明或設定：使用須知與隱私說明蓋在它上面時也留著
+  const base = shown === "help" || shown === "settings" ? shown : under;
 
   return (
     <AppContext.Provider value={state}>
@@ -511,7 +550,7 @@ export function App() {
             <NewDevicesBanner />
             {!state.db.persistent && (
               <div className="notice warn">
-                目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗，或本站已在另一個分頁開啟。
+                目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗。
               </div>
             )}
             {testMode.enabled && (
@@ -542,13 +581,21 @@ export function App() {
             </button>
           ))}
         </nav>
+        <div className="toasts" aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.id} className="toast" role="status">
+              <EmojiText text={t.text} />
+            </div>
+          ))}
+        </div>
+      </div>
         {shown && (
           <>
             {/* 電腦上底下的頁面看得到（變暗），點暗的地方也關閉；側邊的分頁在暗幕之上，點了直接切過去 */}
-            <div className={leaving ? "panel-backdrop leaving" : "panel-backdrop"} onClick={closePanel} />
+            <div className={`panel-backdrop${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`} onClick={closePanel} />
             <aside
               id="side-panel"
-              className={leaving ? "side-panel leaving" : "side-panel"}
+              className={`side-panel${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`}
               role="dialog"
               aria-label={PANEL_LABELS[shown]}
               inert={leaving}
@@ -564,18 +611,20 @@ export function App() {
                   <Icon as={X} />
                 </button>
               </div>
-              <div className="side-panel-body">{shown === "settings" ? <SettingsView section={settingsSection} /> : <HelpView topic={helpTopic} />}</div>
+              {base && (
+                <div className="side-panel-body" hidden={base !== shown}>
+                  {base === "settings" ? <SettingsView section={settingsSection} /> : <HelpView topic={helpTopic} />}
+                </div>
+              )}
+              {base !== shown && (
+                // 建置時由靜態頁產生的固定內容（vite.config.ts 的 legalPagesModule），不含使用者或模型的文字；換頁時從最上面看起
+                <div className="side-panel-body" key={shown}>
+                  <div className="legal-page" dangerouslySetInnerHTML={{ __html: shown === "terms" ? TERMS_HTML : PRIVACY_HTML }} />
+                </div>
+              )}
             </aside>
           </>
         )}
-        <div className="toasts" aria-live="polite">
-          {toasts.map((t) => (
-            <div key={t.id} className="toast" role="status">
-              <EmojiText text={t.text} />
-            </div>
-          ))}
-        </div>
-      </div>
     </AppContext.Provider>
   );
 }

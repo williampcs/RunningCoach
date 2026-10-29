@@ -2,7 +2,7 @@
 // - /privacy 關掉 JavaScript 也看得到全部內容，樣式只從本站載入，沒有任何腳本或外部的請求
 // - 手機與電腦、淺色與深色的截圖；不會左右捲動
 // - App 裡的連結（新手引導、設定的資料流向、Intervals.icu、多裝置同步、設定最下面、使用說明的開頭與「隱私說明」一節、
-//   教練用 get_app_help 回答時的連結）都在新分頁打開 /privacy
+//   教練用 get_app_help 回答時的連結）都在 App 的面板打開（KI-046，不開新分頁）；從設定的某一項點進來，✕ 回到那一項
 // staging 的標示由 verify-environments.cjs 檢查（它自己建置 staging）。
 const fs = require("fs");
 const path = require("path");
@@ -18,14 +18,8 @@ const viewports = {
   1280: { viewport: { width: 1280, height: 900 } },
 };
 
-/** 點連結，確認在新分頁打開隱私說明頁 */
-async function opensPrivacy(context, link) {
-  const [popup] = await Promise.all([context.waitForEvent("page", { timeout: 5000 }), link.click()]);
-  await popup.waitForLoadState();
-  const ok = popup.url() === PRIVACY && (await popup.getByRole("heading", { name: "隱私說明", level: 1 }).isVisible());
-  await popup.close();
-  return ok;
-}
+/** 點連結，確認在 App 的面板打開隱私說明、沒有新分頁（KI-046） */
+const opensPrivacy = (context, link) => E2E.opensLegalPanel(link.page(), link, "隱私說明");
 
 (async () => {
   const browser = await chromium.launch();
@@ -107,6 +101,18 @@ async function opensPrivacy(context, link) {
       check[`${tag}.link.dataFlow`] = await viaInfo("AI 教練", "資料會送到哪裡");
       check[`${tag}.link.intervals`] = await viaInfo("訓練紀錄", "怎麼取得 API key");
       check[`${tag}.link.deviceSync`] = await viaInfo("多裝置同步", "同步哪些資料");
+      // ✕ 回到設定裡原本的那一項
+      check[`${tag}.link.backToSection`] = await panel.locator('.subpage[data-section="sync"]').isVisible();
+      // 從設定的某一項打開、在兩頁之間切換四次（隱私說明 → 使用須知 → 隱私說明 → 使用須知）：✕ 一次、返回一次都回到那一項
+      for (const how of ["close", "back"]) {
+        // 回到那一項時 ⓘ 的說明還開著（狀態留著）：沒開著才按
+        if (!(await panel.locator(".info-pop").isVisible())) await panel.getByRole("button", { name: "同步哪些資料" }).click();
+        const hopped = await E2E.hopLegal(page, panel.locator(".info-pop").getByRole("link", { name: "隱私說明" }), "隱私說明");
+        if (how === "close") await panel.locator(".side-panel-close").click();
+        else await page.goBack();
+        const backHead = await panel.locator(".side-panel-head h2", { hasText: /^設定$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+        check[`${tag}.link.hopFromSettings.${how}Once`] = hopped && backHead && (await panel.locator('.subpage[data-section="sync"]').isVisible());
+      }
       await panel.locator(".back-button").click();
       check[`${tag}.link.settingsFooter`] = await opensPrivacy(context, panel.locator("p.center").getByRole("link", { name: "隱私說明" }));
       if (mobile) await page.screenshot({ path: `${E2E.OUT}/privacy-settings-mobile.png` });
