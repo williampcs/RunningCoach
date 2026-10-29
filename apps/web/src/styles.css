@@ -449,6 +449,18 @@ a {
   padding-top: 0;
 }
 
+/* 賽事的備註：照打的換行顯示，和標題對齊（左邊是圖示的寬度） */
+.race-notes {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.list > li > .race-notes,
+.list > li > .race-notes-more {
+  padding-left: calc(36px + var(--sp-3));
+}
+
 .guide {
   margin: 0;
   padding-left: 1.3em;

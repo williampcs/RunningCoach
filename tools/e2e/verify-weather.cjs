@@ -112,13 +112,24 @@ const requests = async () => (await fetch(`${MOCK}/_mock/requests`)).json();
   await E2E.settings(page, "天氣");
   check.keptAfterSave = (await page.locator("#weather").innerText()).includes("目前：台北市");
 
-  // 清除
+  // 清除：看板的天氣提醒跟著消失（KI-047）。看板收起時沒有 .feed-item，先展開，並先確認清除前還在，不然什麼都檢查不到
+  const weatherItems = () => page.locator(".feed:not(.collapsed) .feed-item").filter({ hasText: "Weather data by Open-Meteo.com" });
+  const expandFeed = async () => {
+    await page.locator(".feed").first().waitFor();
+    if (await page.locator(".feed.collapsed .feed-summary").count()) await page.locator(".feed.collapsed .feed-summary").click();
+    await page.locator(".feed:not(.collapsed)").waitFor();
+  };
+  await E2E.go(page, "對話");
+  await expandFeed();
+  check.feedBeforeClear = await weatherItems().first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+  await E2E.settings(page, "天氣");
   await page.locator("#weather").getByRole("button", { name: "清除天氣的城市" }).click();
   await page.locator("#weather").getByText("還沒設定：教練不會參考天氣。").waitFor();
   check.cleared = (await page.evaluate(() => JSON.parse(localStorage.getItem("running-coach.settings.v1")).weather)) === null;
   await E2E.go(page, "對話");
-  await page.waitForTimeout(800);
-  check.feedGoneAfterClear = (await page.locator(".feed-item").filter({ hasText: "Weather data by Open-Meteo.com" }).count()) === 0;
+  await expandFeed();
+  check.feedGoneAfterClear = await weatherItems().first().waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
+  check.feedStillHasOthers = (await page.locator(".feed:not(.collapsed) .feed-item").count()) > 0;
   await page.context().close();
 
   check.noConsoleErrors = problems.length === 0;

@@ -32,6 +32,23 @@ const CHUNK_MS = Number(process.env.MOCK_CHUNK_MS ?? 25);
 // 長回覆寫慢一點（約 10 秒）：E2E 要在串流中點開段落、看「寫作中」（規格 12.30）
 const chunkMs = (text: string) => (text === LONG_REPLY ? CHUNK_MS * 4 : CHUNK_MS);
 
+// 模擬別的時間（例：MOCK_NOW=2026-10-29T23:50:00+08:00 測跨日）：時鐘從那個時間開始照常走；E2E 的瀏覽器用 E2E_NOW 對上
+if (process.env.MOCK_NOW) {
+  const offset = Date.parse(process.env.MOCK_NOW) - Date.now();
+  if (Number.isNaN(offset)) throw new Error(`MOCK_NOW 不是時間：${process.env.MOCK_NOW}`);
+  const RealDate = Date;
+  class ShiftedDate extends RealDate {
+    constructor(...args: unknown[]) {
+      if (args.length) super(...(args as [string]));
+      else super(RealDate.now() + offset);
+    }
+    static override now() {
+      return RealDate.now() + offset;
+    }
+  }
+  globalThis.Date = ShiftedDate as DateConstructor;
+}
+
 type Block = { type: string; [key: string]: unknown };
 type Message = { role: string; content: string | Block[] };
 

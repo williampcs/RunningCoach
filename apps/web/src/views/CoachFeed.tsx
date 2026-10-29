@@ -88,16 +88,22 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
   const [injuries, setInjuries] = useState<Injury[]>([]);
   const [pain, setPain] = useState<Record<number, number>>({});
   const [error, setError] = useState<string | null>(null);
+  // 讀完今天的自評才顯示欄位：不然讀到的值會蓋掉讀完之前已經打的字（KI-047）
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    void coach.db.getCheckin(today).then((c: DailyCheckin | null) => {
+    let cancelled = false;
+    void Promise.all([coach.db.getCheckin(today), coach.db.getInjuries()]).then(([c, list]: [DailyCheckin | null, Injury[]]) => {
+      if (cancelled) return;
       if (c) setValues({ energy: c.energy, soreness: c.soreness, sleep: c.sleep, notes: c.notes ?? "" });
-    });
-    void coach.db.getInjuries().then((list) => {
       setInjuries(list);
       // 今天已經回報過的分數帶出來
       setPain(Object.fromEntries(list.flatMap((i) => i.scores.filter((x) => x.date === today && x.when === "checkin").map((x) => [i.id, x.score]))));
+      setLoaded(true);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [coach, today]);
 
   async function save() {
@@ -112,6 +118,7 @@ function CheckinForm({ onDone }: { onDone: () => void }) {
     }
   }
 
+  if (!loaded) return null;
   return (
     <div className="checkin">
       {SCALES.map((s) => (
@@ -180,7 +187,7 @@ function prefersReducedMotion(): boolean {
  * collapseSignal 每次送出訊息時遞增：開始對話後收成一行，讓對話有空間。
  */
 export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
-  const { coach, revision, goTo, openReport, llmProblem, touch } = useApp();
+  const { coach, settings, revision, goTo, openReport, llmProblem, touch } = useApp();
   const sync = useSync();
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -195,9 +202,15 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const [reducedMotion] = useState(prefersReducedMotion);
   const sectionRef = useRef<HTMLElement>(null);
 
+  // 設定改了（例：清除天氣的城市、改時區）也重新整理：儲存設定只更新同一個 Coach，不會改 revision（KI-047）。
+  // 先送出的比較慢時不蓋掉後來的
   useEffect(() => {
-    void coach.feed().then(setItems);
-  }, [coach, revision]);
+    let cancelled = false;
+    void coach.feed().then((next) => !cancelled && setItems(next));
+    return () => {
+      cancelled = true;
+    };
+  }, [coach, revision, settings]);
 
   // 內容更新（例如存了自評、項目重新排序）後回到最上面，不停在原本捲動的位置
   useEffect(() => {

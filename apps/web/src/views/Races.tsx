@@ -302,7 +302,6 @@ export function RacesCard() {
                 race.start_time ? `${race.start_time} 起跑` : null,
                 racePlaceOf(race)?.label || null,
                 ...(outcome === "finished" ? resultDetail(race) : []),
-                race.notes || null,
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -310,6 +309,7 @@ export function RacesCard() {
           </span>
           <span className="list-row-end">{raceStatusText(race, today)}</span>
         </div>
+        {race.notes?.trim() && <RaceNotes text={race.notes.trim()} />}
         <div className="actions">
           <button
             className="text"
@@ -473,4 +473,15 @@ export function RacesCard() {
       </li>
     );
   }
+}
+
+/** 備註照使用者打的換行顯示；超過兩行（或很長）的收進「備註」（設計準則：長的說明先收起來） */
+export function RaceNotes({ text }: { text: string }) {
+  const long = text.split("\n").length > 2 || text.length > 60;
+  if (!long) return <p className="race-notes small muted">{text}</p>;
+  return (
+    <Disclosure className="race-notes-more" summary="備註">
+      <p className="race-notes small muted">{text}</p>
+    </Disclosure>
+  );
 }

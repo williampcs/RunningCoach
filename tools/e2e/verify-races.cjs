@@ -111,6 +111,26 @@ const mockToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).
   check.noResultBeforeRace = (await item("秋季全馬").getByRole("button", { name: "記錄成績" }).count()) === 0;
   await page.screenshot({ path: `${OUT}/races-4-list.png`, fullPage: true });
 
+  // 4b. 備註照打的換行顯示（不接在副標那一行）；超過兩行的收進「備註」，預設收起
+  const editNotes = async (name, notes) => {
+    await item(name).getByRole("button", { name: "編輯" }).click();
+    await card.getByLabel("備註").fill(notes);
+    await card.getByRole("button", { name: "儲存變更" }).click();
+    await card.getByRole("button", { name: "儲存變更" }).waitFor({ state: "detached" });
+  };
+  const lines = (locator) =>
+    locator.evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight)));
+  await editNotes("秋季全馬", "住飯店\n早上 5 點接駁車");
+  const notes = item("秋季全馬").locator("p.race-notes");
+  check.notesOwnLines = (await notes.innerText()) === "住飯店\n早上 5 點接駁車" && (await lines(notes)) === 2;
+  check.notesNotInSub = !(await item("秋季全馬").locator(".list-row-sub").innerText()).includes("住飯店");
+  await editNotes("秋季全馬", "住飯店\n早上 5 點接駁車\n寄物在 B 區\n補給：3 包膠");
+  const more = item("秋季全馬").locator("details.race-notes-more");
+  check.longNotesFolded = (await more.getAttribute("open")) === null && (await more.locator("summary").innerText()) === "備註";
+  await more.locator("summary").click();
+  check.longNotesShown = (await lines(more.locator("p.race-notes"))) === 4;
+  await item("秋季全馬").screenshot({ path: `${OUT}/races-4-notes.png` });
+
   // 5. 教練看得到賽事頁上的所有賽事（含沒有出賽、沒有完賽的）
   await E2E.go(page, "對話");
   await page.getByPlaceholder("輸入訊息…").fill("我有哪些比賽");
