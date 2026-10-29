@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addDays, adherenceText, ATHLETE_ADJUST_NOTE, isoWeekLabel, isoWeekStart, pastPlanWeeks, recentAdherence, type Db, type PastSession, type PastWeek } from "../src";
+import { addDays, adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, isoWeekLabel, isoWeekStart, pastPlanWeeks, recentAdherence, type Db, type PastSession, type PastWeek } from "../src";
 import type { SessionDraft } from "../src/plan";
 import { ContextManager } from "../src/context";
 import { DEFAULT_SETTINGS } from "../src";
@@ -156,8 +156,8 @@ const week = (weekStart: string, sessions: PastSession[], text = false): PastWee
 
 describe("最近 4 週的摘要（給教練）", () => {
   it("沒有一堂一堂的課表（只有文字課表）時沒有摘要", () => {
-    expect(adherenceText([week("2026-09-28", [], true)], "2026-09-07", "2026-10-04")).toBeNull();
-    expect(adherenceText([], "2026-09-07", "2026-10-04")).toBeNull();
+    expect(adherenceSummary([week("2026-09-28", [], true)], "2026-09-07", "2026-10-04")).toBeNull();
+    expect(adherenceSummary([], "2026-09-07", "2026-10-04")).toBeNull();
   });
 
   it("各種課的結果、同一個星期幾一直沒做、選手自己跳過或改用替代；跨月的日期", () => {
@@ -170,7 +170,10 @@ describe("最近 4 週的摘要（給教練）", () => {
         past({ kind: "easy", date: addDays(d, -1), outcome: i === 3 ? "fallback" : "achieved", byAthlete: i === 3 }),
       ]),
     );
-    const text = adherenceText(weeks, "2026-09-07", "2026-10-04")!;
+    const summary = adherenceSummary(weeks, "2026-09-07", "2026-10-04")!;
+    expect(summary.weekdays).toEqual([{ weekday: 2, weeks: 4, total: 4, missed: { skipped: 1, missed: 2 } }]);
+    expect(summary.athlete).toEqual({ skipped: 1, fallback: 1 });
+    const text = adherenceText(summary);
     expect(text.split("\n")).toEqual([
       "【最近 4 週照課表的情形】（9/7 – 10/4，程式依手錶紀錄比對；4 週都有課表）",
       "・輕鬆跑 4 堂：做了 3、改用替代 1",
@@ -186,7 +189,7 @@ describe("最近 4 週的摘要（給教練）", () => {
       week("2026-09-28", [past({ kind: "easy", date: "2026-09-29", outcome: "missed" }), past({ kind: "ride_endurance", date: "2026-10-01", outcome: "achieved", isRun: false, sport: "ride" })]),
       week("2026-09-21", [], true),
     ];
-    expect(adherenceText(weeks, "2026-09-07", "2026-10-04")!.split("\n")).toEqual([
+    expect(adherenceText(adherenceSummary(weeks, "2026-09-07", "2026-10-04")!).split("\n")).toEqual([
       "【最近 4 週照課表的情形】（9/7 – 10/4，程式依手錶紀錄比對；4 週裡 1 週有一堂一堂的課表、1 週是文字課表（沒有比對））",
       "・輕鬆跑 1 堂：沒做 1",
       "・耐力騎 1 堂：做了 1",

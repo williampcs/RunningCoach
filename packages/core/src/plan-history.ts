@@ -173,7 +173,7 @@ export async function pastPlanWeeks(
 }
 
 /** 摘要裡結果的順序與說法 */
-const SUMMARY_OUTCOMES: [Outcome, string][] = [
+const SUMMARY_OUTCOMES: [PastSession["outcome"], string][] = [
   ["achieved", "做了"],
   ["partial", "部分"],
   ["different", "做了不一樣的課"],
@@ -183,59 +183,96 @@ const SUMMARY_OUTCOMES: [Outcome, string][] = [
 ];
 const NOT_DONE: ReadonlySet<Outcome> = new Set(["skipped", "missed"]);
 
-function countText(items: PastSession[]): string {
-  return SUMMARY_OUTCOMES.map(([o, label]) => [label, items.filter((s) => s.outcome === o).length] as const)
-    .filter(([, n]) => n > 0)
-    .map(([label, n]) => `${label} ${n}`)
+/** 各種結果的堂數（沒有的不列） */
+export type OutcomeCounts = Partial<Record<PastSession["outcome"], number>>;
+
+/**
+ * 最近幾週照課表的情形（結構）；adherenceText 轉成給教練看的文字.
+ * 之後要加的項目（例如選手自己改短、換成輕鬆跑的次數與原因，規格 12.34 第 3 點 B）加一個欄位，再在 adherenceText 加幾行
+ */
+export interface AdherenceSummary {
+  from: string;
+  to: string;
+  weekCount: number;
+  /** 有一堂一堂課表的週數、文字課表的週數 */
+  structuredWeeks: number;
+  textWeeks: number;
+  /** 各種課（依 SESSION_KINDS 的順序）：排了幾堂與結果 */
+  kinds: { kind: SessionKind; total: number; counts: OutcomeCounts }[];
+  /** 同一個星期幾沒做到（跳過或沒做）兩次以上的：那天排了幾次、在幾週裡、沒做到的結果 */
+  weekdays: { weekday: number; weeks: number; total: number; missed: OutcomeCounts }[];
+  /** 選手自己在課表頁按的調整 */
+  athlete: { skipped: number; fallback: number };
+}
+
+function countOf(items: PastSession[]): OutcomeCounts {
+  const counts: OutcomeCounts = {};
+  for (const s of items) counts[s.outcome] = (counts[s.outcome] ?? 0) + 1;
+  return counts;
+}
+
+const total = (counts: OutcomeCounts) => Object.values(counts).reduce((sum, n) => sum + (n ?? 0), 0);
+
+function countText(counts: OutcomeCounts): string {
+  return SUMMARY_OUTCOMES.filter(([o]) => counts[o])
+    .map(([o, label]) => `${label} ${counts[o]}`)
     .join("、");
 }
 
-/**
- * 教練看的最近 4 週照課表做得怎樣（weeks 是那幾週，新舊都可以）. 沒有一堂一堂的課表時為 null.
- * 例：
- * 【最近 4 週照課表的情形】（9/28 – 10/25，程式依手錶紀錄比對；4 週都有課表）
- * ・T 閾值 4 堂：做了 3、跳過 1
- * ・週三的課：排了 4 次，沒做到 3 次（跳過 1、沒做 2）
- */
-export function adherenceText(weeks: PastWeek[], from: string, to: string, weekCount = ADHERENCE_WEEKS): string | null {
+/** weeks 是那幾週（新舊都可以）；沒有一堂一堂的課表時為 null */
+export function adherenceSummary(weeks: PastWeek[], from: string, to: string, weekCount = ADHERENCE_WEEKS): AdherenceSummary | null {
   const structured = weeks.filter((w) => !w.text);
   if (!structured.length) return null;
-  const texts = weeks.length - structured.length;
   const sessions = structured.flatMap((w) => w.sessions);
-  const coverage =
-    structured.length === weekCount ? `${weekCount} 週都有課表` : `${weekCount} 週裡 ${structured.length} 週有一堂一堂的課表`;
+  const kinds = (Object.keys(SESSION_KINDS) as SessionKind[])
+    .map((kind) => sessions.filter((s) => s.kind === kind))
+    .filter((items) => items.length)
+    .map((items) => ({ kind: items[0]!.kind, total: items.length, counts: countOf(items) }));
+  const weekdays: AdherenceSummary["weekdays"] = [];
+  for (let weekday = 0; weekday < 7; weekday++) {
+    const items = sessions.filter((s) => s.date && weekdayIndex(s.date) === weekday);
+    const missed = items.filter((s) => NOT_DONE.has(s.outcome));
+    if (missed.length < 2) continue;
+    weekdays.push({ weekday, weeks: new Set(items.map((s) => mondayOf(s.date!))).size, total: items.length, missed: countOf(missed) });
+  }
+  const self = sessions.filter((s) => s.byAthlete);
+  return {
+    from,
+    to,
+    weekCount,
+    structuredWeeks: structured.length,
+    textWeeks: weeks.length - structured.length,
+    kinds,
+    weekdays,
+    athlete: { skipped: self.filter((s) => s.outcome === "skipped").length, fallback: self.filter((s) => s.outcome === "fallback").length },
+  };
+}
+
+/**
+ * 給教練看的文字. 例：
+ * 【最近 4 週照課表的情形】（9/28 – 10/25，程式依手錶紀錄比對；4 週都有課表）
+ * ・T 閾值 4 堂：做了 3、跳過 1
+ * ・週三的課：4 週排了 4 次，沒做到 3 次（跳過 1、沒做 2）
+ */
+export function adherenceText(summary: AdherenceSummary): string {
+  const { weekCount, structuredWeeks, textWeeks } = summary;
+  const coverage = structuredWeeks === weekCount ? `${weekCount} 週都有課表` : `${weekCount} 週裡 ${structuredWeeks} 週有一堂一堂的課表`;
   const lines = [
-    `【最近 ${weekCount} 週照課表的情形】（${monthDay(from)} – ${monthDay(to)}，程式依手錶紀錄比對；${coverage}` +
-      `${texts ? `、${texts} 週是文字課表（沒有比對）` : ""}）`,
+    `【最近 ${weekCount} 週照課表的情形】（${monthDay(summary.from)} – ${monthDay(summary.to)}，程式依手錶紀錄比對；${coverage}` +
+      `${textWeeks ? `、${textWeeks} 週是文字課表（沒有比對）` : ""}）`,
   ];
-  if (!sessions.length) {
+  if (!summary.kinds.length) {
     lines.push("・課表上沒有要練的課");
     return lines.join("\n");
   }
-
-  // 各種課：依種類在 SESSION_KINDS 的順序
-  const kinds = (Object.keys(SESSION_KINDS) as SessionKind[]).filter((k) => sessions.some((s) => s.kind === k));
-  for (const kind of kinds) {
-    const items = sessions.filter((s) => s.kind === kind);
-    lines.push(`・${SESSION_KINDS[kind]} ${items.length} 堂：${countText(items)}`);
+  for (const k of summary.kinds) lines.push(`・${SESSION_KINDS[k.kind]} ${k.total} 堂：${countText(k.counts)}`);
+  for (const d of summary.weekdays) {
+    const name = weekdayName(addDays(summary.from, d.weekday - weekdayIndex(summary.from))).replace("星期", "週");
+    lines.push(`・${name}的課：${d.weeks} 週排了 ${d.total} 次，沒做到 ${total(d.missed)} 次（${countText(d.missed)}）`);
   }
-
-  // 同一個星期幾沒做到兩次以上
-  for (let day = 0; day < 7; day++) {
-    const items = sessions.filter((s) => s.date && weekdayIndex(s.date) === day);
-    const missed = items.filter((s) => NOT_DONE.has(s.outcome));
-    if (missed.length < 2) continue;
-    const name = weekdayName(addDays(from, day)).replace("星期", "週");
-    const weeksWith = new Set(items.map((s) => mondayOf(s.date!))).size;
-    lines.push(`・${name}的課：${weeksWith} 週排了 ${items.length} 次，沒做到 ${missed.length} 次（${countText(missed)}）`);
-  }
-
-  // 選手自己在計畫頁按的
-  const self = sessions.filter((s) => s.byAthlete);
-  const selfSkipped = self.filter((s) => s.outcome === "skipped").length;
-  const selfFallback = self.filter((s) => s.outcome === "fallback").length;
-  if (selfSkipped || selfFallback) {
-    lines.push(`・選手自己在課表頁${[selfSkipped && `跳過 ${selfSkipped} 次`, selfFallback && `改用替代 ${selfFallback} 次`].filter(Boolean).join("、")}`);
+  const { skipped, fallback } = summary.athlete;
+  if (skipped || fallback) {
+    lines.push(`・選手自己在課表頁${[skipped && `跳過 ${skipped} 次`, fallback && `改用替代 ${fallback} 次`].filter(Boolean).join("、")}`);
   }
   return lines.join("\n");
 }
@@ -246,6 +283,6 @@ export async function recentAdherence(db: Db, today: string, options: { multispo
   const from = addDays(thisMonday, -7 * ADHERENCE_WEEKS);
   const list = await candidates(db, from, thisMonday, null);
   if (!list.some((c) => !c.text)) return null;
-  const weeks = await buildWeeks(db, today, list, !!options.multisport);
-  return adherenceText(weeks, from, addDays(thisMonday, -1));
+  const summary = adherenceSummary(await buildWeeks(db, today, list, !!options.multisport), from, addDays(thisMonday, -1));
+  return summary && adherenceText(summary);
 }
