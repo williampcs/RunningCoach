@@ -131,7 +131,7 @@ function InjuryItem({ injury, save, remove }: { injury: Injury; save: (input: In
 }
 
 /** 新增一個傷：部位、哪一側、會痛的運動 */
-function AddInjury({ add, cancel }: { add: (input: InjuryInput & { area: string }) => void; cancel: () => void }) {
+export function AddInjury({ add, cancel }: { add: (input: InjuryInput & { area: string }) => void; cancel: () => void }) {
   const [area, setArea] = useState("");
   const [side, setSide] = useState<InjurySide>("none");
   const [sports, setSports] = useState<Sport[]>([]);

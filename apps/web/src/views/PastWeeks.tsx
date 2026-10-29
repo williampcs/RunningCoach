@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { monthDay, OUTCOME_LABELS, PAST_WEEKS_PAGE, weekdayName, type PastSession, type PastWeek } from "@running-coach/core";
+import { monthDay, OUTCOME_LABELS, PAST_WEEKS_PAGE, ratioText, weekdayName, type PastSession, type PastWeek } from "@running-coach/core";
 import { Check, ChevronRight, Circle, CircleCheck, CircleDashed, CircleDot, CircleMinus, type LucideIcon } from "lucide-react";
 
 import { useApp } from "../app-context";
@@ -41,6 +41,10 @@ function outcomeLabel(s: PastSession): string {
   // 不是跑步的課沒做寫「沒做」（和時間軸一樣）
   return s.outcome === "missed" && !s.isRun ? "沒做" : OUTCOME_LABELS[s.outcome];
 }
+
+/** 自己改過的課（規格 12.34 第 3 點 B）：「自己改短到約 3/4」「自己換成輕鬆」 */
+const selfText = (s: PastSession) =>
+  s.selfChange ? (s.selfChange.action === "shorten" ? `自己改短到${ratioText(s.selfChange.ratio)}` : "自己換成輕鬆") : null;
 
 function sportOf(s: PastSession): SportKey {
   if (s.kind === "strength") return "strength";
@@ -88,7 +92,7 @@ function WeekSessions({ week }: { week: PastWeek }) {
             </span>
             <span className="list-row-text">
               <span className="list-row-title">{s.title}</span>
-              <span className="list-row-sub">{[when, s.actual].filter(Boolean).join(" · ")}</span>
+              <span className="list-row-sub">{[when, selfText(s), s.actual].filter(Boolean).join(" · ")}</span>
             </span>
             <span className="list-row-end">
               <span className={`badge ${s.outcome}`}>

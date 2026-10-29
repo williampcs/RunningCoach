@@ -250,7 +250,7 @@ function samplePlan(text: string, multisport = false) {
   };
 }
 
-/** weeksAgo 週以前的課表（「之前的週」的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
+/** weeksAgo 週以前的課表（「之前的週」與自己改課的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
 function pastPlan(weeksAgo: number) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   const day = (offset: number) => daysAgo(weekday + 7 * weeksAgo - offset);
@@ -273,7 +273,8 @@ function pastPlan(weeksAgo: number) {
         success: "配速在範圍內",
         fallback: "改成 40 分鐘輕鬆跑",
       },
-      { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: 16, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
+      // 2 週前的長跑排得比假資料長（24 km 只跑了約 16 km）：「之前的週」看得到部分達成
+      { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: weeksAgo === 2 ? 24 : 16, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
     ],
   };
 }

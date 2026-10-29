@@ -4,7 +4,7 @@
  */
 import { addDays, daysBetween, isoWeekStart, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
-import { SESSION_KINDS, sessionView, sortSessions, type SessionKind } from "./plan";
+import { activeSelfChange, SELF_CHANGE_REASONS, SESSION_KINDS, sessionView, sortSessions, type SelfChange, type SelfChangeAction, type SelfChangeReason, type SessionKind } from "./plan";
 import { matchWeek, type Difficulty, type Outcome } from "./plan-match";
 import { monthDay, weekRange } from "./plan-timeline";
 import { contextFor } from "./planning";
@@ -37,6 +37,8 @@ export interface PastSession {
   activityId: string | null;
   /** 跳過、改用替代是選手自己在計畫頁按的 */
   byAthlete: boolean;
+  /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）；之後教練又改過的不算 */
+  selfChange: SelfChange | null;
 }
 
 export interface PastWeek {
@@ -134,6 +136,7 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
         workoutId: r?.workoutId ?? null,
         activityId: r?.activityId ?? null,
         byAthlete: s.status !== "planned" && s.note === ATHLETE_ADJUST_NOTE,
+        selfChange: activeSelfChange(v),
       });
     }
     const onlyRuns = sessions.every((s) => s.isRun) && !weekOthers.length;
@@ -203,7 +206,24 @@ export interface AdherenceSummary {
   weekdays: { weekday: number; weeks: number; total: number; missed: OutcomeCounts }[];
   /** 選手自己在課表頁按的調整 */
   athlete: { skipped: number; fallback: number };
+  /**
+   * 選手自己改短、換成輕鬆（規格 12.34 第 3 點 B）：同一種課（改之前的種類）或同一個星期幾改了 2 次以上的才列.
+   * total 是那種課在這幾週排了幾堂；reasons 的 none 是沒選原因
+   */
+  selfChanges: { kind: SessionKind; action: SelfChangeAction; count: number; total: number; reasons: ReasonCounts }[];
+  selfChangeDays: { weekday: number; action: SelfChangeAction; count: number; reasons: ReasonCounts }[];
 }
+
+export type ReasonCounts = Partial<Record<SelfChangeReason | "none", number>>;
+
+/** 自己改課的一筆：課的日期（彈性課表沒有日期）與改了什麼 */
+export interface SelfChangeRecord {
+  date: string | null;
+  change: SelfChange;
+}
+
+/** 同一種改法要幾次以上才寫進摘要（只出現一次不提） */
+const SELF_CHANGE_MIN = 2;
 
 function countOf(items: PastSession[]): OutcomeCounts {
   const counts: OutcomeCounts = {};
@@ -220,7 +240,32 @@ function countText(counts: OutcomeCounts): string {
 }
 
 /** weeks 是那幾週（新舊都可以）；沒有一堂一堂的課表時為 null */
-export function adherenceSummary(weeks: PastWeek[], from: string, to: string, weekCount = ADHERENCE_WEEKS): AdherenceSummary | null {
+function reasonCounts(records: SelfChangeRecord[]): ReasonCounts {
+  const counts: ReasonCounts = {};
+  for (const r of records) {
+    const key = r.change.reason ?? "none";
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** 改課的紀錄依 key 分組，留下 SELF_CHANGE_MIN 次以上的 */
+function groupChanges<K>(records: SelfChangeRecord[], keyOf: (r: SelfChangeRecord) => K | null): [K, SelfChangeRecord[]][] {
+  const groups = new Map<string, [K, SelfChangeRecord[]]>();
+  for (const r of records) {
+    const key = keyOf(r);
+    if (key === null) continue;
+    const id = JSON.stringify([key, r.change.action]);
+    groups.set(id, [key, [...(groups.get(id)?.[1] ?? []), r]]);
+  }
+  return [...groups.values()].filter(([, items]) => items.length >= SELF_CHANGE_MIN);
+}
+
+/**
+ * weeks 是那幾週（新舊都可以）；沒有一堂一堂的課表時為 null.
+ * changes：這幾週選手自己改過的課（含教練整週重排前的舊版，見 Db.getSelfChanges）
+ */
+export function adherenceSummary(weeks: PastWeek[], from: string, to: string, weekCount = ADHERENCE_WEEKS, changes: SelfChangeRecord[] = []): AdherenceSummary | null {
   const structured = weeks.filter((w) => !w.text);
   if (!structured.length) return null;
   const sessions = structured.flatMap((w) => w.sessions);
@@ -245,8 +290,36 @@ export function adherenceSummary(weeks: PastWeek[], from: string, to: string, we
     kinds,
     weekdays,
     athlete: { skipped: self.filter((s) => s.outcome === "skipped").length, fallback: self.filter((s) => s.outcome === "fallback").length },
+    selfChanges: groupChanges(changes, (r) => r.change.original.kind).map(([kind, items]) => ({
+      kind,
+      action: items[0]!.change.action,
+      count: items.length,
+      // 那種課排了幾堂：改成輕鬆的課現在的種類是輕鬆跑，用改之前的種類算
+      total: Math.max(items.length, sessions.filter((s) => (s.selfChange?.original.kind ?? s.kind) === kind).length),
+      reasons: reasonCounts(items),
+    })),
+    // 同一天改的都是同一種課、那種課已經寫了一行時，不再寫星期幾（避免「長跑」與「週日的課」重複）
+    selfChangeDays: groupChanges(changes, (r) => (r.date ? weekdayIndex(r.date) : null))
+      .filter(([, items]) => {
+        const kinds = new Set(items.map((r) => r.change.original.kind));
+        const kind = items[0]!.change.original.kind;
+        return !(kinds.size === 1 && changes.filter((r) => r.change.original.kind === kind && r.change.action === items[0]!.change.action).length >= SELF_CHANGE_MIN);
+      })
+      .map(([weekday, items]) => ({
+      weekday,
+      action: items[0]!.change.action,
+      count: items.length,
+      reasons: reasonCounts(items),
+    })),
   };
 }
+
+const REASON_ORDER: [SelfChangeReason | "none", string][] = [...(Object.entries(SELF_CHANGE_REASONS) as [SelfChangeReason, string][]), ["none", "沒選原因"]];
+const reasonText = (counts: ReasonCounts) =>
+  REASON_ORDER.filter(([k]) => counts[k])
+    .map(([k, label]) => `${label} ${counts[k]}`)
+    .join("、");
+const actionText = (action: SelfChangeAction) => (action === "shorten" ? "改短" : "換成輕鬆");
 
 /**
  * 給教練看的文字. 例：
@@ -274,6 +347,13 @@ export function adherenceText(summary: AdherenceSummary): string {
   if (skipped || fallback) {
     lines.push(`・選手自己在課表頁${[skipped && `跳過 ${skipped} 次`, fallback && `改用替代 ${fallback} 次`].filter(Boolean).join("、")}`);
   }
+  for (const c of summary.selfChanges) {
+    lines.push(`・${SESSION_KINDS[c.kind]} ${c.total} 次裡自己${actionText(c.action)} ${c.count} 次（${reasonText(c.reasons)}）`);
+  }
+  for (const d of summary.selfChangeDays) {
+    const name = weekdayName(addDays(summary.from, d.weekday - weekdayIndex(summary.from))).replace("星期", "週");
+    lines.push(`・${name}的課自己${actionText(d.action)} ${d.count} 次（${reasonText(d.reasons)}）`);
+  }
   return lines.join("\n");
 }
 
@@ -283,6 +363,7 @@ export async function recentAdherence(db: Db, today: string, options: { multispo
   const from = addDays(thisMonday, -7 * ADHERENCE_WEEKS);
   const list = await candidates(db, from, thisMonday, null);
   if (!list.some((c) => !c.text)) return null;
-  const summary = adherenceSummary(await buildWeeks(db, today, list, !!options.multisport), from, addDays(thisMonday, -1));
+  const changes = await db.getSelfChanges(from, addDays(thisMonday, -7));
+  const summary = adherenceSummary(await buildWeeks(db, today, list, !!options.multisport), from, addDays(thisMonday, -1), ADHERENCE_WEEKS, changes);
   return summary && adherenceText(summary);
 }

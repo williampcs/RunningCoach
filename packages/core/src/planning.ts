@@ -4,8 +4,17 @@
 import { addDays, isoWeekLabel, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
 import {
+  activeSelfChange,
   checkPlan,
+  easyChangeable,
+  easyVersion,
   EDITED_LABEL,
+  estimateSession,
+  ratioText,
+  selfChangeable,
+  selfChangeText,
+  SHORTEN_RATIOS,
+  shortenSteps,
   injuryWarnings,
   parseSessions,
   planMarkdown,
@@ -21,6 +30,8 @@ import {
   type PlannedSession,
   type PlanStyle,
   type PlanWarning,
+  type SelfChange,
+  type SelfChangeReason,
   type SessionDraft,
   type SessionView,
   type TargetContext,
@@ -225,7 +236,8 @@ function sessionsText(sessions: PlannedSession[], ctx: TargetContext, match?: We
     .map((s) => {
       const v = sessionView(s, ctx);
       const result = resultText(match?.results.get(s.id));
-      const status = STATUS_LABELS[v.status] || (v.editedAt ? EDITED_LABEL : "");
+      const self = activeSelfChange(v);
+      const status = STATUS_LABELS[v.status] || (self ? selfChangeText(self) : v.editedAt ? EDITED_LABEL : "");
       const detail = [v.purpose && `目的：${v.purpose}`, v.success && `完成的標準：${v.success}`, v.fallback && `狀況不好時：${v.fallback}`]
         .filter(Boolean)
         .join("；");
@@ -476,14 +488,19 @@ export async function changeSession(
       await db.updatePlannedSession(id, { status: "fallback", note: reason });
       break;
     case "restore": {
+      // 自己改短、換成輕鬆的（規格 12.34 第 3 點 B）：內容換回原本的
+      const self = activeSelfChange({ selfChange: session.self_change ?? null, editedAt: session.edited_at ?? null });
       // 傷病：恢復後會是不能排的課時不恢復（規格 12.33）
       const ctx = await contextFor(db, today, plan.week_start, style, options);
-      const restored = (await db.getPlannedSessions(plan.id)).map((s) => (s.id === id ? { ...s, status: "planned" as const, note: null } : s));
+      const restored = (await db.getPlannedSessions(plan.id)).map((s) =>
+        s.id === id ? { ...s, ...(self ? { ...self.original, self_change: null } : {}), status: "planned" as const, note: null } : s,
+      );
       const counted = countedSessions(restored);
       const index = counted.findIndex((s) => (s as PlannedSession).id === id);
       const blocking = checkPlan(counted, ctx).filter((w) => w.blocking && w.session === index);
       if (blocking.length) throw new Error(`這堂課因為傷病先不能恢復：${blocking.map((w) => w.message).join(" ")}`);
-      await db.updatePlannedSession(id, { status: "planned", note: null });
+      if (self) await db.applySelfChange(id, self.original, null);
+      else await db.updatePlannedSession(id, { status: "planned", note: null });
       break;
     }
     case "done":
@@ -513,6 +530,74 @@ export async function changeSession(
   // 回報做完了不是調整，不附整週的檢查
   const recheck = action !== "done" && action !== "undone" && warnings.length;
   return `${done}（session_id=${id}）。` + (recheck ? `\n調整後的檢查：\n${warningList(warnings)}` : "");
+}
+
+/** 自己改課的要求：改短（剩下幾成）或換成輕鬆 */
+export type SelfChangeRequest = { action: "shorten"; ratio: number } | { action: "easy" };
+
+/**
+ * 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）：只有今天與之後、還沒做的跑步或騎車的課.
+ * 改過再改時以原本的內容為準（例：先改 3/4 再改一半，是原本的一半）. 改完照樣跑整週的檢查：
+ * 傷病不能排的不改（不可能因為變短而發生，但照規則檢查），其他提醒附在結果後面（不擋）
+ */
+export async function selfChangeSession(db: Db, today: string, id: number, request: SelfChangeRequest, options: PlanOptions = {}): Promise<string> {
+  const { session, plan, style } = await sessionInActivePlan(db, id);
+  const previous = activeSelfChange({ selfChange: session.self_change ?? null, editedAt: session.edited_at ?? null });
+  const base: Omit<SessionDraft, "date"> = previous?.original ?? {
+    kind: session.kind,
+    title: session.title,
+    steps: session.steps,
+    purpose: session.purpose,
+    success: session.success,
+    fallback: session.fallback,
+    sport: session.sport ?? null,
+  };
+  if (!selfChangeable(base.kind)) throw new Error("只有跑步與騎車的課可以自己改短或換成輕鬆；其他的請教練改");
+  if (session.status !== "planned" || session.done_at) throw new Error("跳過或改用替代的課，先恢復原本的課再改");
+  if (session.date && session.date < today) throw new Error("今天以前的課不能改");
+  if (request.action === "shorten" && !SHORTEN_RATIOS.includes(request.ratio as (typeof SHORTEN_RATIOS)[number])) throw new Error("改短只有約 3/4 與一半");
+  if (request.action === "easy" && !easyChangeable(base.kind)) throw new Error("這堂已經是輕鬆的課");
+
+  const ctx = await contextFor(db, today, plan.week_start, style, options);
+  const sessions = await db.getPlannedSessions(plan.id);
+  const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start, today, ctx);
+  const result = match.results.get(id);
+  if (result?.workoutId != null || result?.activityId) throw new Error("這堂課已經做了，不能再改");
+
+  const original = estimateSession({ ...base, date: session.date }, ctx);
+  const draft: Omit<SessionDraft, "date"> =
+    request.action === "shorten" ? { ...base, steps: shortenSteps(base, request.ratio) } : easyVersion(base, Math.round(original.minutes));
+  const change: SelfChange = {
+    action: request.action,
+    ratio: request.action === "shorten" ? request.ratio : null,
+    reason: previous?.reason ?? null,
+    at: new Date().toISOString(),
+    original: base,
+    minutes: Math.round(original.minutes),
+    km: RIDE_KINDS.has(base.kind) ? 0 : Math.round(original.km * 10) / 10,
+  };
+
+  const changed = sessions.map((s) => (s.id === id ? { ...s, ...draft, self_change: change } : s));
+  const warnings = checkPlan(countedSessions(changed), ctx);
+  const index = countedSessions(changed).findIndex((s) => (s as PlannedSession).id === id);
+  const blocking = warnings.filter((w) => w.blocking && w.session === index);
+  if (blocking.length) throw new Error(`這堂課因為傷病不能這樣改：${blocking.map((w) => w.message).join(" ")}`);
+
+  await db.applySelfChange(id, draft, change);
+  const saved = await db.getPlannedSessions(plan.id);
+  await db.updatePlanContent(plan.id, planMarkdown(planMeta(plan, style), saved, ctx));
+  const done = request.action === "shorten" ? `已改短到${ratioText(request.ratio)}` : "已換成輕鬆";
+  return `${done}（session_id=${id}）。` + (warnings.length ? `\n改了之後的檢查：\n${warningList(warnings)}` : "");
+}
+
+/** 改了之後選的原因（沒時間、太累、不舒服）；再按一次同一個原因是取消 */
+export async function selfChangeReason(db: Db, id: number, reason: SelfChangeReason | null): Promise<SelfChange> {
+  const session = await db.getPlannedSession(id);
+  const change = session && activeSelfChange({ selfChange: session.self_change ?? null, editedAt: session.edited_at ?? null });
+  if (!change) throw new Error("這堂課沒有自己改過");
+  const next = { ...change, reason };
+  await db.setSelfChangeReason(id, next);
+  return next;
 }
 
 /** 一趟跑步在課表上的位置：對應的課與程式的判斷（紀錄頁用） */

@@ -2,7 +2,7 @@
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
-import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
+import type { PlannedSession, PlanStyle, SelfChange, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
 import type {
   Activity,
@@ -39,8 +39,9 @@ import type {
  * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
  * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
  * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
+ * 18：planned_sessions.self_change（選手自己改短、換成輕鬆：原本的內容、改成什麼、原因，規格 12.34 第 3 點 B）
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -192,7 +193,8 @@ const SCHEMA = `
     updated_at TEXT NOT NULL,
     sport      TEXT,
     done_at    TEXT,
-    edited_at  TEXT
+    edited_at  TEXT,
+    self_change TEXT
   );
 
   CREATE TABLE IF NOT EXISTS other_activities (
@@ -311,6 +313,21 @@ const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", 
 /** 可以清掉（寫成 NULL）的欄位：地點與起跑時間；其他欄位傳 null 時不改 */
 const RACE_CLEARABLE = new Set<string>(["place_label", "place_lat", "place_lon", "start_time"]);
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
+
+type SessionRow = Omit<PlannedSession, "steps" | "self_change"> & { steps: string; self_change: string | null };
+
+/** 自己改過的紀錄（JSON）；壞掉的當成沒有 */
+function parseSelfChange(json: string | null): SelfChange | null {
+  if (!json) return null;
+  try {
+    const value = JSON.parse(json) as SelfChange;
+    return value && (value.action === "shorten" || value.action === "easy") && value.original ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+const sessionOf = (row: SessionRow): PlannedSession => ({ ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"], self_change: parseSelfChange(row.self_change) });
 
 function parseJsonArray(json: string | null): unknown[] {
   if (!json) return [];
@@ -535,6 +552,8 @@ export class Db {
       }
       // --- Migration: planned_sessions.edited_at（schema 14：只改一堂課的內容，規格 12.31） ---
       if (!sessionCols.has("edited_at")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN edited_at TEXT");
+      // --- Migration: planned_sessions.self_change（schema 18：選手自己改短、換成輕鬆，規格 12.34 第 3 點 B） ---
+      if (!sessionCols.has("self_change")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN self_change TEXT");
 
       // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
       if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
@@ -1010,19 +1029,19 @@ export class Db {
   }
 
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
-    const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
+    const rows = await this.all<SessionRow>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
-    return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
+    return rows.map(sessionOf);
   }
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
-    const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE id=?",
+    const row = await this.get<SessionRow>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE id=?",
       [id],
     );
-    return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
+    return row ? sessionOf(row) : null;
   }
 
   async updatePlannedSession(
@@ -1048,6 +1067,39 @@ export class Db {
       "UPDATE planned_sessions SET kind=?, title=?, steps=?, purpose=?, success=?, fallback=?, sport=?, status='planned', note=?, edited_at=?, updated_at=? WHERE id=?",
       [draft.kind, draft.title, JSON.stringify(draft.steps), draft.purpose, draft.success, draft.fallback, draft.sport ?? null, note, stamp, stamp, id],
     );
+  }
+
+  /**
+   * 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）：內容換成改過的，記下原本的內容與改了什麼；
+   * change 是 null 時是恢復：內容換回 draft（原本的），清掉紀錄
+   */
+  async applySelfChange(id: number, draft: Omit<SessionDraft, "date">, change: SelfChange | null): Promise<void> {
+    await this.run(
+      "UPDATE planned_sessions SET kind=?, title=?, steps=?, purpose=?, success=?, fallback=?, sport=?, status='planned', note=NULL, self_change=?, updated_at=? WHERE id=?",
+      // 改的時間用資料庫的時鐘（和教練改課的 edited_at 同一種），才比得出誰後改
+      [draft.kind, draft.title, JSON.stringify(draft.steps), draft.purpose, draft.success, draft.fallback, draft.sport ?? null, change ? JSON.stringify({ ...change, at: this.stamp() }) : null, this.stamp(), id],
+    );
+  }
+
+  /** 改了之後才選的原因（沒時間、太累、不舒服） */
+  async setSelfChangeReason(id: number, change: SelfChange): Promise<void> {
+    await this.run("UPDATE planned_sessions SET self_change=?, updated_at=? WHERE id=?", [JSON.stringify(change), this.stamp(), id]);
+  }
+
+  /**
+   * 週一在 [since, until] 之間的課表（每一版，含教練整週重排前的舊版）裡，選手自己改過的課；
+   * 教練重排整週時舊版的紀錄不會不見（規格 12.34 第 3 點 B）
+   */
+  async getSelfChanges(since: string, until: string): Promise<{ date: string | null; week_start: string; change: SelfChange }[]> {
+    const rows = await this.all<{ date: string | null; week_start: string; self_change: string }>(
+      "SELECT s.date, p.week_start, s.self_change FROM planned_sessions s JOIN training_plans p ON p.id = s.plan_id" +
+        " WHERE s.self_change IS NOT NULL AND p.week_start >= ? AND p.week_start <= ? ORDER BY p.week_start, s.date",
+      [since, until],
+    );
+    return rows.flatMap((r) => {
+      const change = parseSelfChange(r.self_change);
+      return change ? [{ date: r.date, week_start: r.week_start, change }] : [];
+    });
   }
 
   /** 改了單堂課之後，更新計畫的文字版 */

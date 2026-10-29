@@ -5,7 +5,8 @@ import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
 import { featureOn } from "./features";
 import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
-import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
+import { activePlan, changeSession, nextPlan, planNoteFor, selfChangeReason, selfChangeSession, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+import type { SelfChange, SelfChangeReason } from "./plan";
 import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
@@ -670,6 +671,16 @@ export class Coach {
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
     return changeSession(this.db, this.today(), id, action, { ...options, multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B） */
+  selfChangeSession(id: number, request: SelfChangeRequest): Promise<string> {
+    return selfChangeSession(this.db, this.today(), id, request, { multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 自己改課的原因；null 是取消 */
+  selfChangeReason(id: number, reason: SelfChangeReason | null): Promise<SelfChange> {
+    return selfChangeReason(this.db, id, reason);
   }
 
   // ---------------------------------------------------------------------------

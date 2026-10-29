@@ -157,6 +157,15 @@ export {
   sessionSport,
   STATUS_LABELS,
   EDITED_LABEL,
+  activeSelfChange,
+  easyChangeable,
+  ratioText,
+  selfChangeable,
+  SELF_CHANGE_REASONS,
+  SHORTEN_RATIOS,
+  type SelfChange,
+  type SelfChangeAction,
+  type SelfChangeReason,
   type PlannedSession,
   type PlanStyle,
   type SessionKind,
@@ -166,8 +175,8 @@ export {
   type StepRow,
   type StructureSegment,
 } from "./plan";
-export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
-export { adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type AdherenceSummary, type OutcomeCounts, type PastSession, type PastWeek } from "./plan-history";
+export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+export { adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type AdherenceSummary, type ReasonCounts, type SelfChangeRecord, type OutcomeCounts, type PastSession, type PastWeek } from "./plan-history";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";

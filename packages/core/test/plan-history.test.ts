@@ -142,6 +142,7 @@ const past = (partial: Partial<PastSession> & Pick<PastSession, "kind" | "outcom
   workoutId: null,
   activityId: null,
   byAthlete: false,
+  selfChange: null,
   ...partial,
 });
 const week = (weekStart: string, sessions: PastSession[], text = false): PastWeek => ({

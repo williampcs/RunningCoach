@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent } from "react";
 
 import {
+  activeSelfChange,
   addDays,
   DIFFICULTY_LABELS,
   distanceText,
@@ -10,12 +11,14 @@ import {
   isQualityKind,
   OUTCOME_LABELS,
   planTimeline,
+  selfChangeable,
   sportOfType,
   raceStatusText,
   STATUS_LABELS,
   EDITED_LABEL,
   weekdayName,
   type ActivePlan,
+  type SelfChangeRequest,
   type OtherActivity,
   type PlanTimeline,
   type Race,
@@ -35,6 +38,7 @@ import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { PastWeeks } from "./PastWeeks";
 import { RacesCard } from "./Races";
+import { ChangeChooser, ReasonChips, selfChangeLine } from "./SelfChange";
 
 type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
 
@@ -105,6 +109,8 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   if (label) return { label, cls: r?.outcome ?? s.status };
   // 傷病（規格 12.33）：之後才記下的傷讓這堂課現在不能做
   if (s.injuryHold && s.status === "planned") return { label: "先不要做", cls: "hold" };
+  // 選手自己改短、換成輕鬆（規格 12.34 第 3 點 B）
+  if (activeSelfChange(s) && s.status === "planned") return { label: "自己改過", cls: "edited" };
   // 教練改過內容（規格 12.31）：照計畫、還沒有結果時標示「已調整」，原因寫在卡片裡
   return s.editedAt && s.status === "planned" ? { label: EDITED_LABEL, cls: "edited" } : null;
 }
@@ -212,12 +218,27 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   useEffect(() => setOpen(focus), [focus]);
   const [details, setDetails] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
   const status = statusOf(s);
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
   const done = r !== null && r.workoutId !== null;
   // 肌力的課可以在 App 裡回報做完了（多運動，規格 12.24）：今天以前（或沒有日期）、還沒配到手錶紀錄的
-  const { coach, goTo } = useApp();
+  const { coach, goTo, touch, toast } = useApp();
   const today = coach.today();
+  // 自己改短、換成輕鬆：今天與之後、還沒做的跑步或騎車的課（改過的以原本的種類判斷）
+  const self = activeSelfChange(s);
+  const changeable = s.id !== null && s.status === "planned" && !s.doneAt && (!s.date || s.date >= today) && selfChangeable(self?.original.kind ?? s.kind);
+  async function selfChange(request: SelfChangeRequest) {
+    setChanging(false);
+    try {
+      toast((await coach.selfChangeSession(s.id!, request)).split("（")[0]!);
+      setChangeError(null);
+      touch();
+    } catch (e) {
+      setChangeError(errorText(e));
+    }
+  }
   const reportable =
     featureEnabled("multisport") && s.kind === "strength" && s.id !== null && (!s.date || s.date <= today) && !(r?.outcome === "achieved" && !s.doneAt);
 
@@ -293,6 +314,8 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
             </div>
           )}
           {s.note && <p className="small muted">調整的原因：{s.note}</p>}
+          {self && <p className="small muted self-change-note">{selfChangeLine(self)}</p>}
+          {self && !done && s.status === "planned" && <ReasonChips id={s.id!} change={self} title={s.title} />}
           {hasDetails && <DisclosureButton open={details} onToggle={() => setDetails(!details)} controls={detailsId} />}
           {details && (
             <div id={detailsId} className="stack small">
@@ -338,6 +361,12 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                   )}
                   {s.fallback && isQualityKind(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
                   {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
+                  {changeable && (
+                    <button aria-expanded={changing} onClick={() => setChanging(!changing)}>
+                      改課
+                    </button>
+                  )}
+                  {self && <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>}
                   <button className="text" onClick={() => onChange(s, "skip")}>
                     跳過
                   </button>
@@ -347,6 +376,8 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
               )}
             </div>
           )}
+          {changing && changeable && <ChangeChooser kind={self?.original.kind ?? s.kind} onPick={(r) => void selfChange(r)} />}
+          {changeError && <p className="field-error">{changeError}</p>}
           {moving && (
             <div className="session-actions move-days">
               {days

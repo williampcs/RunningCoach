@@ -210,7 +210,7 @@ erDiagram
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
-- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。選手自己改短或換成輕鬆的紀錄 `self_change`（JSON：改法、幾成、原因、時間、原本的內容與估計的時間距離；課的內容換成改過的，「恢復」時換回；schema 18，規格 12.34 第 3 點 B）。
 
 **對話**
 - `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。
