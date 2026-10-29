@@ -1165,7 +1165,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-046] 從使用須知回到 App 會開出第二個 App，無法保存（加到主畫面時只能重開）
 
 - 發現：2026-10-28，使用者在正式版 v0.5.0 回報。
-- 狀態：已修正，已推上 v2（2026-10-28），待使用者在 staging 試過後發 patch 版。
+- 狀態：已修正並部署（v0.5.1，2026-10-29）。
 - 原因：App 裡的「使用須知」用新分頁打開靜態頁（`TermsLink.tsx` 的 `target="_blank"`），靜態頁的「← 回到 Zone2Mate」在新分頁打開 App；同一個網站的第二個 App 拿不到 OPFS 的資料庫（同時只能一個分頁用），退回記憶體資料庫並提示無法保存。加到主畫面（standalone）時新視窗不好關。隱私說明的連結有同樣的問題。
 - 修正：
   - 使用須知與隱私說明在 App 的面板打開（和使用說明同一種，✕、Esc、返回都能關；從說明或設定點進來的，關掉回到原本的地方）。內容只有一個來源：建置時把靜態頁（`apps/web/terms/page.html`、`apps/web/privacy/page.html` 填好的結果）的 `<main>` 做成 `virtual:legal-pages`（`vite.config.ts`、`apps/web/privacy/in-app.ts`），拿掉「← 回到 Zone2Mate」與大標題、id 加前綴、外部網址在新分頁打開。App 裡指到 `/terms`、`/privacy` 的連結（TermsLink、PrivacyLink、教練回覆、兩頁之間的連結）都由 `App.tsx` 攔下來換成面板；按著 Ctrl／⌘ 點照瀏覽器的做法。確認使用須知的畫面開著時，面板蓋在它上面。靜態頁照舊，「← 回到 Zone2Mate」維持一般的連結。
