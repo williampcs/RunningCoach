@@ -103,6 +103,16 @@ const opensPrivacy = (context, link) => E2E.opensLegalPanel(link.page(), link, "
       check[`${tag}.link.deviceSync`] = await viaInfo("多裝置同步", "同步哪些資料");
       // ✕ 回到設定裡原本的那一項
       check[`${tag}.link.backToSection`] = await panel.locator('.subpage[data-section="sync"]').isVisible();
+      // 從設定的某一項打開、在兩頁之間切換四次（隱私說明 → 使用須知 → 隱私說明 → 使用須知）：✕ 一次、返回一次都回到那一項
+      for (const how of ["close", "back"]) {
+        // 回到那一項時 ⓘ 的說明還開著（狀態留著）：沒開著才按
+        if (!(await panel.locator(".info-pop").isVisible())) await panel.getByRole("button", { name: "同步哪些資料" }).click();
+        const hopped = await E2E.hopLegal(page, panel.locator(".info-pop").getByRole("link", { name: "隱私說明" }), "隱私說明");
+        if (how === "close") await panel.locator(".side-panel-close").click();
+        else await page.goBack();
+        const backHead = await panel.locator(".side-panel-head h2", { hasText: /^設定$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+        check[`${tag}.link.hopFromSettings.${how}Once`] = hopped && backHead && (await panel.locator('.subpage[data-section="sync"]').isVisible());
+      }
       await panel.locator(".back-button").click();
       check[`${tag}.link.settingsFooter`] = await opensPrivacy(context, panel.locator("p.center").getByRole("link", { name: "隱私說明" }));
       if (mobile) await page.screenshot({ path: `${E2E.OUT}/privacy-settings-mobile.png` });

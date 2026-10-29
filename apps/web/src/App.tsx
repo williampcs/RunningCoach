@@ -61,7 +61,7 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
 /** 小提示留在畫面上多久 */
 const TOAST_MS = 3000;
 const PANEL_LABELS: Record<Panel, string> = { help: "使用說明", settings: "設定", terms: "使用須知", privacy: "隱私說明" };
-/** 使用須知與隱私說明（KI-046）：從另一個面板點進來時，返回回到那個面板 */
+/** 使用須知與隱私說明（KI-046）：從說明或設定點進來時，✕ 與返回回到那個面板；兩頁之間切換不疊加 */
 const LEGAL_PANELS: Panel[] = ["terms", "privacy"];
 
 /** 面板記在瀏覽器的歷史紀錄裡，手機的返回（上一頁）就是關閉面板 */
@@ -174,7 +174,9 @@ export function App() {
   const openPanel = useCallback((next: Panel, here = false) => {
     const current = panelInHistory();
     if (LEGAL_PANELS.includes(next) && current && !LEGAL_PANELS.includes(current)) setUnder(current);
-    if (here || (current && !LEGAL_PANELS.includes(next))) history.replaceState({ panel: next }, "");
+    // 使用須知與隱私說明之間互相切換時取代目前這頁，不疊上去：✕ 與返回一次就回到第一次打開它的地方
+    const between = current && LEGAL_PANELS.includes(current) && LEGAL_PANELS.includes(next);
+    if (here || between || (current && !LEGAL_PANELS.includes(next))) history.replaceState({ panel: next }, "");
     else history.pushState({ panel: next }, "");
     setPanel(next);
   }, []);

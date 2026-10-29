@@ -121,10 +121,19 @@ async function shortLine(page) {
       check[`${tag}.panel.toPrivacy`] = await head.filter({ hasText: /^隱私說明$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
       check[`${tag}.panel.privacyContent`] = (await page.locator("#side-panel .legal-page").innerText()).includes("資料存在哪裡");
       check[`${tag}.panel.onePage`] = context.pages().length === 1;
-      await page.goBack();
-      check[`${tag}.panel.backToTerms`] = await head.filter({ hasText: /^使用須知$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+      // 兩頁之間切換是取代，不疊上去：返回一次就回到打開它的地方（對話）
       await page.goBack();
       check[`${tag}.panel.closedByBack`] = await page.locator("#side-panel").waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
+      // 使用須知 → 隱私說明 → 使用須知 → 隱私說明：✕ 一次、返回一次、Esc 一次都回到對話
+      const shortLink = page.locator(".chat-page .terms-short").getByRole("link", { name: "使用須知" });
+      for (const how of ["close", "back", "escape"]) {
+        const hopped = await E2E.hopLegal(page, shortLink, "使用須知");
+        if (how === "close") await page.locator("#side-panel .side-panel-close").click();
+        else if (how === "back") await page.goBack();
+        else await page.keyboard.press("Escape");
+        const closed = await page.locator("#side-panel").waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
+        check[`${tag}.panel.hop.${how}Once`] = hopped && closed && (await page.locator(".chat-page").isVisible());
+      }
 
       step = "只勾資料流向";
       const panel = page.locator("#side-panel");
@@ -212,6 +221,14 @@ async function shortLine(page) {
       check[`${tag}.link.helpSection`] = await opensTerms(context, page.locator("#help-terms").getByRole("link", { name: "使用須知" }));
       // 從使用說明點進來，✕ 回到使用說明（捲動的位置還在）
       check[`${tag}.link.backToHelp`] = await page.locator("#help-terms").isVisible();
+      // 從使用說明打開、在兩頁之間切換四次：✕ 一次、返回一次都回到使用說明
+      for (const how of ["close", "back"]) {
+        const hopped = await E2E.hopLegal(page, page.locator("#help-terms").getByRole("link", { name: "使用須知" }), "使用須知");
+        if (how === "close") await page.locator("#side-panel .side-panel-close").click();
+        else await page.goBack();
+        const backHead = await page.locator("#side-panel .side-panel-head h2", { hasText: /^使用說明$/ }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+        check[`${tag}.link.hopFromHelp.${how}Once`] = hopped && backHead && (await page.locator("#help-terms").isVisible());
+      }
 
       step = "加到主畫面";
       check[`${tag}.standalone`] = await E2E.emulateStandalone(page);

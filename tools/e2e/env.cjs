@@ -128,6 +128,23 @@ async function opensLegalPanel(page, link, title) {
 }
 
 /**
+ * 從 link 打開 first（使用須知或隱私說明），再在兩頁之間依序切換：first → 另一頁 → first → 另一頁（KI-046）.
+ * 回傳每一步都換到對的面板；結束時停在另一頁，由呼叫的人按 ✕ 或返回
+ */
+async function hopLegal(page, link, first) {
+  const other = first === "使用須知" ? "隱私說明" : "使用須知";
+  const head = page.locator("#side-panel .side-panel-head h2");
+  const at = (title) => head.filter({ hasText: new RegExp(`^${title}$`) }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+  await link.click();
+  let ok = await at(first);
+  for (const title of [other, first, other]) {
+    await page.locator("#side-panel .legal-page").getByRole("link", { name: title }).first().click();
+    ok = (await at(title)) && ok;
+  }
+  return ok;
+}
+
+/**
  * 模擬加到主畫面（display-mode: standalone）：先用 Chromium 的 CDP，不支援時把 matchMedia 的 display-mode 換成 standalone.
  * 只模擬 App 看得到的部分；真的加到主畫面時的視窗由使用者在手機上試
  */
@@ -150,6 +167,7 @@ async function emulateStandalone(page) {
 module.exports = {
   go,
   opensLegalPanel,
+  hopLegal,
   emulateStandalone,
   settings,
   profile,
