@@ -92,7 +92,7 @@ flowchart TB
   end
   subgraph domain["訓練的規則"]
     tv["training-values.ts / sports.ts / coaching-method.ts<br/>配速、心率區間、VDOT；各運動的區間；跑步與單車的教練方法"]
-    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、多運動的每週額度"]
+    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / plan-history.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、之前的週與最近 4 週的摘要、多運動的每週額度"]
     races["races.ts<br/>賽事的規則"]
     recovery["recovery.ts / injuries.ts / red-flags.ts<br/>恢復狀況的判讀、傷病紀錄、就醫提示的字詞"]
     feed["feed.ts<br/>教練動態"]
@@ -188,7 +188,7 @@ erDiagram
   daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
 ```
 
-（`planned_sessions` 和實際跑步、騎車的對應不存在資料庫裡，每次依日期與內容重新比對算出來。）
+（`planned_sessions` 和實際跑步、騎車的對應不存在資料庫裡，每次依日期與內容重新比對算出來。過去的週也一樣：課表頁的「之前的週」與教練系統提示裡的【最近 4 週照課表的情形】由 `plan-history.ts` 拿每週最新的一份課表〔已停用的也算〕重新比對，規格 12.34。）
 
 **選手與目標**
 - `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。

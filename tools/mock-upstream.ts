@@ -250,6 +250,34 @@ function samplePlan(text: string, multisport = false) {
   };
 }
 
+/** weeksAgo 週以前的課表（「之前的週」的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
+function pastPlan(weeksAgo: number) {
+  const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const day = (offset: number) => daysAgo(weekday + 7 * weeksAgo - offset);
+  const easy = (date: string, title: string, minutes: number) => ({ date, kind: "easy", title, steps: [{ duration_min: minutes, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" });
+  return {
+    week_start: day(0),
+    style: "fixed",
+    reason: `（模擬）${weeksAgo} 週前的課表`,
+    accept_warnings: true,
+    warning_notes: "（模擬）測試用的過去課表",
+    sessions: [
+      easy(day(1), "輕鬆跑", 45),
+      easy(day(2), "週三的輕鬆跑", 40),
+      {
+        date: day(3),
+        kind: "threshold",
+        title: "20 分鐘閾值",
+        steps: [{ duration_min: 15, target: { hr: "easy" } }, { duration_min: 20, target: { pace: "T" } }, { duration_min: 10, target: { hr: "easy" } }],
+        purpose: "提高閾值",
+        success: "配速在範圍內",
+        fallback: "改成 40 分鐘輕鬆跑",
+      },
+      { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: 16, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
+    ],
+  };
+}
+
 /**
  * 跑步＋騎車（或只騎車）的課表（多運動的第 3 階段）：今天一堂耐力騎（配對今天傍晚的騎車）、相鄰兩天甜蜜點與 T、
  * 再一堂最大攝氧間歇——第一次不設 accept_warnings，檢查器會回跨運動的警告（兩項合計的數量、不連排）。
@@ -451,6 +479,8 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }
+  // 之前的週（規格 12.34）：測試模式的假資料（每週 3 次：週二輕鬆、週四強度、週日長跑）對得上的過去 10 週課表，週三多一堂不會有紀錄的
+  if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i)));
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
   // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
   if (/調整這週接下來的課/.test(lastText)) {

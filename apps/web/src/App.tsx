@@ -17,7 +17,7 @@ import { BookOpen, CalendarDays, CircleHelp, FlaskConical, MessageCircle, Settin
 
 import { PRIVACY_HTML, TERMS_HTML } from "virtual:legal-pages";
 
-import { AppContext, errorText, type AppState, type Panel, type SettingsSection, type Tab } from "./app-context";
+import { AppContext, errorText, type AppState, type HistoryFocus, type Panel, type SettingsSection, type Tab } from "./app-context";
 import { EmojiText, Icon, ICON_TAB } from "./ui";
 import { HelpView } from "./views/Help";
 import { featureEnabled, FEATURES_ON, IS_STAGING, MOVED_TO } from "./environment";
@@ -288,6 +288,8 @@ export function App() {
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
   const [reportPreselect, setReportPreselect] = useState<number | string | null>(null);
+  // 課表頁「之前的週」點了某一趟：紀錄頁打開那一趟（規格 12.34）
+  const [historyFocus, setHistoryFocus] = useState<HistoryFocus | null>(null);
   // 用手機掃了另一台顯示的 QR code：網址的 #pair= 後面是配對碼（不會送到伺服器）
   const [pairFromLink, setPairFromLink] = useState<string | null>(readPairLink);
   // 已經開著的分頁貼上配對連結：只有 # 後面改變，頁面不會重新載入
@@ -451,6 +453,10 @@ export function App() {
         } else if (next === "terms" || next === "privacy") openPanel(next);
         else showTab(next);
       },
+      openHistory(target) {
+        setHistoryFocus(target);
+        showTab("history");
+      },
       openReport(target) {
         setReportPreselect(target ?? null);
         showTab("report");
@@ -569,7 +575,7 @@ export function App() {
         <main className={tab === "chat" ? "page chat-page" : "page"} inert={!!panel}>
           {tab === "chat" && <ChatView outbox={outbox} onOutboxSent={() => setOutbox(null)} />}
           {tab === "report" && <ReportView preselect={reportPreselect} onPreselectUsed={() => setReportPreselect(null)} />}
-          {tab === "history" && <HistoryView />}
+          {tab === "history" && <HistoryView focus={historyFocus} onFocusUsed={() => setHistoryFocus(null)} />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}
         </main>

@@ -16,6 +16,7 @@ import { hardBlockReason, injuryLine, injuryName } from "./injuries";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
+import { recentAdherence } from "./plan-history";
 import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { guideTopics } from "./app-guide";
 import { athleteSports, SPORT_LABELS } from "./sports";
@@ -172,6 +173,8 @@ export class ContextManager {
         `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
         "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整（移動、跳過、改用替代），並說明改了什麼。" +
         "只動一天的內容（例如那天只有 30 分鐘、長跑縮短、間歇換組數、肌力拿掉某個動作）用 edit_planned_session 只改那一堂；會牽動別天的（強度課挪到隔天、休好幾天）才用 save_training_plan 重排整週。" +
+        "下面的【最近 4 週照課表的情形】是程式比對手錶紀錄的結果：排下週或選手問到課表時用它調整（例如常常沒做到的日子不排強度課；長跑常只做一部分就先問原因，或放慢加量），" +
+        "不要責備選手，也不用每次都提。" +
         "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
       "",
       "【數值與依據】",
@@ -331,6 +334,10 @@ export class ContextManager {
         );
       }
     }
+
+    // 最近 4 週照課表做得怎樣（規格 12.34 第 2 點）：程式比對的摘要，排下週與談課表時用
+    const adherence = await recentAdherence(this.db, today, { multisport });
+    if (adherence) lines.push("", adherence);
 
     // 最近兩天的其他運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞
     const recentOthers = await this.db.getOtherActivities(1);

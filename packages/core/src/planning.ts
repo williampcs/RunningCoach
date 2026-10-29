@@ -115,7 +115,8 @@ const mondayOf = (date: string) => addDays(date, -weekdayIndex(date));
 /** 交叉訓練的目標換算用的運動（跑步用訓練數值） */
 const TARGET_SPORTS: Sport[] = ["ride", "swim"];
 
-async function contextFor(db: Db, today: string, weekStart: string, style: PlanStyle, options: PlanOptions = {}): Promise<CheckContext> {
+/** 檢查與比對用的資料（訓練數值、最近 70 天的紀錄、賽事、身體狀況、傷病）；過去幾週的比對另外換成更長的紀錄 */
+export async function contextFor(db: Db, today: string, weekStart: string, style: PlanStyle, options: PlanOptions = {}): Promise<CheckContext> {
   const [values, profile, workouts, races, wellness, checkins, others, sportSettings, injuries] = await Promise.all([
     computeTrainingValues(db, today),
     db.getProfile(),

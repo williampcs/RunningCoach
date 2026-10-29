@@ -6,6 +6,7 @@ import { featureOn } from "./features";
 import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
 import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
+import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
@@ -622,6 +623,11 @@ export class Coach {
   /** 已經排好、還沒開始的下週課表 */
   nextPlan(): Promise<ActivePlan | null> {
     return nextPlan(this.db, this.today());
+  }
+
+  /** 課表頁的「之前的週」（規格 12.34）：新的在前，先列 limit 週 */
+  pastPlanWeeks(limit?: number): Promise<{ weeks: PastWeek[]; more: boolean }> {
+    return pastPlanWeeks(this.db, this.today(), { limit, multisport: featureOn(this.settings, "multisport") });
   }
 
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */

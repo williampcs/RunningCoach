@@ -3671,3 +3671,53 @@ button.back-button {
 .side-panel-body[hidden] {
   display: none;
 }
+
+/* 計畫頁「之前的週」（規格 12.34）：一週一列，每堂課一個小圖示；做了是綠色，其他是灰色（不用紅色） */
+.past-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-2) 0 0;
+}
+
+.past-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.past-marks {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.past-mark {
+  color: var(--muted);
+}
+
+.past-mark.achieved {
+  color: var(--done);
+}
+
+.past-week-row .chev {
+  flex: none;
+  transition: transform 0.15s;
+}
+
+.past-week-row[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+.past-sessions {
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border);
+  margin-bottom: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .past-week-row .chev {
+    transition: none;
+  }
+}

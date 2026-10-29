@@ -6,6 +6,7 @@ import {
   distanceText,
   monthDay,
   activityLabel,
+  ATHLETE_ADJUST_NOTE,
   isQualityKind,
   OUTCOME_LABELS,
   planTimeline,
@@ -32,6 +33,7 @@ import { Disclosure, DisclosureButton, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, 
 import { featureEnabled } from "../environment";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
+import { PastWeeks } from "./PastWeeks";
 import { RacesCard } from "./Races";
 
 type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
@@ -569,7 +571,7 @@ export function PlanView() {
 
   const onChange: SessionChange = (s, action, date) =>
     void run(async () => {
-      setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
+      setChangeNote(await coach.changeSession(s.id!, action, { date, reason: ATHLETE_ADJUST_NOTE }));
     });
 
   return (
@@ -637,6 +639,7 @@ export function PlanView() {
       </section>
 
       <RacesCard />
+      <PastWeeks />
     </>
   );
 }

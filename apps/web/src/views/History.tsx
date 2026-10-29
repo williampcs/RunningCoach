@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { checkRedFlags } from "../red-flag-alert";
-import type { Accumulation, RideAccumulation, RideCard, RunCard, WeekVolume, Workout } from "@running-coach/core";
+import { daysBetween, type Accumulation, type RideAccumulation, type RideCard, type RunCard, type WeekVolume, type Workout } from "@running-coach/core";
 
-import { errorText, useApp } from "../app-context";
+import { errorText, useApp, type HistoryFocus } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
 import { analysisRequest } from "./Report";
@@ -19,11 +19,17 @@ const HISTORY_DAYS = 30;
 /** 騎車的週趨勢看幾週（規格 12.31：8–12 週） */
 const WEEKLY_WEEKS = 10;
 
-/** 紀錄頁（規格 12.9）：每一趟一列，點開看卡片；補填或修改體感 */
-export function HistoryView() {
+/**
+ * 紀錄頁（規格 12.9）：每一趟一列，點開看卡片；補填或修改體感.
+ * focus：從課表頁的「之前的週」點來的那一趟（規格 12.34）：列到那一天、打開並捲到那一列
+ */
+export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocus | null; onFocusUsed?: () => void } = {}) {
   const { coach, revision, touch, goTo, activitiesReady } = useApp();
   const sync = useSync();
   const today = coach.today();
+  // 平常列最近 30 天；要打開更早的那一趟時列到那一天
+  const [days, setDays] = useState(HISTORY_DAYS);
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
   const [cards, setCards] = useState<RunCard[] | null>(null);
   const [totals, setTotals] = useState<Accumulation | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
@@ -43,18 +49,40 @@ export function HistoryView() {
   const [analyzing, setAnalyzing] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!focus) return;
+    setDays(Math.max(HISTORY_DAYS, daysBetween(focus.date, today) + 1));
+    if ("workoutId" in focus) {
+      setOpen((current) => new Set(current).add(focus.workoutId));
+      setScrollTo(`[data-workout="${focus.workoutId}"]`);
+    } else {
+      setOpenRides((current) => new Set(current).add(focus.activityId));
+      setScrollTo(`[data-ride="${CSS.escape(focus.activityId)}"]`);
+    }
+    onFocusUsed?.();
+  }, [focus, onFocusUsed, today]);
+
+  // 那一列出現後捲過去（卡片讀完才有）
+  useEffect(() => {
+    if (!scrollTo || cards === null) return;
+    const row = document.querySelector(scrollTo);
+    if (!row) return;
+    row.scrollIntoView({ block: "start", behavior: "smooth" });
+    setScrollTo(null);
+  }, [scrollTo, cards, rides]);
+
+  useEffect(() => {
     let alive = true;
-    void coach.runCards(HISTORY_DAYS).then((c) => alive && setCards(c));
+    void coach.runCards(days).then((c) => alive && setCards(c));
     void coach.accumulation().then((a) => alive && setTotals(a));
     if (multisport) {
-      void coach.rideCards(HISTORY_DAYS).then((c) => alive && setRides(c));
+      void coach.rideCards(days).then((c) => alive && setRides(c));
       void coach.rideAccumulation().then((a) => alive && setRideTotals(a));
       void coach.weeklyVolume(WEEKLY_WEEKS).then((w) => alive && setWeeks(w));
     }
     return () => {
       alive = false;
     };
-  }, [coach, revision, multisport]);
+  }, [coach, revision, multisport, days]);
 
   async function saveRideFeedback() {
     if (!rideEditing) return;
@@ -98,7 +126,7 @@ export function HistoryView() {
         return next;
       });
     return (
-      <li key={`ride-${a.intervals_id}`} className={`ride${expanded ? " open" : ""}`} data-sport="ride">
+      <li key={`ride-${a.intervals_id}`} className={`ride${expanded ? " open" : ""}`} data-sport="ride" data-ride={a.intervals_id}>
         <button className="run-row" aria-expanded={expanded} onClick={toggleRide}>
           <span className="list-row-icon">
             <SportIcon sport="ride" />
@@ -274,7 +302,7 @@ export function HistoryView() {
       {multisport && rideTotals && rideTotals.rides > 0 && weeks && <WeeklyVolumeCard weeks={weeks} />}
       <section className="card">
         <h2>
-          最近 {HISTORY_DAYS} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
+          最近 {days} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
         </h2>
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
@@ -287,7 +315,7 @@ export function HistoryView() {
               <FirstSync sync={sync} disabled={!activitiesReady} />
             </>
           ) : (
-            <p className="muted">最近 {HISTORY_DAYS} 天沒有跑步。</p>
+            <p className="muted">最近 {days} 天沒有跑步。</p>
           ))}
         {sync.message && totals !== null && totals.runs > 0 && <SyncNotice message={sync.message} />}
         <ul className="runs">
@@ -299,7 +327,7 @@ export function HistoryView() {
             const before = rides.filter((r) => r.activity.date > w.date && r.activity.date <= newer);
             return [
               ...before.map(rideRow),
-              <li key={w.id} className={expanded ? "open" : ""}>
+              <li key={w.id} className={expanded ? "open" : ""} data-workout={w.id}>
                 <button className="run-row" aria-expanded={expanded} onClick={() => toggle(w.id)}>
                   <span className="list-row-icon">
                     <SportIcon sport="run" />

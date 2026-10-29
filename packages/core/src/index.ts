@@ -20,7 +20,7 @@ export {
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
-export { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
+export { addDays, daysBetween, isoWeekLabel, isoWeekStart, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
   FAKE_DEVICES,
   FAKE_SCENARIOS,
@@ -167,6 +167,7 @@ export {
   type StructureSegment,
 } from "./plan";
 export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type PastSession, type PastWeek } from "./plan-history";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";

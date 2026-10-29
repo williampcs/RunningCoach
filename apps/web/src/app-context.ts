@@ -27,7 +27,8 @@ export interface AppState {
   reload(): Promise<void>;
   /** 切到分頁（關閉面板），或打開說明、設定的面板（底下的分頁不變） */
   goTo(target: Tab | Panel, draft?: string): void;
-  /** 前往跑後回報；指定 workoutId 時預先選好那一筆 */
+  /** 前往紀錄頁並打開那一趟（課表頁的「之前的週」，規格 12.34） */
+  openHistory(target: HistoryFocus): void;
   /** 前往跑後回報並預先選好：跑步是 workout id，騎車等其他運動是 intervals_id（多運動） */
   openReport(target?: number | string): void;
   /** 多裝置同步（規格 12.10） */
@@ -46,6 +47,9 @@ export interface AppState {
 
 /** 設定的各項（第一層清單的每一列） */
 export type SettingsSection = "ai" | "records" | "weather" | "sync" | "lock" | "data" | "testmode" | "reset" | "status";
+
+/** 紀錄頁要打開的一趟：跑步是 workout id，騎車等其他運動是 intervals_id；date 決定要列到多久以前 */
+export type HistoryFocus = { workoutId: number; date: string } | { activityId: string; date: string };
 
 export type Tab = "chat" | "report" | "history" | "plan" | "profile";
 /** 蓋在目前畫面上的面板（規格 12.17）：關閉後回到打開前的樣子；使用須知與隱私說明也在面板裡（KI-046） */

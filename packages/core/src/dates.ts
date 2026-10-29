@@ -75,6 +75,15 @@ export function isoWeekLabel(isoDate: string): string {
   return `${year}-W${String(week).padStart(2, "0")}`;
 }
 
+/** ISO 週標籤的週一，例：2026-W41 → 2026-10-05；格式不對時為 null（舊的文字課表用） */
+export function isoWeekStart(label: string): string | null {
+  const m = /^(\d{4})-W(\d{2})$/.exec(label);
+  if (!m) return null;
+  // 1 月 4 日一定在第 1 週
+  const jan4 = `${m[1]}-01-04`;
+  return addDays(addDays(jan4, -weekdayIndex(jan4)), (Number(m[2]) - 1) * 7);
+}
+
 /** UTC 時間戳記，格式與 v1 相同：2026-10-10T03:06:37Z */
 export function nowIso(now: Date): string {
   return now.toISOString().slice(0, 19) + "Z";

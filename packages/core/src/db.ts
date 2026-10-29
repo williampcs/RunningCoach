@@ -999,6 +999,16 @@ export class Db {
     );
   }
 
+  /** 舊的文字課表（沒有 week_start），每個週標籤最新的一份，依週標籤排（課表頁的「之前的週」） */
+  getTextPlans(): Promise<TrainingPlan[]> {
+    return this.all<TrainingPlan>(
+      "SELECT * FROM training_plans p WHERE week_start IS NULL" +
+        " AND id = (SELECT id FROM training_plans q WHERE q.week_start IS NULL AND q.week_label = p.week_label ORDER BY created_at DESC, id DESC LIMIT 1)" +
+        " ORDER BY week_label",
+      [],
+    );
+  }
+
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
       "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
