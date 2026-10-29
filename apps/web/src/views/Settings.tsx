@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
-import { formatStatus, TERMS_VERSION, type Effort, type Purpose } from "@running-coach/core";
+import { formatStatus, RECORD_WITH_LABELS, recordWithOf, TERMS_VERSION, type Effort, type Purpose, type RecordWith } from "@running-coach/core";
 
 import { errorText, useApp, type SettingsSection } from "../app-context";
 import { featureEnabled } from "../environment";
@@ -14,7 +14,7 @@ import { DeviceSyncCard } from "./DeviceSync";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
-import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { IntervalsGuide, RecordWithPicker, resetGettingStarted } from "./GettingStarted";
 import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
@@ -215,6 +215,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [workouts, setWorkouts] = useState<number | null>(null);
+  // 怎麼記錄跑步（選手資料的 record_with，規格 12.36）
+  const [recordWith, setRecordWith] = useState<RecordWith | null>(null);
   const [locked, setLocked] = useState(lockEnabled);
   const [protection, setProtection] = useState<StorageProtection | null>(null);
   // 「進階」：開放相容服務還沒填模型時自動打開（不填就不能對話）
@@ -234,6 +236,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       ),
     );
     void coach.db.countWorkouts().then(setWorkouts);
+    void coach.db.getProfile().then((p) => setRecordWith(recordWithOf(p)));
   }, [coach, settings, revision]);
 
   useEffect(() => {
@@ -491,7 +494,13 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     return (
       <Subpage id="records" onBack={back}>
         <section className="card">
+          <h2>你用什麼記錄跑步？</h2>
+          <RecordWithPicker value={recordWith} onPicked={setRecordWith} />
+          <p className="small muted">沒有連接 Intervals.icu 時，跑完在「回報」手動記一筆；連接了也可以補記手錶沒記到的。</p>
+        </section>
+        <section className="card">
           {testMode.enabled && <div className="notice info">測試模式中使用假資料，不會連線 Intervals.icu。</div>}
+          <h2>Intervals.icu{recordWith && recordWith !== "watch" ? "（選用）" : ""}</h2>
           <p className="row">
             <span>教練透過 Intervals.icu 讀取你手錶的紀錄。</span>
             <InfoTip label="怎麼取得 API key">
@@ -662,7 +671,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const rowSub: Record<SettingsSection, string> = {
     // 一眼看得到在用哪個服務與模型（例：Claude · 自己的 key · opus-5-5）
     ai: [settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`, settings.models.chat.trim().replace(/^claude-/, "")].filter(Boolean).join(" · "),
-    records: "Intervals.icu",
+    records: recordWith ? RECORD_WITH_LABELS[recordWith].replace(/，.*/, "") : "Intervals.icu",
     weather: settings.weather?.label ?? "還沒設定",
     sync: "電腦、手機之間",
     lock: "保護 API key",
@@ -673,7 +682,14 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   };
   const rowStatus: Partial<Record<SettingsSection, [string, boolean]>> = {
     ai: llmProblem ? ["還沒設定", false] : ["可用", true],
-    records: testMode.enabled ? ["測試模式", false] : activitiesReady ? ["已連接", true] : ["還沒連接", false],
+    // 手機或沒有在記錄的人：手動記就是正常的狀態（規格 12.36）
+    records: testMode.enabled
+      ? ["測試模式", false]
+      : activitiesReady
+        ? ["已連接", true]
+        : recordWith && recordWith !== "watch"
+          ? ["手動記", true]
+          : ["還沒連接", false],
     sync: testMode.enabled ? ["不同步", false] : deviceSync.enabled ? ["已開啟", true] : ["關", false],
     lock: locked ? ["開", true] : ["關", false],
     data: protection ? [PROTECTION_STATUS[protection], protection === "persisted"] : db.persistent ? undefined : ["未持久化", false],

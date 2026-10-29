@@ -1,12 +1,13 @@
 /**
  * 同步哪些資料、每一筆在各裝置上叫什麼名字（規格 12.10）.
  *
- * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、傷病紀錄、對話與對話摘要，以及跑步上的體感、
+ * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、傷病紀錄、對話與對話摘要、手動新增的跑步，以及跑步上的體感、
  * 教練的分析與「不是同一趟」、其他運動（騎車等）的體感. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
  * API key 與設定不在資料庫裡，不同步.
  *
  * 名稱：選手資料用欄位名、自評用日期、賽事、課表、記住的事與傷病紀錄用 sync_id（同步時補上的隨機 id）、
- * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id.
+ * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id，
+ * 手動新增的跑步用它的 sync_id（整筆一起送，體感也在裡面）.
  */
 import type { SqlDriver, SqlValue } from "../types";
 
@@ -17,7 +18,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -58,11 +59,14 @@ const CHECKIN_COLS = ["energy", "soreness", "sleep", "notes", "updated_at"] as c
 const MEMORY_COLS = ["content", "source", "created_at", "updated_at"] as const;
 /** 傷病紀錄（schema 17，規格 12.33）：疼痛的分數在 scores（JSON）裡，一個傷一筆 */
 const INJURY_COLS = ["area", "side", "started_on", "status", "sports", "red_flag", "notes", "scores", "created_at", "updated_at"] as const;
+/** 手動新增的跑步（schema 19，規格 12.36）：整筆，體感與感受也在裡面 */
+const MANUAL_WORKOUT_COLS = ["date", "distance_km", "duration_min", "avg_hr", "avg_pace", "perceived_effort", "subjective_notes", "updated_at"] as const;
 
 const pick = (row: Record<string, SqlValue>, cols: readonly string[]): EntityData => Object.fromEntries(cols.map((c) => [c, row[c] ?? null]));
 
-/** 跑步在各裝置上共通的名字：Intervals.icu 的活動 id，舊的 Strava 紀錄用 Strava 的 id */
-const workoutKey = (row: Record<string, SqlValue>) => (row.intervals_id ? `i${row.intervals_id}` : row.strava_id ? `s${row.strava_id}` : null);
+/** 跑步在各裝置上共通的名字：Intervals.icu 的活動 id，舊的 Strava 紀錄用 Strava 的 id，手動新增的用 sync_id */
+const workoutKey = (row: Record<string, SqlValue>) =>
+  row.intervals_id ? `i${row.intervals_id}` : row.strava_id ? `s${row.strava_id}` : row.sync_id ? `m${row.sync_id}` : null;
 
 export interface Snapshot {
   data: Map<string, EntityData>;
@@ -148,13 +152,14 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   }
 
   // 跑步上的資料
-  const workouts = await sql.all("SELECT id, intervals_id, strava_id, perceived_effort, subjective_notes FROM workouts WHERE removed_at IS NULL");
+  const workouts = await sql.all(`SELECT id, intervals_id, strava_id, sync_id, ${MANUAL_WORKOUT_COLS.join(", ")} FROM workouts WHERE removed_at IS NULL`);
   const keyById = new Map<number, string>();
   for (const w of workouts) {
     const key = workoutKey(w);
     if (!key) continue;
     keyById.set(Number(w.id), key);
-    if (w.perceived_effort !== null || w.subjective_notes !== null) data.set(`w:${key}`, { e: w.perceived_effort ?? null, n: w.subjective_notes ?? null });
+    if (w.sync_id) data.set(`mw:${w.sync_id}`, pick(w, MANUAL_WORKOUT_COLS));
+    else if (w.perceived_effort !== null || w.subjective_notes !== null) data.set(`w:${key}`, { e: w.perceived_effort ?? null, n: w.subjective_notes ?? null });
   }
   for (const r of await sql.all(
     "SELECT workout_id, summary, created_at FROM workout_summaries s WHERE id = (SELECT MAX(id) FROM workout_summaries WHERE workout_id = s.workout_id)",
@@ -178,7 +183,7 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 }
 
 async function workoutId(sql: Sql, key: string): Promise<number | null> {
-  const column = key.startsWith("i") ? "intervals_id" : "strava_id";
+  const column = key.startsWith("i") ? "intervals_id" : key.startsWith("m") ? "sync_id" : "strava_id";
   const row = (await sql.all(`SELECT id FROM workouts WHERE ${column}=? AND removed_at IS NULL ORDER BY duplicate_of IS NOT NULL, id LIMIT 1`, [key.slice(1)]))[0];
   return row ? Number(row.id) : null;
 }
@@ -319,6 +324,30 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
         );
       }
       return "applied";
+    case "mw": {
+      if (!data) {
+        const row = (await sql.all("SELECT id FROM workouts WHERE sync_id=?", [id]))[0];
+        if (row) {
+          // 和 Db.deleteManualWorkout 一樣：併進它的重複紀錄回到列表上，分析一起刪
+          await sql.run("UPDATE workouts SET duplicate_of = NULL WHERE duplicate_of = ?", [row.id ?? -1]);
+          await sql.run("DELETE FROM workout_distinct WHERE a = ? OR b = ?", [row.id ?? -1, row.id ?? -1]);
+          await sql.run("DELETE FROM workout_summaries WHERE workout_id = ?", [row.id ?? -1]);
+          await sql.run("DELETE FROM workouts WHERE id = ?", [row.id ?? -1]);
+        }
+        return "applied";
+      }
+      const row = pick(data, MANUAL_WORKOUT_COLS);
+      const cols = Object.keys(row);
+      const values = cols.map((c) => row[c] ?? null);
+      const updated = await sql.run(`UPDATE workouts SET ${cols.map((c) => `${c}=?`).join(", ")} WHERE sync_id=?`, [...values, id]);
+      if (updated.changes === 0) {
+        await sql.run(
+          `INSERT INTO workouts (${cols.join(", ")}, type, source, sync_id, synced_at) VALUES (${cols.map(() => "?").join(", ")}, 'run', 'manual', ?, ?)`,
+          [...values, id, data.updated_at ?? new Date().toISOString()],
+        );
+      }
+      return "applied";
+    }
     case "wd": {
       const [ka, kb] = id.split("|");
       const [a, b] = [await workoutId(sql, ka ?? ""), await workoutId(sql, kb ?? "")];

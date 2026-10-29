@@ -31,7 +31,7 @@ flowchart LR
     sync --> d1
   end
   llm["AI 服務<br/>Anthropic、OpenAI、Gemini 或相容服務"]
-  icu["Intervals.icu<br/>跑步與恢復資料"]
+  icu["Intervals.icu<br/>跑步與恢復資料（選用：沒有手錶的人手動記）"]
   meteo["Open-Meteo<br/>天氣"]
   discord["Discord"]
   pages -. 下載網頁 .-> web
@@ -160,6 +160,7 @@ sequenceDiagram
 | API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
+| 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
@@ -168,7 +169,7 @@ OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-
 
 使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
 
-## 資料庫的 schema（目前是第 17 版）
+## 資料庫的 schema（目前是第 19 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -197,7 +198,7 @@ erDiagram
 - `injuries`：傷病紀錄（schema 17，規格 12.33）：部位 `area`、哪一側 `side`、開始日期、狀態（進行中、好轉中、好了）、會痛的運動 `sports`（逗號分隔，空的是不知道、當成全部）、紅旗 `red_flag`、備註，疼痛的分數 `scores`（JSON：`[{date, score, when}]`，同一天同一個時間點蓋掉舊的）。教練用 `record_injury`、`update_injury` 寫，選手在「選手 → 身體」改；檢查器依它擋課（`plan.ts` 的 `injuryWarnings`：會痛的運動在疼痛超過 3/10 或超過 3 天沒有分數時，強度課與長課不能存；有紅旗時所有課都不能存），已經排好的課算出「先不要做」（`planning.ts` 的 `injuryHolds`）。
 
 **訓練紀錄**
-- `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。
+- `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。手動新增的（`source` 是 `manual`，規格 12.36「沒有手錶也能用」）沒有 `intervals_id` 與 `raw_json`（所以沒有開始時間，不會自動合併；同一天距離與時間相近的由教練動態問），改用 `sync_id` 當跨裝置的 id、`updated_at` 是修改時間（schema 19）；可以整筆改與刪（`Db.addManualWorkout`、`updateManualWorkout`、`deleteManualWorkout`，`Coach` 的同名方法先檢查欄位、存了用跑後摘要的模型產生分析）。
 - `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
 - `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
@@ -234,7 +235,8 @@ erDiagram
 | `m:sync_id` | 一則記住的事 |
 | `in:sync_id` | 一個傷（含疼痛的分數；schema 17，舊版不認得，不套用也不刪） |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
-| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
+| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」（跑步 id：`i`＋Intervals.icu 的活動 id、`s`＋Strava 的 id，手動新增的是 `m`＋sync_id） |
+| `mw:sync_id` | 手動新增的一趟跑步，整筆（日期、距離、時間、平均心率、配速、體感與感受、修改時間；schema 19，舊版不認得，不套用也不刪）；體感在這裡，不另外送 `w:` |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 

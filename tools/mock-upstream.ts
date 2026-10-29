@@ -250,6 +250,30 @@ function samplePlan(text: string, multisport = false) {
   };
 }
 
+/**
+ * 量不到心率的選手的課表（規格 12.36）：今天 30 分鐘輕鬆跑（目標 {"hr":"easy"}，程式換算成配速與說話測試）；
+ * 這週還有的日子再排一堂 T 與一堂長跑. 完成的標準用體感與說話測試，不寫心率
+ */
+function noHrPlan() {
+  const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const day = (offset: number) => daysAgo(weekday - offset);
+  const later = (offset: number) => offset > weekday;
+  return {
+    week_start: day(0),
+    style: "fixed",
+    reason: "（模擬）沒有手錶：以體感與說話測試為主",
+    accept_warnings: true,
+    warning_notes: "（模擬）測試用的課表",
+    sessions: [
+      { date: today(), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 30, target: { hr: "easy" } }], purpose: "有氧基礎", success: "全程能說完整的句子" },
+      ...(later(3)
+        ? [{ date: day(3), kind: "threshold", title: "3×1 km 閾值", steps: [{ duration_min: 10, target: { hr: "easy" } }, { repeat: 3, steps: [{ distance_km: 1, target: { pace: "T" } }, { duration_min: 2, target: { hr: "easy" } }] }, { duration_min: 10, target: { hr: "easy" } }], purpose: "提高閾值", success: "只能說幾個字，體感 6–7" }]
+        : []),
+      ...(later(6) ? [{ date: day(6), kind: "long", title: "長跑", steps: [{ duration_min: 60, target: { pace: "E" } }], purpose: "耐力", success: "全程能說完整的句子" }] : []),
+    ],
+  };
+}
+
 /** weeksAgo 週以前的課表（「之前的週」與自己改課的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
 function pastPlan(weeksAgo: number) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
@@ -482,6 +506,8 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
   }
   // 之前的週（規格 12.34）：測試模式的假資料（每週 3 次：週二輕鬆、週四強度、週日長跑）對得上的過去 10 週課表，週三多一堂不會有紀錄的
   if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i)));
+  // 量不到心率的選手（沒有手錶，規格 12.36）：今天一堂輕鬆跑（手動記的那趟對得上），完成的標準用說話測試
+  if (/排.*課表|幫我排/.test(lastText) && systemText.includes("心率：量不到")) return [toolUse("save_training_plan", noHrPlan())];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
   // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
   if (/調整這週接下來的課/.test(lastText)) {

@@ -327,6 +327,9 @@ function paceRange(code: PaceCode, ctx: TargetContext): [number, number] | null 
 
 const rangeText = ([fast, slow]: [number, number]) => `${formatPace(fast).replace("/km", "")}–${formatPace(slow)}`;
 
+/** 說話測試：沒有心率時，輕鬆的強度看這個 */
+const TALK_TEST = "能說完整的句子";
+
 const hrRange = (z: { min: number | null; max: number | null }) => (z.min === null ? `≤${z.max}` : `${z.min}–${z.max}`);
 
 /**
@@ -375,19 +378,29 @@ function sportTargetText(target: Target, sport: Sport, ctx: TargetContext, minut
 export function targetText(target: Target | undefined, ctx: TargetContext, sport?: Sport | null, minutes?: number): string {
   if (!target) return "";
   if (sport && sport !== "run") return sportTargetText(target, sport, ctx, minutes);
+  // 量不到心率時（沒有手錶、只用手機，規格 12.36）：輕鬆的強度用說話測試，心率的目標換成配速與體感
+  const noHr = !ctx.values.hr;
   if ("pace" in target) {
     const range = paceRange(target.pace, ctx);
-    if (range) return `${rangeText(range)}（${target.pace}）`;
+    if (range) return `${rangeText(range)}（${target.pace}${noHr && target.pace === "E" ? `，${TALK_TEST}` : ""}）`;
     const [lo, hi] = PACE_RPE[target.pace];
-    return `體感 ${lo}–${hi}/10（${target.pace}，還沒有配速的依據）`;
+    return `體感 ${lo}–${hi}/10（${target.pace}，${target.pace === "E" ? TALK_TEST : "還沒有配速的依據"}）`;
   }
   if ("hr" in target) {
     const hr = ctx.values.hr;
-    return hr ? `心率 ≤${hr.easyMax}` : "能聊天的強度（體感 2–4/10）";
+    if (hr) return `心率 ≤${hr.easyMax}`;
+    const range = paceRange("E", ctx);
+    return range ? `約 ${rangeText(range)}（${TALK_TEST}，體感 2–4/10）` : `體感 2–4/10（${TALK_TEST}）`;
   }
   if ("zone" in target) {
     const zone = ctx.values.hr?.zones.find((z) => z.name === target.zone);
-    return zone ? `心率 ${zone.name}（${hrRange(zone)}）` : `心率 ${target.zone}`;
+    if (zone) return `心率 ${zone.name}（${hrRange(zone)}）`;
+    const [lo, hi] = zoneRpe(target.zone);
+    const level = zoneLevel(target.zone);
+    const code: PaceCode = level <= 2 ? "E" : level === 3 ? "M" : level === 4 ? "T" : "I";
+    const range = paceRange(code, ctx);
+    const why = `${target.zone}，${level <= 2 ? `${TALK_TEST}，` : ""}體感 ${lo}–${hi}/10`;
+    return range ? `約 ${rangeText(range)}（${why}）` : `體感 ${lo}–${hi}/10（${target.zone}${level <= 2 ? `，${TALK_TEST}` : ""}）`;
   }
   if ("power" in target) return `功率 ${target.power}`;
   return `體感 ${target.rpe[0]}–${target.rpe[1]}/10`;
@@ -887,7 +900,7 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
       warn(
         "cross_fatigue",
         heavyDone
-          ? `${heavyDone.date} 有 ${Math.round(heavyDone.duration_min ?? 0)} 分鐘的其他運動（負荷 ${heavyDone.training_load ?? "?"}），${label(s, i)} 建議延後或減量。`
+          ? `${heavyDone.date} 有 ${Math.round(heavyDone.duration_min ?? 0)} 分鐘的其他運動${heavyDone.training_load != null ? `（負荷 ${heavyDone.training_load}）` : ""}，${label(s, i)} 建議延後或減量。`
           : `${label(s, i)} 的前一天排了很久的${RIDE_KINDS.has(s.kind) || sessions.some((x) => RIDE_KINDS.has(x.kind) && x.date === before) ? "騎車" : "交叉訓練"}，強度課建議延後或減量。`,
       );
     }
@@ -1085,7 +1098,7 @@ function intensityOf(target: Target | undefined, kind: SessionKind): StepIntensi
 function targetShort(target: Target | undefined, ctx: TargetContext, sport?: Sport | null, minutes?: number): string {
   if (target && "pace" in target && !(sport && sport !== "run")) {
     const range = paceRange(target.pace, ctx);
-    if (range) return rangeText(range);
+    if (range) return `${rangeText(range)}${!ctx.values.hr && target.pace === "E" ? `（${TALK_TEST}）` : ""}`;
   }
   return targetText(target, ctx, sport, minutes);
 }
@@ -1254,7 +1267,8 @@ export function easyVersion(session: Omit<SessionDraft, "date">, originalMinutes
     title: ride ? "輕鬆騎" : "輕鬆跑",
     steps: [{ duration_min: minutes, target: { hr: "easy" } }],
     purpose: "選手自己換成輕鬆的：維持有氧、讓身體恢復",
-    success: ride ? "心率維持在輕鬆的範圍" : "心率不超過輕鬆跑上限",
+    // 有沒有心率都適用（規格 12.36）：說話測試
+    success: ride ? "輕鬆到能說完整的句子（有心率時維持在輕鬆的範圍）" : "輕鬆到能說完整的句子（有心率時不超過輕鬆跑上限）",
     fallback: null,
     sport: ride ? "ride" : (session.sport ?? null),
   };

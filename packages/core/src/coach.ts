@@ -9,7 +9,7 @@ import { activePlan, changeSession, nextPlan, planNoteFor, selfChangeReason, sel
 import type { SelfChange, SelfChangeReason } from "./plan";
 import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
-import { Db } from "./db";
+import { Db, type ManualWorkoutInput } from "./db";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
@@ -125,6 +125,19 @@ function otherAsActivity(a: OtherActivity): Activity {
     training_load: a.training_load,
     raw_json: a.raw_json ?? null,
   };
+}
+
+/** 手動新增的欄位檢查；錯誤訊息直接給選手看 */
+export function checkManualWorkout(input: ManualWorkoutInput, today: string): ManualWorkoutInput {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("日期的格式不對");
+  if (input.date > today) throw new Error("不能記還沒到的日子");
+  if (!(input.distance_km > 0 && input.distance_km <= 200)) throw new Error("距離要在 0–200 km 之間");
+  if (!(input.duration_min >= 1 && input.duration_min <= 24 * 60)) throw new Error("時間至少 1 分鐘");
+  // 每公里不到 2 分鐘：多半是距離或時間打錯
+  if (input.duration_min / input.distance_km < 2) throw new Error("配速快過每公里 2 分鐘，請確認距離與時間");
+  if (!Number.isInteger(input.perceived_effort) || input.perceived_effort < 1 || input.perceived_effort > 10) throw new Error("體感要是 1–10");
+  if (input.avg_hr !== null && !(Number.isInteger(input.avg_hr) && input.avg_hr >= 40 && input.avg_hr <= 240)) throw new Error("平均心率要在 40–240 之間");
+  return { ...input, distance_km: Math.round(input.distance_km * 100) / 100, subjective_notes: input.subjective_notes?.trim() || null };
 }
 
 function workoutAsActivity(w: Workout): Activity {
@@ -549,6 +562,28 @@ export class Coach {
       this.logger.warn(`Summary generation failed for workout_id=${workoutId}: ${String(e)}`);
     }
     return { workout: (await this.db.getWorkout(workoutId))!, summary };
+  }
+
+  /**
+   * 手動新增一筆跑步（規格 12.36「沒有手錶也能用」）：存檔後和跑後回報一樣產生分析（同一個出口：跑後摘要的模型）.
+   * 分析失敗時紀錄照樣存著，summary 為 null
+   */
+  async addManualWorkout(input: ManualWorkoutInput): Promise<{ workout: Workout; summary: string | null }> {
+    const clean = checkManualWorkout(input, this.today());
+    const id = await this.db.addManualWorkout(clean);
+    return this.addSubjective(id, clean.perceived_effort, clean.subjective_notes ?? "");
+  }
+
+  /** 改手動新增的那一筆，並重新分析 */
+  async updateManualWorkout(id: number, input: ManualWorkoutInput): Promise<{ workout: Workout; summary: string | null }> {
+    const clean = checkManualWorkout(input, this.today());
+    if (!(await this.db.updateManualWorkout(id, clean))) throw new Error("只能改手動新增的紀錄");
+    return this.addSubjective(id, clean.perceived_effort, clean.subjective_notes ?? "");
+  }
+
+  /** 刪掉手動新增的那一筆 */
+  async deleteManualWorkout(id: number): Promise<void> {
+    if (!(await this.db.deleteManualWorkout(id))) throw new Error("只能刪除手動新增的紀錄");
   }
 
   /** 手動合併：dupId 是 keepId 的重複（教練動態問「是不是同一趟」時選了合併） */

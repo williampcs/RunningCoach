@@ -17,7 +17,7 @@ import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
 import { recentAdherence } from "./plan-history";
-import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
+import { heartRateInfo, hrUnusable, recordWithOf, RECORD_WITH_LABELS, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { guideTopics } from "./app-guide";
 import { athleteSports, SPORT_LABELS } from "./sports";
 import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings, Sport } from "./types";
@@ -188,6 +188,11 @@ export class ContextManager {
       "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +
         "先呼叫 fetch_latest_activity 取得客觀數據。",
       "只是詢問訓練、心率或傷痛等問題，沒有回報這次跑步時，不需要呼叫。",
+      "選手手動記錄跑步（選手資料的「記錄方式」是手動）、或 fetch_latest_activity 說沒有連接 Intervals.icu 時，不要暫存：" +
+        (this.settings.shell === "web"
+          ? "請選手到「回報」記一筆（日期、距離、時間、體感），存了會自動分析，你在 get_recent_workouts 看得到；"
+          : "這裡還不能手動記，請選手在網頁版的「回報」記一筆；") +
+        "選手在訊息裡給了距離、時間與體感時，先依這些給回饋。",
       "取得 Intervals.icu 資料後：",
       "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
       "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
@@ -274,7 +279,17 @@ export class ContextManager {
     // 心率資料與區間：Intervals.icu 有閾值心率與區間時用它的（和它算的區間時間一致），
     // 否則依實測或推算的最大心率；填了但不是數字時不顯示，也不用推算值蓋掉使用者的輸入
     const runSettings = (await this.db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS))?.value ?? null;
-    const hr = heartRateInfo(profile, runSettings, today);
+    // 怎麼記錄跑步（新手引導問的，規格 12.36）；量不到心率時不列推算的區間（訓練數值同一個判斷）
+    const how = recordWithOf(profile);
+    if (how) {
+      lines.push(
+        `記錄方式：${RECORD_WITH_LABELS[how]}` +
+          (how === "none" ? "（在 App 的「回報」手動記每一趟：日期、距離、時間、體感；沒有心率，也沒有 Intervals.icu 的訓練負荷）" : how === "phone" ? "（沒有心率；手機 GPS 的配速會飄）" : ""),
+      );
+    }
+    const noHr = hrUnusable(profile, await this.db.getRecentWorkouts(28));
+    const hr = noHr ? null : heartRateInfo(profile, runSettings, today);
+    if (noHr) lines.push(`心率：量不到（${noHr}）。強度看體感與說話測試，配速為輔。`);
     if (hr?.maxHr) {
       const label = hr.source === "estimate" ? "推算，220－年齡" : toInt(profile.max_hr) ? "實測" : "Intervals.icu 的設定";
       lines.push(`最大心率：${hr.maxHr}bpm（${label}）`);

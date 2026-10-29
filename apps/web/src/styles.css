@@ -3743,3 +3743,41 @@ button.back-button {
 .unwell-panel p {
   margin: 0;
 }
+
+/* 手動記一趟跑步（規格 12.36「沒有手錶也能用」）：日期與距離一列、時間是分與秒兩格 */
+.manual-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.manual-time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.manual-time legend {
+  width: 100%;
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+.manual-time label {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.manual-time input {
+  width: 6em;
+}
+
+.manual-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}

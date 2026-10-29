@@ -105,7 +105,7 @@ export class IntervalsClient implements ActivitySource {
   private authHeader(): string {
     if (this.options.accessToken) return `Bearer ${this.options.accessToken}`;
     if (this.options.apiKey) return `Basic ${btoa(`API_KEY:${this.options.apiKey}`)}`;
-    throw new IntervalsError("找不到 Intervals.icu API Key，請先完成設定。");
+    throw new IntervalsError("沒有連接 Intervals.icu（找不到 API Key）；手動記錄的選手請到「回報」記一筆。");
   }
 
   /** 將 Intervals.icu 活動資料正規化為系統統一口徑 */

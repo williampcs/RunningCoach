@@ -8,6 +8,7 @@ export {
   type ImportSuggestion,
 } from "./athlete-import";
 export {
+  checkManualWorkout,
   Coach,
   type ChatReply,
   type CoachConfig,
@@ -18,7 +19,7 @@ export {
   type UsageStats,
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
-export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type RaceUpdate, type SaveResult } from "./db";
+export { Db, manualPace, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type ManualWorkoutInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
 export { addDays, daysBetween, isoWeekLabel, isoWeekStart, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
@@ -200,7 +201,11 @@ export {
   estimateVdot,
   formatTrainingValues,
   heartRateInfo,
+  hrUnusable,
   HR_SOURCE_LABELS,
+  RECORD_WITH_LABELS,
+  recordWithOf,
+  type RecordWith,
   predictSecs,
   vdotOf,
   zonesText,

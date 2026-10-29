@@ -12,8 +12,10 @@ import { FirstSync } from "./FirstSync";
 import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
 import { dayText, IntensityBar, kmText, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
-import { EffortPicker, SportIcon } from "../ui";
+import { Plus } from "lucide-react";
+import { EffortPicker, Icon, SportIcon } from "../ui";
 import { WeeklyVolumeCard } from "./WeeklyVolume";
+import { ManualRunForm } from "./ManualRun";
 
 const HISTORY_DAYS = 30;
 /** 騎車的週趨勢看幾週（規格 12.31：8–12 週） */
@@ -47,6 +49,9 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   const [rideEditing, setRideEditing] = useState<{ id: string; effort: number; notes: string } | null>(null);
   // 正在產生分析的騎車（規格 12.31）
   const [analyzing, setAnalyzing] = useState<string | null>(null);
+  // 手動新增一筆（規格 12.36）：「新增」打開表單；改手動記的那一筆時是它的 id
+  const [adding, setAdding] = useState(false);
+  const [editingManual, setEditingManual] = useState<number | null>(null);
 
   useEffect(() => {
     if (!focus) return;
@@ -216,6 +221,19 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   }
 
   function actions(w: Workout) {
+    // 手動記的：整筆可以改與刪（體感也在同一張表單）
+    if (w.source === "manual") {
+      if (editingManual === w.id) {
+        return <ManualRunForm editing={w} onSaved={() => setEditingManual(null)} onCancel={() => setEditingManual(null)} />;
+      }
+      return (
+        <div className="actions">
+          <button disabled={editingManual !== null || editing !== null} onClick={() => setEditingManual(w.id)}>
+            修改這一筆
+          </button>
+        </div>
+      );
+    }
     if (editing?.id === w.id) {
       return (
         <div className="backfill">
@@ -301,9 +319,31 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
       {multisport && rideTotals && rideTotals.rides > 0 && <RideTotals totals={rideTotals} />}
       {multisport && rideTotals && rideTotals.rides > 0 && weeks && <WeeklyVolumeCard weeks={weeks} />}
       <section className="card">
-        <h2>
-          最近 {days} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
-        </h2>
+        <div className="card-head">
+          <h2>
+            最近 {days} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
+          </h2>
+          {/* 還沒有紀錄、沒連接 Intervals.icu 時，下面已經有「記第一筆」 */}
+          {!adding && !(totals?.runs === 0 && !activitiesReady) && (
+            <button className="text" onClick={() => setAdding(true)}>
+              <Icon as={Plus} size={18} />
+              新增一筆
+            </button>
+          )}
+        </div>
+        {adding && (
+          <div className="manual-add">
+            <h3>手動記一趟跑步</h3>
+            <ManualRunForm
+              onSaved={(result) => {
+                setAdding(false);
+                setOpen((current) => new Set(current).add(result.workout.id));
+                setScrollTo(`[data-workout="${result.workout.id}"]`);
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
+        )}
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
         {cards?.length === 0 &&
@@ -311,8 +351,18 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
           (totals?.runs === 0 ? (
             <>
               <p className="muted">還沒有跑步紀錄。</p>
-              {!activitiesReady && <p className="muted small">先到「設定」填好 Intervals.icu 才能抓紀錄。</p>}
-              <FirstSync sync={sync} disabled={!activitiesReady} />
+              {activitiesReady ? (
+                <FirstSync sync={sync} />
+              ) : (
+                // 沒有連接 Intervals.icu：手動記（規格 12.36）；要抓手錶的紀錄到設定連接
+                !adding && (
+                  <div className="actions">
+                    <button className="primary" onClick={() => setAdding(true)}>
+                      記第一筆
+                    </button>
+                  </div>
+                )
+              )}
             </>
           ) : (
             <p className="muted">最近 {days} 天沒有跑步。</p>
@@ -321,7 +371,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
         <ul className="runs">
           {cards?.map((card, index) => {
             const w = card.workout;
-            const expanded = open.has(w.id) || editing?.id === w.id;
+            const expanded = open.has(w.id) || editing?.id === w.id || editingManual === w.id;
             // 騎車依日期插在跑步之間（新的在前）
             const newer = index === 0 ? "9999" : cards[index - 1]!.workout.date;
             const before = rides.filter((r) => r.activity.date > w.date && r.activity.date <= newer);
@@ -341,6 +391,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
                     <PlanBadge card={card} />
                     {w.perceived_effort == null && <span className="badge">未填體感</span>}
                     {(w.duplicate_count ?? 0) > 0 && <span className="badge missed">已合併</span>}
+                    {w.source === "manual" && <span className="badge">手動</span>}
                   </span>
                   {card.intensity && !expanded && <IntensityBar intensity={card.intensity} compact />}
                 </button>

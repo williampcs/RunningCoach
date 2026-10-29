@@ -22,7 +22,7 @@ import { featureEnabled } from "../environment";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
 import { InjuriesCard } from "./Injuries";
-import { TrainingValuesCard } from "./TrainingValues";
+import { EffortSplit, TrainingValuesCard } from "./TrainingValues";
 
 interface Field {
   key: string;
@@ -237,6 +237,8 @@ function MyNumbers({ open }: { open: () => void }) {
     vdot && { value: vdot.value.toFixed(1), label: "VDOT" },
     paces && { value: pace(paces.threshold), label: "閾值 /km" },
     hr && { value: String(hr.easyMax), label: "輕鬆跑上限" },
+    // 量不到心率時：輕鬆跑的配速（規格 12.36）
+    !hr && paces && { value: `${pace(paces.easy[0])}–${pace(paces.easy[1])}`, label: "輕鬆 /km" },
   ].filter((n): n is { value: string; label: string } => Boolean(n));
   return (
     <section className="card my-numbers">
@@ -257,7 +259,11 @@ function MyNumbers({ open }: { open: () => void }) {
           ))}
         </div>
       ) : (
-        <p className="small muted">還算不出來：同步跑步紀錄、回報一場比賽的成績，或填最大心率與出生年，就會有配速與心率。</p>
+        <p className="small muted">
+          {values.noHr
+            ? "還算不出配速：在下面的個人最佳填 5 km 或 10 km 的時間，或回報一場比賽的成績。"
+            : "還算不出來：同步跑步紀錄、回報一場比賽的成績、填 5 km 的個人最佳，或填最大心率與出生年，就會有配速與心率。"}
+        </p>
       )}
       {total > 0 ? (
         <>
@@ -272,8 +278,10 @@ function MyNumbers({ open }: { open: () => void }) {
             <span>高 {pct(d.highSecs, total)}%</span>
           </p>
         </>
+      ) : values.efforts.rated >= 3 ? (
+        <EffortSplit efforts={values.efforts} />
       ) : (
-        <p className="small muted">最近 28 天的強度分配：要有心率區間的資料（手錶有心率、Intervals.icu 設好區間）。</p>
+        <p className="small muted">最近 28 天的強度分配：要有心率區間的資料，或回報 3 次以上的體感。</p>
       )}
     </section>
   );

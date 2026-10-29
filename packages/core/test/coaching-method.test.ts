@@ -27,7 +27,7 @@ describe("教練方法", () => {
   it("多運動關著時沒有交叉訓練的部分（v4–v6），傷病的處理照樣有（v7）", () => {
     expect(coachingMethod()).toBe(COACHING_METHOD);
     expect(planningRules()).toBe(PLANNING_RULES);
-    expect(COACHING_METHOD).toContain("【教練方法 v7】");
+    expect(COACHING_METHOD).toContain("【教練方法 v8】");
     expect(COACHING_METHOD).toContain(INJURY_METHOD);
     expect(COACHING_METHOD).not.toContain("v4");
     expect(PLANNING_RULES).not.toContain("v4");

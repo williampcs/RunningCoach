@@ -98,11 +98,11 @@ describe("功能開關", () => {
       return provider.calls[0]!.request.system!;
     };
     const [offPrompt, onPrompt] = [await prompt({}), await prompt(MULTI)];
-    expect(offPrompt).toContain("【教練方法 v7】");
+    expect(offPrompt).toContain("【教練方法 v8】");
     expect(offPrompt).toContain("傷病的處理（v7）");
     expect(offPrompt).not.toContain("練的運動");
     expect(offPrompt).not.toContain("交叉訓練的目標（v4）");
-    expect(onPrompt).toContain("【教練方法 v7】");
+    expect(onPrompt).toContain("【教練方法 v8】");
     expect(onPrompt).toContain("傷病的處理（v7）");
     expect(onPrompt).toContain("練的運動：跑步、騎車、肌力訓練");
     expect(onPrompt).toContain("騎車：目標 週末長騎");

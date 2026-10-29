@@ -103,8 +103,11 @@ export function danielsPaces(vdot: number): DanielsPaces {
 
 export interface VdotEstimate {
   value: number;
-  /** race：選手回報的比賽成績；race_effort：Intervals.icu 標為比賽的活動；best_effort：訓練中的最佳表現 */
-  kind: "race" | "race_effort" | "best_effort";
+  /**
+   * race：選手回報的比賽成績；race_effort：Intervals.icu 標為比賽的活動；best_effort：訓練中的最佳表現；
+   * profile：選手資料填的個人最佳（沒有日期，只在沒有其他依據時用；規格 12.36「沒有手錶也能用」）
+   */
+  kind: "race" | "race_effort" | "best_effort" | "profile";
   distanceM: number;
   secs: number;
   date: string | null;
@@ -118,8 +121,19 @@ export function parseDuration(text: string | null | undefined): number | null {
   return Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-/** 最近 90 天的比賽成績與最佳表現中，VDOT 最高的一個 */
-export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, today: string): VdotEstimate | null {
+/** 選手資料的個人最佳（欄位與距離） */
+const PROFILE_PBS: [string, number][] = [
+  ["pb_5k", 5000],
+  ["pb_10k", 10_000],
+  ["pb_half", 21_097.5],
+  ["pb_full", 42_195],
+];
+
+/**
+ * 最近 90 天的比賽成績與最佳表現中，VDOT 最高的一個；都沒有時用選手資料填的個人最佳（短的距離優先：
+ * 沒有手錶的人多半只知道 5 km、10 km 的時間）
+ */
+export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, today: string, profile: Record<string, string> = {}): VdotEstimate | null {
   const since = addDays(today, -VDOT_LOOKBACK_DAYS);
   const candidates: VdotEstimate[] = [];
   for (const r of races) {
@@ -138,7 +152,13 @@ export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, toda
   candidates.sort((a, b) => b.value - a.value);
   const [top, second] = candidates;
   if (top && second && top.kind !== "race" && top.value > second.value * OUTLIER_RATIO) return second;
-  return top ?? null;
+  if (top) return top;
+  for (const [key, distanceM] of PROFILE_PBS) {
+    const secs = parseDuration(profile[key]);
+    const value = secs === null ? null : vdotOf(distanceM, secs);
+    if (value !== null) return { value, kind: "profile", distanceM, secs: secs!, date: null };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +226,27 @@ export function heartRateInfo(profile: Record<string, string>, settings: RunSett
     easyMax: Math.floor(maxHr * EASY_MAX_OF_HRMAX),
     easyMaxNote: "Daniels 的輕鬆跑上限，最大心率的 79%",
   };
+}
+
+/** 選手怎麼記錄跑步（選手資料的 record_with，新手引導第一步問的）：手錶、手機的跑步 App、沒有在記錄（手動記） */
+export type RecordWith = "watch" | "phone" | "none";
+export const RECORD_WITH_LABELS: Record<RecordWith, string> = { watch: "手錶", phone: "手機的跑步 App", none: "沒有在記錄，手動記" };
+export function recordWithOf(profile: Record<string, string>): RecordWith | null {
+  const v = profile.record_with;
+  return v === "watch" || v === "phone" || v === "none" ? v : null;
+}
+
+/**
+ * 心率的區間用不用得到：沒有量心率的裝置（選手說用手機或手動記）、或最近 3 次以上的跑步都沒有心率時，
+ * 推算或設定的區間都量不到，課表的目標與看板不拿來用（規格 12.36）. 最近有一趟有心率就照用.
+ * 回傳用不到的原因；用得到時為 null
+ */
+export function hrUnusable(profile: Record<string, string>, recent: Pick<Workout, "avg_hr">[]): string | null {
+  if (recent.some((w) => w.avg_hr != null)) return null;
+  const how = recordWithOf(profile);
+  if (how === "phone" || how === "none") return `選手${how === "phone" ? "用手機記錄" : "手動記錄"}，沒有量心率的裝置`;
+  if (recent.length >= 3) return `最近 ${recent.length} 次跑步都沒有心率`;
+  return null;
 }
 
 export const HR_SOURCE_LABELS: Record<HeartRateInfo["source"], string> = {
@@ -374,6 +415,8 @@ export interface TrainingValues {
   /** 最近 28 天的跑步中，各種資料有幾次：缺的不補、不估，只說明 */
   coverage: { runs: number; withHr: number; withZones: number; rated: number };
   hr: HeartRateInfo | null;
+  /** 量不到心率的原因（hrUnusable）；這時 hr 是 null. 量得到時為 null */
+  noHr: string | null;
   vdot: VdotEstimate | null;
   /** 課表用的配速（依最近強度課的結果可能放慢）；預測完賽時間仍用 vdot */
   paces: DanielsPaces | null;
@@ -468,9 +511,11 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     db.getOtherActivities(Math.max(weeks * 7, 31)),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
   ]);
-  const hr = heartRateInfo(profile, settings?.value ?? null, today);
-  const vdot = estimateVdot(races, curve?.value ?? null, today);
   const recent = workouts.filter((w) => daysBetween(w.date, today) < DISTRIBUTION_DAYS);
+  const noHr = hrUnusable(profile, recent);
+  // 量不到心率時不給區間（220－年齡推算的也不給）：課表的目標改成配速與體感
+  const hr = noHr ? null : heartRateInfo(profile, settings?.value ?? null, today);
+  const vdot = estimateVdot(races, curve?.value ?? null, today, profile);
   const distribution = intensityDistribution(recent, hr?.lthr ?? null);
   const efforts = effortDistribution(recent);
   const basePaces = vdot ? danielsPaces(vdot.value) : null;
@@ -498,6 +543,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
       rated: efforts.rated,
     },
     hr,
+    noHr,
     vdot,
     paces: vdot ? (adjustment ? danielsPaces(vdot.value - adjustment.penalty) : basePaces) : null,
     adjustment,
@@ -564,6 +610,8 @@ function vdotSourceText(v: VdotEstimate): string {
       return `最近 ${VDOT_LOOKBACK_DAYS} 天的最佳 ${what}（${v.date ?? "日期不明"}，Intervals.icu 標為比賽）`;
     case "best_effort":
       return `最近 ${VDOT_LOOKBACK_DAYS} 天的最佳 ${what}（${v.date ?? "日期不明"}），來自訓練、不是比賽，可能低估`;
+    case "profile":
+      return `選手資料填的個人最佳 ${what}（沒有日期，可能不是現在的體能：先照這個排，強度課做起來太難就放慢，並請選手回報最近的比賽或做一次 5 km 計時跑）`;
   }
 }
 
@@ -595,6 +643,11 @@ function runningLines(v: TrainingValues): string[] {
     lines.push(`・區間：${zonesText(v.hr)}`);
     lines.push(`・輕鬆跑的心率上限：${v.hr.easyMax} bpm（${v.hr.easyMaxNote}）`);
     if (v.coverage.runs && !v.coverage.withHr) lines.push("最近的跑步都沒有心率，這些區間暫時用不到，強度以配速與體感為主。");
+  } else if (v.noHr) {
+    lines.push(
+      `量不到心率（${v.noHr}）：不要用心率的目標（不要寫 {"hr":"easy"} 以外的心率區間，也不要寫「心率不超過」）；` +
+        "強度用配速與體感，輕鬆的強度用說話測試（能說完整的句子）。手機 GPS 的配速會飄，以體感為主、配速為輔。",
+    );
   } else {
     lines.push("沒有心率的依據（沒有 Intervals.icu 的閾值心率，選手資料也沒有最大心率或出生年）：強度以配速與體感為主。");
   }
@@ -619,7 +672,7 @@ function runningLines(v: TrainingValues): string[] {
   } else {
     lines.push(
       `最近 ${VDOT_LOOKBACK_DAYS} 天沒有可以推算的比賽成績或最佳表現（需要 1.5 km 以上、3.5 分鐘以上的全力跑）。` +
-        "配速以體感與心率為主；需要配速時，可以請選手回報最近的比賽成績，或做一次 5 km 計時跑。",
+        `配速以體感${v.hr ? "與心率" : ""}為主；需要配速時，可以請選手回報最近的比賽成績（或在選手資料填 5 km、10 km 的個人最佳），或做一次 5 km 計時跑。`,
     );
   }
   if (v.curve?.critical_speed) {

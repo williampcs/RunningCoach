@@ -173,7 +173,7 @@ describe("課表與實際進到教練", () => {
     // 看板只放摘要：時間與目標，步驟留在課表頁（規格 12.28）
     const today = feed.find((i) => i.kind === "plan" && i.title === "今天的課");
     expect(today?.lines).toEqual([{ sport: "run", text: "輕鬆跑 40 分鐘" }]);
-    expect(today?.detail).toBe("能聊天的強度（體感 2–4/10）");
+    expect(today?.detail).toBe("體感 2–4/10（能說完整的句子）");
     expect(today?.actions.map((a) => (a.type === "ask" ? a.label : a.type))).toEqual(["plan", "想改輕鬆一點"]);
 
     // 排在今天以前的課：先退回

@@ -462,7 +462,7 @@ describe("Coach.reportRun（表單式跑後回報）", () => {
     await coach.reportRun(5, "", { kind: "new", intervalsId: "i100" });
     const prompt = String(provider.calls[0]!.request.messages[0]!.content);
     expect(prompt).toContain("心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）");
-    expect(prompt).toContain("沒有心率資料：依配速、時長與體感評估，不要推測心率。");
+    expect(prompt).toContain("沒有心率資料：依配速、時長與體感評估，不要推測心率");
     expect(prompt).not.toContain("bpm");
 
     await coach.chat("最近練得怎樣");

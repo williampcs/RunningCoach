@@ -23,10 +23,40 @@ const VDOT_KIND: Record<NonNullable<TrainingValues["vdot"]>["kind"], string> = {
   race: "比賽成績",
   race_effort: "Intervals.icu 標為比賽",
   best_effort: "訓練中的最佳表現，可能低估",
+  profile: "你填的個人最佳，可能不是現在的體能",
 };
 
 const pace = (secs: number) => formatPace(secs).replace("/km", "");
 const pct = (part: number, total: number) => Math.round((part / total) * 100);
+
+/** 沒有心率時的強度分配：依體感（1–4 輕鬆、5–6 中等、7 以上高強度），以次數計 */
+export function EffortSplit({ efforts: e }: { efforts: TrainingValues["efforts"] }) {
+  return (
+    <>
+      <div
+        className="split-bar"
+        role="img"
+        aria-label={`依體感：輕鬆 ${pct(e.low, e.rated)}%、中等 ${pct(e.moderate, e.rated)}%、高強度 ${pct(e.high, e.rated)}%`}
+      >
+        <span className="low" style={{ flexGrow: e.low }} />
+        <span className="moderate" style={{ flexGrow: e.moderate }} />
+        <span className="high" style={{ flexGrow: e.high }} />
+      </div>
+      <p className="small legend">
+        <span>
+          <span className="dot low" />輕鬆 {pct(e.low, e.rated)}%
+        </span>
+        <span>
+          <span className="dot moderate" />中 {pct(e.moderate, e.rated)}%
+        </span>
+        <span>
+          <span className="dot high" />高 {pct(e.high, e.rated)}%
+        </span>
+        <span className="muted">依體感，{e.rated} 次</span>
+      </p>
+    </>
+  );
+}
 
 /** 教練排課表用的數字與來源：和 get_training_values 給教練的是同一份 */
 export function TrainingValuesCard() {
@@ -81,7 +111,9 @@ export function TrainingValuesCard() {
           </dl>
         </>
       ) : (
-        <p className="small muted">沒有閾值心率，也沒有最大心率或出生年；強度以配速與體感為主。</p>
+        <p className="small muted">
+          {values.noHr ? `量不到心率（${values.noHr.replace(/^選手/, "你")}）；強度看體感與配速，輕鬆的強度是能說完整的句子。` : "沒有閾值心率，也沒有最大心率或出生年；強度以配速與體感為主。"}
+        </p>
       )}
 
       <h3>配速（Daniels）</h3>
@@ -120,7 +152,7 @@ export function TrainingValuesCard() {
           </dl>
         </>
       ) : (
-        <p className="small muted">最近 90 天沒有可以推算的比賽成績或最佳表現。回報最近的比賽成績，或做一次 5 km 計時跑，就能算出配速。</p>
+        <p className="small muted">最近 90 天沒有可以推算的比賽成績或最佳表現。回報最近的比賽成績、在選手資料填 5 km 或 10 km 的個人最佳，或做一次 5 km 計時跑，就能算出配速。</p>
       )}
 
       <h3>最近 28 天的強度分配</h3>
@@ -148,8 +180,11 @@ export function TrainingValuesCard() {
             <span className="muted">目標：低強度約 80%</span>
           </p>
         </>
+      ) : values.efforts.rated >= 3 ? (
+        // 沒有心率：依回報的體感粗分（以次數計，規格 12.36）
+        <EffortSplit efforts={values.efforts} />
       ) : (
-        <p className="small muted">沒有心率區間的資料。</p>
+        <p className="small muted">沒有心率區間的資料，回報體感的次數也還不夠。</p>
       )}
 
       {fitness && (

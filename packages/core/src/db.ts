@@ -40,8 +40,9 @@ import type {
  * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
  * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
  * 18：planned_sessions.self_change（選手自己改短、換成輕鬆：原本的內容、改成什麼、原因，規格 12.34 第 3 點 B）
+ * 19：workouts.sync_id、updated_at（手動新增的跑步：跨裝置不變的 id 與修改時間，規格 12.36「沒有手錶也能用」）
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -51,6 +52,23 @@ export const REPLY_EXCERPT_CHARS = 200;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
+
+/** 手動新增一筆跑步的欄位（規格 12.36）：日期、距離、時間、體感必填，平均心率與感受選填 */
+export interface ManualWorkoutInput {
+  date: string;
+  distance_km: number;
+  duration_min: number;
+  perceived_effort: number;
+  avg_hr: number | null;
+  subjective_notes: string | null;
+}
+
+/** 平均配速（例：6:30/km），和 Intervals.icu 進來的寫法一樣 */
+export function manualPace(input: Pick<ManualWorkoutInput, "distance_km" | "duration_min">): string | null {
+  if (!(input.distance_km > 0) || !(input.duration_min > 0)) return null;
+  const seconds = Math.round((input.duration_min * 60) / input.distance_km);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}/km`;
+}
 
 /** 還沒有結局的賽事；舊版或同步過來、沒有 outcome 的，用 cancelled 與成績判斷 */
 const NO_OUTCOME = "COALESCE(outcome, '') = '' AND cancelled=0 AND COALESCE(result_time, '') = ''";
@@ -567,6 +585,12 @@ export class Db {
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
       if (!(await columns("sync_state")).has("v")) await d.exec("ALTER TABLE sync_state ADD COLUMN v INTEGER NOT NULL DEFAULT 0");
+      // --- Migration: workouts.sync_id、updated_at（schema 19：手動新增的跑步，只有手動的才有） ---
+      const workoutCols19 = await columns("workouts");
+      for (const col of ["sync_id", "updated_at"]) {
+        if (!workoutCols19.has(col)) await d.exec(`ALTER TABLE workouts ADD COLUMN ${col} TEXT`);
+      }
+      await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_sync_id ON workouts(sync_id)");
 
       await d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -1125,11 +1149,51 @@ export class Db {
 
   /** 補填或修改已存檔訓練的主觀感受 */
   async updateWorkoutSubjective(id: number, perceivedEffort: number, subjectiveNotes: string | null): Promise<void> {
-    await this.run("UPDATE workouts SET perceived_effort=?, subjective_notes=? WHERE id=?", [
+    // 手動新增的一筆整筆同步（mw:），改了體感也要更新修改時間
+    await this.run("UPDATE workouts SET perceived_effort=?, subjective_notes=?, updated_at=CASE WHEN sync_id IS NULL THEN updated_at ELSE ? END WHERE id=?", [
       perceivedEffort,
       subjectiveNotes,
+      this.stamp(),
       id,
     ]);
+  }
+
+  /**
+   * 手動新增一筆跑步（沒有手錶、或手錶沒記到的，規格 12.36）：source 是 manual，帶 sync_id 整筆同步到其他裝置.
+   * 沒有開始時間，不會自動合併；之後同一天從 Intervals.icu 進來、距離與時間相近的，由教練動態問要不要合併（dedupe.ts 的低可信度）
+   */
+  async addManualWorkout(input: ManualWorkoutInput): Promise<number> {
+    const result = await this.run(
+      `INSERT INTO workouts
+         (date, type, distance_km, duration_min, avg_hr, avg_pace, perceived_effort, subjective_notes, source, sync_id, updated_at, synced_at)
+       VALUES (?, 'run', ?, ?, ?, ?, ?, ?, 'manual', lower(hex(randomblob(16))), ?, ?)`,
+      [input.date, input.distance_km, input.duration_min, input.avg_hr, manualPace(input), input.perceived_effort, input.subjective_notes, this.stamp(), this.stamp()],
+    );
+    return result.lastInsertRowid;
+  }
+
+  /** 改手動新增的那一筆；不是手動的回傳 false */
+  async updateManualWorkout(id: number, input: ManualWorkoutInput): Promise<boolean> {
+    const result = await this.run(
+      `UPDATE workouts SET date=?, distance_km=?, duration_min=?, avg_hr=?, avg_pace=?, perceived_effort=?, subjective_notes=?, updated_at=?
+        WHERE id=? AND source='manual'`,
+      [input.date, input.distance_km, input.duration_min, input.avg_hr, manualPace(input), input.perceived_effort, input.subjective_notes, this.stamp(), id],
+    );
+    return result.changes > 0;
+  }
+
+  /** 刪掉手動新增的那一筆（連同分析）；併進它的重複紀錄回到列表上. 不是手動的回傳 false */
+  deleteManualWorkout(id: number): Promise<boolean> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const row = (await d.all("SELECT id FROM workouts WHERE id=? AND source='manual'", [id]))[0];
+      if (!row) return false;
+      await d.run("UPDATE workouts SET duplicate_of = NULL WHERE duplicate_of = ?", [id]);
+      await d.run("DELETE FROM workout_distinct WHERE a = ? OR b = ?", [id, id]);
+      await d.run("DELETE FROM workout_summaries WHERE workout_id = ?", [id]);
+      await d.run("DELETE FROM workouts WHERE id = ?", [id]);
+      return true;
+    });
   }
 
   getWorkoutByIntervalsId(intervalsId: string): Promise<Workout | null> {
