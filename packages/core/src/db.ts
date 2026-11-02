@@ -1,4 +1,5 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
+import { byNewest, recordOfOther, recordOfWorkout, type ActivityRecord } from "./activities";
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
@@ -1576,6 +1577,25 @@ export class Db {
         " ON CONFLICT(intervals_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
       [intervalsId, summary, updatedAt],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 不分來源的紀錄（activities.ts，規格 12.37）：跑步與其他運動合成同一個格式
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 最近 N 天的紀錄（跑步不含重複與已移除的；其他運動含選手回報的體感與分析），新的在前.
+   * sports 有指定時只回傳那幾種運動（run、ride、swim、strength、other）
+   */
+  async getActivities(days: number, options: { sports?: readonly string[] } = {}): Promise<ActivityRecord[]> {
+    const wantRuns = !options.sports || options.sports.includes("run");
+    const wantOthers = !options.sports || options.sports.some((s) => s !== "run");
+    const [runs, others] = await Promise.all([
+      wantRuns ? this.getRecentWorkouts(days) : Promise.resolve([] as Workout[]),
+      wantOthers ? this.getOtherActivities(days) : Promise.resolve([] as OtherActivity[]),
+    ]);
+    const all = [...runs.map(recordOfWorkout), ...others.map(recordOfOther)];
+    return (options.sports ? all.filter((a) => options.sports!.includes(a.sport)) : all).sort(byNewest);
   }
 
   // ---------------------------------------------------------------------------

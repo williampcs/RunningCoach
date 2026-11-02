@@ -1,4 +1,5 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
+import { detailsOf } from "./activities";
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
@@ -100,13 +101,8 @@ const REPORT_LOOKBACK_DAYS = 2;
 
 /** 原始資料中的當地開始時間，例：2026-10-19T07:12:00 → 07:12 */
 function startTimeOf(rawJson: string | null | undefined): string | null {
-  if (!rawJson) return null;
-  try {
-    const start = (JSON.parse(rawJson) as { start_date_local?: unknown }).start_date_local;
-    return typeof start === "string" && /T\d{2}:\d{2}/.test(start) ? start.slice(11, 16) : null;
-  } catch {
-    return null;
-  }
+  const start = detailsOf(rawJson).startLocal;
+  return start && /T\d{2}:\d{2}/.test(start) ? start.slice(11, 16) : null;
 }
 
 /** 其他運動當成 Activity 顯示（跑後回報的選項） */

@@ -6,6 +6,7 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
+import { detailsOf, wellnessFitnessOf } from "./activities";
 import { allocationLine, allocationText, weekAllocation, type WeekAllocation } from "./allocation";
 import { planningRules } from "./coaching-method";
 import { athleteSports, DEFAULT_RIDE_KMH, sportOfType, sportTargets, sportTargetsText, type SportTargets } from "./sports";
@@ -263,21 +264,6 @@ export function zonesText(hr: HeartRateInfo): string {
 // 強度分配、每週的量、體能與疲勞
 // ---------------------------------------------------------------------------
 
-type Raw = Record<string, unknown>;
-
-function parseRaw(json: string | null | undefined): Raw {
-  if (!json) return {};
-  try {
-    const raw: unknown = JSON.parse(json);
-    return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-const numbers = (value: unknown): number[] | null =>
-  Array.isArray(value) && value.every((x) => typeof x === "number" && Number.isFinite(x)) ? (value as number[]) : null;
-const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 export interface IntensityDistribution {
   runs: number;
@@ -295,10 +281,8 @@ export interface IntensityDistribution {
 export function intensityDistribution(workouts: { raw_json?: string | null }[], fallbackLthr: number | null): IntensityDistribution {
   const out: IntensityDistribution = { runs: workouts.length, withZones: 0, lowSecs: 0, moderateSecs: 0, highSecs: 0 };
   for (const w of workouts) {
-    const raw = parseRaw(w.raw_json);
-    const times = numbers(raw.icu_hr_zone_times);
-    const bounds = numbers(raw.icu_hr_zones);
-    const lthr = num(raw.lthr) ?? fallbackLthr;
+    const { hrZoneTimes: times, hrZones: bounds, lthr: ownLthr } = detailsOf(w.raw_json);
+    const lthr = ownLthr ?? fallbackLthr;
     if (!times?.length || !bounds?.length || !lthr) continue;
     out.withZones += 1;
     times.forEach((secs, i) => {
@@ -392,15 +376,11 @@ export interface FitnessSnapshot {
 /** 最新的體能與疲勞：優先用恢復資料（每天都有），沒有時用最近一筆跑步當時的值 */
 export function latestFitness(wellness: { date: string; raw_json: string | null }[], workouts: Workout[]): FitnessSnapshot | null {
   for (const w of [...wellness].sort((a, b) => b.date.localeCompare(a.date))) {
-    const raw = parseRaw(w.raw_json);
-    const ctl = num(raw.ctl);
-    const atl = num(raw.atl);
-    if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate: num(raw.rampRate), source: "wellness" };
+    const { ctl, atl, rampRate } = wellnessFitnessOf(w.raw_json);
+    if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate, source: "wellness" };
   }
   for (const w of [...workouts].sort((a, b) => b.date.localeCompare(a.date))) {
-    const raw = parseRaw(w.raw_json);
-    const ctl = num(raw.icu_ctl);
-    const atl = num(raw.icu_atl);
+    const { ctl, atl } = detailsOf(w.raw_json);
     if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate: null, source: "activity" };
   }
   return null;
@@ -484,7 +464,7 @@ export function rideValues(others: OtherActivity[], today: string, weeks: number
   const kmh = hours >= 1 ? timed.reduce((sum, a) => sum + a.distance_km!, 0) / hours : DEFAULT_RIDE_KMH;
   let eftp: RideValues["eftp"] = null;
   for (const a of [...rides].sort((x, y) => y.date.localeCompare(x.date))) {
-    const value = num(parseRaw(a.raw_json).icu_eftp);
+    const value = detailsOf(a.raw_json).eftp;
     if (value && value > 0) {
       eftp = { watts: Math.round(value), date: a.date };
       break;

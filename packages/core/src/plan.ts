@@ -8,6 +8,7 @@
  *   教練要修改，或寫出理由後才能存。例外是傷病（規格 12.33）：會痛的運動的強度課與長課、有紅旗時的所有課
  *   是「不能保留」的（blocking），寫理由也不能存。
  */
+import { detailsOf } from "./activities";
 import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
@@ -483,26 +484,16 @@ export function stepsText(session: SessionDraft, ctx: TargetContext): string {
     .join("｜");
 }
 
-type Raw = Record<string, unknown>;
-function rawOf(json: string | null | undefined): Raw {
-  try {
-    const value: unknown = json ? JSON.parse(json) : null;
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Raw) : {};
-  } catch {
-    return {};
-  }
-}
-const nums = (v: unknown) => (Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : null);
 
 /**
  * 依心率區間的時間：低強度與以上的分鐘（閾值心率 90% 以下為低）；沒有資料時為 null.
  * 跑步以外的運動也適用：Intervals.icu 每筆活動的區間與閾值心率是那項運動自己的設定
  */
 export function intensityMinutes(w: { raw_json?: string | null }, fallbackLthr: number | null): { low: number; above: number } | null {
-  const r = rawOf(w.raw_json);
-  const times = nums(r.icu_hr_zone_times);
-  const bounds = nums(r.icu_hr_zones);
-  const lthr = typeof r.lthr === "number" ? r.lthr : fallbackLthr;
+  const d = detailsOf(w.raw_json);
+  const times = d.hrZoneTimes;
+  const bounds = d.hrZones;
+  const lthr = d.lthr ?? fallbackLthr;
   if (!times?.length || !bounds?.length || !lthr) return null;
   let low = 0;
   let above = 0;

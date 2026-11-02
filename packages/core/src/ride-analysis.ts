@@ -4,6 +4,7 @@
  * 只用 Intervals.icu 的活動摘要（時間、距離、心率、心率區間的時間、負荷、爬升，有就有的踏頻與功率），
  * 不抓每秒的串流；心率漂移、FTP 與功率曲線不在這裡.
  */
+import { detailsOf } from "./activities";
 import { addDays, daysBetween, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import type { Llm } from "./llm";
@@ -14,16 +15,6 @@ import { intensityDistribution } from "./training-values";
 import type { OtherActivity, Workout } from "./types";
 import { runWeatherNote, type WeatherSource } from "./weather";
 
-function rawOf(json: string | null | undefined): Record<string, unknown> {
-  try {
-    const value: unknown = json ? JSON.parse(json) : null;
-    return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
-const positive = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
 
 /** 騎車卡與分析用的數字；沒有的是 null（沒有功率計、沒有踏頻感測器時不出現） */
 export interface RideMetrics {
@@ -40,15 +31,15 @@ export interface RideMetrics {
 
 /** Intervals.icu 的欄位：icu_ 開頭的是 Intervals.icu 算的，沒有時用裝置的 */
 export function rideMetrics(a: Pick<OtherActivity, "raw_json">): RideMetrics {
-  const raw = rawOf(a.raw_json);
+  const raw = detailsOf(a.raw_json);
   const round = (v: number | null) => (v === null ? null : Math.round(v));
   const d = intensityDistribution([a], null);
   return {
-    maxHr: round(positive(raw.max_heartrate)),
-    elevationM: round(positive(raw.total_elevation_gain)),
-    cadence: round(positive(raw.average_cadence)),
-    watts: round(positive(raw.icu_average_watts) ?? positive(raw.average_watts)),
-    normalizedWatts: round(positive(raw.icu_weighted_avg_watts) ?? positive(raw.weighted_average_watts)),
+    maxHr: round(raw.maxHr),
+    elevationM: round(raw.elevationM),
+    cadence: round(raw.cadence),
+    watts: round(raw.watts),
+    normalizedWatts: round(raw.normalizedWatts),
     intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
   };
 }
@@ -72,10 +63,7 @@ async function ridePlanNote(db: Db, today: string, a: OtherActivity): Promise<st
 /** 最近 7 天（含這趟那天）的總負荷，和前三週的每週平均比 */
 async function recentLoadNote(db: Db, date: string): Promise<string | null> {
   const days = daysBetween(addDays(date, -27), db.today()) + 1;
-  const [runs, others] = await Promise.all([db.getRecentWorkouts(days), db.getOtherActivities(days)]);
-  const items = [...runs.map((w) => ({ date: w.date, load: w.training_load })), ...others.map((o) => ({ date: o.date, load: o.training_load }))].filter(
-    (x) => x.load != null && x.date <= date,
-  );
+  const items = (await db.getActivities(days)).map((a) => ({ date: a.date, load: a.training_load })).filter((x) => x.load != null && x.date <= date);
   if (!items.length) return null;
   const ago = (d: string) => daysBetween(d, date);
   const recent = items.filter((x) => ago(x.date) < 7).reduce((s, x) => s + x.load!, 0);

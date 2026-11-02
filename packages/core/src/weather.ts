@@ -5,6 +5,7 @@
  * 只用來向 Open-Meteo 查天氣；Coach、系統提示、工具的回傳與資料庫都只看到天氣的數字，看不到地點.
  * Open-Meteo 的資料以 CC BY 4.0 授權，顯示的地方要標示來源（WEATHER_CREDIT）.
  */
+import { detailsOf } from "./activities";
 import { addDays, daysBetween } from "./dates";
 
 export const WEATHER_CREDIT = { label: "Weather data by Open-Meteo.com", href: "https://open-meteo.com/" } as const;
@@ -413,13 +414,8 @@ export function runWeatherText(hours: WeatherHour[], start: string, durationMin:
 
 /** 從原始活動資料取當地開始時間，例：2026-10-19T07:12 */
 export function startLocalOf(rawJson: string | null | undefined): string | null {
-  if (!rawJson) return null;
-  try {
-    const start = (JSON.parse(rawJson) as { start_date_local?: unknown }).start_date_local;
-    return typeof start === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(start) ? start.slice(0, 16) : null;
-  } catch {
-    return null;
-  }
+  const start = detailsOf(rawJson).startLocal;
+  return start && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(start) ? start.slice(0, 16) : null;
 }
 
 /** 一趟跑步的天氣（給摘要的 prompt）；沒設定天氣、太久以前或取不到時為 null，不丟錯 */
