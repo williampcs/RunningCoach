@@ -94,7 +94,7 @@ export function activity(partial: Partial<Activity> = {}): Activity {
 
 export async function makeCoach(
   script: ConstructorParameters<typeof ScriptedProvider>[0] = [],
-  options: { activities?: Activity[]; settings?: Partial<CoachSettings>; now?: () => Date; weather?: WeatherSource | null; raceWeather?: RaceWeatherSource | null } = {},
+  options: { activities?: Activity[]; source?: ActivitySource; settings?: Partial<CoachSettings>; now?: () => Date; weather?: WeatherSource | null; raceWeather?: RaceWeatherSource | null } = {},
 ) {
   const provider = new ScriptedProvider(script);
   const activities = new FakeActivities(options.activities);
@@ -107,7 +107,7 @@ export async function makeCoach(
       models: { chat: "chat-model", summary: "summary-model", compress: "compress-model" },
       chatEffort: "medium",
     },
-    activities,
+    activities: options.source ?? activities,
     weather: options.weather ?? null,
     raceWeather: options.raceWeather ?? null,
     settings: options.settings,

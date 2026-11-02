@@ -26,6 +26,7 @@ import { turnCostUsd } from "./pricing";
 export * from "./types";
 export { priceOf, turnCostUsd, type ModelPrice } from "./pricing";
 export { AnthropicProvider, type AnthropicProviderOptions } from "./anthropic";
+export { checkLlmKey, classifyKeyError, keyProblemText, type KeyCheck, type KeyProblem } from "./check";
 export {
   OpenAICompatibleProvider,
   OpenAICompatibleError,

@@ -90,6 +90,7 @@ function legalPages() {
     staging,
     syncUrl: process.env.VITE_SYNC_URL ?? "",
     devices: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("devices"),
+    onboarding: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("onboarding"),
   };
   return { privacy: renderPrivacyPage(build), terms: renderTermsPage({ staging }) };
 }

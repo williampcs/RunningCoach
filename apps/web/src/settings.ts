@@ -120,6 +120,15 @@ function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
 
 const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "" };
 
+/** 這個瀏覽器存過設定嗎（設定精靈只給從來沒設定過的人，規格 12.35 的 A） */
+export function hasStoredSettings(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null || localStorage.getItem(LOCK_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 /** 設定；啟用密碼鎖時，憑證只有在解鎖後才會出現 */
 export function loadSettings(): AppSettings {
   const plain = loadPlainSettings();
@@ -217,6 +226,9 @@ export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERS
  */
 export const needsTermsConfirm = (s: AppSettings) => s.consents.length > 0 && !termsAccepted(s);
 
+/** 連上 Intervals.icu 了嗎（API key 或登入） */
+export const intervalsConnected = (s: AppSettings) => s.intervals.apiKey.trim() !== "";
+
 /** LLM 設定是否完整到可以開始對話；不完整時回傳缺少的項目 */
 export function llmProblem(s: AppSettings): string | null {
   if (s.llmMode === "proxy") {
@@ -238,7 +250,8 @@ export function buildProvider(s: AppSettings): LlmProvider {
   const apiKey = s.apiKey.trim();
   switch (s.provider) {
     case "anthropic":
-      return new AnthropicProvider({ apiKey, browser: true });
+      // VITE_ANTHROPIC_BASE_URL 只給 E2E 用（指向模擬上游）；正式的建置不設定
+      return new AnthropicProvider({ apiKey, browser: true, baseURL: import.meta.env.VITE_ANTHROPIC_BASE_URL || undefined });
     case "openai":
     case "gemini":
       return new OpenAICompatibleProvider({ ...OPENAI_COMPATIBLE_PRESETS[s.provider], apiKey });

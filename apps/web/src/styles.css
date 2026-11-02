@@ -3781,3 +3781,103 @@ button.back-button {
   padding-bottom: var(--sp-3);
   border-bottom: 1px solid var(--border);
 }
+
+/* 設定精靈（規格 12.35 的 A）：整頁一步一步來，一頁一件事、最下面一顆主要按鈕 */
+.wizard {
+  height: 100dvh;
+  overflow-y: auto;
+  padding: calc(var(--sp-4) + env(safe-area-inset-top)) var(--sp-4) calc(var(--sp-6) + env(safe-area-inset-bottom));
+}
+
+.wizard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 520px;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.wizard-page > .title {
+  outline: none;
+}
+
+.wizard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.wizard-body > .button {
+  align-self: flex-start;
+}
+
+.wizard-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: auto;
+  padding-top: var(--sp-4);
+}
+
+.wizard-more {
+  justify-content: center;
+}
+
+.wizard-points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard-points li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.wizard-points .icon {
+  color: var(--accent);
+  flex: none;
+}
+
+.key-state {
+  min-height: 1.5em;
+  margin: 0;
+}
+
+.ok-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--done);
+  font-weight: 600;
+}
+
+/* 先看看（規格 12.35 的 B）：最上面一直顯示「這是範例」＋「開始設定」 */
+.notice.demo-banner {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.notice.demo-banner > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 200px;
+}
+
+a.button {
+  text-decoration: none;
+}

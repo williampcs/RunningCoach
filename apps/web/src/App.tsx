@@ -7,6 +7,8 @@ import {
   OpenMeteoRaceWeather,
   OpenMeteoWeather,
   openMeteoUrlsAt,
+  demoSource,
+  seedDemo,
   localDate,
   type CoachConfig,
   type LlmProvider,
@@ -28,7 +30,11 @@ import { RedFlagBanner } from "./views/RedFlag";
 import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
-import { buildProvider, forgetLockedSecrets, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
+import { DEMO, DEMO_DB_FILE } from "./demo";
+import { wizardStart, type WizardStep } from "./wizard";
+import { Wizard } from "./views/Wizard";
+import { DemoBanner, DemoSettings } from "./views/Demo";
+import { buildProvider, defaultSettings, forgetLockedSecrets, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
 import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
@@ -115,7 +121,24 @@ const logger: Logger = { info: () => undefined, warn: (m) => console.warn(m), er
 let clockOffset = 0;
 const now = () => new Date(Date.now() + clockOffset);
 
+/** 範例用的設定：不讀這個瀏覽器存的 key，也沒有同步的服務 */
+const demoSettings = (): AppSettings => ({ ...defaultSettings(), sync: { url: "", key: "" } });
+
+/** 「先看看」的範例（規格 12.35 的 B）：假的活動、不打 AI、不連任何外部服務（沒有天氣） */
+function demoConfig(settings: AppSettings): CoachConfig & { activities: FakeActivitySource } {
+  const today = () => localDate(now(), settings.timeZone);
+  const demo = demoSource(today());
+  return {
+    llm: { provider: unconfiguredProvider("範例裡不能和教練聊，開始設定後就可以"), models: resolvedModels(settings), chatEffort: settings.chatEffort },
+    activities: new FakeActivitySource(demo.activities, today, demo.wellness, demo.runSettings),
+    weather: null,
+    raceWeather: null,
+    settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
+  };
+}
+
 function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
+  if (DEMO) return demoConfig(settings);
   const problem = llmProblem(settings);
   const today = () => localDate(now(), settings.timeZone);
   return {
@@ -154,8 +177,11 @@ export function App() {
   // 整個分頁只有一個 Coach，儲存設定時以 configure() 更新，不重建（理由見 Coach.configure）
   const [coach, setCoach] = useState<Coach | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
-  const [settings, setSettings] = useState(loadSettings);
-  const [termsAtOpen] = useState(() => needsTermsConfirm(loadSettings()));
+  // 範例裡不讀這個瀏覽器存的設定與 key（規格 12.35 的 B）
+  const [settings, setSettings] = useState(() => (DEMO ? demoSettings() : loadSettings()));
+  const [termsAtOpen] = useState(() => !DEMO && needsTermsConfirm(loadSettings()));
+  // 設定精靈（規格 12.35 的 A）：undefined 是還沒判斷，null 是不出現
+  const [wizard, setWizard] = useState<WizardStep | null | undefined>(undefined);
   const redFlag = useRedFlagAlert();
   const [testMode, setTestMode] = useState(loadTestMode);
   // 從說明的連結打開：直接到使用說明頁的那一段
@@ -315,6 +341,18 @@ export function App() {
     if (opening.current) return;
     opening.current = true;
     (async () => {
+      if (DEMO) {
+        // 範例：記憶體裡的資料庫，和真的資料庫完全分開，離開就清掉
+        const opened = await openBrowserDb(DEMO_DB_FILE);
+        const config = demoConfig(demoSettings());
+        const created = new Coach({ driver: opened, ...config, now, logger });
+        await created.init();
+        await seedDemo(created, config.activities);
+        setDb(opened);
+        setCoach(created);
+        setWizard(null);
+        return;
+      }
       const initialSettings = loadSettings();
       const initialTest = loadTestMode();
       clockOffset = clockOffsetMs(initialTest, initialSettings.timeZone);
@@ -322,6 +360,7 @@ export function App() {
       const opened = await openBrowserDb(initialTest.enabled ? TEST_DB_FILE : undefined);
       const created = new Coach({ driver: opened, ...coachConfig(initialSettings, initialTest), now, logger });
       await created.init();
+      setWizard(initialTest.enabled ? null : await wizardStart(created));
       setDb(opened);
       setCoach(created);
       // 資料庫開在瀏覽器的儲存空間；要求瀏覽器不要自動清掉（規格 12.18），設定頁顯示結果
@@ -364,7 +403,7 @@ export function App() {
       location.reload();
     })();
   }, []);
-  const deviceSync = useDeviceSync(coach, settings, testMode.enabled, revision, touch, saveSyncKey, onRemoved);
+  const deviceSync = useDeviceSync(coach, settings, testMode.enabled || DEMO, revision, touch, saveSyncKey, onRemoved);
   // 新裝置加入的提醒點「查看」：打開設定並捲到多裝置同步
   const [devicesFocus, setDevicesFocus] = useState(0);
   // 打開設定時直接到哪一項；n 讓同一項再打開一次也有反應
@@ -421,6 +460,8 @@ export function App() {
       revision,
       touch,
       async updateSettings(next) {
+        // 範例裡什麼都不存
+        if (DEMO) return;
         await saveSettings(next);
         clockOffset = clockOffsetMs(testMode, next.timeZone);
         coach.configure(coachConfig(next, testMode));
@@ -497,13 +538,69 @@ export function App() {
       </main>
     );
   }
-  if (!state) return <main className="page muted">載入中…</main>;
+  if (!state || wizard === undefined) return <main className="page muted">載入中…</main>;
 
   // 用過 App、還沒確認過這一版的使用須知：打開時先確認，底下的畫面不能操作（規格 12.32）.
   // 只看打開時的設定：第一次設定時只勾了資料流向的人，在設定頁勾使用須知就好，不跳出來打斷
   const termsGate = termsAtOpen && !termsAccepted(settings);
   // 面板裡的說明或設定：使用須知與隱私說明蓋在它上面時也留著
   const base = shown === "help" || shown === "settings" ? shown : under;
+  // 面板（說明、設定、使用須知、隱私說明）：設定精靈的畫面上也打得開使用須知與隱私說明
+  const shownPanel = shown && (
+          <>
+            {/* 電腦上底下的頁面看得到（變暗），點暗的地方也關閉；側邊的分頁在暗幕之上，點了直接切過去 */}
+            <div className={`panel-backdrop${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`} onClick={closePanel} />
+            <aside
+              id="side-panel"
+              className={`side-panel${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`}
+              role="dialog"
+              aria-label={PANEL_LABELS[shown]}
+              inert={leaving}
+              onAnimationEnd={(e) => {
+                if (e.target === e.currentTarget && e.animationName === "panel-out") finishLeaving();
+              }}
+            >
+              <div className="side-panel-head">
+                <h2 ref={panelTitle} tabIndex={-1}>
+                  {PANEL_LABELS[shown]}
+                </h2>
+                <button className="icon-button side-panel-close" aria-label={`關閉${PANEL_LABELS[shown]}`} title="關閉" onClick={closePanel}>
+                  <Icon as={X} />
+                </button>
+              </div>
+              {base && (
+                <div className="side-panel-body" hidden={base !== shown}>
+                  {base === "settings" ? DEMO ? <DemoSettings /> : <SettingsView section={settingsSection} /> : <HelpView topic={helpTopic} />}
+                </div>
+              )}
+              {base !== shown && (
+                // 建置時由靜態頁產生的固定內容（vite.config.ts 的 legalPagesModule），不含使用者或模型的文字；換頁時從最上面看起
+                <div className="side-panel-body" key={shown}>
+                  <div className="legal-page" dangerouslySetInnerHTML={{ __html: shown === "terms" ? TERMS_HTML : PRIVACY_HTML }} />
+                </div>
+              )}
+            </aside>
+          </>
+        );
+
+  // 設定精靈（規格 12.35 的 A）：新的使用者第一次打開時，整頁一步一步來；走完或略過之後是平常的畫面
+  if (wizard) {
+    return (
+      <AppContext.Provider value={state}>
+        <main className="wizard">
+          <Wizard
+            start={wizard}
+            onFinish={(target) => {
+              setWizard(null);
+              if (target === "sync" || target === "ai") openSettings(target);
+              else if (target) setTab(target);
+            }}
+          />
+        </main>
+        {shownPanel}
+      </AppContext.Provider>
+    );
+  }
 
   return (
     <AppContext.Provider value={state}>
@@ -535,8 +632,10 @@ export function App() {
             <Icon as={SettingsIcon} size={ICON_TAB} />
           </button>
         </header>
-        {(!state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0 || redFlag) && (
+        {(DEMO || !state.db.persistent || testMode.enabled || IS_STAGING || MOVED_TO || newVersion.commit || removed || deviceSync.newDevices.length > 0 || redFlag) && (
           <div className="notices" inert={!!panel}>
+            {/* 範例（規格 12.35 的 B）：一直在最上面 */}
+            {DEMO && <DemoBanner />}
             {/* 就醫提示（規格 12.33）：最上面，按「我知道了」才收起 */}
             <RedFlagBanner />
             {newVersion.commit && (
@@ -554,7 +653,7 @@ export function App() {
             <StagingBanner />
             {removed && <RemovedBanner onDismiss={() => setRemoved(false)} />}
             <NewDevicesBanner />
-            {!state.db.persistent && (
+            {!state.db.persistent && !DEMO && (
               <div className="notice warn">
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗。
               </div>
@@ -595,42 +694,7 @@ export function App() {
           ))}
         </div>
       </div>
-        {shown && (
-          <>
-            {/* 電腦上底下的頁面看得到（變暗），點暗的地方也關閉；側邊的分頁在暗幕之上，點了直接切過去 */}
-            <div className={`panel-backdrop${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`} onClick={closePanel} />
-            <aside
-              id="side-panel"
-              className={`side-panel${leaving ? " leaving" : ""}${termsGate ? " over-gate" : ""}`}
-              role="dialog"
-              aria-label={PANEL_LABELS[shown]}
-              inert={leaving}
-              onAnimationEnd={(e) => {
-                if (e.target === e.currentTarget && e.animationName === "panel-out") finishLeaving();
-              }}
-            >
-              <div className="side-panel-head">
-                <h2 ref={panelTitle} tabIndex={-1}>
-                  {PANEL_LABELS[shown]}
-                </h2>
-                <button className="icon-button side-panel-close" aria-label={`關閉${PANEL_LABELS[shown]}`} title="關閉" onClick={closePanel}>
-                  <Icon as={X} />
-                </button>
-              </div>
-              {base && (
-                <div className="side-panel-body" hidden={base !== shown}>
-                  {base === "settings" ? <SettingsView section={settingsSection} /> : <HelpView topic={helpTopic} />}
-                </div>
-              )}
-              {base !== shown && (
-                // 建置時由靜態頁產生的固定內容（vite.config.ts 的 legalPagesModule），不含使用者或模型的文字；換頁時從最上面看起
-                <div className="side-panel-body" key={shown}>
-                  <div className="legal-page" dangerouslySetInnerHTML={{ __html: shown === "terms" ? TERMS_HTML : PRIVACY_HTML }} />
-                </div>
-              )}
-            </aside>
-          </>
-        )}
+        {shownPanel}
     </AppContext.Provider>
   );
 }

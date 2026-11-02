@@ -7,7 +7,11 @@
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
  *   GET  /intervals/athlete/:id               選手與運動設定（跑步與騎車的閾值心率與區間，騎車的 FTP 與功率區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
- *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
+ *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）；/sync/v1/intervals/token 是換 token（client_id mock-client）
+ *   GET  /intervals/oauth/authorize           模擬 Intervals.icu 的授權頁：直接帶 code 轉回 redirect_uri（login_hint=deny 時回 access_denied）
+ *   POST /intervals/api/oauth/token           模擬換 token（client_secret 要是 mock-secret；code 只能用一次）
+ *   DELETE /intervals/disconnect-app          模擬中斷連結（Bearer）
+ *   GET  /_mock/oauth                         E2E 檢查：授權頁收到的參數、換 token 與中斷連結的次數
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
  *   GET  /_mock/requests                      最近送到模擬服務的模型請求（與回傳的用量）、天氣查詢（E2E 檢查送出了什麼）
  *
@@ -23,6 +27,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createSyncHandler } from "../apps/sync/src/handler";
+import { handleIntervalsToken, isIntervalsTokenPath } from "../apps/sync/src/intervals-token";
 import { SyncStore } from "../apps/sync/src/store";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8788);
@@ -537,7 +542,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   // 萬用字元不涵蓋 authorization，要另外列出
   "access-control-allow-headers": "*, authorization",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -743,7 +748,12 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   req.on("end", () => {
     const hasBody = req.method !== "GET" && req.method !== "HEAD" && chunks.length > 0;
     const headers = Object.entries(req.headers).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : []));
-    void syncHandle(new Request(`http://localhost${path}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined })).then(
+    const request = new Request(`http://localhost${path}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined });
+    // 換 token（規格 12.37）：和正式的同一份程式，向模擬的 Intervals.icu 換
+    const handled = isIntervalsTokenPath(new URL(request.url).pathname)
+      ? handleIntervalsToken(request, { clientId: MOCK_CLIENT_ID, clientSecret: MOCK_CLIENT_SECRET, allowedOrigins: ["*"], tokenUrl: `http://127.0.0.1:${PORT}/intervals/api/oauth/token` })
+      : syncHandle(request);
+    void handled.then(
       async (response) => {
         res.writeHead(response.status, Object.fromEntries(response.headers));
         res.end(Buffer.from(await response.arrayBuffer()));
@@ -751,6 +761,17 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
     );
   });
 }
+
+/** 模擬的 Intervals.icu OAuth（規格 12.37） */
+const MOCK_CLIENT_ID = "mock-client";
+const MOCK_CLIENT_SECRET = "mock-secret";
+const MOCK_OAUTH_TOKEN = "mock-oauth-token";
+const oauth = { authorize: [] as Record<string, string>[], issuedCodes: new Set<string>(), exchanges: 0, disconnects: 0, revoked: false, bearerPaths: [] as string[] };
+/**
+ * 登入的 token 讀得到哪些端點、各要哪個權限範圍（規格 12.37；依 Intervals.icu 論壇的說明，還沒以真實帳號確認，
+ * 要在 staging 實測）：/athlete/{id}（運動設定、閾值）SETTINGS:READ；activities 與 pace-curves.json ACTIVITY:READ；
+ * wellness WELLNESS:READ. 我們要的就是這三個（INTERVALS_SCOPES），ATHLETES 範圍（論壇說對 Bearer 會 403）不用
+ */
 
 /** 模擬的 Open-Meteo：每天一樣，白天濕熱 */
 function mockWeather(url: URL) {
@@ -806,6 +827,44 @@ createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
   if (req.method === "GET" && path === "/_mock/requests") return send(200, recent);
+  if (req.method === "GET" && path === "/_mock/oauth") return send(200, { authorize: oauth.authorize, exchanges: oauth.exchanges, disconnects: oauth.disconnects, bearerPaths: oauth.bearerPaths });
+  // Intervals.icu 的授權頁：不顯示畫面，直接當成選手按了同意（login_hint=deny 時當成拒絕）
+  if (req.method === "GET" && path === "/intervals/oauth/authorize") {
+    const q = Object.fromEntries(url.searchParams);
+    oauth.authorize.push(q);
+    const back = new URL(q.redirect_uri ?? "http://localhost/");
+    if (q.client_id !== MOCK_CLIENT_ID) back.searchParams.set("error", "invalid_client");
+    else if (q.login_hint === "deny") back.searchParams.set("error", "access_denied");
+    else {
+      const code = `mock-code-${oauth.authorize.length}`;
+      oauth.issuedCodes.add(code);
+      back.searchParams.set("code", code);
+    }
+    if (q.state) back.searchParams.set("state", q.state);
+    res.writeHead(302, { location: back.toString() });
+    return void res.end();
+  }
+  if (req.method === "POST" && path === "/intervals/api/oauth/token") {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString());
+      oauth.exchanges++;
+      const code = form.get("code") ?? "";
+      if (form.get("client_id") !== MOCK_CLIENT_ID || form.get("client_secret") !== MOCK_CLIENT_SECRET || !oauth.issuedCodes.delete(code)) {
+        return send(400, { error: "invalid_grant" });
+      }
+      oauth.revoked = false;
+      send(200, { token_type: "Bearer", access_token: MOCK_OAUTH_TOKEN, scope: "ACTIVITY:READ,WELLNESS:READ,SETTINGS:READ", athlete: { id: "i777", name: "Mock Runner" } });
+    });
+    return;
+  }
+  if (req.method === "DELETE" && path === "/intervals/disconnect-app") {
+    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}`) return send(401, { status: 401, error: "Unauthorized" });
+    oauth.disconnects++;
+    oauth.revoked = true;
+    return send(200, {});
+  }
   if (req.method === "GET" && path.startsWith("/weather/v1/")) {
     record("weather", { path, query: Object.fromEntries(url.searchParams) });
     if (path === "/weather/v1/forecast") return send(200, mockWeather(url));
@@ -836,6 +895,15 @@ createServer((req, res) => {
         return date >= oldest && date <= newest;
       }),
     );
+  }
+  // 登入的 token：中斷連結之後就不能用；記下用 Bearer 讀了哪些端點
+  if (path.startsWith("/intervals/athlete/") && req.headers.authorization?.startsWith("Bearer ")) {
+    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}` || oauth.revoked) return send(401, { status: 401, error: "Unauthorized" });
+    oauth.bearerPaths.push(path);
+  }
+  // 錯的 Intervals.icu key（設定精靈的檢查）：API_KEY:bad-key
+  if (path.startsWith("/intervals/") && req.headers.authorization === `Basic ${Buffer.from("API_KEY:bad-key").toString("base64")}`) {
+    return send(403, { status: 403, error: "Access denied" });
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
@@ -872,6 +940,12 @@ createServer((req, res) => {
     return send(200, wellness());
   }
   if (req.method === "POST" && path === "/v1/messages") {
+    // 設定精靈的 key 檢查（規格 12.35 的 A）：特定的 key 回 Anthropic 的錯誤
+    const apiKey = String(req.headers["x-api-key"] ?? "");
+    if (apiKey === "bad-key") return send(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
+    if (apiKey === "no-credit-key") {
+      return send(400, { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } });
+    }
     void readJson(req).then(async (body) => {
       record("llm", body);
       const content = reply(body);

@@ -99,6 +99,8 @@ const viewports = {
   }
   const open = async (tag, options = {}) => {
     const context = await browser.newContext({ ...viewports[tag.split("-")[0]], timezoneId: "Asia/Taipei", ...options });
+    // staging 開著設定精靈（onboarding）：這裡檢查平常的畫面，跳過精靈
+    await E2E.skipWizard(context);
     const page = await context.newPage();
     page.on("console", (m) => m.type() === "error" && !m.text().startsWith("Failed to load resource") && problems.push(`[${tag} ${step}] ${m.text()}`));
     page.on("pageerror", (e) => problems.push(`[${tag} ${step}] ${e.message}`));

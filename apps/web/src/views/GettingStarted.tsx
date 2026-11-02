@@ -7,6 +7,7 @@ import { Check, CircleCheck, PencilLine, Smartphone, Watch, type LucideIcon } fr
 import { useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
 import { featureEnabled } from "../environment";
+import { DEMO } from "../demo";
 import { useSync } from "../use-sync";
 import { FirstSync } from "./FirstSync";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
@@ -118,7 +119,7 @@ function PhonePaths() {
 /** 新手引導的「你練哪些運動」：跑步、騎車（可以只選騎車；多運動，規格 12.24）；其他的在選手資料選 */
 const ONBOARDING_SPORTS: Sport[] = ["run", "ride"];
 
-function SportsStep({ profile, onSaved }: { profile: Record<string, string>; onSaved: () => void }) {
+export function SportsStep({ profile, onSaved }: { profile: Record<string, string>; onSaved: () => void }) {
   const { coach } = useApp();
   const [picked, setPicked] = useState<Sport[]>(() => (profile.pref_sports ? athleteSports(profile) : ["run"]));
   const toggle = (sport: Sport) => setPicked((p) => (p.includes(sport) ? p.filter((s) => s !== sport) : [...p, sport]));
@@ -163,7 +164,8 @@ export function GettingStarted() {
     );
   }, [coach, revision]);
 
-  if (!counts || dismissed) return null;
+  // 範例裡不出現（規格 12.35 的 B）
+  if (!counts || dismissed || DEMO) return null;
 
   const llmReady = llmProblem === null;
   const intervalsReady = activitiesReady;

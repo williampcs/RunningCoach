@@ -188,8 +188,19 @@ async function emulateStandalone(page) {
   });
 }
 
+/**
+ * 設定精靈（規格 12.35 的 A，功能開關 onboarding）只給新的使用者：開著 onboarding 的建置（all、staging）裡
+ * 測其他東西的腳本用這個跳過精靈，直接從平常的畫面開始（等同已經走完）
+ */
+async function skipWizard(context) {
+  await context.addInitScript(() => {
+    if (!localStorage.getItem("running-coach.wizard.v1")) localStorage.setItem("running-coach.wizard.v1", JSON.stringify({ done: true }));
+  });
+}
+
 module.exports = {
   go,
+  skipWizard,
   opensLegalPanel,
   hopLegal,
   emulateStandalone,

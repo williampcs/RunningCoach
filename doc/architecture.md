@@ -163,10 +163,14 @@ sequenceDiagram
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
+| 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
+| 「先看看」的範例（規格 12.35 的 B） | 記憶體裡的另一個資料庫（worker 的 `:memory:`），範例的狀態在 sessionStorage | 不會；不碰真的資料庫，離開就清掉 |
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
 OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-lock.ts` 用 Web Locks（鎖的名稱 `zone2mate-db`）記哪個分頁在用：拿到鎖才打開 App（`views/TabGate.tsx`）；拿不到時顯示「已經在另一個分頁開著」。按「在這裡使用」時先排進鎖的佇列，再用 BroadcastChannel（`zone2mate-tabs`）請正在用的分頁交出來；那個分頁先收起 App、關掉資料庫並放開 OPFS 的檔案（worker 的 `close`：`db.close()` 與 `pauseVfs()`，`db/driver.ts` 的 `closeBrowserDb`），才放開鎖，所以不會兩邊同時寫。被接手的分頁按「在這裡繼續」時重新載入並直接接手。瀏覽器沒有這兩個 API 時照舊直接打開；真的沒有 OPFS（例如無痕視窗）才退回記憶體資料庫。
+
+新的使用者第一次打開時（`onboarding` 開著）先走設定精靈（`apps/web/src/wizard.ts` 判斷誰是新的使用者、記進度；畫面在 `views/Wizard.tsx`，整頁取代平常的分頁）。貼上 AI 的 key 時用核心的 `checkLlmKey`（`llm/check.ts`）打一次最小的請求再存。「先看看」（`apps/web/src/demo.ts`）打開時換成記憶體裡的資料庫、預設的設定（沒有 key、沒有同步）、假的活動來源與不會送出請求的 AI 替身，由核心的 `seedDemo`（`demo.ts`）寫進範例；不走分頁的鎖與密碼鎖。
 
 使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
 

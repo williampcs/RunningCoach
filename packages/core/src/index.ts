@@ -103,6 +103,11 @@ export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type 
 export {
   AnthropicProvider,
   LlmError,
+  checkLlmKey,
+  classifyKeyError,
+  keyProblemText,
+  type KeyCheck,
+  type KeyProblem,
   OpenAICompatibleError,
   OpenAICompatibleProvider,
   OPENAI_COMPATIBLE_PRESETS,
@@ -248,3 +253,4 @@ export {
   type PainWhen,
 } from "./injuries";
 export { detectRedFlags, RED_FLAG_TERMS, redFlagAdvice } from "./red-flags";
+export { DEMO_QUESTION, DEMO_REPLY, demoSource, demoSpec, seedDemo, type DemoSource } from "./demo";

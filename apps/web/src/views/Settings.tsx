@@ -21,6 +21,7 @@ import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard } from "./TestMode";
+import { resetWizard } from "../wizard";
 import {
   clearSettings,
   consentKey,
@@ -55,7 +56,7 @@ const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
 };
 
 /** 目前選擇下，資料會送到哪裡（收在 ⓘ 裡） */
-function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
+export function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   if (draft.llmMode === "proxy") {
     return (
       <ul>
@@ -333,6 +334,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       if (keep === null) {
         clearSettings();
         clearRemoved();
+        // 回到第一次使用的狀態：設定精靈也重新出現（功能開關開著時）
+        resetWizard();
       }
       // 重新載入，讓 Coach 與各頁的狀態（進行中的對話壓縮、未送出的內容）一併回到初始
       location.reload();

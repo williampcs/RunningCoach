@@ -21,6 +21,8 @@ import { checkRedFlags } from "../red-flag-alert";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
+import { DemoComposer } from "./Demo";
+import { DEMO } from "../demo";
 
 // 執行工具時顯示的狀態
 const TOOL_STATUS: Record<string, string> = {
@@ -468,7 +470,9 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         )}
         <div ref={bottom} />
       </div>
-      {llmProblem ? (
+      {DEMO ? (
+        <DemoComposer />
+      ) : llmProblem ? (
         <div className="notice warn inline">
           <span>{llmProblem}，目前無法對話。</span>
           <button className="text" onClick={() => openSettings("ai")}>
