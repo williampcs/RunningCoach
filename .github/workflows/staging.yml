@@ -7,6 +7,7 @@
 #   STAGING_WEB_URL              staging 的網址（https://staging.zone2mate.com），同步服務只允許它
 #   STAGING_SYNC_D1_DATABASE_ID  staging 的 D1 資料庫的 id
 #   STAGING_SYNC_URL             staging 同步服務的網址（https://running-coach-sync-staging.<子網域>.workers.dev）
+#   STAGING_INTERVALS_CLIENT_ID  用 Intervals.icu 登入的 client_id（選填，規格 12.37）；client_secret 在 Secrets 的 STAGING_INTERVALS_CLIENT_SECRET
 # 沒設定的部分跳過、不失敗：沒有 STAGING_PAGES_PROJECT 不部署網頁版；沒有 D1 的 id 或 STAGING_WEB_URL 不部署同步服務。
 # 設定步驟見規格 12.19。改了 Variables 之後手動執行一次。
 name: Deploy staging
@@ -73,6 +74,7 @@ jobs:
           DATABASE_ID: ${{ vars.STAGING_SYNC_D1_DATABASE_ID }}
           # 只允許 staging 的網址；正式的網址連的是正式的同步服務
           WEB_URLS: ${{ vars.STAGING_WEB_URL }}
+          INTERVALS_CLIENT_ID: ${{ vars.STAGING_INTERVALS_CLIENT_ID }}
         run: npx tsx tools/sync-config.ts
       - name: Deploy
         working-directory: apps/sync
@@ -81,6 +83,21 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         # 釘住確切版本：這一步拿著 Cloudflare 的 API token
         run: npx --yes wrangler@4.148.0 deploy
+      - name: Intervals.icu client secret
+        # 用 Intervals.icu 登入（規格 12.37）：有 client_id 時把 client_secret 寫成 Worker 的 secret。從 stdin 給，不印出
+        if: ${{ vars.STAGING_INTERVALS_CLIENT_ID != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          INTERVALS_CLIENT_SECRET: ${{ secrets.STAGING_INTERVALS_CLIENT_SECRET }}
+        run: |
+          if [ -z "$INTERVALS_CLIENT_SECRET" ]; then
+            echo "::warning::有 Intervals.icu 的 client_id、沒有 STAGING_INTERVALS_CLIENT_SECRET：登入會失敗（回「沒有設定」）"
+            exit 0
+          fi
+          printf '%s' "$INTERVALS_CLIENT_SECRET" | npx --yes wrangler@4.148.0 secret put INTERVALS_CLIENT_SECRET > /dev/null
+          echo "已寫入 Intervals.icu 的 client_secret"
 
   web:
     name: Deploy staging web app
@@ -113,6 +130,8 @@ jobs:
           VITE_STAGING: "1"
           # 沒設定 STAGING_SYNC_URL 時，staging 的設定頁顯示同步服務「還沒設定」，不會連到正式的同步服務
           VITE_SYNC_URL: ${{ vars.STAGING_SYNC_URL }}
+          # 用 Intervals.icu 登入（規格 12.37）：沒有設定時按鈕不出現
+          VITE_INTERVALS_CLIENT_ID: ${{ vars.STAGING_INTERVALS_CLIENT_ID }}
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

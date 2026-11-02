@@ -31,7 +31,11 @@ export interface AppSettings {
   models: Record<Purpose, string>;
   chatEffort: Effort;
   proxy: { url: string; token: string };
-  intervals: { apiKey: string; athleteId: string };
+  /**
+   * Intervals.icu：API key（Basic），或用 Intervals.icu 登入拿到的 token（Bearer，規格 12.37）與那個帳號.
+   * token 和 API key 一樣只存在這台（密碼鎖開著時加密），不同步
+   */
+  intervals: { apiKey: string; athleteId: string; accessToken: string; account: { id: string | null; name: string | null } | null };
   /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
   sync: { url: string; key: string };
   timeZone: string;
@@ -76,7 +80,7 @@ export function defaultSettings(): AppSettings {
     models: { ...CLAUDE_MODELS },
     chatEffort: "medium",
     proxy: { url: import.meta.env.VITE_PROXY_URL ?? "", token: "" },
-    intervals: { apiKey: "", athleteId: "" },
+    intervals: { apiKey: "", athleteId: "", accessToken: "", account: null },
     sync: { url: import.meta.env.VITE_SYNC_URL ?? "", key: "" },
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
     weather: null,
@@ -105,7 +109,7 @@ function loadPlainSettings(): AppSettings {
 }
 
 function secretsOf(s: AppSettings): Secrets {
-  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey, syncKey: s.sync.key };
+  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey, syncKey: s.sync.key, intervalsToken: s.intervals.accessToken };
 }
 
 function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
@@ -113,12 +117,12 @@ function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
     ...s,
     apiKey: secrets.apiKey,
     proxy: { ...s.proxy, token: secrets.proxyToken },
-    intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey },
+    intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey, accessToken: secrets.intervalsToken ?? "" },
     sync: { ...s.sync, key: secrets.syncKey ?? "" },
   };
 }
 
-const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "" };
+const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "", intervalsToken: "" };
 
 /** 這個瀏覽器存過設定嗎（設定精靈只給從來沒設定過的人，規格 12.35 的 A） */
 export function hasStoredSettings(): boolean {
@@ -227,7 +231,7 @@ export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERS
 export const needsTermsConfirm = (s: AppSettings) => s.consents.length > 0 && !termsAccepted(s);
 
 /** 連上 Intervals.icu 了嗎（API key 或登入） */
-export const intervalsConnected = (s: AppSettings) => s.intervals.apiKey.trim() !== "";
+export const intervalsConnected = (s: AppSettings) => s.intervals.apiKey.trim() !== "" || s.intervals.accessToken !== "";
 
 /** LLM 設定是否完整到可以開始對話；不完整時回傳缺少的項目 */
 export function llmProblem(s: AppSettings): string | null {

@@ -274,8 +274,10 @@ export const WEB_GUIDE: GuideSection[] = [
   {
     id: "intervals",
     title: "連接 Intervals.icu",
-    keywords: ["Intervals", "API key", "Athlete ID", "時區", "手錶"],
-    body: `設定的「訓練紀錄」：填 Intervals.icu 的「API key」（在 Intervals.icu 的設定頁最下面）；「進階」裡的「Athlete ID」通常可以留空，「時區」影響“今天”是哪一天。按「儲存設定」後，到「回報」按「同步最近 14 天」。
+    keywords: ["Intervals", "API key", "Athlete ID", "時區", "手錶", "登入", "中斷連結"],
+    body: `有「用 Intervals.icu 登入」的按鈕時（這個版本設定好登入才有），按它到 Intervals.icu 按同意就好，不用複製 key；回來後顯示“已用 Intervals.icu 登入”。只讀你的活動、恢復資料與設定。不想連了按「中斷連結」：會請 Intervals.icu 取消授權，並刪掉這台的登入（已經抓進來的紀錄留著）。登入只在這台有效，其他裝置要各自登入。這時貼 API key 的方式收在「進階」。
+
+沒有登入的按鈕時：設定的「訓練紀錄」：填 Intervals.icu 的「API key」（在 Intervals.icu 的設定頁最下面）；「進階」裡的「Athlete ID」通常可以留空，「時區」影響“今天”是哪一天。按「儲存設定」後，到「回報」按「同步最近 14 天」。
 
 API key 只存在這台裝置的瀏覽器裡，不會同步到其他裝置。`,
   },

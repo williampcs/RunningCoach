@@ -883,6 +883,15 @@ createServer((req, res) => {
       });
     }
   }
+  // 登入的 token：中斷連結之後就不能用；記下用 Bearer 讀了哪些端點
+  if (path.startsWith("/intervals/athlete/") && req.headers.authorization?.startsWith("Bearer ")) {
+    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}` || oauth.revoked) return send(401, { status: 401, error: "Unauthorized" });
+    oauth.bearerPaths.push(path);
+  }
+  // 錯的 Intervals.icu key（設定精靈的檢查）：API_KEY:bad-key
+  if (path.startsWith("/intervals/") && req.headers.authorization === `Basic ${Buffer.from("API_KEY:bad-key").toString("base64")}`) {
+    return send(403, { status: 403, error: "Access denied" });
+  }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/activities$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
     // 和 Intervals.icu 一樣只回傳 oldest～newest 之間的活動
@@ -895,15 +904,6 @@ createServer((req, res) => {
         return date >= oldest && date <= newest;
       }),
     );
-  }
-  // 登入的 token：中斷連結之後就不能用；記下用 Bearer 讀了哪些端點
-  if (path.startsWith("/intervals/athlete/") && req.headers.authorization?.startsWith("Bearer ")) {
-    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}` || oauth.revoked) return send(401, { status: 401, error: "Unauthorized" });
-    oauth.bearerPaths.push(path);
-  }
-  // 錯的 Intervals.icu key（設定精靈的檢查）：API_KEY:bad-key
-  if (path.startsWith("/intervals/") && req.headers.authorization === `Basic ${Buffer.from("API_KEY:bad-key").toString("base64")}`) {
-    return send(403, { status: 403, error: "Access denied" });
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });

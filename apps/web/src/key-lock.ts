@@ -11,6 +11,8 @@ export interface Secrets {
   intervalsApiKey: string;
   /** 多裝置同步的金鑰（規格 12.10）；之前建立的密碼鎖沒有這一項 */
   syncKey?: string;
+  /** 用 Intervals.icu 登入拿到的 token（規格 12.37）；之前建立的密碼鎖沒有這一項 */
+  intervalsToken?: string;
 }
 
 /** 存進 localStorage 的密文 */

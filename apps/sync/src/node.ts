@@ -6,19 +6,28 @@ import { dirname } from "node:path";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createSyncHandler } from "./handler";
+import { handleIntervalsToken, isIntervalsTokenPath } from "./intervals-token";
 import { SyncStore } from "./store";
 
 const dbPath = process.env.SYNC_DB_PATH?.trim() || "./data/sync.db";
 if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
 const store = new SyncStore(openNodeSqlite(dbPath));
 await store.init();
-const handle = createSyncHandler({
-  store,
-  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "http://localhost:5173,http://localhost:4173")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
-});
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:5173,http://localhost:4173")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const syncHandle = createSyncHandler({ store, allowedOrigins });
+// 用 Intervals.icu 登入（規格 12.37）：INTERVALS_CLIENT_ID、INTERVALS_CLIENT_SECRET 有設定時才能用
+const handle = (request: Request) =>
+  isIntervalsTokenPath(new URL(request.url).pathname)
+    ? handleIntervalsToken(request, {
+        clientId: process.env.INTERVALS_CLIENT_ID,
+        clientSecret: process.env.INTERVALS_CLIENT_SECRET,
+        allowedOrigins,
+        tokenUrl: process.env.INTERVALS_TOKEN_URL || undefined,
+      })
+    : syncHandle(request);
 
 const port = Number(process.env.PORT ?? 8789);
 createServer((req, res) => {

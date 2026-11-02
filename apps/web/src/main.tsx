@@ -3,10 +3,14 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import { DEMO } from "./demo";
+import { captureLoginCallback } from "./intervals-login";
 import { needsUnlock } from "./settings";
 import { TabGate } from "./views/TabGate";
 import { UnlockView } from "./views/Unlock";
 import "./styles.css";
+
+// 從 Intervals.icu 登入回來（規格 12.37）：在任何外部請求之前讀走網址上的 code 並清掉
+captureLoginCallback();
 
 function Root() {
   const [locked, setLocked] = useState(needsUnlock);

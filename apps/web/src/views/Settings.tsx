@@ -21,6 +21,7 @@ import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard } from "./TestMode";
+import { IntervalsLogin, intervalsLoginAvailable } from "./IntervalsLogin";
 import { resetWizard } from "../wizard";
 import {
   clearSettings,
@@ -252,7 +253,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
 
   // 這張表單只管 AI 模型與 Intervals.icu（還有時區、同意紀錄）；同步金鑰與天氣的城市由各自的卡片管理，
   // 表單打開之後才改的，存檔不能用表單打開時的舊值蓋掉
-  const formOf = (s: AppSettings) => ({ ...s, sync: null, weather: null });
+  // Intervals.icu 的登入（token）也由它自己的元件管理（規格 12.37）
+  const formOf = (s: AppSettings) => ({ ...s, sync: null, weather: null, intervals: { ...s.intervals, accessToken: null, account: null } });
   const dirty = JSON.stringify(formOf(draft)) !== JSON.stringify(formOf(settings));
   // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
   const syncNext = !dirty && llmProblem === null && activitiesReady && workouts === 0;
@@ -285,7 +287,12 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       return;
     }
     try {
-      await updateSettings({ ...draft, sync: settings.sync, weather: settings.weather });
+      await updateSettings({
+        ...draft,
+        sync: settings.sync,
+        weather: settings.weather,
+        intervals: { ...draft.intervals, accessToken: settings.intervals.accessToken, account: settings.intervals.account },
+      });
       setError(null);
       toast("設定已儲存在這個瀏覽器。");
     } catch (e) {
@@ -494,6 +501,19 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   }
 
   if (page === "records") {
+    // 能用 Intervals.icu 登入時（規格 12.37），貼 API key 收進「進階」
+    const loginAvailable = intervalsLoginAvailable();
+    const apiKeyField = (
+      <label>
+        API key
+        <input
+          type="password"
+          autoComplete="off"
+          value={draft.intervals.apiKey}
+          onChange={(e) => setDraft({ ...draft, intervals: { ...draft.intervals, apiKey: e.target.value } })}
+        />
+      </label>
+    );
     return (
       <Subpage id="records" onBack={back}>
         <section className="card">
@@ -512,16 +532,15 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
             </InfoTip>
           </p>
           <PhoneGuide />
-          <label>
-            API key
-            <input
-              type="password"
-              autoComplete="off"
-              value={draft.intervals.apiKey}
-              onChange={(e) => setDraft({ ...draft, intervals: { ...draft.intervals, apiKey: e.target.value } })}
-            />
-          </label>
+          <IntervalsLogin from="settings" />
+          {!loginAvailable && apiKeyField}
           <Disclosure summary="進階" className="advanced">
+            {loginAvailable && (
+              <>
+                <p className="small muted">也可以不登入、改貼 Intervals.icu 的 API key（登入了就用登入的）。</p>
+                {apiKeyField}
+              </>
+            )}
             <div className="grid">
               <label>
                 Athlete ID

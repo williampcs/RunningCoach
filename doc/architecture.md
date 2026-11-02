@@ -158,7 +158,7 @@ sequenceDiagram
 | 資料 | 存在哪裡 | 會同步到其他裝置嗎 |
 |---|---|---|
 | 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
-| API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
+| API key、AI 的設定、Intervals.icu 的 key 或登入的 token（規格 12.37）、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key 與 token） | 不會 |
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
@@ -169,6 +169,8 @@ sequenceDiagram
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
 OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-lock.ts` 用 Web Locks（鎖的名稱 `zone2mate-db`）記哪個分頁在用：拿到鎖才打開 App（`views/TabGate.tsx`）；拿不到時顯示「已經在另一個分頁開著」。按「在這裡使用」時先排進鎖的佇列，再用 BroadcastChannel（`zone2mate-tabs`）請正在用的分頁交出來；那個分頁先收起 App、關掉資料庫並放開 OPFS 的檔案（worker 的 `close`：`db.close()` 與 `pauseVfs()`，`db/driver.ts` 的 `closeBrowserDb`），才放開鎖，所以不會兩邊同時寫。被接手的分頁按「在這裡繼續」時重新載入並直接接手。瀏覽器沒有這兩個 API 時照舊直接打開；真的沒有 OPFS（例如無痕視窗）才退回記憶體資料庫。
+
+用 Intervals.icu 登入（規格 12.37，OAuth）：網頁帶著 client_id、回呼網址（網站的根目錄）與只有讀的權限到 Intervals.icu 同意；回來時 `main.tsx` 在任何請求之前讀走網址上的 code 並清掉（`apps/web/src/intervals-login.ts`）；code 送到同步服務的 `POST /v1/intervals/token`（`apps/sync/src/intervals-token.ts`：帶上 Worker 的 secret `INTERVALS_CLIENT_SECRET` 向 Intervals.icu 換 token，只轉送、不存、不碰 D1），token 存進這台的設定；之後 `IntervalsClient` 用 Bearer 直接讀。沒有設定 client_id 時按鈕不出現。
 
 新的使用者第一次打開時（`onboarding` 開著）先走設定精靈（`apps/web/src/wizard.ts` 判斷誰是新的使用者、記進度；畫面在 `views/Wizard.tsx`，整頁取代平常的分頁）。貼上 AI 的 key 時用核心的 `checkLlmKey`（`llm/check.ts`）打一次最小的請求再存。「先看看」（`apps/web/src/demo.ts`）打開時換成記憶體裡的資料庫、預設的設定（沒有 key、沒有同步）、假的活動來源與不會送出請求的 AI 替身，由核心的 `seedDemo`（`demo.ts`）寫進範例；不走分頁的鎖與密碼鎖。
 
@@ -294,6 +296,7 @@ sequenceDiagram
 
 兩個環境怎麼分（規格 12.19）：
 - 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
+- 用 Intervals.icu 登入（規格 12.37，選填）：Variables 的 `INTERVALS_CLIENT_ID`（staging：`STAGING_INTERVALS_CLIENT_ID`）在部署同步服務時寫進 `wrangler.toml` 的 var、建置網頁時是 `VITE_INTERVALS_CLIENT_ID`；Secrets 的 `INTERVALS_CLIENT_SECRET`（staging：`STAGING_INTERVALS_CLIENT_SECRET`）在部署同步服務後用 `wrangler secret put` 從 stdin 寫入，不印出。沒設定時登入的按鈕不出現。
 - 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
 - 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。

@@ -25,6 +25,7 @@ import { PrivacyLink } from "./PrivacyLink";
 import { DataFlow } from "./Settings";
 import { TermsShort } from "./TermsLink";
 import { IntervalsLogin, intervalsLoginAvailable } from "./IntervalsLogin";
+import { peekLoginCallback } from "../intervals-login";
 
 /** 精靈裡可以選的 AI（其他相容服務、訂閱在設定頁填） */
 type WizardProvider = Exclude<ProviderKind, "openai-compatible">;
@@ -307,7 +308,8 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
   );
   const [keyOk, setKeyOk] = useState(false);
   const connected = intervalsConnected(settings);
-  const [source, setSource] = useState<Source | null>(connected ? "intervals" : null);
+  // 從 Intervals.icu 登入回來時停在「紀錄從哪裡來？」，Intervals.icu 選好
+  const [source, setSource] = useState<Source | null>(connected || peekLoginCallback()?.from === "wizard" ? "intervals" : null);
   const sync = useSync();
   const [error, setError] = useState<string | null>(null);
 
@@ -472,10 +474,16 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
           <Choices label="紀錄從哪裡來" value={source} options={watch ? options : [options[1]!, options[0]!]} onPick={setSource} />
           {source === "intervals" && (
             <div className="stack">
-              <IntervalsLogin />
-              <Disclosure summary="用 API key 連接（進階）" className="small" open={!intervalsLoginAvailable()}>
+              <IntervalsLogin from="wizard" />
+              {intervalsLoginAvailable() ? (
+                !settings.intervals.accessToken && (
+                  <Disclosure summary="用 API key 連接（進階）" className="small">
+                    <IntervalsKey />
+                  </Disclosure>
+                )
+              ) : (
                 <IntervalsKey />
-              </Disclosure>
+              )}
             </div>
           )}
         </Page>

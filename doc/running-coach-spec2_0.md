@@ -197,6 +197,7 @@
 | 2.0-draft | 2026-11-02 | 產品想法補充：資料的路涵蓋 iOS、Android 與主流穿戴裝置；12.37 加四層與裝置對照表 |
 | 2.0-draft | 2026-11-02 | 想法的索引加「大改期間要不要先關掉正式站」 |
 | 2.0-draft | 2026-11-02 | 工作單：新手的第一步（Intervals.icu 登入、設定精靈、先看看）（9.4、12.37） |
+| 2.0-draft | 2026-11-02 | 新手的第一步之二：用 Intervals.icu 登入（OAuth）。同步服務多一個只轉送的換 token 端點（`/v1/intervals/token`，不存、不記、只接受允許的來源）；網頁的「用 Intervals.icu 登入」與「中斷連結」，token 只存在這台（密碼鎖加密）、之後瀏覽器直接帶 Bearer 讀；有設定 client_id 才出現，貼 API key 收進「進階」；workflow 讀 `INTERVALS_CLIENT_ID`／`STAGING_INTERVALS_CLIENT_ID` 與對應的 secret；隱私說明、使用說明跟著改（9.4、12.37） |
 | 2.0-draft | 2026-11-02 | 新手的第一步之一：設定精靈與先看看（功能開關 `onboarding`，staging 開著）。新的使用者第一次打開時一步一頁：你用什麼記錄 → 選 AI → 貼 key（「去拿 key」直接開到產生 key 的頁面，貼上就檢查並自動存，錯誤寫看得懂的話）→ 同意並繼續 → 紀錄從哪裡來 →（多運動）練的運動 → 抓紀錄或記第一筆 → 選手資料（可略過）；可以上一步、中途離開從同一步繼續；已經設定好的人不出現。「先看看」用記憶體裡的資料庫放範例（課表、紀錄、看板、選手頁、預先寫好的對話），不讀 key、不同步、不連外部服務，離開就清掉；使用說明、隱私說明（開關開著時）跟著改（9.4、12.37） |
 | 2.0-draft | 2026-11-02 | 不分來源的核心（第一步）之二：數字。負荷依心率、配速或體感自己估（`load.ts`，TSS 的尺度）、沒有 Intervals.icu 時體能疲勞由我們算；有 Intervals.icu 的值照舊用它；教練的訓練數值、跑步與騎車的卡片、我的數字標出估的來源；本機的比對腳本 `tools/compare-load.ts`；工作單已推上 v2（12.37 的「實作」、9.4、`doc/architecture.md`） |
 | 2.0-draft | 2026-11-02 | 不分來源的核心（第一步）之一：資料層。跑步與其他運動合成同一個格式（`activities.ts` 的 `ActivityRecord`、`Db.getActivities`），來源的原始資料只在轉換裡解讀；資料表不變（schema 19）、同步不變、使用者看到的數字不變（12.37、`doc/architecture.md`） |
@@ -755,7 +756,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     - 精靈與先看看放在功能開關後面（staging 全開，正式版等使用者決定）；Intervals.icu 登入靠設定的有無開關。
     - 使用者要做的事（回報時寫清楚步驟與確切的回呼網址）：在 Intervals.icu 建立 OAuth 的 App、登記 staging 與正式的回呼網址、把 client_id 與 client_secret 設到 GitHub。
     - 隱私說明要補：登入時經過我們的 Worker（只轉送）、token 存在哪裡、怎麼中斷。
-  - 狀態：開發中（2026-11-02，開發 session「新手的第一步：Intervals.icu 登入、設定精靈、先看看」）。第一次推（設定精靈與先看看，功能開關 `onboarding`）已推上 v2，實作見 12.37 的「實作：新手的第一步」；Intervals.icu 登入的設計協調 session 同意了（2026-11-02），開發中。
+  - 狀態：開發中（2026-11-02，開發 session「新手的第一步：Intervals.icu 登入、設定精靈、先看看」）。已推上 v2（2026-11-02，分兩次推：設定精靈與先看看〔功能開關 `onboarding`〕、Intervals.icu 登入〔有設定 client_id 才出現〕）；實作、驗證與和工作單不同的地方見 12.37 的「實作：新手的第一步」。待使用者：在 Intervals.icu 建 App、設定 GitHub 的 Variables 與 Secrets（回報裡有步驟）、在 staging 試精靈、先看看與登入。
 
 - **不分來源的核心（第一步）**（12.37「要做 App 的話，Intervals.icu 要不要先擱置？」；2026-11-02 使用者：「不分來源排最前面，寫工作單吧」）
   - 目的：紀錄從哪裡來（Intervals.icu、手動、之後的 Apple 健康與 Health Connect、FIT／GPX 檔）都走同一條路；負荷、體能疲勞、強度分配、區間由我們自己從原始數字算，Intervals.icu 算好的值變成「有就拿來用或對照」。之後加一個來源只要寫一個轉換，不用改各處。
@@ -4163,3 +4164,31 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 - 單元測試：`packages/core/test/demo.test.ts`（範例寫進的內容、不打 AI、課表都在今天以後；key 的錯誤分類、最小的請求、模型沒產生文字也算可以用）；功能開關的清單；隱私說明頁的網址清單加上「去拿 key」的三個網站（只是連結）。
 - E2E `tools/e2e/verify-wizard.cjs`（自己建置開著 `onboarding` 的一份，4180 埠，Anthropic 指向模擬上游）：手機淺色走手錶 → Claude → 錯的 key「key 不對」、沒有額度的 key「還沒有額度」、對的 key 自動存（檢查的請求是 16 個 token、摘要的模型、沒有系統提示）→ 重新整理從同一步繼續 → 上一步 → 同意並繼續（記下兩項同意）→ 使用須知在面板打開 → Intervals.icu 的 key 貼錯有錯誤、對的連上 → 同步 → 略過選手資料 → 平常的對話頁可以聊、重新整理不再出現；電腦深色走沒有在記錄 → 手動記 → 記第一筆 → 填選手資料；先看看（手機淺色、電腦深色）：標示、範例的對話與換掉的輸入框、計畫、紀錄、選手頁、設定鎖住、整段沒有任何外部請求、「開始設定」回到精靈且真的資料庫沒有紀錄與選手資料；存過設定的人打開不會看到精靈；每一頁最多一顆主要按鈕、按鈕至少 44 高、不左右捲動；截圖 `wizard-*`。
 - `verify-design.cjs`（開關全開的建置）與 `verify-environments.cjs`（staging 的建置）改成跳過精靈（`E2E.skipWizard`），檢查的仍是平常的畫面。
+
+Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-11-02 同意）
+- 換 token 的端點：放在現有的同步服務 Worker，`POST /v1/intervals/token`（`apps/sync/src/intervals-token.ts`）。理由：staging 與正式各已有一個、允許的來源（ALLOWED_ORIGINS）已照環境設好、已關閉觀測日誌；另開 Worker 要多一組部署設定與網址。這條路徑在 worker.ts 裡先處理，不碰 D1。
+  - 只轉送：收 `{code, redirect_uri}`，用 form 帶 client_id、client_secret、code（與回呼網址）POST 到 `https://intervals.icu/api/oauth/token`，只回 `{access_token, athlete_id, athlete_name, scope}`；不存、沒有任何 console、回應 `cache-control: no-store`。
+  - 限制：Origin 要完全符合 ALLOWED_ORIGINS（不符合 403、沒有 CORS 標頭，預檢也一樣）；回呼網址只能是那個來源的根目錄；code 的格式與長度、內容上限 4 KB。沒有頻率限制（協調 session：Origin＋code 一次性已足夠）。
+  - 錯誤只回類別：`not_configured`（404，沒有 client_id 或 secret）、`origin`、`invalid_request`、`invalid_code`（Intervals.icu 拒絕，例如過期或用過）、`upstream`（連不上或回壞的）；不轉送 Intervals.icu 的原文。
+- 網頁（`apps/web/src/intervals-login.ts`、`views/IntervalsLogin.tsx`）：
+  - 「用 Intervals.icu 登入」→ `https://intervals.icu/oauth/authorize?client_id=…&redirect_uri=<網站的根目錄>&response_type=code&scope=ACTIVITY:READ,WELLNESS:READ,SETTINGS:READ&state=<隨機>`；state 與從哪裡按的（精靈或設定）存在 sessionStorage。
+  - 回來時：`main.tsx` 在任何請求之前讀走網址上的 code、state（與 error）並用 `history.replaceState` 清掉；state 對不上的不換。網站的 Referrer-Policy 本來就是 `no-referrer`。精靈從「紀錄從哪裡來？」繼續；從設定按的打開設定的「訓練紀錄」。在 Intervals.icu 按不同意、state 對不上、換不到 token 時寫看得懂的錯誤。
+  - token 存在設定的 `intervals.accessToken` 與 `intervals.account`（Intervals.icu 的選手 id 與名字），密碼鎖的 Secrets 多一個 `intervalsToken`（和 API key 一樣加密）；不同步；這台從同步被移除時一起清掉。登入的優先於 API key：`IntervalsClient` 帶 `Authorization: Bearer`，選手用換 token 時拿到的 id。
+  - 「中斷連結」：瀏覽器直接送 `DELETE https://intervals.icu/api/v1/disconnect-app`（Bearer），再刪掉這台的 token；呼叫失敗（網路或 CORS）也照樣刪，並請使用者到 Intervals.icu 的設定頁移除 Zone2Mate。
+  - 這次建置有 `VITE_INTERVALS_CLIENT_ID` 與同步服務的網址時按鈕才出現（範例裡不出現）；這時設定的「訓練紀錄」把貼 API key 收進「進階」，精靈的是「用 API key 連接（進階）」。沒有設定時和原本一樣（正式版在使用者設定好之前不受影響）。
+- 權限範圍與端點（依論壇與第三方的說明，還沒以真實帳號確認）：`/athlete/{id}`（運動設定、閾值）要 SETTINGS:READ；`/athlete/{id}/activities`、`/athlete/{id}/pace-curves.json` 要 ACTIVITY:READ；`/athlete/{id}/wellness` 要 WELLNESS:READ。ATHLETES 範圍（論壇說對 Bearer 會 403）不用。
+- CORS：這個雲端 session 連不到 intervals.icu，沒有實際打。間接的證據：正式版本來就由瀏覽器直接帶 `Authorization: Basic` 呼叫 Intervals.icu，Bearer 是同一個標頭、預檢一樣，所以讀取應該可以；不確定的是 DELETE（disconnect-app）的預檢，失敗時用上面的退路。換 token 由 Worker 呼叫，不受 CORS 影響。
+- 設定（使用者要做的，步驟見回報與 9.4）：Variables 的 `INTERVALS_CLIENT_ID`／`STAGING_INTERVALS_CLIENT_ID`，Secrets 的 `INTERVALS_CLIENT_SECRET`／`STAGING_INTERVALS_CLIENT_SECRET`。workflow：client_id 在部署同步服務時寫進 wrangler.toml 的 var（`tools/sync-config.ts`），建置網頁時是 `VITE_INTERVALS_CLIENT_ID`；client_secret 在部署同步服務後用 `wrangler secret put` 從 stdin 寫入，不印出（沒有 secret 時只出警告）。回呼網址：`https://staging.zone2mate.com/`、`https://app.zone2mate.com/`。
+- 模擬上游：`/intervals/oauth/authorize`（直接帶 code 轉回）、`/intervals/api/oauth/token`（client_secret 要對、code 只能用一次）、`/intervals/disconnect-app`、`/sync/v1/intervals/token`（同一份程式）；Bearer 讀的端點記下來，中斷連結之後 token 不能再用。
+- 隱私說明（這次建置有登入時才出現）：登入時授權碼經過同步服務轉送一次、不保存；token 只存在裝置；之後瀏覽器直接讀；中斷連結的方式。使用說明「連接 Intervals.icu」加上登入與中斷連結。
+- 驗證：
+  - 單元測試：`apps/sync/test/intervals-token.test.ts`（成功時轉送的內容與回應、來源不對與預檢、沒有設定、格式與回呼網址與大小、Intervals.icu 拒絕或連不上、不透露原文、沒有任何 console 輸出、路徑）；`apps/web/test/intervals-login.test.ts`（回呼：state 對得上、清掉網址、對不上、拒絕、不是回呼；權限只有讀；換 token 的請求與錯誤文字；中斷連結帶 Bearer、失敗回 false）；`tools/test/sync-config.test.ts`（client_id 有設定才填、格式）。
+  - E2E `tools/e2e/verify-intervals-login.cjs`（自己建置一份，4181 埠）：精靈裡登入（API key 收在進階、授權頁收到的參數、回來時網址已清掉、只換一次、token 存在這台、用 Bearer 讀到活動、恢復資料與設定、用的是換 token 時的選手）→ 設定裡中斷連結（Intervals.icu 收到、token 刪掉、狀態變回「還沒連接」）；設定頁：按不同意、state 對不上（不換、網址清掉）、登入成功、密碼鎖開了以後 token 加密、解鎖後仍是登入的。`verify-wizard.cjs` 的建置沒有 client_id，檢查沒有登入的按鈕。
+- 沒做的：OpenRouter 登入、代理與帳號、推課表到手錶（工作單的「不做」）；配對時帶 token（12.35 的 C，協調 session：之後一起處理）；「去拿 key」的截圖（等使用者提供）。
+- 使用者要做的設定（沒做之前按鈕不出現，其他照舊）：
+  1. 在 Intervals.icu 建一個 OAuth 的 App：登入 Intervals.icu → Settings → Developer Settings 找建立 OAuth App 的地方（這個雲端 session 看不到 Intervals.icu 的畫面與論壇；沒有這個選項的話，照論壇「Intervals.icu OAuth support」的說明向作者申請）。名稱填 Zone2Mate；回呼網址（Redirect URI）兩個都登記：`https://staging.zone2mate.com/`、`https://app.zone2mate.com/`（結尾的 `/` 要有）；權限（scope）勾或寫 ACTIVITY:READ、WELLNESS:READ、SETTINGS:READ（只要讀）。建好後記下 client_id 與 client_secret（secret 不要貼進對話或 repo）。
+  2. GitHub repo → Settings → Secrets and variables → Actions：
+     - Variables：`STAGING_INTERVALS_CLIENT_ID`（staging）、`INTERVALS_CLIENT_ID`（正式），值是 client_id。
+     - Secrets：`STAGING_INTERVALS_CLIENT_SECRET`、`INTERVALS_CLIENT_SECRET`，值是 client_secret。用同一個 App 的話兩組的值一樣。
+  3. 請協調 session 執行一次「Deploy staging」（分支 `v2`），或下一次推 `v2` 時自動部署；之後打開 staging 的設定 →「訓練紀錄」應該有「用 Intervals.icu 登入」。正式版要等合併部署後才有（正式的同步服務與網頁版那時才會讀這兩個設定）。
+- 在 staging 實測的清單：(1) 第一次登入：到 Intervals.icu 的同意頁、權限只有讀、回到 staging 後顯示「已用 Intervals.icu 登入：名字」、網址上沒有 code；(2) 同步最近 14 天讀到活動與恢復資料；(3) 我的數字裡有 Intervals.icu 的設定（閾值、區間）——也就是用 Bearer 讀 `/athlete/{id}` 不需要 SETTINGS:READ 以外的範圍；(4) 中斷連結：沒有出現「Intervals.icu 沒有回應」的提示（代表 DELETE 的 CORS 也可以），Intervals.icu 的設定裡 Zone2Mate 不見了；(5) 有問題時把畫面上的錯誤告訴協調 session。

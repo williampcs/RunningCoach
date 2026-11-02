@@ -32,9 +32,10 @@ import { useDeviceSync } from "./device-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { DEMO, DEMO_DB_FILE } from "./demo";
 import { wizardStart, type WizardStep } from "./wizard";
+import { peekLoginCallback } from "./intervals-login";
 import { Wizard } from "./views/Wizard";
 import { DemoBanner, DemoSettings } from "./views/Demo";
-import { buildProvider, defaultSettings, forgetLockedSecrets, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
+import { buildProvider, defaultSettings, forgetLockedSecrets, intervalsConnected, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
 import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
@@ -150,12 +151,12 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
     // 測試模式只用假資料，完全不連線 Intervals.icu
     activities: test.enabled
       ? new FakeActivitySource(testActivities(test), today, testWellness(test), testRunSettings(test))
-      : new IntervalsClient({
-          apiKey: settings.intervals.apiKey.trim(),
-          athleteId: settings.intervals.athleteId.trim(),
-          today,
-          baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL,
-        }),
+      : new IntervalsClient(
+          // 用 Intervals.icu 登入的（規格 12.37）帶 Bearer，選手是換 token 時拿到的那個；否則照舊用 API key
+          settings.intervals.accessToken
+            ? { accessToken: settings.intervals.accessToken, athleteId: settings.intervals.account?.id ?? "", today, baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL }
+            : { apiKey: settings.intervals.apiKey.trim(), athleteId: settings.intervals.athleteId.trim(), today, baseUrl: import.meta.env.VITE_INTERVALS_BASE_URL },
+        ),
     weather: settings.weather
       ? new OpenMeteoWeather({
           place: settings.weather,
@@ -388,7 +389,7 @@ export function App() {
         ...current,
         apiKey: "",
         proxy: { ...current.proxy, token: "" },
-        intervals: { ...current.intervals, apiKey: "" },
+        intervals: { ...current.intervals, apiKey: "", accessToken: "", account: null },
         sync: { ...current.sync, key: "" },
       };
       try {
@@ -425,7 +426,7 @@ export function App() {
   }, []);
   const [removed, setRemoved] = useState(removedHere);
 
-  const activitiesReady = testMode.enabled || settings.intervals.apiKey.trim() !== "";
+  const activitiesReady = testMode.enabled || intervalsConnected(settings);
 
   // 手機把 App 放在背景、隔天再打開時，頁面不會重新載入：回到前景與跨日時重新讀取，
   // 恢復資料（手錶早上才同步的靜息心率、HRV、睡眠）過期時也重新取得（只讀取，不花 LLM 的費用）
@@ -514,6 +515,11 @@ export function App() {
       toast,
     };
   }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
+
+  // 從 Intervals.icu 登入回來（規格 12.37）：精靈以外按的，打開設定的「訓練紀錄」，在那裡換 token
+  useEffect(() => {
+    if (state && wizard === null && peekLoginCallback()) openSettings("records");
+  }, [state, wizard, openSettings]);
 
   // 從配對連結打開：直接打開設定，到同步那一項
   useEffect(() => {

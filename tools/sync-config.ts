@@ -6,6 +6,7 @@
  *   DATABASE_NAME   D1 資料庫的名稱（選填，預設照 wrangler.toml）
  *   DATABASE_ID     D1 資料庫的 id（必填）
  *   WEB_URLS        允許連線的網頁網址，以空白或逗號分隔（必填，至少一個；只取來源）
+ *   INTERVALS_CLIENT_ID  用 Intervals.icu 登入的 client_id（選填，規格 12.37；client_secret 由 workflow 另外用 wrangler secret 寫入）
  *
  * 允許的來源設錯，那個網址的同步就會失敗：網址不是 https、沒有任何網址、wrangler.toml 的格式和預期不同時
  * 直接失敗、不部署，正式的同步服務維持上一次的設定.
@@ -18,6 +19,7 @@ export interface SyncDeployConfig {
   databaseName?: string;
   databaseId: string;
   webUrls: string;
+  intervalsClientId?: string;
 }
 
 /** 網址轉成去掉重複的來源（https://host）；有任何一個不是 https 的網址就失敗 */
@@ -46,6 +48,7 @@ export function fillWranglerToml(toml: string, config: SyncDeployConfig): string
     if (name && !NAME.test(name)) throw new Error(`名稱只能有小寫英文、數字與 -：${name}`);
   }
   const origins = allowedOrigins(config.webUrls).join(",");
+  if (config.intervalsClientId && !/^[A-Za-z0-9._-]{1,200}$/.test(config.intervalsClientId)) throw new Error("Intervals.icu 的 client_id 格式不對");
   const replace = (text: string, pattern: RegExp, line: string | undefined): string => {
     if (line === undefined) return text;
     const matches = text.match(new RegExp(pattern.source, "gm"));
@@ -57,6 +60,7 @@ export function fillWranglerToml(toml: string, config: SyncDeployConfig): string
   out = replace(out, /^database_name = ".*"$/, config.databaseName && `database_name = "${config.databaseName}"`);
   out = replace(out, /^database_id = ""$/, `database_id = "${config.databaseId}"`);
   out = replace(out, /^ALLOWED_ORIGINS = ""$/, `ALLOWED_ORIGINS = "${origins}"`);
+  out = replace(out, /^INTERVALS_CLIENT_ID = ""$/, config.intervalsClientId && `INTERVALS_CLIENT_ID = "${config.intervalsClientId}"`);
   return out;
 }
 
@@ -69,11 +73,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       databaseName: env.DATABASE_NAME || undefined,
       databaseId: env.DATABASE_ID ?? "",
       webUrls: env.WEB_URLS ?? "",
+      intervalsClientId: env.INTERVALS_CLIENT_ID?.trim() || undefined,
     };
     writeFileSync(path, fillWranglerToml(readFileSync(path, "utf8"), config));
     // 只印公開的網址；D1 的 id 不印（Actions 的紀錄在公開的 repo 看得到）
     console.log(`Worker：${config.workerName ?? "（照 wrangler.toml）"}`);
     console.log(`允許的網頁來源：${allowedOrigins(config.webUrls).join(" ")}`);
+    // client_id 是公開的（網頁的授權網址裡也有），只印有沒有設定
+    console.log(`Intervals.icu 登入：${config.intervalsClientId ? "有設定 client_id" : "沒有設定"}`);
   } catch (e) {
     console.error(`::error::${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
