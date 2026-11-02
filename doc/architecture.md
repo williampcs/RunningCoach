@@ -101,7 +101,7 @@ flowchart TB
   end
   subgraph data["資料"]
     db["db.ts<br/>schema、migration、所有 SQL"]
-    acts["activities.ts<br/>不分來源的紀錄、來源原始資料的轉換"]
+    acts["activities.ts / load.ts<br/>不分來源的紀錄、來源原始資料的轉換；負荷與體能疲勞"]
     sync["sync.ts / history-import.ts / dedupe.ts<br/>從 Intervals.icu 同步、匯入、去重"]
     ds["device-sync/<br/>多裝置同步：加密、配對、合併"]
     icu["intervals.ts<br/>Intervals.icu 的 API"]
@@ -207,6 +207,7 @@ erDiagram
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
 - `activity_summaries`：騎車的 AI 分析（騎後分析，schema 16，規格 12.31）。和體感一樣另外存、用 `intervals_id` 對應；用跑後摘要的模型，存了騎車的體感（回報、補填、教練的 `save_activity_feedback`）或按「請教練分析」時產生（`ride-analysis.ts`）。
 - **不分來源的紀錄**（`activities.ts`，規格 12.37「不分來源的核心」）：跑步（`workouts`）與其他運動（`other_activities`，含 `activity_feedback`、`activity_summaries`）在 `Db.getActivities(days, { sports })` 合成同一個格式 `ActivityRecord`（運動、來源 `intervals`／`manual`／`strava`／`fake`／`import`、日期、時間、距離、心率、配速、體感、分析）。來源的原始資料 `raw_json` 只在 `detailsOf` 裡解讀，轉成 `SourceDetails`（開始時間、經過時間、心率區間的時間與閾值心率、Intervals.icu 算好的負荷與體能疲勞、功率、氣溫）；去重、強度分配、比對課表、騎車的數字、天氣、比賽成績都讀 `SourceDetails`，不自己 parse。資料表這一版不變：搬成一張表的時機與步驟見規格 12.37 的「實作」。之後加一個來源（Apple 健康、FIT 檔）只要寫一個轉換。
+- **負荷與體能疲勞**（`load.ts`，規格 12.37）：每一趟的負荷有 Intervals.icu 算好的就用，沒有時依心率（hrSS）、配速（rTSS，只有跑步）或體感估，都是 TSS 的尺度；體能（42 天）與疲勞（7 天）是每天負荷合計的指數平均，有 Intervals.icu 的值時照舊用它的。估負荷的依據（各運動量到的最大心率與閾值心率、靜止心率、閾值配速）由 `training-values.ts` 的 `loadContextOf` 組好，放在 `TrainingValues.loadContext`，紀錄卡片與檢查器用同一份。都是算出來的，不存進資料庫。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
 - `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。

@@ -96,6 +96,8 @@ const localDate = (offsetDays = 0) => new Date(Date.now() + 8 * 3600_000 + offse
       await result.locator(".run-summary").waitFor({ timeout: 20000 });
       c("firstSaved", (await result.innerText()).includes("沒有心率資料"));
       c("firstPace", (await result.innerText()).includes("7:00"));
+      // 負荷由我們依體感估，標明是估的（規格 12.37）
+      c("firstLoadEstimated", /負荷 \d+（依體感估）/.test(await result.innerText()));
       c("formCleared", (await report.getByLabel("距離（km）").inputValue()) === "");
       await shot("4-report-saved");
 
@@ -116,6 +118,8 @@ const localDate = (offsetDays = 0) => new Date(Date.now() + 8 * 3600_000 + offse
       const planText = await page.locator("main").innerText();
       c("planTalkTest", planText.includes("體感 2–4/10"));
       c("planNoHr", !/心率/.test(planText));
+      // 負荷變成有值之後，檢查器不出現負荷或體能的提醒（那些規則只給練騎車的人）
+      c("planNoLoadWarning", !/負荷|體能/.test(planText));
       await shot("5-plan-rpe");
 
       step = "填 5 km 的個人最佳：目標變成配速＋說話測試";
@@ -173,6 +177,24 @@ const localDate = (offsetDays = 0) => new Date(Date.now() + 8 * 3600_000 + offse
       await E2E.profile(page);
       const numbers = await page.locator(".my-numbers").innerText();
       c("myNumbersEasyPace", numbers.includes("輕鬆 /km") && !numbers.includes("輕鬆跑上限"));
+      // 體能與疲勞由我們算（沒有 Intervals.icu），標「估計值」
+      await page.locator(".my-numbers-head").click();
+      const full = page.locator(".card.training-values");
+      await full.waitFor();
+      const fullText = await full.innerText();
+      c("myNumbersFitnessEstimated", /體能 \d+\.\d · 疲勞 \d+\.\d/.test(fullText) && fullText.includes("估計值"));
+      await shot("9-values-estimated");
+
+      step = "教練看到的訓練數值：負荷與體能疲勞是我們估的";
+      await E2E.go(page, "對話");
+      await page.getByLabel("訊息").fill("我的強度分配怎麼樣？");
+      await page.getByLabel("訊息").press("Enter");
+      // 模擬的教練呼叫 get_training_values 後把結果當成回覆
+      await page.getByText("【體能與疲勞】我們估的").last().waitFor({ timeout: 20000 });
+      const valuesRequests = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm");
+      const lastBody = JSON.stringify(valuesRequests.at(-1)?.body ?? valuesRequests.at(-1) ?? "");
+      c("coachFitnessEstimated", lastBody.includes("【體能與疲勞】我們估的"));
+      c("coachLoadNote", lastBody.includes("沒有的依心率、配速或體感估"));
       c("noOverflow", await noOverflow());
     } catch (e) {
       problems.push(`[${tag} ${step}] ${e.message.split("\n")[0]}`);

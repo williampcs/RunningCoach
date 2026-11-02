@@ -4,6 +4,7 @@ import {
   durationText,
   formatPace,
   HR_SOURCE_LABELS,
+  loadCountsText,
   predictSecs,
   type TrainingValues,
 } from "@running-coach/core";
@@ -190,7 +191,17 @@ export function TrainingValuesCard() {
       {fitness && (
         <p className="small">
           體能 {fitness.ctl.toFixed(1)} · 疲勞 {fitness.atl.toFixed(1)} · 狀態 {(fitness.ctl - fitness.atl).toFixed(1)}
-          <span className="muted"> · Intervals.icu {fitness.date.slice(5).replace("-", "/")}</span>
+          {fitness.source === "estimate" ? (
+            <>
+              <span className="muted"> · 估計值</span>
+              <InfoTip label="體能與疲勞怎麼算">
+                沒有 Intervals.icu 的數字，由每一趟的負荷算（體能是 42 天、疲勞是 7 天的平均）。負荷依心率、配速或體感估，看趨勢就好。
+                {fitness.counts ? `（${loadCountsText(fitness.counts)}）` : ""}
+              </InfoTip>
+            </>
+          ) : (
+            <span className="muted"> · Intervals.icu {fitness.date.slice(5).replace("-", "/")}</span>
+          )}
         </p>
       )}
       <p className="small muted row">

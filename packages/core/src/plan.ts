@@ -9,6 +9,7 @@
  *   是「不能保留」的（blocking），寫理由也不能存。
  */
 import { detailsOf } from "./activities";
+import { loadOf, type LoadInput } from "./load";
 import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
@@ -1006,9 +1007,13 @@ function checkRides(
   if (!cycling) return;
 
   // 這週的負荷：今天以前做過的加上今天起排的（跳過的不算）
-  const doneLoad = [...ctx.workouts, ...ctx.others]
-    .filter((w) => w.date >= ctx.weekStart && w.date < ctx.today && w.date <= weekEnd)
-    .reduce((sum, w) => sum + (w.training_load ?? 0), 0);
+  // 負荷：Intervals.icu 的，沒有的用我們估的（load.ts，規格 12.37）
+  const loadCtx = ctx.values.loadContext;
+  const done = [...ctx.workouts.map((w) => ({ a: w as LoadInput & { date: string }, sport: "run" })), ...ctx.others.map((a) => ({ a: a as LoadInput & { date: string }, sport: sportOfType(a.type) }))];
+  const loadOfItem = ({ a, sport }: (typeof done)[number]) => (loadCtx ? loadOf(a, sport, loadCtx)?.value ?? 0 : a.training_load ?? 0);
+  const doneLoad = done
+    .filter(({ a }) => a.date >= ctx.weekStart && a.date < ctx.today && a.date <= weekEnd)
+    .reduce((sum, item) => sum + loadOfItem(item), 0);
   const plannedLoad = sessions.filter((s) => !s.date || s.date >= ctx.today).reduce((sum, s) => sum + sessionLoad(s, ctx), 0);
   const weekLoad = doneLoad + plannedLoad;
 
@@ -1023,7 +1028,7 @@ function checkRides(
 
   // 恢復週：每 3–4 週一週，量減約 30–40%
   const loadOfWeek = (start: string) =>
-    [...ctx.workouts, ...ctx.others].filter((w) => w.date >= start && w.date <= addDays(start, 6)).reduce((sum, w) => sum + (w.training_load ?? 0), 0);
+    done.filter(({ a }) => a.date >= start && a.date <= addDays(start, 6)).reduce((sum, item) => sum + loadOfItem(item), 0);
   const past = [1, 2, 3].map((n) => loadOfWeek(addDays(ctx.weekStart, -7 * n)));
   const peak = Math.max(...past);
   if (past.every((l) => l > 0) && Math.min(...past) > peak * RIDE_RULES.recoveryLighter && weekLoad >= peak * RIDE_RULES.recoveryNear) {

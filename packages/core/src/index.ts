@@ -19,6 +19,7 @@ export {
   type UsageStats,
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
+export { DEFAULT_REST_HR, estimateLoad, FITNESS_DAYS, fitnessSeries, hrLoad, LOAD_SOURCE_LABELS, loadCountsText, loadOf, loadText, paceLoad, RPE_INTENSITY, rpeLoad, type FitnessPoint, type HrBasis, type Load, type LoadContext, type LoadCounts, type LoadInput, type LoadSource } from "./load";
 export { byNewest, detailsOf, recordOfOther, recordOfWorkout, wellnessFitnessOf, type ActivityRecord, type ActivitySourceKind, type SourceDetails } from "./activities";
 export { Db, manualPace, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type ManualWorkoutInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
@@ -196,6 +197,8 @@ export {
 } from "./sports";
 export {
   computeTrainingValues,
+  estimatedFitness,
+  loadContextOf,
   danielsPaces,
   distanceText,
   durationText,
