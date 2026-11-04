@@ -11,7 +11,7 @@ import {
   type ReplyRef,
 } from "@running-coach/core";
 
-import { Archive, X } from "lucide-react";
+import { Archive, Square, X } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
@@ -192,6 +192,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   const bottom = useRef<HTMLDivElement>(null);
   // 以 ref 同步判斷是否送出中：state 要到下次 render 才更新，擋不住同一輪內的重複觸發
   const busy = useRef(false);
+  // 停止回覆（規格 12.38）：這次送出的 AbortController
+  const abort = useRef<AbortController | null>(null);
 
   // 文字片段很密集，每個畫面更新一次就好
   const showDraft = useCallback(() => {
@@ -311,12 +313,16 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       setSendingReply(reply);
       setError(null);
       setFooter("");
+      const controller = new AbortController();
+      abort.current = controller;
       try {
-        const { stats } = await coach.chat(content, onEvent, { replyTo: reply });
+        const { stats } = await coach.chat(content, onEvent, { replyTo: reply, signal: controller.signal });
         setFooter(formatTokenFooter(stats));
       } catch (e) {
-        setError(errorText(e));
+        // 停止不是錯誤：教練那則已經存成「（已停止）」
+        if (!controller.signal.aborted) setError(errorText(e));
       } finally {
+        abort.current = null;
         await load();
         busy.current = false;
         clearDraft();
@@ -542,9 +548,17 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           )}
           {/* Enter 送出、Shift+Enter 換行，輸入法選字時不送出；平常一行高，打字時長高到 6 行 */}
           <AutoGrowTextarea enter="send" value={input} placeholder="輸入訊息…" aria-label="訊息" onChange={(e) => setInput(e.target.value)} />
-          <button type="submit" className="primary" disabled={sending !== null || !input.trim()}>
-            送出
-          </button>
+          {sending !== null ? (
+            // 回覆進行中：送出鈕變成停止（不再等模型、不開始下一輪；正在執行的工具會做完）
+            <button type="button" className="stop-button" onClick={() => abort.current?.abort()}>
+              <Icon as={Square} />
+              停止
+            </button>
+          ) : (
+            <button type="submit" className="primary" disabled={!input.trim()}>
+              送出
+            </button>
+          )}
         </form>
       )}
       {/* 精簡版的使用須知一直顯示在輸入框下方（規格 12.32） */}

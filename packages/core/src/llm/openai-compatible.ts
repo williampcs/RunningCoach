@@ -113,6 +113,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${options.apiKey}` },
           body: JSON.stringify(body),
+          signal: opts.signal,
         });
         if (!response.ok) {
           throw new OpenAICompatibleError(response.status, await errorMessage(response));

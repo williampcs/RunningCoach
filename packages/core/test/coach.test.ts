@@ -138,7 +138,7 @@ describe("Coach.chat", () => {
       turn({ text: "好了" }),
     ]);
     await coach.chat("一");
-    // 手動填寫的文字課表（網頁版、Discord 的 /plan）
+    // 文字課表（Discord 的 /plan、從其他 AI 帶入）
     await coach.savePlanForThisWeek("週二間歇、週日長跑");
     await coach.chat("二");
 

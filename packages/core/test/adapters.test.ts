@@ -45,6 +45,11 @@ const anthropicSse = (events: Record<string, unknown>[]) =>
 const openaiSse = (chunks: unknown[], eol = "\n") =>
   new Sse([...chunks.map((c) => JSON.stringify(c)), "[DONE]"].map((d) => `data: ${d}${eol}${eol}`).join(""));
 
+/** 送出一段 SSE 後就不再送、也不結束（測試停止：要靠中斷才會結束） */
+class Hang {
+  constructor(readonly body: string) {}
+}
+
 /** 依序回覆預先寫好的 JSON 或 SSE，並記錄收到的 request */
 async function mockApi(responses: unknown[]) {
   const captured: Captured[] = [];
@@ -57,6 +62,11 @@ async function mockApi(responses: unknown[]) {
       if (response instanceof HttpError) {
         res.writeHead(response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(response.body));
+        return;
+      }
+      if (response instanceof Hang) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(response.body);
         return;
       }
       if (response instanceof Sse) {
@@ -563,5 +573,33 @@ describe("OpenAICompatibleProvider", () => {
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(OpenAICompatibleError);
     expect(error).toMatchObject({ status: 401, message: "401 Incorrect API key provided" });
+  });
+});
+
+describe("停止回覆（規格 12.38）：中斷正在串流的呼叫", () => {
+  it("Claude 與 OpenAI 相容：signal 中斷後 next() 丟出，不再等", async () => {
+    const claudeStart = [
+      { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "部分" } },
+    ];
+    const openaiStart = [{ choices: [{ index: 0, delta: { role: "assistant", content: "部分" }, finish_reason: null }] }];
+    for (const kind of ["claude", "openai"] as const) {
+      const body =
+        kind === "claude"
+          ? claudeStart.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("")
+          : openaiStart.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("");
+      const { baseURL } = await mockApi([new Hang(body)]);
+      const provider = kind === "claude" ? new AnthropicProvider({ apiKey: "k", baseURL }) : new OpenAICompatibleProvider({ apiKey: "k", baseURL });
+      const session = provider.startChat({ model: kind === "claude" ? "claude-opus-5-5" : "m", messages: [{ role: "user", content: "hi" }], tools, maxTokens: 100, effort: "low" });
+      const controller = new AbortController();
+      const texts: string[] = [];
+      const pending = session.next({ onText: (t) => (texts.push(t), controller.abort()), signal: controller.signal });
+      await expect(pending).rejects.toThrow();
+      expect(texts).toEqual(["部分"]);
+      server?.closeAllConnections();
+      server?.close();
+      server = undefined;
+    }
   });
 });

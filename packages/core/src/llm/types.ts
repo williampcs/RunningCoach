@@ -91,6 +91,8 @@ export interface NextOptions {
   onToolStart?: (name: string) => void;
   /** 自動再送一次之前（例如 strict 的工具不被接受，拿掉 strict 重送） */
   onRetry?: () => void;
+  /** 選手按了停止（規格 12.38）：中斷這次呼叫，丟出錯誤 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -158,5 +160,6 @@ export class Usage {
 export interface LlmResult {
   text: string;
   usage: Usage;
-  finish: "ok" | "refused" | "truncated";
+  /** stopped：選手按了停止（規格 12.38），text 是那次呼叫已經寫出的部分 */
+  finish: "ok" | "refused" | "truncated" | "stopped";
 }

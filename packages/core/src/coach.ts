@@ -11,6 +11,7 @@ import type { SelfChange, SelfChangeReason } from "./plan";
 import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
 import { Db, type ManualWorkoutInput } from "./db";
+import { stoppedReply } from "./stopped";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
@@ -64,6 +65,8 @@ export interface ChatReply {
   stats: UsageStats;
   /** 回覆前讀過的資料（例如「訓練數值」「最近 14 天的訓練」），由實際呼叫的工具產生 */
   sources: string[];
+  /** 選手按了停止 */
+  stopped?: boolean;
 }
 
 export type RunReport =
@@ -303,7 +306,7 @@ export class Coach {
    * 提供 onEvent 時以串流方式呼叫模型並回報進度；回覆仍在完成後才寫入對話紀錄。
    * replyTo：選手回覆的那一則（教練會看到它的時間與前段文字）
    */
-  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void, options: { replyTo?: ReplyRef | null } = {}): Promise<ChatReply> {
+  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void, options: { replyTo?: ReplyRef | null; signal?: AbortSignal } = {}): Promise<ChatReply> {
     const rt = this.runtime;
     await this.db.appendConversation("user", userMessage, [], options.replyTo ?? null);
     // 手錶早上才同步的靜息心率、HRV 與睡眠，對話前先取得，教練才不會拿昨天的資料當今天的
@@ -322,14 +325,16 @@ export class Coach {
     };
     let result;
     try {
-      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings, { weather: rt.weather !== null }), executeTool, onEvent);
+      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings, { weather: rt.weather !== null }), executeTool, onEvent, options.signal);
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
 
     let reply = result.text;
-    if (result.finish === "refused") reply = REFUSED_REPLY;
+    // 停止（規格 12.38）：已經寫出的部分＋（已停止）＋已經做的寫入
+    if (result.finish === "stopped") reply = stoppedReply(result.text, calls.map((c) => c.name));
+    else if (result.finish === "refused") reply = REFUSED_REPLY;
     else if (!result.text.trim()) reply = EMPTY_REPLY;
 
     const sources = sourcesOf(calls);
@@ -344,6 +349,7 @@ export class Coach {
         usage: result.usage,
       },
       sources,
+      stopped: result.finish === "stopped",
     };
   }
 

@@ -5,7 +5,7 @@
 // - 不舒服的三種結果：在選部位那一步「先不用」（照改過的上＋記下部位和分數的提示）、3 分以下（照改過的上）、超過 3 分（先不要做，課卡也標）
 // - 測試模式塞進過去 6 週的課表：「之前的週」6 週、各種結果（達成、部分達成、跳過、改用替代、沒做、自己改過）、教練的系統提示有最近 4 週的摘要；
 //   清掉後沒有；停用測試模式後真的資料庫的計畫頁沒有「之前的週」
-// 電腦深色（OpenAI 相容）：工具呼叫前的文字；舊的文字課表（從其他 AI 帶入）唯讀、「請教練改成可以追蹤的課表」
+// 電腦深色（OpenAI 相容）：工具呼叫前的文字；停止（思考中、串流到一半、存了課表之後；不顯示錯誤、再問一次正常）；舊的文字課表（從其他 AI 帶入）唯讀、「請教練改成可以追蹤的課表」
 // 截圖：staging-fixes-*；不左右捲動
 // 這個腳本自己建置一份（4182 埠：testmode、Anthropic 指向模擬上游，Claude 的串流才是真的逐段到）；只需要 npm run dev:mock。
 const { execFileSync, spawn } = require("node:child_process");
@@ -340,6 +340,61 @@ const PRE_TOOL = "Let me remove the session first.";
       await plan.getByRole("button", { name: "請教練改成可以追蹤的課表" }).click();
       await waitReply(page, "可以追蹤的課表");
       c("convertSent", true);
+
+      step = "停止：思考中";
+      const stopButton = page.getByRole("button", { name: "停止" });
+      const lastReply = () => page.locator(".msg.assistant .bubble.assistant").last().innerText();
+      const ask = async (text) => {
+        await E2E.go(page, "對話");
+        await page.getByLabel("訊息").fill(text);
+        await page.getByLabel("訊息").press("Enter");
+      };
+      await ask("想久一點");
+      await stopButton.waitFor();
+      c("stopInsteadOfSend", (await page.getByRole("button", { name: "送出" }).count()) === 0);
+      await page.screenshot({ path: `${E2E.OUT}/staging-fixes-stop-button-1280-dark.png` });
+      await stopButton.click();
+      await waitReply(page, "想久一點");
+      c("stoppedThinking", (await lastReply()).trim() === "（已停止）");
+      c("stopNoError", (await page.locator(".notice.error").count()) === 0);
+      c("sendBack", (await page.getByRole("button", { name: "送出" }).count()) === 1);
+
+      step = "停止：串流到一半";
+      await ask("詳細說明一下");
+      await page.locator(".bubble.assistant.streaming").waitFor({ timeout: 10000 });
+      await page.waitForTimeout(800);
+      await stopButton.click();
+      await waitReply(page, "詳細說明一下");
+      const partial = await lastReply();
+      c("stoppedPartial", partial.includes("（已停止）") && partial.replace("（已停止）", "").trim().length > 0);
+      c("stopNoError2", (await page.locator(".notice.error").count()) === 0);
+
+      step = "停止：存了課表之後";
+      const before = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm").length;
+      await ask("幫我排這週的課表");
+      // 等第二輪（帶著工具的結果）送出：課表已經存了，模型還在想
+      for (let i = 0; i < 100; i++) {
+        const list = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm");
+        const last = list.at(-1)?.body;
+        if (list.length > before && (last?.messages ?? []).some((m) => m.role === "tool")) break;
+        await page.waitForTimeout(50);
+      }
+      await stopButton.click();
+      await waitReply(page, "幫我排這週的課表");
+      const afterTool = await lastReply();
+      c("stoppedAfterTool", afterTool.includes("（已停止）") && afterTool.includes("已經做的：存了課表") && afterTool.includes("到「計畫」看"));
+      c("stopNoError3", (await page.locator(".notice.error").count()) === 0);
+      await page.screenshot({ path: `${E2E.OUT}/staging-fixes-stopped-1280-dark.png` });
+      await E2E.go(page, "計畫");
+      c("planKept", await page.locator(".plan-card .timeline").waitFor({ timeout: 10000 }).then(() => true, () => false));
+
+      step = "停止後再問一次";
+      await send(page, "再問一次");
+      c("askAgain", !(await lastReply()).includes("（已停止）") && (await page.locator(".notice.error").count()) === 0);
+      // 送給模型的歷史：停止的那則是教練的訊息，沒有連著兩則選手的
+      const reqs = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm");
+      const roles = (reqs.at(-1).body.messages ?? []).filter((m) => m.role !== "system").map((m) => m.role);
+      c("historyAlternates", roles.every((r, i) => i === 0 || !(r === "user" && roles[i - 1] === "user")));
     } catch (e) {
       problems.push(`[desktop ${step}] ${e.message.split("\n")[0]}`);
       await page.screenshot({ path: `${E2E.OUT}/staging-fixes-fail-1280-dark.png` }).catch(() => {});
