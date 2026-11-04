@@ -115,7 +115,9 @@ export class Llm {
       effort: this.config.chatEffort,
     });
 
-    const stream = onEvent ? { onText: (text: string) => onEvent({ type: "text", text }) } : {};
+    const stream = onEvent
+      ? { onText: (text: string) => onEvent({ type: "text", text }), onToolStart: (name: string) => onEvent({ type: "preparing", name }) }
+      : {};
 
     onEvent?.({ type: "thinking" });
     let turn = await session.next(stream);

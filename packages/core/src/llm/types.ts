@@ -87,6 +87,8 @@ export interface NextOptions {
   disableTools?: boolean;
   /** 提供時以串流方式呼叫，回覆文字一產生就交給它；回傳的 Turn 與非串流時相同 */
   onText?: (text: string) => void;
+  /** 串流時，模型開始寫工具呼叫（還沒寫完參數）就交給它工具的名稱；這次呼叫先前的文字不是最終回覆 */
+  onToolStart?: (name: string) => void;
 }
 
 /**
@@ -101,9 +103,10 @@ export interface ChatSession {
  * 主對話的進度，供介面即時顯示；不影響結果。
  * - thinking：開始一次模型呼叫，在第一段文字出現前模型在思考
  * - text：這次模型呼叫產生的文字片段
+ * - preparing：模型開始寫工具呼叫（參數還在寫，例如整週的課表要幾秒）；這次模型呼叫先前產生的文字不是最終回覆
  * - tool：開始執行工具；這次模型呼叫先前產生的文字不是最終回覆
  */
-export type ChatEvent = { type: "thinking" } | { type: "text"; text: string } | { type: "tool"; name: string };
+export type ChatEvent = { type: "thinking" } | { type: "text"; text: string } | { type: "preparing"; name: string } | { type: "tool"; name: string };
 
 export interface LlmProvider {
   /** 供 /status 顯示：該模型實際會套用的思考強度；不支援時回傳 null */

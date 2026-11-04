@@ -185,6 +185,7 @@ export {
 } from "./plan";
 export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
 export { adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type AdherenceSummary, type ReasonCounts, type SelfChangeRecord, type OutcomeCounts, type PastSession, type PastWeek } from "./plan-history";
+export { clearPastPlans, seedPastPlans, TEST_PLAN_REASON, TEST_PLAN_WEEKS } from "./test-plans";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";

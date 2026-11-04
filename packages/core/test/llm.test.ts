@@ -29,6 +29,7 @@ describe("Llm.runWithTools", () => {
     const { llm, provider } = makeLlm([
       (call) => {
         call.onText?.("讓我查一下");
+        call.onToolStart?.("echo");
         return turn({ text: "讓我查一下", finish: "tool_use", toolCalls: [{ id: "a", name: "echo", input: {} }] });
       },
       (call) => {
@@ -47,6 +48,7 @@ describe("Llm.runWithTools", () => {
     expect(events).toEqual([
       { type: "thinking" },
       { type: "text", text: "讓我查一下" },
+      { type: "preparing", name: "echo" },
       { type: "tool", name: "echo" },
       { type: "thinking" },
       { type: "text", text: "完" },

@@ -46,6 +46,9 @@ describe("ContextManager", () => {
     // 長的回覆先給結論、細節分小標（網頁版把小標以下收起，規格 12.30）
     expect(stable).toContain("先用一兩句寫結論");
     expect(stable).toContain("用「## 小標」分段");
+    // 工具呼叫前不寫給選手看的文字（網頁版等待時會閃過，staging 試用的回饋，規格 12.38）
+    expect(stable).toContain("呼叫工具之前不要先寫給選手看的文字");
+    expect(stable).toContain("只用繁體中文寫一句很短的");
     expect(stable).toContain(
       "【賽事】選手在賽事頁看得到的所有賽事（完賽、沒有完賽、沒有出賽、更早的）都可以用 list_races 查，不要只看下面的清單就說沒有。" +
         "賽後只能改名稱與備註。記錄成績時先問選手大會給的成績（個人成績、大會成績），沒有時才用 get_race_activity 查手錶的時間給選手參考，選手確認後才記錄。" +

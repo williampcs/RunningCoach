@@ -62,7 +62,7 @@ export class AnthropicProvider implements LlmProvider {
           ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
         };
         const send = (p: Anthropic.MessageCreateParamsNonStreaming) =>
-          opts.onText ? streamMessage(client, p, opts.onText) : client.messages.create(p);
+          opts.onText ? streamMessage(client, p, opts.onText, opts.onToolStart) : client.messages.create(p);
         let response: Anthropic.Message;
         try {
           response = await send(params);
@@ -112,6 +112,7 @@ async function streamMessage(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
   onText: (text: string) => void,
+  onToolStart?: (name: string) => void,
 ): Promise<Anthropic.Message> {
   const stream = client.messages.stream(params);
   let textBlocks = 0;
@@ -119,6 +120,8 @@ async function streamMessage(
     if (event.type === "content_block_start" && event.content_block.type === "text") {
       // 非串流時多個文字區塊以換行串接，這裡保持一致
       if (textBlocks++ > 0) onText("\n");
+    } else if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
+      onToolStart?.(event.content_block.name);
     } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       onText(event.delta.text);
     }

@@ -241,7 +241,10 @@ describe("AnthropicProvider", () => {
     const texts: string[] = [];
     const onText = (text: string) => texts.push(text);
 
-    const first = await session.next({ onText });
+    // 模型開始寫工具呼叫時（參數還沒寫完）就交出名稱：介面把之前的文字改成等待中的狀態（規格 12.38）
+    const started: string[] = [];
+    const first = await session.next({ onText, onToolStart: (name) => started.push(`${name}@${texts.length}`) });
+    expect(started).toEqual(["get_training_plan@2"]);
     expect(first).toEqual({
       text: "讓我看看",
       toolCalls: [{ id: "toolu_1", name: "get_training_plan", input: { week: "2026-W41" } }],
@@ -496,7 +499,10 @@ describe("OpenAICompatibleProvider", () => {
     const texts: string[] = [];
     const onText = (text: string) => texts.push(text);
 
-    const first = await session.next({ onText });
+    const started: string[] = [];
+    const first = await session.next({ onText, onToolStart: (name) => started.push(name) });
+    // 名稱出現時交出一次，之後逐段的參數不再交
+    expect(started).toEqual(["get_training_plan"]);
     expect(first).toEqual({
       text: "",
       toolCalls: [{ id: "call_1", name: "get_training_plan", input: { week: "2026-W41" } }],

@@ -2,13 +2,16 @@ import { useState } from "react";
 
 import {
   addDays,
+  clearPastPlans,
   FAKE_DEVICES,
   FAKE_SCENARIOS,
   fakeActivity,
   generateActivities,
   generateWellness,
   parsePace,
+  seedPastPlans,
   SYNC_DAYS,
+  TEST_PLAN_WEEKS,
   type FakeDevice,
   type FakeScenario,
   type FakeSpec,
@@ -50,6 +53,7 @@ export function TestModeCard() {
 
   const [run, setRun] = useState({ date: "", distance: "", duration: "", avgHr: "", maxHr: "", elevation: "" });
   const [simDate, setSimDate] = useState(testMode.today ?? "");
+  const [pastWeeks, setPastWeeks] = useState("6");
 
   if (!testMode.enabled) {
     return (
@@ -168,6 +172,33 @@ export function TestModeCard() {
       kind: "ok",
       text: `已新增 ${activity.date} ${activity.distance_km} 公里（${activity.avg_pace}）。可以到「回報」記下這次的感受，或按「同步」帶入。`,
     });
+  }
+
+  // 只寫進測試模式的資料庫（這張卡只在測試模式開著時出現），課表標成測試產生的，清掉時用標記找
+  async function seedPast() {
+    setBusy(true);
+    try {
+      const { weeks: n, sessions } = await seedPastPlans(coach.db, today, Number(pastWeeks));
+      touch();
+      setMessage({ kind: "ok", text: `已塞進過去 ${n} 週的課表（${sessions} 堂課）。到「計畫」最下面的「之前的週」看；之前塞的已換掉。` });
+    } catch (e) {
+      setMessage({ kind: "error", text: `塞不進去：${errorText(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPast() {
+    setBusy(true);
+    try {
+      const n = await clearPastPlans(coach.db);
+      touch();
+      setMessage({ kind: "ok", text: n ? `已清掉塞進的 ${n} 週課表。` : "沒有塞進的課表。" });
+    } catch (e) {
+      setMessage({ kind: "error", text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
   }
 
   function applyDate(next: string | null) {
@@ -289,6 +320,29 @@ export function TestModeCard() {
             清空手動新增的紀錄
           </button>
         )}
+      </div>
+
+      <h3 className="section">過去的課表</h3>
+      <p className="row small muted">
+        <span>塞進今天以前幾週的課表，試計畫頁的「之前的週」。</span>
+        <InfoTip label="過去的課表的說明">
+          照測試資料庫裡的跑步排，每週不同的結果（達成、部分達成、跳過、改用替代、沒做、自己改短或換成輕鬆附原因），教練也看得到最近 4 週的摘要。先按「同步最近 14 天」，最近兩週才有跑步可以對。只寫進測試資料庫，標成測試產生的；再塞一次會換掉之前塞的。
+        </InfoTip>
+      </p>
+      <div className="row">
+        <select aria-label="塞進幾週" value={pastWeeks} onChange={(e) => setPastWeeks(e.target.value)}>
+          {Array.from({ length: TEST_PLAN_WEEKS.max - TEST_PLAN_WEEKS.min + 1 }, (_, i) => String(TEST_PLAN_WEEKS.min + i)).map((n) => (
+            <option key={n} value={n}>
+              {n} 週
+            </option>
+          ))}
+        </select>
+        <button disabled={busy} onClick={() => void seedPast()}>
+          塞進過去的課表
+        </button>
+        <button className="text" disabled={busy} onClick={() => void clearPast()}>
+          清掉塞進的課表
+        </button>
       </div>
 
       <h3 className="section">模擬今天的日期</h3>

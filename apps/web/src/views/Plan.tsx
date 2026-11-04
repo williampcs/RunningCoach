@@ -34,13 +34,16 @@ import { Activity, Check, Gauge, HeartPulse, Repeat, Route, Timer, Zap, type Luc
 import { errorText, useApp } from "../app-context";
 import { Disclosure, DisclosureButton, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
 import { featureEnabled } from "../environment";
-import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
 import { PastWeeks } from "./PastWeeks";
 import { RacesCard } from "./Races";
 import { ChangeChooser, ReasonChips, selfChangeLine } from "./SelfChange";
 
 type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
+
+/** 計畫頁的「請教練…」：帶到對話並直接送出這一句（和其他「請教練…」的按鈕一樣） */
+export const ASK_PLAN = "幫我排這週的課表";
+export const ASK_CONVERT = "幫我把這週的文字課表改成一堂一堂、可以追蹤的課表";
 
 const weekdayOf = (date: string) => weekdayName(date).replace("星期", "");
 
@@ -568,13 +571,12 @@ function Why({ current, next }: { current: ActivePlan; next: ActivePlan | null }
 }
 
 export function PlanView() {
-  const { coach, revision, touch } = useApp();
+  const { coach, revision, touch, goTo } = useApp();
   const [current, setCurrent] = useState<ActivePlan | null>(null);
   // 週日先排好的下週課表：接在這週的後面
   const [next, setNext] = useState<ActivePlan | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
   const [changeNote, setChangeNote] = useState<string | null>(null);
-  const [planDraft, setPlanDraft] = useState<string | null>(null);
   const [why, setWhy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const today = coach.today();
@@ -632,39 +634,27 @@ export function PlanView() {
             {timeline.earlier.length > 0 && <Earlier t={timeline} extras={current!.extras} onChange={onChange} />}
             <Timeline t={timeline} today={today} onChange={onChange} />
           </>
+        ) : plan ? (
+          // 舊的文字課表（v1 的 /plan、之前的「手動填寫」）：唯讀；請教練改成一堂一堂、可以追蹤的課表（規格 12.38）
+          <>
+            <h2>訓練計畫</h2>
+            <Markdown>{plan.content}</Markdown>
+            <p className="small muted">這是文字的課表：不會對照你的紀錄，也不能改課。</p>
+            <div className="actions">
+              <button className="primary" onClick={() => goTo("chat", ASK_CONVERT)}>
+                請教練改成可以追蹤的課表
+              </button>
+            </div>
+          </>
         ) : (
           <>
-            <div className="card-head">
-              <h2>訓練計畫</h2>
-              {planDraft === null && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
+            <h2>訓練計畫</h2>
+            <p className="muted">還沒有這週的課表。</p>
+            <div className="actions">
+              <button className="primary" onClick={() => goTo("chat", ASK_PLAN)}>
+                請教練排這週的課表
+              </button>
             </div>
-            {error && <div className="notice error">{error}</div>}
-            {planDraft === null ? (
-              plan ? (
-                <Markdown>{plan.content}</Markdown>
-              ) : (
-                <p className="muted">還沒有訓練計畫。可以在對話中請教練排，或自己填寫。</p>
-              )
-            ) : (
-              <>
-                <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
-                <div className="actions">
-                  <button
-                    className="primary"
-                    disabled={!planDraft.trim()}
-                    onClick={() =>
-                      void run(async () => {
-                        await coach.savePlanForThisWeek(planDraft.trim());
-                        setPlanDraft(null);
-                      })
-                    }
-                  >
-                    儲存為本週計畫
-                  </button>
-                  <button className="text" onClick={() => setPlanDraft(null)}>取消</button>
-                </div>
-              </>
-            )}
           </>
         )}
       </section>

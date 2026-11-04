@@ -1033,6 +1033,40 @@ export class Db {
     });
   }
 
+  /**
+   * 測試模式塞進的過去的課表（規格 12.38）：不啟用（不影響這週的課表），reason 是標記，清掉時用它找；回傳新計畫的 id
+   */
+  insertPastPlan(plan: { weekLabel: string; weekStart: string; reason: string; content: string }, sessions: SessionDraft[]): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const { lastInsertRowid: planId } = await d.run(
+        "INSERT INTO training_plans (week_label, content, created_at, is_active, week_start, style, reason, outline, notes) VALUES (?, ?, ?, 0, ?, 'fixed', ?, NULL, NULL)",
+        [plan.weekLabel, plan.content, this.stamp(), plan.weekStart, plan.reason],
+      );
+      for (const [i, s] of sessions.entries()) {
+        await d.run(
+          "INSERT INTO planned_sessions (plan_id, position, date, kind, title, steps, purpose, success, fallback, sport, updated_at)" +
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [planId, i, s.date, s.kind, s.title, JSON.stringify(s.steps), s.purpose, s.success, s.fallback, s.sport ?? null, this.stamp()],
+        );
+      }
+      return planId;
+    });
+  }
+
+  /** 刪掉 reason 是這個標記的課表與它們的課（測試模式塞進的過去的課表）；回傳刪了幾份 */
+  deletePlansByReason(reason: string): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const rows = (await d.all("SELECT id FROM training_plans WHERE reason=?", [reason])) as { id: number }[];
+      for (const { id } of rows) {
+        await d.run("DELETE FROM planned_sessions WHERE plan_id=?", [id]);
+        await d.run("DELETE FROM training_plans WHERE id=?", [id]);
+      }
+      return rows.length;
+    });
+  }
+
   /** 每週最新的一份結構化課表（週一在 since 之後的），舊的在前；依結果調整配速時看最近幾週 */
   getWeeklyPlansSince(since: string): Promise<TrainingPlan[]> {
     return this.all<TrainingPlan>(

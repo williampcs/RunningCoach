@@ -119,7 +119,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         }
 
         const data = opts.onText
-          ? await readStream(response, opts.onText)
+          ? await readStream(response, opts.onText, opts.onToolStart)
           : ((await response.json()) as CompletionData);
         const choice = data.choices?.[0];
         const message = choice?.message;
@@ -192,7 +192,7 @@ interface StreamChunk extends Omit<CompletionData, "choices"> {
  * 文字逐段串接並交給 onText；工具呼叫依 index 合併，名稱與參數逐段串接，其餘欄位（如思考簽章）保留；
  * 訊息上其他欄位的字串逐段串接，非字串以最後收到的為準。
  */
-async function readStream(response: Response, onText: (text: string) => void): Promise<CompletionData> {
+async function readStream(response: Response, onText: (text: string) => void, onToolStart?: (name: string) => void): Promise<CompletionData> {
   const message: WireMessage = { role: "assistant", content: "" };
   const calls: WireToolCall[] = [];
   let finishReason: string | null | undefined;
@@ -211,7 +211,13 @@ async function readStream(response: Response, onText: (text: string) => void): P
         message.content += value;
         if (value) onText(value);
       } else if (key === "tool_calls" && Array.isArray(value)) {
-        for (const delta of value as WireDelta[]) mergeToolCall(calls, delta);
+        for (const delta of value as WireDelta[]) {
+          // 名稱的第一段出現：模型開始寫這個工具呼叫
+          const fresh = !calls[delta.index ?? calls.length]?.function.name;
+          mergeToolCall(calls, delta);
+          const name = calls[delta.index ?? calls.length - 1]?.function.name;
+          if (fresh && name) onToolStart?.(name);
+        }
       } else {
         const previous = message[key];
         message[key] = typeof value === "string" && typeof previous === "string" ? previous + value : value;

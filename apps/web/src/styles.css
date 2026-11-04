@@ -1277,6 +1277,13 @@ button.info-button[aria-expanded="true"] {
   border-bottom-left-radius: var(--sp-1);
 }
 
+/* 等待中：模型在工具呼叫前寫的字，接在狀態下面的一行小字（不是回覆，規格 12.38） */
+.chat-aside {
+  display: block;
+  margin-top: var(--sp-1);
+  color: var(--muted);
+}
+
 /* 教練的長回覆（規格 12.30）：結論一直顯示，每個小標收成一列，最後「全部展開」 */
 .coach-reply {
   display: flex;
@@ -3742,6 +3749,11 @@ button.back-button {
 
 .unwell-panel p {
   margin: 0;
+}
+
+/* 不舒服之後這堂課怎樣：一行粗一點的字（照改過的上／先不要做） */
+.unwell-outcome {
+  font-weight: 600;
 }
 
 /* 手動記一趟跑步（規格 12.36「沒有手錶也能用」）：日期與距離一列、時間是分與秒兩格 */

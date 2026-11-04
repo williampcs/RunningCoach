@@ -167,6 +167,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   // 串流中的回覆：draft 是這次模型呼叫目前為止的文字，tool 是正在執行的工具
   const [draft, setDraft] = useState("");
   const [tool, setTool] = useState<string | null>(null);
+  // 模型在工具呼叫之前寫的字（例如「我先看一下課表」）：不是回覆，顯示成等待中的狀態的一部分，不像正式回覆一閃而過
+  const [aside, setAside] = useState("");
   const draftText = useRef("");
   // 串流中的回覆哪些段落打開（存好後的那一則接著用）
   const draftOpen = useRef<ReplyOpen>({ all: null, each: {} });
@@ -191,11 +193,14 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       if (event.type === "text") {
         draftText.current += event.text;
       } else {
-        // 新的一次模型呼叫或開始執行工具：先前的文字不是最終回覆
+        // 模型開始寫工具呼叫、開始執行工具或新的一次模型呼叫：先前的文字不是最終回覆，改成等待中的一行小字
+        const before = draftText.current.trim();
+        if (before && event.type !== "thinking") setAside(before);
         draftText.current = "";
         draftOpen.current = { all: null, each: {} };
         setDraftRound((n) => n + 1);
-        setTool(event.type === "tool" ? event.name : null);
+        if (event.type !== "thinking") setTool(event.name);
+        else if (!before) setTool(null);
       }
       showDraft();
     },
@@ -208,6 +213,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     draftText.current = "";
     setDraft("");
     setTool(null);
+    setAside("");
   }, []);
 
   const load = useCallback(async () => {
@@ -459,7 +465,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               <CoachReply key={draftRound} content={draft} streaming initial={draftOpen.current} onOpenChange={(o) => (draftOpen.current = o)} />
             </div>
           ) : (
-            <div className="bubble assistant muted">{tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}</div>
+            <div className="bubble assistant muted">
+              {tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}
+              {aside && <span className="chat-aside small">{aside}</span>}
+            </div>
           ))}
         {error && <div className="notice error">沒有收到回覆：{error}</div>}
         {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}

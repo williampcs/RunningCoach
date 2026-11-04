@@ -36,6 +36,7 @@ export interface RecordedCall {
   disableTools?: boolean;
   /** 串流呼叫時才有；腳本中的函式可以用它模擬逐段產生的文字 */
   onText?: (text: string) => void;
+  onToolStart?: (name: string) => void;
 }
 
 /** 依序回放預先寫好的回應，並記錄每次呼叫 */

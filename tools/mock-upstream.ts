@@ -55,6 +55,8 @@ if (process.env.MOCK_NOW) {
 }
 
 type Block = { type: string; [key: string]: unknown };
+/** 工具呼叫前的那句（E2E 檢查它不像正式回覆閃過） */
+const PRE_TOOL_TEXT = "Let me remove the session first.";
 type Message = { role: string; content: string | Block[] };
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
@@ -506,6 +508,8 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
   }
   if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
+  // 工具呼叫前先寫一句英文（staging 試用的回饋，規格 12.38）：參數寫 2.5 秒，介面不能把那句當成回覆顯示
+  if (/先看一下課表再說/.test(lastText)) return [{ type: "text", text: PRE_TOOL_TEXT }, { ...toolUse("get_training_plan"), slowMs: 2500 }];
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }
@@ -670,7 +674,10 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
         await sleep(chunkMs(String(block.text)));
       }
     } else {
-      send("content_block_start", { index, content_block: { ...block, input: {} } });
+      const { slowMs, ...tool } = block;
+      send("content_block_start", { index, content_block: { ...tool, input: {} } });
+      // 參數很長時（例如整週的課表）要寫好幾秒
+      if (typeof slowMs === "number") await sleep(slowMs);
       send("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
     }
     send("content_block_stop", { index });
@@ -704,7 +711,7 @@ function toOpenAI(content: Block[]) {
   const text = content.filter((b) => b.type === "text").map((b) => String(b.text)).join("\n");
   const toolCalls = content
     .filter((b) => b.type === "tool_use")
-    .map((b) => ({ id: String(b.id), type: "function", function: { name: String(b.name), arguments: JSON.stringify(b.input) } }));
+    .map((b) => ({ id: String(b.id), type: "function", function: { name: String(b.name), arguments: JSON.stringify(b.input) }, slowMs: typeof b.slowMs === "number" ? b.slowMs : 0 }));
   return { text, toolCalls, finishReason: toolCalls.length ? "tool_calls" : "stop" };
 }
 
@@ -723,6 +730,7 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage,
   }
   for (const [index, call] of toolCalls.entries()) {
     chunk({ tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: "" } }] });
+    if (call.slowMs) await sleep(call.slowMs);
     chunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
   }
   chunk({}, finishReason);
@@ -985,7 +993,7 @@ createServer((req, res) => {
           {
             index: 0,
             finish_reason: finishReason,
-            message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+            message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls.map(({ slowMs: _s, ...c }) => c) } : {}) },
           },
         ],
         usage: openAIUsage(usage),
