@@ -70,6 +70,7 @@ export class AnthropicProvider implements LlmProvider {
           // strict 的 schema 不被接受（例如超過複雜度的上限）時，拿掉 strict 再送一次，不讓對話因此失敗；400 不計費
           if (!(e instanceof Anthropic.BadRequestError) || !tools?.some((t) => t.strict)) throw e;
           const loose = tools.map(withoutStrict) as Anthropic.Tool[];
+          opts.onRetry?.();
           // 拿掉 strict 也失敗的，是別的原因造成的 400：照樣丟出，之後照樣送 strict
           response = await send({ ...params, tools: loose });
           tools = loose;

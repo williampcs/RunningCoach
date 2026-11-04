@@ -290,7 +290,10 @@ describe("strict 的工具（規格 12.31 第 2 點）", () => {
     const { baseURL, captured } = await mockApi([rejected, ok, ok]);
     const provider = new AnthropicProvider({ apiKey: "k", baseURL });
     const request = { model: "claude-test", system: "s", messages: [{ role: "user" as const, content: "hi" }], tools: strictTools, maxTokens: 100, effort: "low" as const };
-    expect((await provider.startChat(request).next()).text).toBe("好");
+    let retries = 0;
+    expect((await provider.startChat(request).next({ onRetry: () => retries++ })).text).toBe("好");
+    // 介面顯示「再試一次…」（規格 12.38）
+    expect(retries).toBe(1);
     expect(captured[0]!.body.tools[0].strict).toBe(true);
     expect(captured[0]!.body.tools[0].input_schema.$defs.step).toBeDefined();
     expect(captured[1]!.body.tools[0].strict).toBeUndefined();

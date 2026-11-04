@@ -89,6 +89,8 @@ export interface NextOptions {
   onText?: (text: string) => void;
   /** 串流時，模型開始寫工具呼叫（還沒寫完參數）就交給它工具的名稱；這次呼叫先前的文字不是最終回覆 */
   onToolStart?: (name: string) => void;
+  /** 自動再送一次之前（例如 strict 的工具不被接受，拿掉 strict 重送） */
+  onRetry?: () => void;
 }
 
 /**
@@ -105,8 +107,9 @@ export interface ChatSession {
  * - text：這次模型呼叫產生的文字片段
  * - preparing：模型開始寫工具呼叫（參數還在寫，例如整週的課表要幾秒）；這次模型呼叫先前產生的文字不是最終回覆
  * - tool：開始執行工具；這次模型呼叫先前產生的文字不是最終回覆
+ * - retry：這次模型呼叫失敗，自動再送一次
  */
-export type ChatEvent = { type: "thinking" } | { type: "text"; text: string } | { type: "preparing"; name: string } | { type: "tool"; name: string };
+export type ChatEvent = { type: "thinking" } | { type: "retry" } | { type: "text"; text: string } | { type: "preparing"; name: string } | { type: "tool"; name: string };
 
 export interface LlmProvider {
   /** 供 /status 顯示：該模型實際會套用的思考強度；不支援時回傳 null */

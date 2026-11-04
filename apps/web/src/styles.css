@@ -1277,11 +1277,16 @@ button.info-button[aria-expanded="true"] {
   border-bottom-left-radius: var(--sp-1);
 }
 
-/* 等待中：模型在工具呼叫前寫的字，接在狀態下面的一行小字（不是回覆，規格 12.38） */
+/* 等待中：模型在工具呼叫前寫的字，收成泡泡上方一行不顯眼的字（不是回覆，規格 12.38） */
 .chat-aside {
-  display: block;
-  margin-top: var(--sp-1);
+  align-self: flex-start;
+  max-width: 88%;
   color: var(--muted);
+}
+
+/* 等很久時接在狀態後面 */
+.chat-slow::before {
+  content: "・";
 }
 
 /* 教練的長回覆（規格 12.30）：結論一直顯示，每個小標收成一列，最後「全部展開」 */

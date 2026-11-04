@@ -25,6 +25,15 @@ import { DemoComposer } from "./Demo";
 import { DEMO } from "../demo";
 
 // 執行工具時顯示的狀態
+/** 等待中多久沒有新的事件就提示「還在處理，有點久」；E2E 可以用 localStorage 的 running-coach.e2e.slow-ms 縮短 */
+const SLOW_MS = (() => {
+  try {
+    return Number(localStorage.getItem("running-coach.e2e.slow-ms")) || 20_000;
+  } catch {
+    return 20_000;
+  }
+})();
+
 const TOOL_STATUS: Record<string, string> = {
   fetch_latest_activity: "讀取最新的跑步活動",
   save_workout: "儲存訓練並產生分析",
@@ -169,6 +178,11 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   const [tool, setTool] = useState<string | null>(null);
   // 模型在工具呼叫之前寫的字（例如「我先看一下課表」）：不是回覆，顯示成等待中的狀態的一部分，不像正式回覆一閃而過
   const [aside, setAside] = useState("");
+  // 自動重試（例如 strict 的工具不被接受，拿掉 strict 再送一次）：到下一個事件之前顯示「再試一次…」
+  const [retrying, setRetrying] = useState(false);
+  // 很久沒有新的事件：狀態後面補「還在處理，有點久」，不讓人以為當掉
+  const [slow, setSlow] = useState(false);
+  const lastEvent = useRef(0);
   const draftText = useRef("");
   // 串流中的回覆哪些段落打開（存好後的那一則接著用）
   const draftOpen = useRef<ReplyOpen>({ all: null, each: {} });
@@ -190,6 +204,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
 
   const onEvent = useCallback(
     (event: ChatEvent) => {
+      lastEvent.current = Date.now();
+      setSlow(false);
+      setRetrying(event.type === "retry");
+      if (event.type === "retry") return;
       if (event.type === "text") {
         draftText.current += event.text;
       } else {
@@ -214,7 +232,19 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     setDraft("");
     setTool(null);
     setAside("");
+    setRetrying(false);
+    setSlow(false);
   }, []);
+
+  // 等待中每秒看一次：超過 SLOW_MS 沒有新的事件時提示
+  useEffect(() => {
+    if (sending === null) return;
+    lastEvent.current = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - lastEvent.current > SLOW_MS) setSlow(true);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [sending]);
 
   const load = useCallback(async () => {
     // 多讀一則，知道更早的還有沒有
@@ -459,6 +489,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
             <div className="bubble user">{sending}</div>
           </div>
         )}
+        {/* 工具前的文字：收成泡泡上方一行不顯眼的字，直到這次的回覆存好 */}
+        {progressShown && aside && <div className="chat-aside small">教練：{aside}</div>}
         {progressShown &&
           (draft ? (
             <div className="bubble assistant streaming">
@@ -466,8 +498,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
             </div>
           ) : (
             <div className="bubble assistant muted">
-              {tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}
-              {aside && <span className="chat-aside small">{aside}</span>}
+              {retrying ? "再試一次…" : tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}
+              {slow && <span className="chat-slow">還在處理，有點久</span>}
             </div>
           ))}
         {error && <div className="notice error">沒有收到回覆：{error}</div>}

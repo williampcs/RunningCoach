@@ -62,6 +62,8 @@ const PRE_TOOL = "Let me remove the session first.";
       colorScheme: mobile ? "light" : "dark",
       timezoneId: "Asia/Taipei",
     });
+    // 「還在處理，有點久」：測試把 20 秒縮成 3 秒
+    await context.addInitScript(() => localStorage.setItem("running-coach.e2e.slow-ms", "3000"));
     const page = await context.newPage();
     page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${name} ${step}] ${m.text()}`));
     page.on("pageerror", (e) => problems.push(`[${name} ${step}] pageerror: ${e.message}`));
@@ -97,7 +99,7 @@ const PRE_TOOL = "Let me remove the session first.";
           const out = [];
           for (let i = 0; i < n; i++) {
             const streaming = document.querySelector(".bubble.assistant.streaming");
-            const aside = document.querySelector(".bubble.assistant.muted .chat-aside");
+            const aside = document.querySelector(".chat-aside");
             out.push({ asReply: !!streaming && streaming.textContent.includes(text), aside: !!aside && aside.textContent.includes(text) });
             await new Promise((r) => setTimeout(r, 100));
           }
@@ -106,6 +108,7 @@ const PRE_TOOL = "Let me remove the session first.";
         { text: PRE_TOOL, n },
       );
     const samples = await sample(18);
+    c("asideLabel", await page.locator(".chat-aside").innerText().then((t) => t === `教練：${PRE_TOOL}`, () => false));
     // 參數還在寫的時候（等待中的那一行小字）
     await page.screenshot({ path: `${E2E.OUT}/staging-fixes-pretool-${c.size}.png` });
     samples.push(...(await sample(25)));
@@ -116,6 +119,30 @@ const PRE_TOOL = "Let me remove the session first.";
     await waitReply(page, "先看一下課表再說");
     const last = await page.locator(".msg.assistant .bubble.assistant").last().innerText();
     c("preToolNotInReply", !last.includes(PRE_TOOL));
+    c("asideGone", (await page.locator(".chat-aside").count()) === 0);
+  }
+
+  /** 沒有工具、想很久才回：等待中補「還在處理，有點久」，之後照常串流成回覆，沒有收成小字 */
+  async function directSlowReply(page, c) {
+    await E2E.go(page, "對話");
+    await page.getByLabel("訊息").fill("想久一點");
+    await page.getByLabel("訊息").press("Enter");
+    const slow = page.locator(".bubble.assistant.muted .chat-slow");
+    c("slowHint", await slow.waitFor({ timeout: 6000 }).then(async () => (await slow.innerText()).includes("還在處理，有點久"), () => false));
+    await page.screenshot({ path: `${E2E.OUT}/staging-fixes-slow-${c.size}.png` });
+    const seen = await page.evaluate(async () => {
+      let asReply = false;
+      let aside = false;
+      for (let i = 0; i < 60 && !document.querySelector(".msg.assistant .bubble.assistant")?.textContent.includes("想好了"); i++) {
+        if (document.querySelector(".bubble.assistant.streaming")?.textContent.includes("想好了")) asReply = true;
+        if (document.querySelector(".chat-aside")) aside = true;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return { asReply, aside };
+    });
+    c("directStreamed", seen.asReply && !seen.aside);
+    await waitReply(page, "想久一點");
+    c("directReply", (await page.locator(".msg.assistant .bubble.assistant").last().innerText()).includes("想好了"));
   }
 
   // ---------------------------------------------------------------------------
@@ -156,6 +183,8 @@ const PRE_TOOL = "Let me remove the session first.";
 
       step = "工具呼叫前的文字（Claude）";
       await preToolText(page, c);
+      step = "直接回覆、等很久（Claude）";
+      await directSlowReply(page, c);
 
       step = "不舒服：在部位那一步先不用";
       await E2E.go(page, "計畫");
@@ -291,6 +320,8 @@ const PRE_TOOL = "Let me remove the session first.";
 
       step = "工具呼叫前的文字（OpenAI 相容）";
       await preToolText(page, c);
+      step = "直接回覆、等很久（OpenAI 相容）";
+      await directSlowReply(page, c);
 
       step = "舊的文字課表：唯讀";
       await E2E.go(page, "計畫");

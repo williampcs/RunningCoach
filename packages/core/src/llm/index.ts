@@ -116,7 +116,7 @@ export class Llm {
     });
 
     const stream = onEvent
-      ? { onText: (text: string) => onEvent({ type: "text", text }), onToolStart: (name: string) => onEvent({ type: "preparing", name }) }
+      ? { onText: (text: string) => onEvent({ type: "text", text }), onToolStart: (name: string) => onEvent({ type: "preparing", name }), onRetry: () => onEvent({ type: "retry" }) }
       : {};
 
     onEvent?.({ type: "thinking" });
