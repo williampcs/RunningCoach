@@ -512,7 +512,7 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
   if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
   // 工具呼叫前先寫一句英文（staging 試用的回饋，規格 12.38）：參數寫 2.5 秒，介面不能把那句當成回覆顯示
   // 想很久才回（介面的「還在處理，有點久」）：思考 6 秒
-  if (/想久一點/.test(lastText)) return [{ type: "text", text: "（模擬回覆）想好了。", thinkMs: 6000 }];
+  if (/想久一點/.test(lastText)) return [{ type: "text", text: "（模擬回覆）想好了。這週照原本的課表練，週四的閾值課照常，週日的長跑維持輕鬆的配速，有不舒服再跟我說。", thinkMs: 6000 }];
   if (/先看一下課表再說/.test(lastText)) return [{ type: "text", text: PRE_TOOL_TEXT }, { ...toolUse("get_training_plan"), slowMs: 2500 }];
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
