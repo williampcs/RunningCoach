@@ -3907,3 +3907,11 @@ button.back-button {
 a.button {
   text-decoration: none;
 }
+
+/* 手機（觸控）上欄位的字至少 16px：iOS 對小於 16px 的欄位，點下去時會自動放大頁面、打完也不縮回（2026-11-04 使用者回報）。
+   不用 maximum-scale 擋：那會讓 Android 不能手動放大 */
+@media (pointer: coarse) {
+  :root :is(input, select, textarea) {
+    font-size: var(--fs-sub);
+  }
+}
