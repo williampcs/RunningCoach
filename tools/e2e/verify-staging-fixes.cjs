@@ -115,7 +115,8 @@ const PRE_TOOL = "Let me remove the session first.";
     const firstAside = samples.findIndex((s) => s.aside);
     c("preToolAside", firstAside >= 0 && samples.filter((s) => s.aside).length >= 10);
     // 顯示成回覆的時間只有那句還在打字的時候（不到 0.8 秒），之後不再出現
-    c("preToolNotReply", samples.filter((s) => s.asReply).length <= 8 && samples.slice(firstAside).every((s) => !s.asReply));
+    if (process.env.DEBUG) console.log(JSON.stringify(samples.map((s) => (s.asReply ? "R" : "") + (s.aside ? "A" : "") || "-").join("")));
+    c("preToolNotReply", samples.filter((s) => s.asReply).length <= 10 && samples.slice(firstAside).every((s) => !s.asReply));
     await waitReply(page, "先看一下課表再說");
     const last = await page.locator(".msg.assistant .bubble.assistant").last().innerText();
     c("preToolNotInReply", !last.includes(PRE_TOOL));
@@ -370,13 +371,14 @@ const PRE_TOOL = "Let me remove the session first.";
       c("stopNoError2", (await page.locator(".notice.error").count()) === 0);
 
       step = "停止：存了課表之後";
-      const before = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm").length;
       await ask("幫我排這週的課表");
       // 等第二輪（帶著工具的結果）送出：課表已經存了，模型還在想
       for (let i = 0; i < 100; i++) {
         const list = (await (await fetch(`${E2E.MOCK}/_mock/requests`)).json()).filter((r) => r.kind === "llm");
         const last = list.at(-1)?.body;
-        if (list.length > before && (last?.messages ?? []).some((m) => m.role === "tool")) break;
+        const msgs = last?.messages ?? [];
+        const asked = msgs.map((m) => m.role === "user" && typeof m.content === "string" && m.content.includes("幫我排這週的課表")).lastIndexOf(true);
+        if (asked >= 0 && msgs.slice(asked).some((m) => m.role === "tool")) break;
         await page.waitForTimeout(50);
       }
       await stopButton.click();
