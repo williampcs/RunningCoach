@@ -1534,6 +1534,15 @@ span.quote {
   min-height: var(--touch);
 }
 
+/* 送出與停止和輸入框是同一組：用欄位的圓角、同樣的大小，切換時不跳動 */
+.composer > button {
+  flex: none;
+  width: 5.5rem;
+  height: var(--touch);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-field);
+}
+
 .composer.replying {
   flex-wrap: wrap;
 }
