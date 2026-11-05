@@ -27,8 +27,10 @@ import { checkRedFlags, dismissRedFlags, useRedFlagAlert } from "../red-flag-ale
 import { redFlagFeedItem } from "./RedFlag";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
+import { SCOPED_KEYS, storageKey } from "../storage-scope";
 
-const STATE_KEY = "running-coach.feed.v1";
+// 測試模式用自己一份（storage-scope.ts）
+const STATE_KEY = () => storageKey(SCOPED_KEYS.feed);
 
 /** 「知道了」的項目與收合狀態只記當天，隔天重新顯示 */
 interface FeedState {
@@ -39,7 +41,7 @@ interface FeedState {
 
 function loadState(today: string): FeedState {
   try {
-    const stored = JSON.parse(localStorage.getItem(STATE_KEY) ?? "null") as FeedState | null;
+    const stored = JSON.parse(localStorage.getItem(STATE_KEY()) ?? "null") as FeedState | null;
     if (stored?.date === today) return stored;
   } catch {
     // 無法存取時用預設值
@@ -49,7 +51,7 @@ function loadState(today: string): FeedState {
 
 function saveState(state: FeedState): void {
   try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(state));
+    localStorage.setItem(STATE_KEY(), JSON.stringify(state));
   } catch {
     // 無法存取時略過
   }

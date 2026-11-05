@@ -10,10 +10,12 @@ import {
 } from "@running-coach/core";
 
 import { createLock, openLock, passwordMatches, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
+import { SCOPED_KEYS, storageKey } from "./storage-scope";
 
-const STORAGE_KEY = "running-coach.settings.v1";
+// 測試模式用自己一份（storage-scope.ts）：這個頁面在測試模式時，兩個都是測試的那一份
+const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
 /** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
-const LOCK_KEY = "running-coach.lock.v1";
+const LOCK_KEY = () => storageKey(SCOPED_KEYS.lock);
 
 /** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
 let lockSession: LockSession | null = null;
@@ -92,7 +94,7 @@ export function defaultSettings(): AppSettings {
 function loadPlainSettings(): AppSettings {
   const defaults = defaultSettings();
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<AppSettings> | null;
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY()) ?? "null") as Partial<AppSettings> | null;
     if (!stored) return defaults;
     return {
       ...defaults,
@@ -127,7 +129,7 @@ const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", s
 /** 這個瀏覽器存過設定嗎（設定精靈只給從來沒設定過的人，規格 12.35 的 A） */
 export function hasStoredSettings(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) !== null || localStorage.getItem(LOCK_KEY) !== null;
+    return localStorage.getItem(STORAGE_KEY()) !== null || localStorage.getItem(LOCK_KEY()) !== null;
   } catch {
     return false;
   }
@@ -143,18 +145,18 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   if (lockEnabled()) {
     if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
     const sealed = await sealSecrets(lockSession, secretsOf(settings));
-    localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+    localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
+    localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
     unlockedSecrets = secretsOf(settings);
     return;
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
 }
 
 /** 刪除儲存的設定（含 API key 與密碼鎖），下次載入時回到預設值 */
 export function clearSettings(): void {
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.removeItem(STORAGE_KEY());
+  localStorage.removeItem(LOCK_KEY());
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +165,7 @@ export function clearSettings(): void {
 
 export function lockEnabled(): boolean {
   try {
-    return localStorage.getItem(LOCK_KEY) !== null;
+    return localStorage.getItem(LOCK_KEY()) !== null;
   } catch {
     return false;
   }
@@ -176,7 +178,7 @@ export function needsUnlock(): boolean {
 
 /** 密碼錯誤時丟出 WrongPasswordError */
 export async function unlock(password: string): Promise<void> {
-  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY()) ?? "null") as SealedSecrets | null;
   if (!sealed) throw new Error("沒有啟用密碼鎖");
   const opened = await openLock(sealed, password);
   lockSession = opened.session;
@@ -185,7 +187,7 @@ export async function unlock(password: string): Promise<void> {
 
 /** 已解鎖後再確認一次密碼（顯示復原碼、新增裝置前，規格 12.26）；不改變解鎖的狀態 */
 export async function checkPassword(password: string): Promise<boolean> {
-  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY()) ?? "null") as SealedSecrets | null;
   if (!sealed) throw new Error("沒有啟用密碼鎖");
   return passwordMatches(sealed, password);
 }
@@ -193,23 +195,23 @@ export async function checkPassword(password: string): Promise<boolean> {
 /** 以密碼加密目前的憑證，明文設定裡的憑證改為空白 */
 export async function enableLock(password: string, settings: AppSettings): Promise<void> {
   const { sealed, session } = await createLock(password, secretsOf(settings));
-  localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+  localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
   lockSession = session;
   unlockedSecrets = secretsOf(settings);
 }
 
 /** 停用密碼鎖：憑證改回以明文保存 */
 export function disableLock(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
+  localStorage.removeItem(LOCK_KEY());
   lockSession = null;
   unlockedSecrets = null;
 }
 
 /** 忘記密碼：刪除加密的憑證（其餘設定保留），之後要重新填寫 key */
 export function forgetLockedSecrets(): void {
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.removeItem(LOCK_KEY());
   lockSession = null;
   unlockedSecrets = null;
 }

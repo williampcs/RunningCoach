@@ -3815,6 +3815,25 @@ button.back-button {
   padding: calc(var(--sp-4) + env(safe-area-inset-top)) var(--sp-4) calc(var(--sp-6) + env(safe-area-inset-bottom));
 }
 
+/* 測試模式裡的精靈：上方是測試模式的提示（可以離開），下面是精靈的那一頁 */
+.wizard.with-test {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.wizard.with-test > .test-banner {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.wizard.with-test > .wizard-page {
+  width: 100%;
+  min-height: 0;
+  flex: 1 0 auto;
+}
+
 .wizard-page {
   display: flex;
   flex-direction: column;

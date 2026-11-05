@@ -8,8 +8,10 @@ import type { Coach } from "@running-coach/core";
 
 import { featureEnabled } from "./environment";
 import { hasStoredSettings } from "./settings";
+import { SCOPED_KEYS, storageKey } from "./storage-scope";
 
-const KEY = "running-coach.wizard.v1";
+// 測試模式用自己一份（storage-scope.ts）
+const KEY = () => storageKey(SCOPED_KEYS.wizard);
 
 export type WizardStep =
   /** 第一頁：開始設定／先看看 */
@@ -35,7 +37,7 @@ type Stored = { step: WizardStep } | { done: true };
 
 function read(): Stored | null {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? "null") as Stored | null;
+    return JSON.parse(localStorage.getItem(KEY()) ?? "null") as Stored | null;
   } catch {
     return null;
   }
@@ -43,7 +45,7 @@ function read(): Stored | null {
 
 function write(value: Stored): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(value));
+    localStorage.setItem(KEY(), JSON.stringify(value));
   } catch {
     // 存不了時只是下次不能從這一步繼續
   }
@@ -90,7 +92,7 @@ export function finishWizard(): void {
 /** 全部重置時：下次打開當成新的使用者 */
 export function resetWizard(): void {
   try {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem(KEY());
   } catch {
     // 略過
   }

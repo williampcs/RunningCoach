@@ -13,13 +13,15 @@ import { FirstSync } from "./FirstSync";
 import { PhoneGuide, SyncNotice } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TermsShort } from "./TermsLink";
+import { SCOPED_KEYS, storageKey } from "../storage-scope";
 
-const DISMISS_KEY = "running-coach.getting-started.dismissed";
+// 測試模式用自己一份（storage-scope.ts）
+const DISMISS_KEY = () => storageKey(SCOPED_KEYS.gettingStarted);
 
 /** 讓新手引導重新出現（重置時使用） */
 export function resetGettingStarted(): void {
   try {
-    localStorage.removeItem(DISMISS_KEY);
+    localStorage.removeItem(DISMISS_KEY());
   } catch {
     // 無法存取時略過
   }
@@ -27,7 +29,7 @@ export function resetGettingStarted(): void {
 
 function readDismissed(): boolean {
   try {
-    return localStorage.getItem(DISMISS_KEY) === "1";
+    return localStorage.getItem(DISMISS_KEY()) === "1";
   } catch {
     return false;
   }
@@ -183,7 +185,7 @@ export function GettingStarted() {
   function dismiss() {
     setDismissed(true);
     try {
-      localStorage.setItem(DISMISS_KEY, "1");
+      localStorage.setItem(DISMISS_KEY(), "1");
     } catch {
       // 無法寫入時只在這次隱藏
     }

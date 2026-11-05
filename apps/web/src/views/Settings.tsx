@@ -20,7 +20,8 @@ import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TermsLink, TermsShort } from "./TermsLink";
-import { TestModeCard } from "./TestMode";
+import { TestModeCard, TestModeReset } from "./TestMode";
+import { forgetTestScope } from "../storage-scope";
 import { IntervalsLogin, intervalsLoginAvailable } from "./IntervalsLogin";
 import { resetWizard } from "../wizard";
 import {
@@ -340,6 +341,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       resetGettingStarted();
       if (keep === null) {
         clearSettings();
+        // 測試模式那一份設定裡也有複製過去的 API key：一起刪掉，下次進測試模式再從這裡複製
+        forgetTestScope(localStorage);
         clearRemoved();
         // 回到第一次使用的狀態：設定精靈也重新出現（功能開關開著時）
         resetWizard();
@@ -633,14 +636,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       <Subpage id="reset" onBack={back}>
         <section className="card">
           {testMode.enabled ? (
-            <>
-              <p>測試模式中只會清除測試資料庫；正式資料與設定不受影響。</p>
-              <div className="actions">
-                <button className="danger" onClick={() => void reset("stop")}>
-                  清除測試資料
-                </button>
-              </div>
-            </>
+            <TestModeReset />
           ) : (
             <>
               <p className="row">

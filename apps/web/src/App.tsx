@@ -37,6 +37,7 @@ import { Wizard } from "./views/Wizard";
 import { DemoBanner, DemoSettings } from "./views/Demo";
 import { buildProvider, defaultSettings, forgetLockedSecrets, intervalsConnected, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
+import { forgetTestScope } from "./storage-scope";
 import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
 import {
   clockOffsetMs,
@@ -171,6 +172,33 @@ function coachConfig(settings: AppSettings, test: TestMode): CoachConfig {
     }),
     settings: { timeZone: settings.timeZone, shell: "web", features: FEATURES_ON },
   };
+}
+
+/** 測試模式的提示：平常的畫面上「測試設定」；精靈的畫面上多一個「離開測試模式」 */
+function TestBanner({ testMode, openSettings, leave }: { testMode: TestMode; openSettings: () => void; leave?: () => void }) {
+  return (
+    <div className="notice test-banner">
+      <span>
+        <Icon as={FlaskConical} size={16} /> 測試模式：用假資料，正式資料不受影響。
+        {testMode.today ? `模擬日期 ${testMode.today}。` : ""}
+      </span>
+      <span className="row">
+        <button className="text" onClick={openSettings}>
+          測試設定
+        </button>
+        {leave && (
+          <button
+            className="text"
+            onClick={() => {
+              if (confirm("離開測試模式，回到正常模式？測試的資料與設定會保留，下次啟用時還在。")) leave();
+            }}
+          >
+            離開測試模式
+          </button>
+        )}
+      </span>
+    </div>
+  );
 }
 
 export function App() {
@@ -361,7 +389,8 @@ export function App() {
       const opened = await openBrowserDb(initialTest.enabled ? TEST_DB_FILE : undefined);
       const created = new Coach({ driver: opened, ...coachConfig(initialSettings, initialTest), now, logger });
       await created.init();
-      setWizard(initialTest.enabled ? null : await wizardStart(created));
+      // 測試模式有自己一份設定與標記（storage-scope.ts）：「重置成第一次打開」之後在測試模式裡也看得到精靈
+      setWizard(await wizardStart(created));
       setDb(opened);
       setCoach(created);
       // 資料庫開在瀏覽器的儲存空間；要求瀏覽器不要自動清掉（規格 12.18），設定頁顯示結果
@@ -400,6 +429,8 @@ export function App() {
         saveSettings({ ...next }).catch(() => undefined);
       }
       await deleteDeviceIdentity();
+      // 測試模式那一份裡也有複製過去的 API key
+      forgetTestScope(localStorage);
       markRemoved();
       location.reload();
     })();
@@ -593,7 +624,9 @@ export function App() {
   if (wizard) {
     return (
       <AppContext.Provider value={state}>
-        <main className="wizard">
+        <main className={testMode.enabled ? "wizard with-test" : "wizard"}>
+          {/* 測試模式重置成第一次打開後也在精靈裡：上方一直有離開的路（9.4 的工作單） */}
+          {testMode.enabled && <TestBanner testMode={testMode} openSettings={() => openSettings("testmode")} leave={() => state.updateTestMode({ ...testMode, enabled: false, today: null })} />}
           <Wizard
             start={wizard}
             onFinish={(target) => {
@@ -664,17 +697,7 @@ export function App() {
                 目前無法使用瀏覽器的持久儲存，資料只會留在這個分頁，關閉後就會消失。常見原因：無痕視窗。
               </div>
             )}
-            {testMode.enabled && (
-              <div className="notice test-banner">
-                <span>
-                  <Icon as={FlaskConical} size={16} /> 測試模式：用假資料，正式資料不受影響。
-                  {testMode.today ? `模擬日期 ${testMode.today}。` : ""}
-                </span>
-                <button className="text" onClick={() => openSettings("testmode")}>
-                  測試設定
-                </button>
-              </div>
-            )}
+            {testMode.enabled && <TestBanner testMode={testMode} openSettings={() => openSettings("testmode")} />}
           </div>
         )}
         <main className={tab === "chat" ? "page chat-page" : "page"} inert={!!panel}>
