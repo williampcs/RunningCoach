@@ -222,7 +222,8 @@ async function walkWizard(page) {
     step = "A 走完精靈";
     await walkWizard(page);
     check.afterWizardTestBanner = await page.locator(".test-banner").isVisible();
-    check.afterWizardGettingStarted = (await page.locator(".getting-started").count()) > 0;
+    // 新手引導在資料讀完後才出現
+    check.afterWizardGettingStarted = await page.locator(".getting-started").first().waitFor({ timeout: 10000 }).then(() => true, () => false);
     const afterWizard = await stored(page, TEST);
     check.wizardWroteTestSettings = afterWizard?.provider === "anthropic" && afterWizard?.terms?.version >= 1;
     check.wizardNormalUntouched = (await raw(page, NORMAL)) === normalBefore;
