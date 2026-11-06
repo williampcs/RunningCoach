@@ -87,6 +87,12 @@ export interface NextOptions {
   disableTools?: boolean;
   /** 提供時以串流方式呼叫，回覆文字一產生就交給它；回傳的 Turn 與非串流時相同 */
   onText?: (text: string) => void;
+  /** 串流時，模型開始寫工具呼叫（還沒寫完參數）就交給它工具的名稱；這次呼叫先前的文字不是最終回覆 */
+  onToolStart?: (name: string) => void;
+  /** 自動再送一次之前（例如 strict 的工具不被接受，拿掉 strict 重送） */
+  onRetry?: () => void;
+  /** 選手按了停止（規格 12.38）：中斷這次呼叫，丟出錯誤 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -101,9 +107,11 @@ export interface ChatSession {
  * 主對話的進度，供介面即時顯示；不影響結果。
  * - thinking：開始一次模型呼叫，在第一段文字出現前模型在思考
  * - text：這次模型呼叫產生的文字片段
+ * - preparing：模型開始寫工具呼叫（參數還在寫，例如整週的課表要幾秒）；這次模型呼叫先前產生的文字不是最終回覆
  * - tool：開始執行工具；這次模型呼叫先前產生的文字不是最終回覆
+ * - retry：這次模型呼叫失敗，自動再送一次
  */
-export type ChatEvent = { type: "thinking" } | { type: "text"; text: string } | { type: "tool"; name: string };
+export type ChatEvent = { type: "thinking" } | { type: "retry" } | { type: "text"; text: string } | { type: "preparing"; name: string } | { type: "tool"; name: string };
 
 export interface LlmProvider {
   /** 供 /status 顯示：該模型實際會套用的思考強度；不支援時回傳 null */
@@ -152,5 +160,6 @@ export class Usage {
 export interface LlmResult {
   text: string;
   usage: Usage;
-  finish: "ok" | "refused" | "truncated";
+  /** stopped：選手按了停止（規格 12.38），text 是那次呼叫已經寫出的部分 */
+  finish: "ok" | "refused" | "truncated" | "stopped";
 }

@@ -8,6 +8,8 @@
  *   教練要修改，或寫出理由後才能存。例外是傷病（規格 12.33）：會痛的運動的強度課與長課、有紅旗時的所有課
  *   是「不能保留」的（blocking），寫理由也不能存。
  */
+import { detailsOf } from "./activities";
+import { loadOf, type LoadInput } from "./load";
 import { addDays, daysBetween, weekdayIndex, weekdayName } from "./dates";
 import { formatPace, parsePace } from "./fake-activities";
 import type { RecoverySignals } from "./recovery";
@@ -139,6 +141,29 @@ export interface PlannedSession extends SessionDraft {
   done_at?: string | null;
   /** 教練改過這堂課的內容的時間（edit_planned_session，規格 12.31）；沒改過時為 null */
   edited_at?: string | null;
+  /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）；沒改過或恢復了是 null */
+  self_change?: SelfChange | null;
+}
+
+/** 選手自己的快速改課：改短、換成輕鬆（規格 12.34 第 3 點 B）；改長、加量要請教練 */
+export type SelfChangeAction = "shorten" | "easy";
+/** 改課的原因：沒時間、太累、不舒服（不舒服接到傷病的流程） */
+export type SelfChangeReason = "time" | "tired" | "unwell";
+export const SELF_CHANGE_REASONS: Record<SelfChangeReason, string> = { time: "沒時間", tired: "太累", unwell: "不舒服" };
+/** 改短的兩種：短一點（約 3/4）、一半 */
+export const SHORTEN_RATIOS = [0.75, 0.5] as const;
+
+export interface SelfChange {
+  action: SelfChangeAction;
+  /** 改短：剩下幾成（0.75、0.5）；換成輕鬆是 null */
+  ratio: number | null;
+  reason: SelfChangeReason | null;
+  /** 改的時間（UTC） */
+  at: string;
+  /** 原本的內容（恢復用），與原本估計的時間、距離 */
+  original: Omit<SessionDraft, "date">;
+  minutes: number;
+  km: number;
 }
 
 /** 固定：照星期排；彈性：一週的菜單，哪天跑都可以 */
@@ -304,6 +329,9 @@ function paceRange(code: PaceCode, ctx: TargetContext): [number, number] | null 
 
 const rangeText = ([fast, slow]: [number, number]) => `${formatPace(fast).replace("/km", "")}–${formatPace(slow)}`;
 
+/** 說話測試：沒有心率時，輕鬆的強度看這個 */
+const TALK_TEST = "能說完整的句子";
+
 const hrRange = (z: { min: number | null; max: number | null }) => (z.min === null ? `≤${z.max}` : `${z.min}–${z.max}`);
 
 /**
@@ -352,19 +380,29 @@ function sportTargetText(target: Target, sport: Sport, ctx: TargetContext, minut
 export function targetText(target: Target | undefined, ctx: TargetContext, sport?: Sport | null, minutes?: number): string {
   if (!target) return "";
   if (sport && sport !== "run") return sportTargetText(target, sport, ctx, minutes);
+  // 量不到心率時（沒有手錶、只用手機，規格 12.36）：輕鬆的強度用說話測試，心率的目標換成配速與體感
+  const noHr = !ctx.values.hr;
   if ("pace" in target) {
     const range = paceRange(target.pace, ctx);
-    if (range) return `${rangeText(range)}（${target.pace}）`;
+    if (range) return `${rangeText(range)}（${target.pace}${noHr && target.pace === "E" ? `，${TALK_TEST}` : ""}）`;
     const [lo, hi] = PACE_RPE[target.pace];
-    return `體感 ${lo}–${hi}/10（${target.pace}，還沒有配速的依據）`;
+    return `體感 ${lo}–${hi}/10（${target.pace}，${target.pace === "E" ? TALK_TEST : "還沒有配速的依據"}）`;
   }
   if ("hr" in target) {
     const hr = ctx.values.hr;
-    return hr ? `心率 ≤${hr.easyMax}` : "能聊天的強度（體感 2–4/10）";
+    if (hr) return `心率 ≤${hr.easyMax}`;
+    const range = paceRange("E", ctx);
+    return range ? `約 ${rangeText(range)}（${TALK_TEST}，體感 2–4/10）` : `體感 2–4/10（${TALK_TEST}）`;
   }
   if ("zone" in target) {
     const zone = ctx.values.hr?.zones.find((z) => z.name === target.zone);
-    return zone ? `心率 ${zone.name}（${hrRange(zone)}）` : `心率 ${target.zone}`;
+    if (zone) return `心率 ${zone.name}（${hrRange(zone)}）`;
+    const [lo, hi] = zoneRpe(target.zone);
+    const level = zoneLevel(target.zone);
+    const code: PaceCode = level <= 2 ? "E" : level === 3 ? "M" : level === 4 ? "T" : "I";
+    const range = paceRange(code, ctx);
+    const why = `${target.zone}，${level <= 2 ? `${TALK_TEST}，` : ""}體感 ${lo}–${hi}/10`;
+    return range ? `約 ${rangeText(range)}（${why}）` : `體感 ${lo}–${hi}/10（${target.zone}${level <= 2 ? `，${TALK_TEST}` : ""}）`;
   }
   if ("power" in target) return `功率 ${target.power}`;
   return `體感 ${target.rpe[0]}–${target.rpe[1]}/10`;
@@ -447,26 +485,16 @@ export function stepsText(session: SessionDraft, ctx: TargetContext): string {
     .join("｜");
 }
 
-type Raw = Record<string, unknown>;
-function rawOf(json: string | null | undefined): Raw {
-  try {
-    const value: unknown = json ? JSON.parse(json) : null;
-    return value && typeof value === "object" && !Array.isArray(value) ? (value as Raw) : {};
-  } catch {
-    return {};
-  }
-}
-const nums = (v: unknown) => (Array.isArray(v) && v.every((x) => typeof x === "number") ? (v as number[]) : null);
 
 /**
  * 依心率區間的時間：低強度與以上的分鐘（閾值心率 90% 以下為低）；沒有資料時為 null.
  * 跑步以外的運動也適用：Intervals.icu 每筆活動的區間與閾值心率是那項運動自己的設定
  */
 export function intensityMinutes(w: { raw_json?: string | null }, fallbackLthr: number | null): { low: number; above: number } | null {
-  const r = rawOf(w.raw_json);
-  const times = nums(r.icu_hr_zone_times);
-  const bounds = nums(r.icu_hr_zones);
-  const lthr = typeof r.lthr === "number" ? r.lthr : fallbackLthr;
+  const d = detailsOf(w.raw_json);
+  const times = d.hrZoneTimes;
+  const bounds = d.hrZones;
+  const lthr = d.lthr ?? fallbackLthr;
   if (!times?.length || !bounds?.length || !lthr) return null;
   let low = 0;
   let above = 0;
@@ -864,7 +892,7 @@ export function checkPlan(sessions: SessionDraft[], ctx: CheckContext): PlanWarn
       warn(
         "cross_fatigue",
         heavyDone
-          ? `${heavyDone.date} 有 ${Math.round(heavyDone.duration_min ?? 0)} 分鐘的其他運動（負荷 ${heavyDone.training_load ?? "?"}），${label(s, i)} 建議延後或減量。`
+          ? `${heavyDone.date} 有 ${Math.round(heavyDone.duration_min ?? 0)} 分鐘的其他運動${heavyDone.training_load != null ? `（負荷 ${heavyDone.training_load}）` : ""}，${label(s, i)} 建議延後或減量。`
           : `${label(s, i)} 的前一天排了很久的${RIDE_KINDS.has(s.kind) || sessions.some((x) => RIDE_KINDS.has(x.kind) && x.date === before) ? "騎車" : "交叉訓練"}，強度課建議延後或減量。`,
       );
     }
@@ -979,9 +1007,13 @@ function checkRides(
   if (!cycling) return;
 
   // 這週的負荷：今天以前做過的加上今天起排的（跳過的不算）
-  const doneLoad = [...ctx.workouts, ...ctx.others]
-    .filter((w) => w.date >= ctx.weekStart && w.date < ctx.today && w.date <= weekEnd)
-    .reduce((sum, w) => sum + (w.training_load ?? 0), 0);
+  // 負荷：Intervals.icu 的，沒有的用我們估的（load.ts，規格 12.37）
+  const loadCtx = ctx.values.loadContext;
+  const done = [...ctx.workouts.map((w) => ({ a: w as LoadInput & { date: string }, sport: "run" })), ...ctx.others.map((a) => ({ a: a as LoadInput & { date: string }, sport: sportOfType(a.type) }))];
+  const loadOfItem = ({ a, sport }: (typeof done)[number]) => (loadCtx ? loadOf(a, sport, loadCtx)?.value ?? 0 : a.training_load ?? 0);
+  const doneLoad = done
+    .filter(({ a }) => a.date >= ctx.weekStart && a.date < ctx.today && a.date <= weekEnd)
+    .reduce((sum, item) => sum + loadOfItem(item), 0);
   const plannedLoad = sessions.filter((s) => !s.date || s.date >= ctx.today).reduce((sum, s) => sum + sessionLoad(s, ctx), 0);
   const weekLoad = doneLoad + plannedLoad;
 
@@ -996,7 +1028,7 @@ function checkRides(
 
   // 恢復週：每 3–4 週一週，量減約 30–40%
   const loadOfWeek = (start: string) =>
-    [...ctx.workouts, ...ctx.others].filter((w) => w.date >= start && w.date <= addDays(start, 6)).reduce((sum, w) => sum + (w.training_load ?? 0), 0);
+    done.filter(({ a }) => a.date >= start && a.date <= addDays(start, 6)).reduce((sum, item) => sum + loadOfItem(item), 0);
   const past = [1, 2, 3].map((n) => loadOfWeek(addDays(ctx.weekStart, -7 * n)));
   const peak = Math.max(...past);
   if (past.every((l) => l > 0) && Math.min(...past) > peak * RIDE_RULES.recoveryLighter && weekLoad >= peak * RIDE_RULES.recoveryNear) {
@@ -1062,7 +1094,7 @@ function intensityOf(target: Target | undefined, kind: SessionKind): StepIntensi
 function targetShort(target: Target | undefined, ctx: TargetContext, sport?: Sport | null, minutes?: number): string {
   if (target && "pace" in target && !(sport && sport !== "run")) {
     const range = paceRange(target.pace, ctx);
-    if (range) return rangeText(range);
+    if (range) return `${rangeText(range)}${!ctx.values.hr && target.pace === "E" ? `（${TALK_TEST}）` : ""}`;
   }
   return targetText(target, ctx, sport, minutes);
 }
@@ -1140,12 +1172,12 @@ export interface StructureSegment {
  * 整堂課的結構（課表頁的強度條，規格 12.28）：每一步一段（重複組展開），長度是估計的時間.
  * 三步以上時第一步是暖身、最後一步是緩和；兩步時，輕鬆的那一步在前是暖身、在後是緩和
  */
-export function sessionStructure(session: SessionDraft, ctx: TargetContext): StructureSegment[] {
-  const sport = sessionSport(session);
+/** 每一個最上層的步驟是暖身、主課還是緩和：三步以上頭尾是暖身與緩和；兩步時強度低的那一步 */
+export function stepPhases(session: Pick<SessionDraft, "steps" | "kind">): StructureSegment["phase"][] {
   const top = session.steps;
   const level = (step: PlanStep) =>
     isRepeat(step) ? Math.max(...step.steps.map((s) => STEP_ORDER[intensityOf(s.target, session.kind)])) : STEP_ORDER[intensityOf(step.target, session.kind)];
-  const phaseOf = (i: number): StructureSegment["phase"] => {
+  return top.map((_, i) => {
     if (top.length >= 3) return i === 0 ? "warmup" : i === top.length - 1 ? "cooldown" : "main";
     if (top.length === 2) {
       const [a, b] = [level(top[0]!), level(top[1]!)];
@@ -1153,15 +1185,89 @@ export function sessionStructure(session: SessionDraft, ctx: TargetContext): Str
       if (b < a) return i === 1 ? "cooldown" : "main";
     }
     return "main";
-  };
+  });
+}
+
+export function sessionStructure(session: SessionDraft, ctx: TargetContext): StructureSegment[] {
+  const sport = sessionSport(session);
+  const phases = stepPhases(session);
   const out: StructureSegment[] = [];
-  top.forEach((step, i) => {
-    const phase = phaseOf(i);
+  session.steps.forEach((step, i) => {
+    const phase = phases[i]!;
     const add = (s: Step) => out.push({ intensity: intensityOf(s.target, session.kind), minutes: stepEstimate(s, ctx, sport).minutes, phase });
     if (isRepeat(step)) for (let n = 0; n < step.repeat; n++) step.steps.forEach(add);
     else add(step);
   });
   return out.filter((seg) => seg.minutes > 0);
+}
+
+// ---------------------------------------------------------------------------
+// 選手自己的快速改課（規格 12.34 第 3 點 B）：改短、換成輕鬆
+// ---------------------------------------------------------------------------
+
+/** 自己改過、而且之後教練沒有再改這堂課（教練改過時以教練的為準，不能再恢復成選手改之前的；同一秒時算教練的） */
+export function activeSelfChange(v: { selfChange: SelfChange | null; editedAt: string | null }): SelfChange | null {
+  const c = v.selfChange;
+  return c && !(v.editedAt && v.editedAt >= c.at) ? c : null;
+}
+
+/** 改短的比例：0.75 →「約 3/4」、0.5 →「一半」 */
+export const ratioText = (ratio: number | null) => (ratio === 0.5 ? "一半" : ratio ? "約 3/4" : "");
+
+/** 給教練看的一句，例：「選手自己改短到約 3/4，原本約 16 km、95 分鐘；原因：太累」 */
+export function selfChangeText(c: SelfChange): string {
+  const what = c.action === "shorten" ? `選手自己改短到${ratioText(c.ratio)}` : "選手自己換成輕鬆";
+  const original = `原本「${c.original.title}」${c.km ? `約 ${c.km} km、` : "約 "}${c.minutes} 分鐘`;
+  return `${what}，${original}${c.reason ? `；原因：${SELF_CHANGE_REASONS[c.reason]}` : ""}`;
+}
+
+/** 輕鬆的課：不提供「換成輕鬆」 */
+const EASY_KINDS: ReadonlySet<SessionKind> = new Set(["easy", "ride_recovery", "ride_endurance"]);
+
+/** 可以自己改的課：跑步與騎車（休息、肌力、交叉訓練、比賽不行） */
+export const selfChangeable = (kind: SessionKind) => kind !== "race" && (!NON_RUN_KINDS.has(kind) || RIDE_KINDS.has(kind));
+/** 可以換成輕鬆的課：本來就是輕鬆的不用 */
+export const easyChangeable = (kind: SessionKind) => selfChangeable(kind) && !EASY_KINDS.has(kind);
+
+/** 距離：2 km 以上取到 0.5 km，以下取到 0.1 km；時間取到整分鐘 */
+const scaleKm = (km: number, ratio: number) => (km * ratio >= 2 ? Math.round(km * ratio * 2) / 2 : Math.max(0.1, Math.round(km * ratio * 10) / 10));
+const scaleMin = (min: number, ratio: number) => Math.max(1, Math.round(min * ratio));
+const scaleStep = (step: Step, ratio: number): Step => ({
+  ...step,
+  ...(step.distance_km !== undefined ? { distance_km: scaleKm(step.distance_km, ratio) } : {}),
+  ...(step.duration_min !== undefined ? { duration_min: scaleMin(step.duration_min, ratio) } : {}),
+});
+
+/**
+ * 改短：主課變成 ratio（0.75 或 0.5）. 強度課：暖身與緩和照舊，重複組減少組數（至少 1 組），主課的單一步驟照比例縮短；
+ * 輕鬆跑、長跑：跑的那一段照比例縮短，加速跑（重複組）不動
+ */
+export function shortenSteps(session: Pick<SessionDraft, "steps" | "kind">, ratio: number): PlanStep[] {
+  // 輕鬆的課與長課：縮短跑（騎）的那一段，加速跑等重複組不動
+  if (EASY_KINDS.has(session.kind) || session.kind === "long" || session.kind === "ride_long") {
+    return session.steps.map((step) => (isRepeat(step) ? step : scaleStep(step, ratio)));
+  }
+  const phases = stepPhases(session);
+  return session.steps.map((step, i) => {
+    if (phases[i] !== "main") return step;
+    return isRepeat(step) ? { ...step, repeat: Math.max(1, Math.round(step.repeat * ratio)) } : scaleStep(step, ratio);
+  });
+}
+
+/** 換成輕鬆：跑步換成輕鬆跑、騎車換成耐力騎；時間不超過原本的總時間（跑步最多 40 分鐘、騎車最多 60 分鐘） */
+export function easyVersion(session: Omit<SessionDraft, "date">, originalMinutes: number): Omit<SessionDraft, "date"> {
+  const ride = RIDE_KINDS.has(session.kind);
+  const minutes = Math.max(10, Math.min(ride ? 60 : 40, Math.floor(originalMinutes / 5) * 5 || originalMinutes));
+  return {
+    kind: ride ? "ride_endurance" : "easy",
+    title: ride ? "輕鬆騎" : "輕鬆跑",
+    steps: [{ duration_min: minutes, target: { hr: "easy" } }],
+    purpose: "選手自己換成輕鬆的：維持有氧、讓身體恢復",
+    // 有沒有心率都適用（規格 12.36）：說話測試
+    success: ride ? "輕鬆到能說完整的句子（有心率時維持在輕鬆的範圍）" : "輕鬆到能說完整的句子（有心率時不超過輕鬆跑上限）",
+    fallback: null,
+    sport: ride ? "ride" : (session.sport ?? null),
+  };
 }
 
 /** 種類與課名相同（或課名已經包含種類）時只寫課名；不同時另外附種類 */
@@ -1197,6 +1303,8 @@ export interface SessionView {
   doneAt: string | null;
   /** 教練改過內容的時間（課表頁顯示「已調整」）；沒改過時為 null */
   editedAt: string | null;
+  /** 選手自己改短或換成輕鬆（課表頁顯示「自己改過」）；沒改過時為 null */
+  selfChange: SelfChange | null;
   rows: StepRow[];
   chips: string[];
   brief: string[];
@@ -1207,7 +1315,7 @@ export interface SessionView {
 }
 
 export function sessionView(
-  session: SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "done_at" | "edited_at">>,
+  session: SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "done_at" | "edited_at" | "self_change">>,
   ctx: TargetContext,
 ): SessionView {
   const e = estimateSession(session, ctx);
@@ -1234,6 +1342,7 @@ export function sessionView(
     sport: sessionSport(session) === "ride" ? "ride" : (session.sport ?? null),
     doneAt: session.done_at ?? null,
     editedAt: session.edited_at ?? null,
+    selfChange: session.self_change ?? null,
     rows: stepRows(session, ctx),
     ...sessionChips(session, e, ctx),
     structure: sessionStructure(session, ctx),
@@ -1251,7 +1360,7 @@ export function sortSessions<T extends { date: string | null }>(sessions: T[]): 
 /** 課表的 Markdown（存在 training_plans.content：v1 與 Discord 的 /plan 讀得到；工具與網頁版另外即時換算） */
 export function planMarkdown(
   plan: { weekLabel: string; weekStart: string; style: PlanStyle; reason: string; outline: string | null; notes: string | null },
-  sessions: (SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "edited_at">>)[],
+  sessions: (SessionDraft & Partial<Pick<PlannedSession, "id" | "status" | "note" | "edited_at" | "self_change">>)[],
   ctx: TargetContext,
 ): string {
   const views = sortSessions(sessions).map((s) => sessionView(s, ctx));
@@ -1260,7 +1369,8 @@ export function planMarkdown(
   if (plan.reason) lines.push(`原因：${plan.reason}`);
   lines.push("");
   for (const v of views) {
-    const status = STATUS_LABELS[v.status] || (v.editedAt ? `${EDITED_LABEL}${v.note ? `：${v.note}` : ""}` : "");
+    const self = activeSelfChange(v);
+    const status = STATUS_LABELS[v.status] || (self ? selfChangeText(self) : v.editedAt ? `${EDITED_LABEL}${v.note ? `：${v.note}` : ""}` : "");
     lines.push(`- ${v.when}｜${v.kindLabel}：${v.title}${status ? `（${status}）` : ""}`);
     if (v.steps) lines.push(`  - ${v.steps}（${v.isRun ? `約 ${v.km} km、` : ""}${v.minutes} 分鐘）`);
     const detail = [v.purpose && `目的：${v.purpose}`, v.success && `完成的標準：${v.success}`, v.fallback && `狀況不好時：${v.fallback}`].filter(Boolean);

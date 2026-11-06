@@ -3,7 +3,7 @@
  * - complete(purpose, prompt, maxTokens)：單次生成（跑後摘要、對話壓縮）
  * - runWithTools(system, messages, tools, executeTool)：帶工具的多輪對話（主對話）
  *
- * 呼叫端只會看到 LlmResult.finish（ok / refused / truncated）或 LlmError。
+ * 呼叫端只會看到 LlmResult.finish（ok / refused / truncated / stopped）或 LlmError。
  */
 import type { Logger } from "../types";
 import {
@@ -15,6 +15,7 @@ import {
   type Effort,
   type LlmProvider,
   type LlmResult,
+  type NextOptions,
   type Purpose,
   type SystemPrompt,
   type ToolDef,
@@ -26,6 +27,7 @@ import { turnCostUsd } from "./pricing";
 export * from "./types";
 export { priceOf, turnCostUsd, type ModelPrice } from "./pricing";
 export { AnthropicProvider, type AnthropicProviderOptions } from "./anthropic";
+export { checkLlmKey, classifyKeyError, keyProblemText, type KeyCheck, type KeyProblem } from "./check";
 export {
   OpenAICompatibleProvider,
   OpenAICompatibleError,
@@ -101,6 +103,7 @@ export class Llm {
     tools: ToolDef[],
     executeTool: (name: string, input: Record<string, unknown>) => Promise<string>,
     onEvent?: (event: ChatEvent) => void,
+    signal?: AbortSignal,
   ): Promise<LlmResult> {
     const usage = new Usage();
     const session = this.config.provider.startChat({
@@ -114,26 +117,65 @@ export class Llm {
       effort: this.config.chatEffort,
     });
 
-    const stream = onEvent ? { onText: (text: string) => onEvent({ type: "text", text }) } : {};
+    // 這次模型呼叫已經寫出的文字：停止時存成教練那則的開頭
+    let partial = "";
+    const stream = onEvent
+      ? {
+          onText: (text: string) => {
+            partial += text;
+            onEvent({ type: "text", text });
+          },
+          onToolStart: (name: string) => {
+            // 工具前的文字不是回覆：停止時不存
+            partial = "";
+            onEvent({ type: "preparing", name });
+          },
+          onRetry: () => onEvent({ type: "retry" }),
+        }
+      : {};
+    // 停止（規格 12.38）：不再等模型、不開始下一輪；正在執行的工具讓它做完
+    const stopped = (): LlmResult => {
+      this.logUsage("chat", usage);
+      return { text: partial, usage, finish: "stopped" };
+    };
+    const next = async (opts: NextOptions): Promise<Turn | null> => {
+      if (signal?.aborted) return null;
+      partial = "";
+      try {
+        return await session.next({ ...opts, ...stream, signal });
+      } catch (e) {
+        if (signal?.aborted) return null;
+        throw e;
+      }
+    };
 
     onEvent?.({ type: "thinking" });
-    let turn = await session.next(stream);
+    let turn = await next({});
+    if (!turn) return stopped();
     usage.add(turn.usage, turnCostUsd(this.config.models.chat, turn.usage));
 
     for (let round = 1; turn.finish === "tool_use"; round++) {
       usage.toolRounds += 1;
       const toolResults: ToolResult[] = [];
       for (const call of turn.toolCalls) {
+        // 停止後同一輪剩下的工具不執行
+        if (signal?.aborted) break;
         onEvent?.({ type: "tool", name: call.name });
         const content = await executeTool(call.name, call.input);
         this.logger.info(`Tool [${call.name}] input=${JSON.stringify(call.input)} → ${content.slice(0, 120)}`);
         toolResults.push({ id: call.id, content });
       }
+      if (signal?.aborted) {
+        partial = "";
+        return stopped();
+      }
 
       const lastRound = round >= this.config.toolCallMaxRounds;
       if (lastRound) this.logger.warn(`Max tool call rounds (${this.config.toolCallMaxRounds}) reached`);
       onEvent?.({ type: "thinking" });
-      turn = await session.next({ toolResults, disableTools: lastRound, ...stream });
+      const following = await next({ toolResults, disableTools: lastRound });
+      if (!following) return stopped();
+      turn = following;
       usage.add(turn.usage, turnCostUsd(this.config.models.chat, turn.usage));
       if (lastRound) break;
     }

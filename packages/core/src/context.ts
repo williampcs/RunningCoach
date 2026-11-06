@@ -16,7 +16,8 @@ import { hardBlockReason, injuryLine, injuryName } from "./injuries";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
 import { joinSystemPrompt, type ChatMessage, type SystemPrompt } from "./llm";
 import { DEFAULT_PREFERENCES, preferenceText } from "./planning";
-import { heartRateInfo, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
+import { recentAdherence } from "./plan-history";
+import { heartRateInfo, hrUnusable, recordWithOf, RECORD_WITH_LABELS, SNAPSHOT_RUN_SETTINGS, zonesText } from "./training-values";
 import { guideTopics } from "./app-guide";
 import { athleteSports, SPORT_LABELS } from "./sports";
 import type { CoachSettings, ConversationRow, Race, ReplyRef, RunSettings, Sport } from "./types";
@@ -150,6 +151,9 @@ export class ContextManager {
       "長的回覆（要講好幾件事，或超過三四段）先用一兩句寫結論：選手只看這兩句也知道要做什麼。" +
         "細節照樣寫完整，用「## 小標」分段，小標寫那段在講什麼（例如「## 週四的閾值課」）；結論不要放在小標底下。" +
         "短的回答直接講，不用小標。",
+      // 網頁版在等待時會顯示模型在工具呼叫前寫的字（staging 試用的回饋，規格 12.38）：英文的內部說明會閃過
+      "呼叫工具之前不要先寫給選手看的文字（不要寫「Let me…」這類內部說明，也不要寫英文）；要說的話等工具的結果回來、寫在最後的回覆裡。" +
+        "真的要先說一句時，只用繁體中文寫一句很短的，例如「我先看一下課表」。",
       "",
       "【訓練歷史載入時機】",
       "以下情況請主動呼叫 get_recent_workouts 取得訓練歷史與分析摘要：",
@@ -172,6 +176,9 @@ export class ContextManager {
         `選手不想回答時用預設（${DEFAULT_PREFERENCES}），並用 update_athlete_profile 記下。` +
         "用 save_training_plan 存成一堂一堂的課，目標寫代號；選手說太累、沒空或想改輕鬆時，用 update_planned_session 調整（移動、跳過、改用替代），並說明改了什麼。" +
         "只動一天的內容（例如那天只有 30 分鐘、長跑縮短、間歇換組數、肌力拿掉某個動作）用 edit_planned_session 只改那一堂；會牽動別天的（強度課挪到隔天、休好幾天）才用 save_training_plan 重排整週。" +
+        "下面的【最近 4 週照課表的情形】是程式比對手錶紀錄的結果：排下週或選手問到課表時用它調整（例如常常沒做到的日子不排強度課；長跑常只做一部分就先問原因，或放慢加量），" +
+        "選手自己改短或換成輕鬆的原因：太累 → 減量或放慢加量；沒時間 → 把長的課排到有空的日子，或問選手哪天有空；不舒服 → 照傷病的處理先問清楚；先問或調整。" +
+        "不要責備選手，也不用每次都提。" +
         "課表的 reason 只寫一兩句為什麼這樣排，不寫跑量、配速等數字（課表頁的數字由程式算、程式顯示）；warning_notes 寫成給選手看的一句話。",
       "",
       "【數值與依據】",
@@ -184,6 +191,11 @@ export class ContextManager {
       "當使用者是在回報一次剛完成的跑步（例如「剛跑完 8K，體感 7/10，腿有點重」），" +
         "先呼叫 fetch_latest_activity 取得客觀數據。",
       "只是詢問訓練、心率或傷痛等問題，沒有回報這次跑步時，不需要呼叫。",
+      "選手手動記錄跑步（選手資料的「記錄方式」是手動）、或 fetch_latest_activity 說沒有連接 Intervals.icu 時，不要暫存：" +
+        (this.settings.shell === "web"
+          ? "請選手到「回報」記一筆（日期、距離、時間、體感），存了會自動分析，你在 get_recent_workouts 看得到；"
+          : "這裡還不能手動記，請選手在網頁版的「回報」記一筆；") +
+        "選手在訊息裡給了距離、時間與體感時，先依這些給回饋。",
       "取得 Intervals.icu 資料後：",
       "・若活動日期 = 今天 → 呼叫 save_workout 合併主客觀資料並生成分析",
       "・若活動日期 ≠ 今天（手錶尚未同步至 Intervals.icu）→ 呼叫 save_pending_subjective 暫存主觀感受，" +
@@ -270,7 +282,17 @@ export class ContextManager {
     // 心率資料與區間：Intervals.icu 有閾值心率與區間時用它的（和它算的區間時間一致），
     // 否則依實測或推算的最大心率；填了但不是數字時不顯示，也不用推算值蓋掉使用者的輸入
     const runSettings = (await this.db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS))?.value ?? null;
-    const hr = heartRateInfo(profile, runSettings, today);
+    // 怎麼記錄跑步（新手引導問的，規格 12.36）；量不到心率時不列推算的區間（訓練數值同一個判斷）
+    const how = recordWithOf(profile);
+    if (how) {
+      lines.push(
+        `記錄方式：${RECORD_WITH_LABELS[how]}` +
+          (how === "none" ? "（在 App 的「回報」手動記每一趟：日期、距離、時間、體感；沒有心率，也沒有 Intervals.icu 的訓練負荷）" : how === "phone" ? "（沒有心率；手機 GPS 的配速會飄）" : ""),
+      );
+    }
+    const noHr = hrUnusable(profile, await this.db.getRecentWorkouts(28));
+    const hr = noHr ? null : heartRateInfo(profile, runSettings, today);
+    if (noHr) lines.push(`心率：量不到（${noHr}）。強度看體感與說話測試，配速為輔。`);
     if (hr?.maxHr) {
       const label = hr.source === "estimate" ? "推算，220－年齡" : toInt(profile.max_hr) ? "實測" : "Intervals.icu 的設定";
       lines.push(`最大心率：${hr.maxHr}bpm（${label}）`);
@@ -331,6 +353,10 @@ export class ContextManager {
         );
       }
     }
+
+    // 最近 4 週照課表做得怎樣（規格 12.34 第 2 點）：程式比對的摘要，排下週與談課表時用
+    const adherence = await recentAdherence(this.db, today, { multisport });
+    if (adherence) lines.push("", adherence);
 
     // 最近兩天的其他運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞
     const recentOthers = await this.db.getOtherActivities(1);

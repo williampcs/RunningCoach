@@ -13,6 +13,7 @@ import {
   type ReportTarget,
   type RunCard,
   type RunReport,
+  type Workout,
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
@@ -22,6 +23,7 @@ import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
 import { kmText, RunCardView, SummaryView } from "./RunCard";
+import { ManualRunForm } from "./ManualRun";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -80,7 +82,7 @@ const targetKey = (t: ReportTarget) =>
 
 /** preselect：從教練動態進來時要預先選好的紀錄（跑步是 workout id，騎車等是 intervals_id） */
 export function ReportView({ preselect, onPreselectUsed }: { preselect: number | string | null; onPreselectUsed: () => void }) {
-  const { coach, revision, touch, goTo, activitiesReady, openSettings, toast } = useApp();
+  const { coach, revision, touch, goTo, activitiesReady, toast } = useApp();
   const today = coach.today();
   const [effort, setEffort] = useState(5);
   const [notes, setNotes] = useState("");
@@ -95,19 +97,23 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   // 剛存檔那一趟的卡片
   const [card, setCard] = useState<RunCard | null>(null);
+  // 手動記的（沒有連接 Interv.icu，或手錶沒記到）：剛存的那一筆；manualOpen 是連著 Intervals.icu 時打開的表單
+  const [manual, setManual] = useState<{ workout: Workout; summary: string | null } | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
+  const savedId = manual ? manual.workout.id : report?.status === "saved" ? report.workoutId : null;
   useEffect(() => {
-    if (report?.status !== "saved") {
+    if (savedId === null) {
       setCard(null);
       return;
     }
     let alive = true;
-    void coach.runCards(7).then((cards) => alive && setCard(cards.find((c) => c.workout.id === report.workoutId) ?? null));
+    void coach.runCards(31).then((cards) => alive && setCard(cards.find((c) => c.workout.id === savedId) ?? null));
     return () => {
       alive = false;
     };
-  }, [coach, report, revision]);
+  }, [coach, savedId, revision]);
 
   const hasIntervals = activitiesReady;
 
@@ -157,6 +163,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
       // 感受裡有紅旗的字詞時出現就醫提示（規格 12.33）
       checkRedFlags(notes);
       setReport(saved);
+      setManual(null);
       if (saved.status === "saved") toast("已存檔。");
       setSubmitted({ effort, notes: notes.trim() });
       setEffort(5);
@@ -170,16 +177,48 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   }
 
 
+  const manualResult = manual && (
+    <div className="report-result" ref={resultRef}>
+      {card ? (
+        <RunCardView card={card} today={today}>
+          <div className="actions">
+            <button
+              className="primary"
+              onClick={() =>
+                goTo("chat", analysisRequest(manual.workout, manual.workout.perceived_effort ?? 5, manual.workout.subjective_notes ?? "", manual.workout.date !== today))
+              }
+            >
+              請教練分析
+            </button>
+            <button className="text" onClick={() => goTo("history")}>
+              看所有紀錄
+            </button>
+          </div>
+        </RunCardView>
+      ) : (
+        <p className="muted small">讀取中…</p>
+      )}
+    </div>
+  );
+
+  // 沒有連接 Intervals.icu（沒有手錶、只用手機）：回報就是手動記一趟（規格 12.36）
+  if (!hasIntervals) {
+    return (
+      <section className="card report">
+        <h2 className="title">記一趟跑步</h2>
+        <ManualRunForm
+          onSaved={(result) => {
+            setManual(result);
+            setReport(null);
+          }}
+        />
+        {manualResult}
+      </section>
+    );
+  }
+
   return (
     <>
-      {!hasIntervals && (
-        <div className="notice warn inline">
-          <span>還沒連接 Intervals.icu，抓不到手錶的紀錄。</span>
-          <button className="text" onClick={() => openSettings("records")}>
-            前往設定
-          </button>
-        </div>
-      )}
 
       {/* 標題就是問題；選一趟、點體感、一句話、存起來（規格 12.28） */}
       <section className="card report">
@@ -299,6 +338,27 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
         {report?.status === "pending" && (
           <div className="notice warn">已暫存今天（{shortDateLabel(report.date)}）的回報。手錶上傳到 Intervals.icu 後按「同步最近 14 天」，就會配對到今天的跑步。</div>
         )}
+      </section>
+      {/* 手錶沒記到（忘了戴、沒電）：手動記一趟（規格 12.36） */}
+      <section className="card">
+        {manualOpen ? (
+          <>
+            <h2>手動記一趟</h2>
+            <ManualRunForm
+              onSaved={(result) => {
+                setManual(result);
+                setReport(null);
+                setManualOpen(false);
+              }}
+              onCancel={() => setManualOpen(false)}
+            />
+          </>
+        ) : (
+          <button className="text" onClick={() => setManualOpen(true)}>
+            手錶沒記到？手動記一趟
+          </button>
+        )}
+        {manualResult}
       </section>
     </>
   );

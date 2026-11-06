@@ -669,6 +669,8 @@ export type WorkoutSummaryInput = Pick<
 > & {
   perceived_effort: number | null;
   subjective_notes: string | null;
+  /** 紀錄的來源（manual 是選手手動記的）；不帶時當成手錶的 */
+  source?: string | null;
   /** 當天的身體狀況（recoveryNoteFor），沒有時不帶入 */
   recovery?: string | null;
   /** 這趟對應的課與程式的判斷（planNoteFor）；沒有結構化課表時不加 */
@@ -693,16 +695,17 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
     (hasHeartRate
       ? `平均心率：${bpmOrMissing(workout.avg_hr)}\n最高心率：${bpmOrMissing(workout.max_hr)}\n`
       : "心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）\n") +
+    (workout.source === "manual" ? "來源：選手手動記錄（距離與時間是選手自己填的，沒有分段與爬升）\n" : "") +
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
     (workout.plan ? `課表：${workout.plan}\n` : "") +
     (workout.weather ? `當時天氣（模型估計，約略）：${workout.weather}\n` : "") +
     // 網頁版以數字與圖顯示數據，摘要的第一行當結論顯示，其餘預設收起（規格 12.9）
-    `\n格式：第一行是一句話的結論（例如「穩定的有氧跑，心率控制得很好」），不加標題、粗體，也不重複列出數據；` +
+    `\n格式：第一行是一句話的結論（例如「${hasHeartRate ? "穩定的有氧跑，心率控制得很好" : "穩定的有氧跑，體感和配速都在輕鬆的範圍"}」），不加標題、粗體，也不重複列出數據；` +
     `之後用 2–4 個條列說明。` +
     (hasSubjective ? "客觀數據與體感對比分析。" : "僅客觀數據，給出客觀評估。") +
-    (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率。") +
+    (hasHeartRate ? "" : "沒有心率資料：依配速、時長與體感評估，不要推測心率，也不要建議選手看心率。") +
     (workout.recovery
       ? "可以參考當天的身體狀況解讀心率與體感；手錶的恢復數據只是參考，與選手的自評不一致時以選手的感受為主。"
       : "") +

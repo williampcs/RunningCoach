@@ -12,7 +12,7 @@
 // - 「回報」選騎車填體感，課表的判斷看得到體感；紀錄頁列出騎車與騎車的累積
 // - 騎車的賽事（教練看得到「（單車）」）；使用說明有「跑步以外的運動」
 // - 只練騎車：新手引導只選騎車、同步完成、排只騎車的課表（系統提示不帶跑步的方法）
-// - 開關關著的一般建置（E2E_URL，4173）：設定頁沒有列功能、選手資料沒有新的欄位、工具沒有 sport、教練方法是 v7（沒有交叉訓練的部分）、
+// - 開關關著的一般建置（E2E_URL，4173）：設定頁沒有列功能、選手資料沒有新的欄位、工具沒有 sport、教練方法是 v8（沒有交叉訓練的部分）、
 //   分頁是「回報」、使用說明沒有多運動、新手引導沒有「選擇你練的運動」
 // 這個腳本自己建置一份開著 multisport 的（放在 $E2E_OUT 底下），用 4176 埠開 vite preview；只需要 npm run dev:mock。
 const { spawn, execFileSync } = require("child_process");
@@ -144,7 +144,7 @@ async function flow(browser, { width, height, scheme }, check, problems) {
       const llm = (await requests()).filter((r) => r.kind === "llm").map((r) => JSON.stringify(r.body));
       const last = llm.filter((b) => b.includes("幫我排這週的課表")).at(-1) ?? "";
       check.toolHasSport = last.includes("交叉訓練（kind=cross）是哪種運動");
-      check.promptHasSports = last.includes("練的運動：跑步、騎車、肌力訓練") && last.includes("騎車：目標 長距離（百公里、長途）") && last.includes("【教練方法 v7】");
+      check.promptHasSports = last.includes("練的運動：跑步、騎車、肌力訓練") && last.includes("騎車：目標 長距離（百公里、長途）") && last.includes("【教練方法 v8】");
     }
 
     step = "課表頁：騎車的目標";
@@ -484,7 +484,7 @@ async function offFlow(browser, check, problems) {
     await page.getByRole("button", { name: "送出" }).click();
     await page.locator('.msg.user:has-text("關著時看看課表") ~ .msg.assistant .bubble.assistant').first().waitFor({ timeout: 30000 });
     const body = (await requests()).filter((r) => r.kind === "llm").map((r) => JSON.stringify(r.body)).filter((b) => b.includes("關著時看看課表"))[0] ?? "";
-    check.offToolsUnchanged = body.includes("save_training_plan") && !body.includes("交叉訓練（kind=cross）是哪種運動") && body.includes("【教練方法 v7】");
+    check.offToolsUnchanged = body.includes("save_training_plan") && !body.includes("交叉訓練（kind=cross）是哪種運動") && body.includes("【教練方法 v8】");
     check.offNoCycling = !body.includes("ride_sweetspot") && !body.includes("save_activity_feedback") && body.includes("你是一位專業跑步教練");
     // 分頁的名稱開關開著與關著都一樣（規格 12.28）
     check.offReportTab = (await page.locator("nav.tabbar").getByRole("button", { name: "回報", exact: true }).count()) === 1;

@@ -45,6 +45,11 @@ const anthropicSse = (events: Record<string, unknown>[]) =>
 const openaiSse = (chunks: unknown[], eol = "\n") =>
   new Sse([...chunks.map((c) => JSON.stringify(c)), "[DONE]"].map((d) => `data: ${d}${eol}${eol}`).join(""));
 
+/** 送出一段 SSE 後就不再送、也不結束（測試停止：要靠中斷才會結束） */
+class Hang {
+  constructor(readonly body: string) {}
+}
+
 /** 依序回覆預先寫好的 JSON 或 SSE，並記錄收到的 request */
 async function mockApi(responses: unknown[]) {
   const captured: Captured[] = [];
@@ -57,6 +62,11 @@ async function mockApi(responses: unknown[]) {
       if (response instanceof HttpError) {
         res.writeHead(response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(response.body));
+        return;
+      }
+      if (response instanceof Hang) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(response.body);
         return;
       }
       if (response instanceof Sse) {
@@ -241,7 +251,10 @@ describe("AnthropicProvider", () => {
     const texts: string[] = [];
     const onText = (text: string) => texts.push(text);
 
-    const first = await session.next({ onText });
+    // 模型開始寫工具呼叫時（參數還沒寫完）就交出名稱：介面把之前的文字改成等待中的狀態（規格 12.38）
+    const started: string[] = [];
+    const first = await session.next({ onText, onToolStart: (name) => started.push(`${name}@${texts.length}`) });
+    expect(started).toEqual(["get_training_plan@2"]);
     expect(first).toEqual({
       text: "讓我看看",
       toolCalls: [{ id: "toolu_1", name: "get_training_plan", input: { week: "2026-W41" } }],
@@ -287,7 +300,10 @@ describe("strict 的工具（規格 12.31 第 2 點）", () => {
     const { baseURL, captured } = await mockApi([rejected, ok, ok]);
     const provider = new AnthropicProvider({ apiKey: "k", baseURL });
     const request = { model: "claude-test", system: "s", messages: [{ role: "user" as const, content: "hi" }], tools: strictTools, maxTokens: 100, effort: "low" as const };
-    expect((await provider.startChat(request).next()).text).toBe("好");
+    let retries = 0;
+    expect((await provider.startChat(request).next({ onRetry: () => retries++ })).text).toBe("好");
+    // 介面顯示「再試一次…」（規格 12.38）
+    expect(retries).toBe(1);
     expect(captured[0]!.body.tools[0].strict).toBe(true);
     expect(captured[0]!.body.tools[0].input_schema.$defs.step).toBeDefined();
     expect(captured[1]!.body.tools[0].strict).toBeUndefined();
@@ -496,7 +512,10 @@ describe("OpenAICompatibleProvider", () => {
     const texts: string[] = [];
     const onText = (text: string) => texts.push(text);
 
-    const first = await session.next({ onText });
+    const started: string[] = [];
+    const first = await session.next({ onText, onToolStart: (name) => started.push(name) });
+    // 名稱出現時交出一次，之後逐段的參數不再交
+    expect(started).toEqual(["get_training_plan"]);
     expect(first).toEqual({
       text: "",
       toolCalls: [{ id: "call_1", name: "get_training_plan", input: { week: "2026-W41" } }],
@@ -554,5 +573,33 @@ describe("OpenAICompatibleProvider", () => {
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(OpenAICompatibleError);
     expect(error).toMatchObject({ status: 401, message: "401 Incorrect API key provided" });
+  });
+});
+
+describe("停止回覆（規格 12.38）：中斷正在串流的呼叫", () => {
+  it("Claude 與 OpenAI 相容：signal 中斷後 next() 丟出，不再等", async () => {
+    const claudeStart = [
+      { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "部分" } },
+    ];
+    const openaiStart = [{ choices: [{ index: 0, delta: { role: "assistant", content: "部分" }, finish_reason: null }] }];
+    for (const kind of ["claude", "openai"] as const) {
+      const body =
+        kind === "claude"
+          ? claudeStart.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("")
+          : openaiStart.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("");
+      const { baseURL } = await mockApi([new Hang(body)]);
+      const provider = kind === "claude" ? new AnthropicProvider({ apiKey: "k", baseURL }) : new OpenAICompatibleProvider({ apiKey: "k", baseURL });
+      const session = provider.startChat({ model: kind === "claude" ? "claude-opus-5-5" : "m", messages: [{ role: "user", content: "hi" }], tools, maxTokens: 100, effort: "low" });
+      const controller = new AbortController();
+      const texts: string[] = [];
+      const pending = session.next({ onText: (t) => (texts.push(t), controller.abort()), signal: controller.signal });
+      await expect(pending).rejects.toThrow();
+      expect(texts).toEqual(["部分"]);
+      server?.closeAllConnections();
+      server?.close();
+      server = undefined;
+    }
   });
 });

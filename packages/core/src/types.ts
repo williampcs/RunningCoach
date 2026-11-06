@@ -220,6 +220,9 @@ export interface Workout {
   duplicate_of?: number | null;
   /** 在 Intervals.icu 已刪除或類型不再是跑步的時間（不在列表上） */
   removed_at?: string | null;
+  /** 手動新增的（source 是 manual）才有：跨裝置不變的 id 與修改時間（schema 19） */
+  sync_id?: string | null;
+  updated_at?: string | null;
   /** getRecentWorkouts：併進這筆的重複紀錄數 */
   duplicate_count?: number;
   /** LEFT JOIN workout_summaries */

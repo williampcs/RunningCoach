@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { Check } from "lucide-react";
 
-import { addDays, shortDateLabel, type RideAccumulation, type RideCard, type RunCard } from "@running-coach/core";
+import { addDays, LOAD_SOURCE_LABELS, loadText, shortDateLabel, type RideAccumulation, type RideCard, type RunCard } from "@running-coach/core";
 
 import { Markdown } from "../Markdown";
 import { Disclosure, Icon, ICON_CHIP, SportIcon } from "../ui";
@@ -109,7 +109,8 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
     w.avg_hr == null && w.max_hr == null ? "沒有心率資料" : null,
     w.max_hr != null ? `最高心率 ${w.max_hr}` : null,
     w.elevation_m ? `爬升 ${w.elevation_m} m` : null,
-    w.training_load != null ? `負荷 ${w.training_load}` : null,
+    // 沒有 Intervals.icu 的負荷時是我們估的，標「依體感估」等（規格 12.37）
+    card.load ? `負荷 ${loadText(card.load)}` : null,
   ].filter(Boolean);
   return (
     <div className="run-card">
@@ -166,12 +167,13 @@ export function RideCardView({ card, children }: { card: RideCard; children?: Re
         <Stat label="時間" {...minutesText(a.duration_min)} />
         <Stat label="距離" value={a.distance_km ? kmText(a.distance_km) : "—"} unit={a.distance_km ? "km" : undefined} />
         <Stat label="平均心率" value={a.avg_hr ?? "—"} />
-        <Stat label={card.watts ? "功率" : "負荷"} value={card.watts ?? a.training_load ?? "—"} unit={card.watts ? "W" : undefined} />
+        <Stat label={card.watts ? "功率" : "負荷"} value={card.watts ?? card.load?.value ?? "—"} unit={card.watts ? "W" : undefined} />
       </dl>
       {/* 有資料才出現（規格 12.31）：功率在上面的格子，這裡是負荷、標準化功率與踏頻 */}
       {(() => {
         const extra = [
-          card.watts && a.training_load != null ? `負荷 ${a.training_load}` : null,
+          card.watts && card.load ? `負荷 ${loadText(card.load)}` : null,
+          !card.watts && card.load && card.load.source !== "intervals" ? `負荷是${LOAD_SOURCE_LABELS[card.load.source]}的` : null,
           card.normalizedWatts ? `標準化功率 ${card.normalizedWatts} W` : null,
           card.cadence ? `平均踏頻 ${card.cadence} rpm` : null,
           a.avg_hr == null ? "沒有心率資料" : null,

@@ -11,7 +11,7 @@ import {
   type ReplyRef,
 } from "@running-coach/core";
 
-import { Archive, X } from "lucide-react";
+import { Archive, Square, X } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
 import { Disclosure, EmojiText, Icon } from "../ui";
@@ -21,8 +21,19 @@ import { checkRedFlags } from "../red-flag-alert";
 import { Markdown } from "../Markdown";
 import { CoachFeed } from "./CoachFeed";
 import { GettingStarted } from "./GettingStarted";
+import { DemoComposer } from "./Demo";
+import { DEMO } from "../demo";
 
 // 執行工具時顯示的狀態
+/** 等待中多久沒有新的事件就提示「還在處理，有點久」；E2E 可以用 localStorage 的 running-coach.e2e.slow-ms 縮短 */
+const SLOW_MS = (() => {
+  try {
+    return Number(localStorage.getItem("running-coach.e2e.slow-ms")) || 20_000;
+  } catch {
+    return 20_000;
+  }
+})();
+
 const TOOL_STATUS: Record<string, string> = {
   fetch_latest_activity: "讀取最新的跑步活動",
   save_workout: "儲存訓練並產生分析",
@@ -165,6 +176,13 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   // 串流中的回覆：draft 是這次模型呼叫目前為止的文字，tool 是正在執行的工具
   const [draft, setDraft] = useState("");
   const [tool, setTool] = useState<string | null>(null);
+  // 模型在工具呼叫之前寫的字（例如「我先看一下課表」）：不是回覆，顯示成等待中的狀態的一部分，不像正式回覆一閃而過
+  const [aside, setAside] = useState("");
+  // 自動重試（例如 strict 的工具不被接受，拿掉 strict 再送一次）：到下一個事件之前顯示「再試一次…」
+  const [retrying, setRetrying] = useState(false);
+  // 很久沒有新的事件：狀態後面補「還在處理，有點久」，不讓人以為當掉
+  const [slow, setSlow] = useState(false);
+  const lastEvent = useRef(0);
   const draftText = useRef("");
   // 串流中的回覆哪些段落打開（存好後的那一則接著用）
   const draftOpen = useRef<ReplyOpen>({ all: null, each: {} });
@@ -174,6 +192,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   const bottom = useRef<HTMLDivElement>(null);
   // 以 ref 同步判斷是否送出中：state 要到下次 render 才更新，擋不住同一輪內的重複觸發
   const busy = useRef(false);
+  // 停止回覆（規格 12.38）：這次送出的 AbortController
+  const abort = useRef<AbortController | null>(null);
 
   // 文字片段很密集，每個畫面更新一次就好
   const showDraft = useCallback(() => {
@@ -186,14 +206,21 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
 
   const onEvent = useCallback(
     (event: ChatEvent) => {
+      lastEvent.current = Date.now();
+      setSlow(false);
+      setRetrying(event.type === "retry");
+      if (event.type === "retry") return;
       if (event.type === "text") {
         draftText.current += event.text;
       } else {
-        // 新的一次模型呼叫或開始執行工具：先前的文字不是最終回覆
+        // 模型開始寫工具呼叫、開始執行工具或新的一次模型呼叫：先前的文字不是最終回覆，改成等待中的一行小字
+        const before = draftText.current.trim();
+        if (before && event.type !== "thinking") setAside(before);
         draftText.current = "";
         draftOpen.current = { all: null, each: {} };
         setDraftRound((n) => n + 1);
-        setTool(event.type === "tool" ? event.name : null);
+        if (event.type !== "thinking") setTool(event.name);
+        else if (!before) setTool(null);
       }
       showDraft();
     },
@@ -206,7 +233,20 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
     draftText.current = "";
     setDraft("");
     setTool(null);
+    setAside("");
+    setRetrying(false);
+    setSlow(false);
   }, []);
+
+  // 等待中每秒看一次：超過 SLOW_MS 沒有新的事件時提示
+  useEffect(() => {
+    if (sending === null) return;
+    lastEvent.current = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - lastEvent.current > SLOW_MS) setSlow(true);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [sending]);
 
   const load = useCallback(async () => {
     // 多讀一則，知道更早的還有沒有
@@ -273,12 +313,16 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
       setSendingReply(reply);
       setError(null);
       setFooter("");
+      const controller = new AbortController();
+      abort.current = controller;
       try {
-        const { stats } = await coach.chat(content, onEvent, { replyTo: reply });
+        const { stats } = await coach.chat(content, onEvent, { replyTo: reply, signal: controller.signal });
         setFooter(formatTokenFooter(stats));
       } catch (e) {
-        setError(errorText(e));
+        // 停止不是錯誤：教練那則已經存成「（已停止）」
+        if (!controller.signal.aborted) setError(errorText(e));
       } finally {
+        abort.current = null;
         await load();
         busy.current = false;
         clearDraft();
@@ -451,13 +495,18 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
             <div className="bubble user">{sending}</div>
           </div>
         )}
+        {/* 工具前的文字：收成泡泡上方一行不顯眼的字，直到這次的回覆存好 */}
+        {progressShown && aside && <div className="chat-aside small">教練：{aside}</div>}
         {progressShown &&
           (draft ? (
             <div className="bubble assistant streaming">
               <CoachReply key={draftRound} content={draft} streaming initial={draftOpen.current} onOpenChange={(o) => (draftOpen.current = o)} />
             </div>
           ) : (
-            <div className="bubble assistant muted">{tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}</div>
+            <div className="bubble assistant muted">
+              {retrying ? "再試一次…" : tool ? `${TOOL_STATUS[tool] ?? "處理中"}…` : "教練思考中…"}
+              {slow && <span className="chat-slow">還在處理，有點久</span>}
+            </div>
           ))}
         {error && <div className="notice error">沒有收到回覆：{error}</div>}
         {notice && <div className={`notice ${notice.kind}`}>{notice.text}</div>}
@@ -468,7 +517,9 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         )}
         <div ref={bottom} />
       </div>
-      {llmProblem ? (
+      {DEMO ? (
+        <DemoComposer />
+      ) : llmProblem ? (
         <div className="notice warn inline">
           <span>{llmProblem}，目前無法對話。</span>
           <button className="text" onClick={() => openSettings("ai")}>
@@ -497,9 +548,17 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
           )}
           {/* Enter 送出、Shift+Enter 換行，輸入法選字時不送出；平常一行高，打字時長高到 6 行 */}
           <AutoGrowTextarea enter="send" value={input} placeholder="輸入訊息…" aria-label="訊息" onChange={(e) => setInput(e.target.value)} />
-          <button type="submit" className="primary" disabled={sending !== null || !input.trim()}>
-            送出
-          </button>
+          {sending !== null ? (
+            // 回覆進行中：送出鈕變成停止（不再等模型、不開始下一輪；正在執行的工具會做完）
+            <button type="button" className="stop-button" onClick={() => abort.current?.abort()}>
+              <Icon as={Square} />
+              停止
+            </button>
+          ) : (
+            <button type="submit" className="primary" disabled={!input.trim()}>
+              送出
+            </button>
+          )}
         </form>
       )}
       {/* 精簡版的使用須知一直顯示在輸入框下方（規格 12.32） */}

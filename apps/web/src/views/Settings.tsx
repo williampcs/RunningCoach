@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
-import { formatStatus, TERMS_VERSION, type Effort, type Purpose } from "@running-coach/core";
+import { formatStatus, RECORD_WITH_LABELS, recordWithOf, TERMS_VERSION, type Effort, type Purpose, type RecordWith } from "@running-coach/core";
 
 import { errorText, useApp, type SettingsSection } from "../app-context";
 import { featureEnabled } from "../environment";
@@ -14,13 +14,16 @@ import { DeviceSyncCard } from "./DeviceSync";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
-import { IntervalsGuide, resetGettingStarted } from "./GettingStarted";
+import { IntervalsGuide, RecordWithPicker, resetGettingStarted } from "./GettingStarted";
 import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { TermsLink, TermsShort } from "./TermsLink";
-import { TestModeCard } from "./TestMode";
+import { TestModeCard, TestModeReset } from "./TestMode";
+import { forgetTestScope } from "../storage-scope";
+import { IntervalsLogin, intervalsLoginAvailable } from "./IntervalsLogin";
+import { resetWizard } from "../wizard";
 import {
   clearSettings,
   consentKey,
@@ -55,7 +58,7 @@ const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
 };
 
 /** 目前選擇下，資料會送到哪裡（收在 ⓘ 裡） */
-function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
+export function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   if (draft.llmMode === "proxy") {
     return (
       <ul>
@@ -215,6 +218,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [workouts, setWorkouts] = useState<number | null>(null);
+  // 怎麼記錄跑步（選手資料的 record_with，規格 12.36）
+  const [recordWith, setRecordWith] = useState<RecordWith | null>(null);
   const [locked, setLocked] = useState(lockEnabled);
   const [protection, setProtection] = useState<StorageProtection | null>(null);
   // 「進階」：開放相容服務還沒填模型時自動打開（不填就不能對話）
@@ -234,6 +239,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       ),
     );
     void coach.db.countWorkouts().then(setWorkouts);
+    void coach.db.getProfile().then((p) => setRecordWith(recordWithOf(p)));
   }, [coach, settings, revision]);
 
   useEffect(() => {
@@ -248,7 +254,8 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
 
   // 這張表單只管 AI 模型與 Intervals.icu（還有時區、同意紀錄）；同步金鑰與天氣的城市由各自的卡片管理，
   // 表單打開之後才改的，存檔不能用表單打開時的舊值蓋掉
-  const formOf = (s: AppSettings) => ({ ...s, sync: null, weather: null });
+  // Intervals.icu 的登入（token）也由它自己的元件管理（規格 12.37）
+  const formOf = (s: AppSettings) => ({ ...s, sync: null, weather: null, intervals: { ...s.intervals, accessToken: null, account: null } });
   const dirty = JSON.stringify(formOf(draft)) !== JSON.stringify(formOf(settings));
   // 已儲存的設定可以同步、但還沒有任何訓練紀錄：提示下一步
   const syncNext = !dirty && llmProblem === null && activitiesReady && workouts === 0;
@@ -281,7 +288,12 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       return;
     }
     try {
-      await updateSettings({ ...draft, sync: settings.sync, weather: settings.weather });
+      await updateSettings({
+        ...draft,
+        sync: settings.sync,
+        weather: settings.weather,
+        intervals: { ...draft.intervals, accessToken: settings.intervals.accessToken, account: settings.intervals.account },
+      });
       setError(null);
       toast("設定已儲存在這個瀏覽器。");
     } catch (e) {
@@ -329,7 +341,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       resetGettingStarted();
       if (keep === null) {
         clearSettings();
+        // 測試模式那一份設定裡也有複製過去的 API key：一起刪掉，下次進測試模式再從這裡複製
+        forgetTestScope(localStorage);
         clearRemoved();
+        // 回到第一次使用的狀態：設定精靈也重新出現（功能開關開著時）
+        resetWizard();
       }
       // 重新載入，讓 Coach 與各頁的狀態（進行中的對話壓縮、未送出的內容）一併回到初始
       location.reload();
@@ -488,10 +504,29 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   }
 
   if (page === "records") {
+    // 能用 Intervals.icu 登入時（規格 12.37），貼 API key 收進「進階」
+    const loginAvailable = intervalsLoginAvailable();
+    const apiKeyField = (
+      <label>
+        API key
+        <input
+          type="password"
+          autoComplete="off"
+          value={draft.intervals.apiKey}
+          onChange={(e) => setDraft({ ...draft, intervals: { ...draft.intervals, apiKey: e.target.value } })}
+        />
+      </label>
+    );
     return (
       <Subpage id="records" onBack={back}>
         <section className="card">
+          <h2>你用什麼記錄跑步？</h2>
+          <RecordWithPicker value={recordWith} onPicked={setRecordWith} />
+          <p className="small muted">沒有連接 Intervals.icu 時，跑完在「回報」手動記一筆；連接了也可以補記手錶沒記到的。</p>
+        </section>
+        <section className="card">
           {testMode.enabled && <div className="notice info">測試模式中使用假資料，不會連線 Intervals.icu。</div>}
+          <h2>Intervals.icu{recordWith && recordWith !== "watch" ? "（選用）" : ""}</h2>
           <p className="row">
             <span>教練透過 Intervals.icu 讀取你手錶的紀錄。</span>
             <InfoTip label="怎麼取得 API key">
@@ -500,16 +535,15 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
             </InfoTip>
           </p>
           <PhoneGuide />
-          <label>
-            API key
-            <input
-              type="password"
-              autoComplete="off"
-              value={draft.intervals.apiKey}
-              onChange={(e) => setDraft({ ...draft, intervals: { ...draft.intervals, apiKey: e.target.value } })}
-            />
-          </label>
+          <IntervalsLogin from="settings" />
+          {!loginAvailable && apiKeyField}
           <Disclosure summary="進階" className="advanced">
+            {loginAvailable && (
+              <>
+                <p className="small muted">也可以不登入、改貼 Intervals.icu 的 API key（登入了就用登入的）。</p>
+                {apiKeyField}
+              </>
+            )}
             <div className="grid">
               <label>
                 Athlete ID
@@ -602,14 +636,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       <Subpage id="reset" onBack={back}>
         <section className="card">
           {testMode.enabled ? (
-            <>
-              <p>測試模式中只會清除測試資料庫；正式資料與設定不受影響。</p>
-              <div className="actions">
-                <button className="danger" onClick={() => void reset("stop")}>
-                  清除測試資料
-                </button>
-              </div>
-            </>
+            <TestModeReset />
           ) : (
             <>
               <p className="row">
@@ -662,7 +689,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const rowSub: Record<SettingsSection, string> = {
     // 一眼看得到在用哪個服務與模型（例：Claude · 自己的 key · opus-5-5）
     ai: [settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`, settings.models.chat.trim().replace(/^claude-/, "")].filter(Boolean).join(" · "),
-    records: "Intervals.icu",
+    records: recordWith ? RECORD_WITH_LABELS[recordWith].replace(/，.*/, "") : "Intervals.icu",
     weather: settings.weather?.label ?? "還沒設定",
     sync: "電腦、手機之間",
     lock: "保護 API key",
@@ -673,7 +700,14 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   };
   const rowStatus: Partial<Record<SettingsSection, [string, boolean]>> = {
     ai: llmProblem ? ["還沒設定", false] : ["可用", true],
-    records: testMode.enabled ? ["測試模式", false] : activitiesReady ? ["已連接", true] : ["還沒連接", false],
+    // 手機或沒有在記錄的人：手動記就是正常的狀態（規格 12.36）
+    records: testMode.enabled
+      ? ["測試模式", false]
+      : activitiesReady
+        ? ["已連接", true]
+        : recordWith && recordWith !== "watch"
+          ? ["手動記", true]
+          : ["還沒連接", false],
     sync: testMode.enabled ? ["不同步", false] : deviceSync.enabled ? ["已開啟", true] : ["關", false],
     lock: locked ? ["開", true] : ["關", false],
     data: protection ? [PROTECTION_STATUS[protection], protection === "persisted"] : db.persistent ? undefined : ["未持久化", false],

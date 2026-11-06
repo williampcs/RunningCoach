@@ -30,6 +30,9 @@ const LINKS_ONLY: Record<string, string> = {
   "apps.apple.com": "只用 iPhone 時的 App 連結",
   "open-meteo.com": "天氣的資料來源標示",
   "example.com": "服務網址輸入框的範例",
+  "console.anthropic.com": "設定精靈「去拿 key」的連結",
+  "platform.openai.com": "設定精靈「去拿 key」的連結",
+  "aistudio.google.com": "設定精靈「去拿 key」的連結",
 };
 
 describe("隱私說明頁（規格 12.20）", () => {

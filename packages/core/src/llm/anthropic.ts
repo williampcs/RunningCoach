@@ -62,14 +62,15 @@ export class AnthropicProvider implements LlmProvider {
           ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
         };
         const send = (p: Anthropic.MessageCreateParamsNonStreaming) =>
-          opts.onText ? streamMessage(client, p, opts.onText) : client.messages.create(p);
+          opts.onText ? streamMessage(client, p, opts.onText, opts.onToolStart, opts.signal) : client.messages.create(p, { signal: opts.signal });
         let response: Anthropic.Message;
         try {
           response = await send(params);
         } catch (e) {
           // strict 的 schema 不被接受（例如超過複雜度的上限）時，拿掉 strict 再送一次，不讓對話因此失敗；400 不計費
-          if (!(e instanceof Anthropic.BadRequestError) || !tools?.some((t) => t.strict)) throw e;
+          if (!(e instanceof Anthropic.BadRequestError) || !tools?.some((t) => t.strict) || opts.signal?.aborted) throw e;
           const loose = tools.map(withoutStrict) as Anthropic.Tool[];
+          opts.onRetry?.();
           // 拿掉 strict 也失敗的，是別的原因造成的 400：照樣丟出，之後照樣送 strict
           response = await send({ ...params, tools: loose });
           tools = loose;
@@ -112,13 +113,17 @@ async function streamMessage(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
   onText: (text: string) => void,
+  onToolStart?: (name: string) => void,
+  signal?: AbortSignal,
 ): Promise<Anthropic.Message> {
-  const stream = client.messages.stream(params);
+  const stream = client.messages.stream(params, { signal });
   let textBlocks = 0;
   for await (const event of stream) {
     if (event.type === "content_block_start" && event.content_block.type === "text") {
       // 非串流時多個文字區塊以換行串接，這裡保持一致
       if (textBlocks++ > 0) onText("\n");
+    } else if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
+      onToolStart?.(event.content_block.name);
     } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       onText(event.delta.text);
     }

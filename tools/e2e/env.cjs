@@ -12,6 +12,30 @@ function loadPlaywright() {
   }
 }
 
+/**
+ * E2E_NOW（例：2026-10-29T23:50:00+08:00）：每個新的 context 的時鐘從那個時間開始照常走（Playwright 的 clock，計時器不受影響），
+ * 搭配模擬上游的 MOCK_NOW 測跨日。不設時是真的時間
+ */
+function withClock(chromium) {
+  const now = process.env.E2E_NOW;
+  if (!now) return chromium;
+  const offset = Date.parse(now) - Date.now();
+  if (Number.isNaN(offset)) throw new Error(`E2E_NOW 不是時間：${now}`);
+  const launch = chromium.launch.bind(chromium);
+  return Object.assign(Object.create(chromium), {
+    launch: async (...args) => {
+      const browser = await launch(...args);
+      const newContext = browser.newContext.bind(browser);
+      browser.newContext = async (...options) => {
+        const context = await newContext(...options);
+        await context.clock.setSystemTime(new Date(Date.now() + offset));
+        return context;
+      };
+      return browser;
+    },
+  });
+}
+
 const OUT = process.env.E2E_OUT || path.join(os.tmpdir(), "running-coach-e2e");
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -164,8 +188,19 @@ async function emulateStandalone(page) {
   });
 }
 
+/**
+ * 設定精靈（規格 12.35 的 A，功能開關 onboarding）只給新的使用者：開著 onboarding 的建置（all、staging）裡
+ * 測其他東西的腳本用這個跳過精靈，直接從平常的畫面開始（等同已經走完）
+ */
+async function skipWizard(context) {
+  await context.addInitScript(() => {
+    if (!localStorage.getItem("running-coach.wizard.v1")) localStorage.setItem("running-coach.wizard.v1", JSON.stringify({ done: true }));
+  });
+}
+
 module.exports = {
   go,
+  skipWizard,
   opensLegalPanel,
   hopLegal,
   emulateStandalone,
@@ -173,7 +208,7 @@ module.exports = {
   profile,
   profileSave,
   setupMock,
-  chromium: loadPlaywright().chromium,
+  chromium: withClock(loadPlaywright().chromium),
   /** vite preview 的網址 */
   URL: process.env.E2E_URL || "http://localhost:4173/",
   /** 模擬上游（npm run dev:mock） */

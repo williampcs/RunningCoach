@@ -14,6 +14,8 @@ export const FEATURES = {
   testmode: "測試模式",
   /** 多裝置同步的裝置清單、移除某台與換金鑰（規格 12.27）：每台自己的金鑰，既有的同步空間在這台第一次同步時升級 */
   devices: "裝置清單與移除",
+  /** 新的使用者第一次打開時的設定精靈與「先看看」（規格 12.35 的 A、B，12.37）；已經設定好的人不受影響 */
+  onboarding: "設定精靈與先看看",
 } as const;
 
 export type Feature = keyof typeof FEATURES;

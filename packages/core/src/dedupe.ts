@@ -5,6 +5,7 @@
  * 之後的手動新增或 HealthKit），各來源的開始與結束常差幾十秒到幾分鐘，
  * 所以看重疊佔較短那筆的比例，不要求開始時間相同。
  */
+import { detailsOf } from "./activities";
 import type { Activity } from "./types";
 
 /** 重疊達較短那筆的這個比例，視為同一趟並自動合併 */
@@ -21,25 +22,14 @@ export type RunLike = Pick<Activity, "date" | "distance_km" | "duration_min" | "
   raw_json?: string | null;
 };
 
-function num(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-}
-
 /**
  * 原始資料中的時間區間：當地開始時間加上經過時間；缺任何一項時為 null.
  * 當地時間不帶時區，一律當成 UTC 解讀：只用來比較同一個人的兩筆紀錄，彼此一致即可。
  */
 export function timeRangeOf(rawJson: string | null | undefined): TimeRange | null {
-  if (!rawJson) return null;
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(rawJson) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const text =
-    typeof raw.start_date_local === "string" ? raw.start_date_local : typeof raw.start_date === "string" ? raw.start_date : null;
-  const seconds = num(raw.elapsed_time) ?? num(raw.moving_time);
+  const d = detailsOf(rawJson);
+  const text = d.startLocal ?? d.startUtc;
+  const seconds = d.elapsedSec ?? d.movingSec;
   if (!text || !seconds) return null;
   const start = Date.parse(`${text.replace(/(Z|[+-]\d{2}:?\d{2})$/, "")}Z`);
   return Number.isFinite(start) ? { start, end: start + seconds * 1000 } : null;

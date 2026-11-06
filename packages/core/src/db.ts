@@ -1,8 +1,9 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
+import { byNewest, recordOfOther, recordOfWorkout, type ActivityRecord } from "./activities";
 import { addDays, nowIso } from "./dates";
 import { keepScore, sameRun } from "./dedupe";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
-import type { PlannedSession, PlanStyle, SessionDraft, SessionStatus } from "./plan";
+import type { PlannedSession, PlanStyle, SelfChange, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
 import type {
   Activity,
@@ -39,8 +40,10 @@ import type {
  * 15：races 的 place_label、place_lat、place_lon（比賽的地點，只用來查天氣）與 start_time（起跑時間）（規格 12.31 第 3 點）
  * 16：activity_summaries（騎車等其他運動的 AI 分析，規格 12.31 的騎車分析）
  * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
+ * 18：planned_sessions.self_change（選手自己改短、換成輕鬆：原本的內容、改成什麼、原因，規格 12.34 第 3 點 B）
+ * 19：workouts.sync_id、updated_at（手動新增的跑步：跨裝置不變的 id 與修改時間，規格 12.36「沒有手錶也能用」）
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 19;
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -50,6 +53,23 @@ export const REPLY_EXCERPT_CHARS = 200;
 
 /** 列表、統計與教練看到的訓練：排除重複的與已移除的 */
 const ACTIVE = "w.duplicate_of IS NULL AND w.removed_at IS NULL";
+
+/** 手動新增一筆跑步的欄位（規格 12.36）：日期、距離、時間、體感必填，平均心率與感受選填 */
+export interface ManualWorkoutInput {
+  date: string;
+  distance_km: number;
+  duration_min: number;
+  perceived_effort: number;
+  avg_hr: number | null;
+  subjective_notes: string | null;
+}
+
+/** 平均配速（例：6:30/km），和 Intervals.icu 進來的寫法一樣 */
+export function manualPace(input: Pick<ManualWorkoutInput, "distance_km" | "duration_min">): string | null {
+  if (!(input.distance_km > 0) || !(input.duration_min > 0)) return null;
+  const seconds = Math.round((input.duration_min * 60) / input.distance_km);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}/km`;
+}
 
 /** 還沒有結局的賽事；舊版或同步過來、沒有 outcome 的，用 cancelled 與成績判斷 */
 const NO_OUTCOME = "COALESCE(outcome, '') = '' AND cancelled=0 AND COALESCE(result_time, '') = ''";
@@ -192,7 +212,8 @@ const SCHEMA = `
     updated_at TEXT NOT NULL,
     sport      TEXT,
     done_at    TEXT,
-    edited_at  TEXT
+    edited_at  TEXT,
+    self_change TEXT
   );
 
   CREATE TABLE IF NOT EXISTS other_activities (
@@ -311,6 +332,21 @@ const RACE_FIELDS = ["name", "date", "distance_km", "target_time", "confirmed", 
 /** 可以清掉（寫成 NULL）的欄位：地點與起跑時間；其他欄位傳 null 時不改 */
 const RACE_CLEARABLE = new Set<string>(["place_label", "place_lat", "place_lon", "start_time"]);
 export type RaceUpdate = Partial<Record<(typeof RACE_FIELDS)[number], string | number | null>>;
+
+type SessionRow = Omit<PlannedSession, "steps" | "self_change"> & { steps: string; self_change: string | null };
+
+/** 自己改過的紀錄（JSON）；壞掉的當成沒有 */
+function parseSelfChange(json: string | null): SelfChange | null {
+  if (!json) return null;
+  try {
+    const value = JSON.parse(json) as SelfChange;
+    return value && (value.action === "shorten" || value.action === "easy") && value.original ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+const sessionOf = (row: SessionRow): PlannedSession => ({ ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"], self_change: parseSelfChange(row.self_change) });
 
 function parseJsonArray(json: string | null): unknown[] {
   if (!json) return [];
@@ -535,6 +571,8 @@ export class Db {
       }
       // --- Migration: planned_sessions.edited_at（schema 14：只改一堂課的內容，規格 12.31） ---
       if (!sessionCols.has("edited_at")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN edited_at TEXT");
+      // --- Migration: planned_sessions.self_change（schema 18：選手自己改短、換成輕鬆，規格 12.34 第 3 點 B） ---
+      if (!sessionCols.has("self_change")) await d.exec("ALTER TABLE planned_sessions ADD COLUMN self_change TEXT");
 
       // --- Migration: races.sport（schema 13：賽事的運動；NULL 是跑步） ---
       if (!(await columns("races")).has("sport")) await d.exec("ALTER TABLE races ADD COLUMN sport TEXT");
@@ -548,6 +586,12 @@ export class Db {
       await d.exec("CREATE INDEX IF NOT EXISTS idx_conversations_time ON conversations(timestamp, id)");
       // 每一筆看過的最新版本號：伺服器送回舊的版本時拒絕
       if (!(await columns("sync_state")).has("v")) await d.exec("ALTER TABLE sync_state ADD COLUMN v INTEGER NOT NULL DEFAULT 0");
+      // --- Migration: workouts.sync_id、updated_at（schema 19：手動新增的跑步，只有手動的才有） ---
+      const workoutCols19 = await columns("workouts");
+      for (const col of ["sync_id", "updated_at"]) {
+        if (!workoutCols19.has(col)) await d.exec(`ALTER TABLE workouts ADD COLUMN ${col} TEXT`);
+      }
+      await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_sync_id ON workouts(sync_id)");
 
       await d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -989,6 +1033,40 @@ export class Db {
     });
   }
 
+  /**
+   * 測試模式塞進的過去的課表（規格 12.38）：不啟用（不影響這週的課表），reason 是標記，清掉時用它找；回傳新計畫的 id
+   */
+  insertPastPlan(plan: { weekLabel: string; weekStart: string; reason: string; content: string }, sessions: SessionDraft[]): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const { lastInsertRowid: planId } = await d.run(
+        "INSERT INTO training_plans (week_label, content, created_at, is_active, week_start, style, reason, outline, notes) VALUES (?, ?, ?, 0, ?, 'fixed', ?, NULL, NULL)",
+        [plan.weekLabel, plan.content, this.stamp(), plan.weekStart, plan.reason],
+      );
+      for (const [i, s] of sessions.entries()) {
+        await d.run(
+          "INSERT INTO planned_sessions (plan_id, position, date, kind, title, steps, purpose, success, fallback, sport, updated_at)" +
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [planId, i, s.date, s.kind, s.title, JSON.stringify(s.steps), s.purpose, s.success, s.fallback, s.sport ?? null, this.stamp()],
+        );
+      }
+      return planId;
+    });
+  }
+
+  /** 刪掉 reason 是這個標記的課表與它們的課（測試模式塞進的過去的課表）；回傳刪了幾份 */
+  deletePlansByReason(reason: string): Promise<number> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const rows = (await d.all("SELECT id FROM training_plans WHERE reason=?", [reason])) as { id: number }[];
+      for (const { id } of rows) {
+        await d.run("DELETE FROM planned_sessions WHERE plan_id=?", [id]);
+        await d.run("DELETE FROM training_plans WHERE id=?", [id]);
+      }
+      return rows.length;
+    });
+  }
+
   /** 每週最新的一份結構化課表（週一在 since 之後的），舊的在前；依結果調整配速時看最近幾週 */
   getWeeklyPlansSince(since: string): Promise<TrainingPlan[]> {
     return this.all<TrainingPlan>(
@@ -999,20 +1077,30 @@ export class Db {
     );
   }
 
+  /** 舊的文字課表（沒有 week_start），每個週標籤最新的一份，依週標籤排（課表頁的「之前的週」） */
+  getTextPlans(): Promise<TrainingPlan[]> {
+    return this.all<TrainingPlan>(
+      "SELECT * FROM training_plans p WHERE week_start IS NULL" +
+        " AND id = (SELECT id FROM training_plans q WHERE q.week_start IS NULL AND q.week_label = p.week_label ORDER BY created_at DESC, id DESC LIMIT 1)" +
+        " ORDER BY week_label",
+      [],
+    );
+  }
+
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
-    const rows = await this.all<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE plan_id=? ORDER BY position",
+    const rows = await this.all<SessionRow>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
-    return rows.map((r) => ({ ...r, steps: parseJsonArray(r.steps) as PlannedSession["steps"] }));
+    return rows.map(sessionOf);
   }
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
-    const row = await this.get<Omit<PlannedSession, "steps"> & { steps: string }>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at FROM planned_sessions WHERE id=?",
+    const row = await this.get<SessionRow>(
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE id=?",
       [id],
     );
-    return row ? { ...row, steps: parseJsonArray(row.steps) as PlannedSession["steps"] } : null;
+    return row ? sessionOf(row) : null;
   }
 
   async updatePlannedSession(
@@ -1040,6 +1128,39 @@ export class Db {
     );
   }
 
+  /**
+   * 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）：內容換成改過的，記下原本的內容與改了什麼；
+   * change 是 null 時是恢復：內容換回 draft（原本的），清掉紀錄
+   */
+  async applySelfChange(id: number, draft: Omit<SessionDraft, "date">, change: SelfChange | null): Promise<void> {
+    await this.run(
+      "UPDATE planned_sessions SET kind=?, title=?, steps=?, purpose=?, success=?, fallback=?, sport=?, status='planned', note=NULL, self_change=?, updated_at=? WHERE id=?",
+      // 改的時間用資料庫的時鐘（和教練改課的 edited_at 同一種），才比得出誰後改
+      [draft.kind, draft.title, JSON.stringify(draft.steps), draft.purpose, draft.success, draft.fallback, draft.sport ?? null, change ? JSON.stringify({ ...change, at: this.stamp() }) : null, this.stamp(), id],
+    );
+  }
+
+  /** 改了之後才選的原因（沒時間、太累、不舒服） */
+  async setSelfChangeReason(id: number, change: SelfChange): Promise<void> {
+    await this.run("UPDATE planned_sessions SET self_change=?, updated_at=? WHERE id=?", [JSON.stringify(change), this.stamp(), id]);
+  }
+
+  /**
+   * 週一在 [since, until] 之間的課表（每一版，含教練整週重排前的舊版）裡，選手自己改過的課；
+   * 教練重排整週時舊版的紀錄不會不見（規格 12.34 第 3 點 B）
+   */
+  async getSelfChanges(since: string, until: string): Promise<{ date: string | null; week_start: string; change: SelfChange }[]> {
+    const rows = await this.all<{ date: string | null; week_start: string; self_change: string }>(
+      "SELECT s.date, p.week_start, s.self_change FROM planned_sessions s JOIN training_plans p ON p.id = s.plan_id" +
+        " WHERE s.self_change IS NOT NULL AND p.week_start >= ? AND p.week_start <= ? ORDER BY p.week_start, s.date",
+      [since, until],
+    );
+    return rows.flatMap((r) => {
+      const change = parseSelfChange(r.self_change);
+      return change ? [{ date: r.date, week_start: r.week_start, change }] : [];
+    });
+  }
+
   /** 改了單堂課之後，更新計畫的文字版 */
   async updatePlanContent(planId: number, content: string): Promise<void> {
     await this.run("UPDATE training_plans SET content=? WHERE id=?", [content, planId]);
@@ -1063,11 +1184,51 @@ export class Db {
 
   /** 補填或修改已存檔訓練的主觀感受 */
   async updateWorkoutSubjective(id: number, perceivedEffort: number, subjectiveNotes: string | null): Promise<void> {
-    await this.run("UPDATE workouts SET perceived_effort=?, subjective_notes=? WHERE id=?", [
+    // 手動新增的一筆整筆同步（mw:），改了體感也要更新修改時間
+    await this.run("UPDATE workouts SET perceived_effort=?, subjective_notes=?, updated_at=CASE WHEN sync_id IS NULL THEN updated_at ELSE ? END WHERE id=?", [
       perceivedEffort,
       subjectiveNotes,
+      this.stamp(),
       id,
     ]);
+  }
+
+  /**
+   * 手動新增一筆跑步（沒有手錶、或手錶沒記到的，規格 12.36）：source 是 manual，帶 sync_id 整筆同步到其他裝置.
+   * 沒有開始時間，不會自動合併；之後同一天從 Intervals.icu 進來、距離與時間相近的，由教練動態問要不要合併（dedupe.ts 的低可信度）
+   */
+  async addManualWorkout(input: ManualWorkoutInput): Promise<number> {
+    const result = await this.run(
+      `INSERT INTO workouts
+         (date, type, distance_km, duration_min, avg_hr, avg_pace, perceived_effort, subjective_notes, source, sync_id, updated_at, synced_at)
+       VALUES (?, 'run', ?, ?, ?, ?, ?, ?, 'manual', lower(hex(randomblob(16))), ?, ?)`,
+      [input.date, input.distance_km, input.duration_min, input.avg_hr, manualPace(input), input.perceived_effort, input.subjective_notes, this.stamp(), this.stamp()],
+    );
+    return result.lastInsertRowid;
+  }
+
+  /** 改手動新增的那一筆；不是手動的回傳 false */
+  async updateManualWorkout(id: number, input: ManualWorkoutInput): Promise<boolean> {
+    const result = await this.run(
+      `UPDATE workouts SET date=?, distance_km=?, duration_min=?, avg_hr=?, avg_pace=?, perceived_effort=?, subjective_notes=?, updated_at=?
+        WHERE id=? AND source='manual'`,
+      [input.date, input.distance_km, input.duration_min, input.avg_hr, manualPace(input), input.perceived_effort, input.subjective_notes, this.stamp(), id],
+    );
+    return result.changes > 0;
+  }
+
+  /** 刪掉手動新增的那一筆（連同分析）；併進它的重複紀錄回到列表上. 不是手動的回傳 false */
+  deleteManualWorkout(id: number): Promise<boolean> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const row = (await d.all("SELECT id FROM workouts WHERE id=? AND source='manual'", [id]))[0];
+      if (!row) return false;
+      await d.run("UPDATE workouts SET duplicate_of = NULL WHERE duplicate_of = ?", [id]);
+      await d.run("DELETE FROM workout_distinct WHERE a = ? OR b = ?", [id, id]);
+      await d.run("DELETE FROM workout_summaries WHERE workout_id = ?", [id]);
+      await d.run("DELETE FROM workouts WHERE id = ?", [id]);
+      return true;
+    });
   }
 
   getWorkoutByIntervalsId(intervalsId: string): Promise<Workout | null> {
@@ -1450,6 +1611,25 @@ export class Db {
         " ON CONFLICT(intervals_id) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at",
       [intervalsId, summary, updatedAt],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 不分來源的紀錄（activities.ts，規格 12.37）：跑步與其他運動合成同一個格式
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 最近 N 天的紀錄（跑步不含重複與已移除的；其他運動含選手回報的體感與分析），新的在前.
+   * sports 有指定時只回傳那幾種運動（run、ride、swim、strength、other）
+   */
+  async getActivities(days: number, options: { sports?: readonly string[] } = {}): Promise<ActivityRecord[]> {
+    const wantRuns = !options.sports || options.sports.includes("run");
+    const wantOthers = !options.sports || options.sports.some((s) => s !== "run");
+    const [runs, others] = await Promise.all([
+      wantRuns ? this.getRecentWorkouts(days) : Promise.resolve([] as Workout[]),
+      wantOthers ? this.getOtherActivities(days) : Promise.resolve([] as OtherActivity[]),
+    ]);
+    const all = [...runs.map(recordOfWorkout), ...others.map(recordOfOther)];
+    return (options.sports ? all.filter((a) => options.sports!.includes(a.sport)) : all).sort(byNewest);
   }
 
   // ---------------------------------------------------------------------------

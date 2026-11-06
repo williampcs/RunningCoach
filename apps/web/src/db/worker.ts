@@ -21,9 +21,16 @@ let db: Database;
 /** 另一個分頁剛交出資料庫（KI-046）或剛重新載入時，它的 OPFS 檔案可能還要一下子才放開：在這段時間內重試 */
 const OPEN_RETRY_MS = 1500;
 
+/** 「先看看」的範例（規格 12.35 的 B）：只在記憶體裡，不碰 OPFS 上真的資料庫，關掉就消失 */
+const MEMORY_DB = ":memory:";
+
 async function open(file?: string): Promise<{ persistent: boolean; reason?: string }> {
-  if (file) dbFile = file;
   sqlite3 = await sqlite3InitModule();
+  if (file === MEMORY_DB) {
+    db = new sqlite3.oo1.DB(":memory:");
+    return { persistent: false, reason: "demo" };
+  }
+  if (file) dbFile = file;
   const deadline = Date.now() + OPEN_RETRY_MS;
   for (;;) {
     try {

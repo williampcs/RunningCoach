@@ -27,7 +27,7 @@ async function newPage(browser, problems) {
   const card = page.locator(".getting-started");
   await card.waitFor();
   check.cardOnFirstVisit = await card.getByText("開始使用").isVisible();
-  check.stepsPending = (await card.locator(".step:not(.done)").count()) === 4;
+  check.stepsPending = (await card.locator(".step:not(.done)").count()) === 5;
   await page.screenshot({ path: `${OUT}/onb-1-card.png`, fullPage: true });
 
   // Intervals.icu 的取得步驟與連結；「前往設定」直接打開設定的「AI 教練」
@@ -67,7 +67,7 @@ async function newPage(browser, problems) {
   await E2E.go(page, "對話");
   const card2 = page.locator(".getting-started");
   await card2.waitFor();
-  check.stepsDoneMarked = (await card2.locator(".step.done").count()) === 2;
+  check.stepsDoneMarked = (await card2.locator(".step.done").count()) === 3; // 記錄方式（連好 Intervals.icu 就不用問）、AI、Intervals.icu
   await card2.getByRole("button", { name: "同步最近 14 天" }).click();
   await card2.getByText("準備好了").waitFor({ timeout: 20000 });
   check.syncFromCard = await card2.getByText(/同步完成/).isVisible();

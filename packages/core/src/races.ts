@@ -9,6 +9,7 @@
  * - 記錄成績時連到比賽當天距離最接近的那趟跑步（之後的賽後分析用，不另外存一份時間）.
  * - 只有選手能刪除；教練可以列出所有賽事，看到可能重複的會告訴選手.
  */
+import { detailsOf } from "./activities";
 import { daysBetween } from "./dates";
 import type { Db, RaceUpdate } from "./db";
 import { roundPlace, type WeatherPlace } from "./weather";
@@ -197,13 +198,9 @@ export async function raceActivity(
     .filter((w) => Math.abs(w.distance_km! - race.distance_km) <= race.distance_km * 0.25)
     .sort((a, b) => Math.abs(a.distance_km! - race.distance_km) - Math.abs(b.distance_km! - race.distance_km))[0];
   if (!best) return null;
-  let secs: number | null = null;
-  try {
-    const raw = JSON.parse(best.raw_json ?? "{}") as { elapsed_time?: unknown; moving_time?: unknown };
-    secs = Number(raw.elapsed_time) || Number(raw.moving_time) || null;
-  } catch {
-    // 原始資料壞掉時用時長
-  }
+  // 經過時間（含停下來的）；原始資料沒有時用時長
+  const source = detailsOf(best.raw_json);
+  let secs: number | null = source.elapsedSec ?? source.movingSec;
   secs ??= best.duration_min != null ? best.duration_min * 60 : null;
   if (!secs) return null;
   return { time: formatRaceTime(secs), distanceKm: best.distance_km, workoutId: best.id, intervalsId: best.intervals_id };

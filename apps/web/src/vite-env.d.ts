@@ -18,6 +18,12 @@ interface ImportMetaEnv {
   readonly VITE_INTERVALS_BASE_URL?: string;
   /** 開發用：把 Open-Meteo 指向本機的模擬服務（{base}/v1/forecast…） */
   readonly VITE_WEATHER_BASE_URL?: string;
+  /** 開發用：把 Anthropic 指向本機的模擬服務（設定精靈的 E2E） */
+  readonly VITE_ANTHROPIC_BASE_URL?: string;
+  /** 用 Intervals.icu 登入（規格 12.37）的 client_id（Variables 的 INTERVALS_CLIENT_ID）；沒有時登入的按鈕不出現 */
+  readonly VITE_INTERVALS_CLIENT_ID?: string;
+  /** 開發用：Intervals.icu 的授權頁指向本機的模擬服務 */
+  readonly VITE_INTERVALS_OAUTH_URL?: string;
 }
 
 /** 使用須知與隱私說明在面板裡的內容（KI-046）：建置時由靜態頁產生（vite.config.ts 的 legalPagesModule） */

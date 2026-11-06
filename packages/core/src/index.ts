@@ -8,6 +8,7 @@ export {
   type ImportSuggestion,
 } from "./athlete-import";
 export {
+  checkManualWorkout,
   Coach,
   type ChatReply,
   type CoachConfig,
@@ -18,9 +19,11 @@ export {
   type UsageStats,
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
-export { Db, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type RaceUpdate, type SaveResult } from "./db";
+export { DEFAULT_REST_HR, estimateLoad, FITNESS_DAYS, fitnessSeries, hrLoad, LOAD_SOURCE_LABELS, loadCountsText, loadOf, loadText, paceLoad, RPE_INTENSITY, rpeLoad, type FitnessPoint, type HrBasis, type Load, type LoadContext, type LoadCounts, type LoadInput, type LoadSource } from "./load";
+export { byNewest, detailsOf, recordOfOther, recordOfWorkout, wellnessFitnessOf, type ActivityRecord, type ActivitySourceKind, type SourceDetails } from "./activities";
+export { Db, manualPace, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type ManualWorkoutInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
-export { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
+export { addDays, daysBetween, isoWeekLabel, isoWeekStart, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
   FAKE_DEVICES,
   FAKE_SCENARIOS,
@@ -100,6 +103,11 @@ export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type 
 export {
   AnthropicProvider,
   LlmError,
+  checkLlmKey,
+  classifyKeyError,
+  keyProblemText,
+  type KeyCheck,
+  type KeyProblem,
   OpenAICompatibleError,
   OpenAICompatibleProvider,
   OPENAI_COMPATIBLE_PRESETS,
@@ -157,6 +165,15 @@ export {
   sessionSport,
   STATUS_LABELS,
   EDITED_LABEL,
+  activeSelfChange,
+  easyChangeable,
+  ratioText,
+  selfChangeable,
+  SELF_CHANGE_REASONS,
+  SHORTEN_RATIOS,
+  type SelfChange,
+  type SelfChangeAction,
+  type SelfChangeReason,
   type PlannedSession,
   type PlanStyle,
   type SessionKind,
@@ -166,7 +183,10 @@ export {
   type StepRow,
   type StructureSegment,
 } from "./plan";
-export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SessionAction } from "./planning";
+export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+export { adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type AdherenceSummary, type ReasonCounts, type SelfChangeRecord, type OutcomeCounts, type PastSession, type PastWeek } from "./plan-history";
+export { clearPastPlans, seedPastPlans, TEST_PLAN_REASON, TEST_PLAN_WEEKS } from "./test-plans";
+export { STOPPED_MARK, stoppedReply } from "./stopped";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
@@ -184,13 +204,19 @@ export {
 } from "./sports";
 export {
   computeTrainingValues,
+  estimatedFitness,
+  loadContextOf,
   danielsPaces,
   distanceText,
   durationText,
   estimateVdot,
   formatTrainingValues,
   heartRateInfo,
+  hrUnusable,
   HR_SOURCE_LABELS,
+  RECORD_WITH_LABELS,
+  recordWithOf,
+  type RecordWith,
   predictSecs,
   vdotOf,
   zonesText,
@@ -229,3 +255,4 @@ export {
   type PainWhen,
 } from "./injuries";
 export { detectRedFlags, RED_FLAG_TERMS, redFlagAdvice } from "./red-flags";
+export { DEMO_QUESTION, DEMO_REPLY, demoSource, demoSpec, seedDemo, type DemoSource } from "./demo";

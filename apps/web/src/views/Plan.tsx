@@ -1,20 +1,24 @@
 import { useEffect, useState, type MouseEvent } from "react";
 
 import {
+  activeSelfChange,
   addDays,
   DIFFICULTY_LABELS,
   distanceText,
   monthDay,
   activityLabel,
+  ATHLETE_ADJUST_NOTE,
   isQualityKind,
   OUTCOME_LABELS,
   planTimeline,
+  selfChangeable,
   sportOfType,
   raceStatusText,
   STATUS_LABELS,
   EDITED_LABEL,
   weekdayName,
   type ActivePlan,
+  type SelfChangeRequest,
   type OtherActivity,
   type PlanTimeline,
   type Race,
@@ -30,11 +34,16 @@ import { Activity, Check, Gauge, HeartPulse, Repeat, Route, Timer, Zap, type Luc
 import { errorText, useApp } from "../app-context";
 import { Disclosure, DisclosureButton, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
 import { featureEnabled } from "../environment";
-import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { Markdown } from "../Markdown";
+import { PastWeeks } from "./PastWeeks";
 import { RacesCard } from "./Races";
+import { ChangeChooser, ReasonChips, selfChangeLine } from "./SelfChange";
 
 type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
+
+/** 計畫頁的「請教練…」：帶到對話並直接送出這一句（和其他「請教練…」的按鈕一樣） */
+export const ASK_PLAN = "幫我排這週的課表";
+export const ASK_CONVERT = "幫我把這週的文字課表改成一堂一堂、可以追蹤的課表";
 
 const weekdayOf = (date: string) => weekdayName(date).replace("星期", "");
 
@@ -103,6 +112,8 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
   if (label) return { label, cls: r?.outcome ?? s.status };
   // 傷病（規格 12.33）：之後才記下的傷讓這堂課現在不能做
   if (s.injuryHold && s.status === "planned") return { label: "先不要做", cls: "hold" };
+  // 選手自己改短、換成輕鬆（規格 12.34 第 3 點 B）
+  if (activeSelfChange(s) && s.status === "planned") return { label: "自己改過", cls: "edited" };
   // 教練改過內容（規格 12.31）：照計畫、還沒有結果時標示「已調整」，原因寫在卡片裡
   return s.editedAt && s.status === "planned" ? { label: EDITED_LABEL, cls: "edited" } : null;
 }
@@ -210,12 +221,27 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   useEffect(() => setOpen(focus), [focus]);
   const [details, setDetails] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
   const status = statusOf(s);
   const r = s.result && s.result.outcome !== "pending" ? s.result : null;
   const done = r !== null && r.workoutId !== null;
   // 肌力的課可以在 App 裡回報做完了（多運動，規格 12.24）：今天以前（或沒有日期）、還沒配到手錶紀錄的
-  const { coach, goTo } = useApp();
+  const { coach, goTo, touch, toast } = useApp();
   const today = coach.today();
+  // 自己改短、換成輕鬆：今天與之後、還沒做的跑步或騎車的課（改過的以原本的種類判斷）
+  const self = activeSelfChange(s);
+  const changeable = s.id !== null && s.status === "planned" && !s.doneAt && (!s.date || s.date >= today) && selfChangeable(self?.original.kind ?? s.kind);
+  async function selfChange(request: SelfChangeRequest) {
+    setChanging(false);
+    try {
+      toast((await coach.selfChangeSession(s.id!, request)).split("（")[0]!);
+      setChangeError(null);
+      touch();
+    } catch (e) {
+      setChangeError(errorText(e));
+    }
+  }
   const reportable =
     featureEnabled("multisport") && s.kind === "strength" && s.id !== null && (!s.date || s.date <= today) && !(r?.outcome === "achieved" && !s.doneAt);
 
@@ -291,6 +317,8 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
             </div>
           )}
           {s.note && <p className="small muted">調整的原因：{s.note}</p>}
+          {self && <p className="small muted self-change-note">{selfChangeLine(self)}</p>}
+          {self && !done && s.status === "planned" && <ReasonChips id={s.id!} change={self} title={s.title} />}
           {hasDetails && <DisclosureButton open={details} onToggle={() => setDetails(!details)} controls={detailsId} />}
           {details && (
             <div id={detailsId} className="stack small">
@@ -336,6 +364,12 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                   )}
                   {s.fallback && isQualityKind(s.kind) && <button onClick={() => onChange(s, "fallback")}>改用替代</button>}
                   {s.fixed && <button onClick={() => setMoving(!moving)}>移到別天</button>}
+                  {changeable && (
+                    <button aria-expanded={changing} onClick={() => setChanging(!changing)}>
+                      改課
+                    </button>
+                  )}
+                  {self && <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>}
                   <button className="text" onClick={() => onChange(s, "skip")}>
                     跳過
                   </button>
@@ -345,6 +379,8 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
               )}
             </div>
           )}
+          {changing && changeable && <ChangeChooser kind={self?.original.kind ?? s.kind} onPick={(r) => void selfChange(r)} />}
+          {changeError && <p className="field-error">{changeError}</p>}
           {moving && (
             <div className="session-actions move-days">
               {days
@@ -535,13 +571,12 @@ function Why({ current, next }: { current: ActivePlan; next: ActivePlan | null }
 }
 
 export function PlanView() {
-  const { coach, revision, touch } = useApp();
+  const { coach, revision, touch, goTo } = useApp();
   const [current, setCurrent] = useState<ActivePlan | null>(null);
   // 週日先排好的下週課表：接在這週的後面
   const [next, setNext] = useState<ActivePlan | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
   const [changeNote, setChangeNote] = useState<string | null>(null);
-  const [planDraft, setPlanDraft] = useState<string | null>(null);
   const [why, setWhy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const today = coach.today();
@@ -569,7 +604,7 @@ export function PlanView() {
 
   const onChange: SessionChange = (s, action, date) =>
     void run(async () => {
-      setChangeNote(await coach.changeSession(s.id!, action, { date, reason: "選手在計畫頁調整" }));
+      setChangeNote(await coach.changeSession(s.id!, action, { date, reason: ATHLETE_ADJUST_NOTE }));
     });
 
   return (
@@ -599,44 +634,33 @@ export function PlanView() {
             {timeline.earlier.length > 0 && <Earlier t={timeline} extras={current!.extras} onChange={onChange} />}
             <Timeline t={timeline} today={today} onChange={onChange} />
           </>
+        ) : plan ? (
+          // 舊的文字課表（v1 的 /plan、之前的「手動填寫」）：唯讀；請教練改成一堂一堂、可以追蹤的課表（規格 12.38）
+          <>
+            <h2>訓練計畫</h2>
+            <Markdown>{plan.content}</Markdown>
+            <p className="small muted">這是文字的課表：不會對照你的紀錄，也不能改課。</p>
+            <div className="actions">
+              <button className="primary" onClick={() => goTo("chat", ASK_CONVERT)}>
+                請教練改成可以追蹤的課表
+              </button>
+            </div>
+          </>
         ) : (
           <>
-            <div className="card-head">
-              <h2>訓練計畫</h2>
-              {planDraft === null && <button onClick={() => setPlanDraft(plan?.content ?? "")}>{plan ? "編輯" : "手動填寫"}</button>}
+            <h2>訓練計畫</h2>
+            <p className="muted">還沒有這週的課表。</p>
+            <div className="actions">
+              <button className="primary" onClick={() => goTo("chat", ASK_PLAN)}>
+                請教練排這週的課表
+              </button>
             </div>
-            {error && <div className="notice error">{error}</div>}
-            {planDraft === null ? (
-              plan ? (
-                <Markdown>{plan.content}</Markdown>
-              ) : (
-                <p className="muted">還沒有訓練計畫。可以在對話中請教練排，或自己填寫。</p>
-              )
-            ) : (
-              <>
-                <AutoGrowTextarea minRows={6} maxRows={20} value={planDraft} aria-label="訓練計畫內容" onChange={(e) => setPlanDraft(e.target.value)} />
-                <div className="actions">
-                  <button
-                    className="primary"
-                    disabled={!planDraft.trim()}
-                    onClick={() =>
-                      void run(async () => {
-                        await coach.savePlanForThisWeek(planDraft.trim());
-                        setPlanDraft(null);
-                      })
-                    }
-                  >
-                    儲存為本週計畫
-                  </button>
-                  <button className="text" onClick={() => setPlanDraft(null)}>取消</button>
-                </div>
-              </>
-            )}
           </>
         )}
       </section>
 
       <RacesCard />
+      <PastWeeks />
     </>
   );
 }

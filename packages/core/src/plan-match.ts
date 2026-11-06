@@ -5,6 +5,7 @@
  * 跑了別的課不算未達成，而是「跑了不一樣的課」；沒跑的課跳過即可，不要補。
  * 難度不另外問：用跑後回報的體感和這種課預期的體感比較（EXPECTED_RPE）。
  */
+import { detailsOf } from "./activities";
 import { STRENGTH_TYPES } from "./activity-labels";
 import { addDays } from "./dates";
 import { sportOfType } from "./sports";
@@ -152,33 +153,16 @@ const LONG_RIDE_DRIFT_MIN = 90;
 
 /** 功率區間的時間：Z1–Z2 為低，其他為中、高（甜蜜點的時間和其他區間重疊，不算）；沒有功率資料時為 null */
 export function powerMinutes(a: { raw_json?: string | null }): { low: number; above: number } | null {
-  let raw: Record<string, unknown> = {};
-  try {
-    raw = a.raw_json ? (JSON.parse(a.raw_json) as Record<string, unknown>) : {};
-  } catch {
-    return null;
-  }
-  const times = Array.isArray(raw.icu_zone_times) ? (raw.icu_zone_times as { id?: unknown; secs?: unknown }[]) : null;
+  const times = detailsOf(a.raw_json).powerZoneTimes;
   if (!times?.length) return null;
   let low = 0;
   let above = 0;
-  for (const z of times) {
-    const id = String(z.id ?? "");
-    const secs = typeof z.secs === "number" ? z.secs : 0;
+  for (const { id, secs } of times) {
     if (!/^Z\d$/.test(id)) continue;
     if (Number(id.slice(1)) <= 2) low += secs;
     else above += secs;
   }
   return low + above > 0 ? { low: low / 60, above: above / 60 } : null;
-}
-
-function rawNumber(a: { raw_json?: string | null }, key: string): number | null {
-  try {
-    const v = a.raw_json ? (JSON.parse(a.raw_json) as Record<string, unknown>)[key] : null;
-    return typeof v === "number" ? v : null;
-  } catch {
-    return null;
-  }
 }
 
 /** 其他運動的實際紀錄，例：「62 分鐘、24.1 km、心率 132、負荷 55、功率 165 W、體感 4」 */
@@ -187,7 +171,7 @@ export function otherActualText(a: OtherActivity): string {
   if (a.distance_km) parts.push(`${a.distance_km} km`);
   if (a.avg_hr != null) parts.push(`心率 ${a.avg_hr}`);
   if (a.training_load != null) parts.push(`負荷 ${a.training_load}`);
-  const watts = rawNumber(a, "icu_average_watts") ?? rawNumber(a, "average_watts");
+  const watts = detailsOf(a.raw_json).watts;
   if (watts) parts.push(`功率 ${Math.round(watts)} W`);
   if (a.perceived_effort != null) parts.push(`體感 ${a.perceived_effort}`);
   return parts.join("、");
@@ -253,7 +237,7 @@ export function judgeOther(session: PlannedSession, a: OtherActivity, ctx: Targe
     }
   } else {
     // 熱天與長時間騎乘：心率會漂移，低強度的比例放寬到 60%（功率不受影響）
-    const drift = !power && (minutes >= LONG_RIDE_DRIFT_MIN || (rawNumber(a, "average_temp") ?? 0) >= HOT_C);
+    const drift = !power && (minutes >= LONG_RIDE_DRIFT_MIN || (detailsOf(a.raw_json).avgTempC ?? 0) >= HOT_C);
     const need = drift ? 0.6 : 0.7;
     const total = intensity ? intensity.low + intensity.above : 0;
     const easyMax = ctx.sports?.[ride ? "ride" : (session.sport ?? "other")]?.hr?.easyMax ?? null;

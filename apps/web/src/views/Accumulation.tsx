@@ -6,6 +6,7 @@ import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIco
 
 import { errorText, useApp } from "../app-context";
 import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
+import { SCOPED_KEYS, storageKey } from "../storage-scope";
 
 /** 最多畫幾格；更早的以「+N」表示 */
 const MAX_BLOCKS = 300;
@@ -323,13 +324,14 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
 }
 
 /** 還沒選里程碑、而時區對得到某個地區：問一次要不要依時區自動判斷 */
-const REGION_HINT_KEY = "running-coach.region-hint.dismissed";
+// 測試模式用自己一份（storage-scope.ts）
+const REGION_HINT_KEY = () => storageKey(SCOPED_KEYS.regionHint);
 
 function RegionHint({ region }: { region: Accumulation["region"] }) {
   const { coach, touch } = useApp();
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return localStorage.getItem(REGION_HINT_KEY) === "1";
+      return localStorage.getItem(REGION_HINT_KEY()) === "1";
     } catch {
       return false;
     }
@@ -338,7 +340,7 @@ function RegionHint({ region }: { region: Accumulation["region"] }) {
   if (region !== "" || dismissed || byTimeZone === "") return null;
   const dismiss = () => {
     try {
-      localStorage.setItem(REGION_HINT_KEY, "1");
+      localStorage.setItem(REGION_HINT_KEY(), "1");
     } catch {
       // 記不住也沒關係，下次再問
     }

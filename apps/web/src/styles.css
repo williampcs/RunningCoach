@@ -449,6 +449,18 @@ a {
   padding-top: 0;
 }
 
+/* 賽事的備註：照打的換行顯示，和標題對齊（左邊是圖示的寬度） */
+.race-notes {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.list > li > .race-notes,
+.list > li > .race-notes-more {
+  padding-left: calc(36px + var(--sp-3));
+}
+
 .guide {
   margin: 0;
   padding-left: 1.3em;
@@ -1265,6 +1277,18 @@ button.info-button[aria-expanded="true"] {
   border-bottom-left-radius: var(--sp-1);
 }
 
+/* 等待中：模型在工具呼叫前寫的字，收成泡泡上方一行不顯眼的字（不是回覆，規格 12.38） */
+.chat-aside {
+  align-self: flex-start;
+  max-width: 88%;
+  color: var(--muted);
+}
+
+/* 等很久時接在狀態後面 */
+.chat-slow::before {
+  content: "・";
+}
+
 /* 教練的長回覆（規格 12.30）：結論一直顯示，每個小標收成一列，最後「全部展開」 */
 .coach-reply {
   display: flex;
@@ -1508,6 +1532,15 @@ span.quote {
 .composer textarea {
   flex: 1;
   min-height: var(--touch);
+}
+
+/* 送出與停止和輸入框是同一組：用欄位的圓角、同樣的大小，切換時不跳動 */
+.composer > button {
+  flex: none;
+  width: 5.5rem;
+  height: var(--touch);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-field);
 }
 
 .composer.replying {
@@ -3658,4 +3691,246 @@ button.back-button {
 /* 使用須知或隱私說明蓋在上面時，底下的說明或設定留著但不顯示（App.tsx） */
 .side-panel-body[hidden] {
   display: none;
+}
+
+/* 計畫頁「之前的週」（規格 12.34）：一週一列，每堂課一個小圖示；做了是綠色，其他是灰色（不用紅色） */
+.past-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: var(--sp-2) 0 0;
+}
+
+.past-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.past-marks {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.past-mark {
+  color: var(--muted);
+}
+
+.past-mark.achieved {
+  color: var(--done);
+}
+
+.past-week-row .chev {
+  flex: none;
+  transition: transform 0.15s;
+}
+
+.past-week-row[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+.past-sessions {
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border);
+  margin-bottom: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .past-week-row .chev {
+    transition: none;
+  }
+}
+
+/* 自己改課（規格 12.34 第 3 點 B）：改課的選擇、原因、不舒服 */
+.self-change-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.unwell-panel {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-field);
+  background: var(--bg);
+}
+
+.unwell-panel p {
+  margin: 0;
+}
+
+/* 不舒服之後這堂課怎樣：一行粗一點的字（照改過的上／先不要做） */
+.unwell-outcome {
+  font-weight: 600;
+}
+
+/* 手動記一趟跑步（規格 12.36「沒有手錶也能用」）：日期與距離一列、時間是分與秒兩格 */
+.manual-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.manual-time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.manual-time legend {
+  width: 100%;
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-aux);
+  color: var(--muted);
+}
+
+.manual-time label {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.manual-time input {
+  width: 6em;
+}
+
+.manual-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 設定精靈（規格 12.35 的 A）：整頁一步一步來，一頁一件事、最下面一顆主要按鈕 */
+.wizard {
+  height: 100dvh;
+  overflow-y: auto;
+  padding: calc(var(--sp-4) + env(safe-area-inset-top)) var(--sp-4) calc(var(--sp-6) + env(safe-area-inset-bottom));
+}
+
+/* 測試模式裡的精靈：上方是測試模式的提示（可以離開），下面是精靈的那一頁 */
+.wizard.with-test {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.wizard.with-test > .test-banner {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.wizard.with-test > .wizard-page {
+  width: 100%;
+  min-height: 0;
+  flex: 1 0 auto;
+}
+
+.wizard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  max-width: 520px;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.wizard-page > .title {
+  outline: none;
+}
+
+.wizard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.wizard-body > .button {
+  align-self: flex-start;
+}
+
+.wizard-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: auto;
+  padding-top: var(--sp-4);
+}
+
+.wizard-more {
+  justify-content: center;
+}
+
+.wizard-points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard-points li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.wizard-points .icon {
+  color: var(--accent);
+  flex: none;
+}
+
+.key-state {
+  min-height: 1.5em;
+  margin: 0;
+}
+
+.ok-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--done);
+  font-weight: 600;
+}
+
+/* 先看看（規格 12.35 的 B）：最上面一直顯示「這是範例」＋「開始設定」 */
+.notice.demo-banner {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.notice.demo-banner > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 200px;
+}
+
+a.button {
+  text-decoration: none;
+}
+
+/* 手機（觸控）上欄位的字至少 16px：iOS 對小於 16px 的欄位，點下去時會自動放大頁面、打完也不縮回（2026-11-04 使用者回報）。
+   不用 maximum-scale 擋：那會讓 Android 不能手動放大 */
+@media (pointer: coarse) {
+  :root :is(input, select, textarea) {
+    font-size: var(--fs-sub);
+  }
 }

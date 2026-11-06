@@ -6,8 +6,10 @@
 import { useEffect, useState } from "react";
 
 import { detectRedFlags } from "@running-coach/core";
+import { SCOPED_KEYS, storageKey } from "./storage-scope";
 
-const KEY = "running-coach.red-flag-alert";
+// 測試模式用自己一份（storage-scope.ts）
+const KEY = () => storageKey(SCOPED_KEYS.redFlag);
 const EVENT = "running-coach:red-flag";
 
 export interface RedFlagAlert {
@@ -19,7 +21,7 @@ export interface RedFlagAlert {
 
 function read(): RedFlagAlert | null {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY) ?? "null") as RedFlagAlert | null;
+    const value = JSON.parse(localStorage.getItem(KEY()) ?? "null") as RedFlagAlert | null;
     return value && Array.isArray(value.labels) && value.labels.length ? value : null;
   } catch {
     return null;
@@ -28,8 +30,8 @@ function read(): RedFlagAlert | null {
 
 function write(alert: RedFlagAlert | null): void {
   try {
-    if (alert) localStorage.setItem(KEY, JSON.stringify(alert));
-    else localStorage.removeItem(KEY);
+    if (alert) localStorage.setItem(KEY(), JSON.stringify(alert));
+    else localStorage.removeItem(KEY());
   } catch {
     // 無法存取時只在這次顯示
   }
@@ -54,7 +56,7 @@ export function useRedFlagAlert(): RedFlagAlert | null {
   const [alert, setAlert] = useState(read);
   useEffect(() => {
     const onChange = (e: Event) => setAlert((e as CustomEvent<RedFlagAlert | null>).detail);
-    const onStorage = (e: StorageEvent) => e.key === KEY && setAlert(read());
+    const onStorage = (e: StorageEvent) => e.key === KEY() && setAlert(read());
     window.addEventListener(EVENT, onChange);
     window.addEventListener("storage", onStorage);
     return () => {

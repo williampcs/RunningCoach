@@ -1,13 +1,17 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
+import { detailsOf } from "./activities";
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
 import { featureOn } from "./features";
 import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
-import { activePlan, changeSession, nextPlan, planNoteFor, type ActivePlan, type SessionAction } from "./planning";
+import { activePlan, changeSession, nextPlan, planNoteFor, selfChangeReason, selfChangeSession, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+import type { SelfChange, SelfChangeReason } from "./plan";
+import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
-import { Db } from "./db";
+import { Db, type ManualWorkoutInput } from "./db";
+import { stoppedReply } from "./stopped";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
 import { compressConversations } from "./summarizer";
 import { sameRun } from "./dedupe";
@@ -61,6 +65,8 @@ export interface ChatReply {
   stats: UsageStats;
   /** 回覆前讀過的資料（例如「訓練數值」「最近 14 天的訓練」），由實際呼叫的工具產生 */
   sources: string[];
+  /** 選手按了停止 */
+  stopped?: boolean;
 }
 
 export type RunReport =
@@ -98,13 +104,8 @@ const REPORT_LOOKBACK_DAYS = 2;
 
 /** 原始資料中的當地開始時間，例：2026-10-19T07:12:00 → 07:12 */
 function startTimeOf(rawJson: string | null | undefined): string | null {
-  if (!rawJson) return null;
-  try {
-    const start = (JSON.parse(rawJson) as { start_date_local?: unknown }).start_date_local;
-    return typeof start === "string" && /T\d{2}:\d{2}/.test(start) ? start.slice(11, 16) : null;
-  } catch {
-    return null;
-  }
+  const start = detailsOf(rawJson).startLocal;
+  return start && /T\d{2}:\d{2}/.test(start) ? start.slice(11, 16) : null;
 }
 
 /** 其他運動當成 Activity 顯示（跑後回報的選項） */
@@ -123,6 +124,19 @@ function otherAsActivity(a: OtherActivity): Activity {
     training_load: a.training_load,
     raw_json: a.raw_json ?? null,
   };
+}
+
+/** 手動新增的欄位檢查；錯誤訊息直接給選手看 */
+export function checkManualWorkout(input: ManualWorkoutInput, today: string): ManualWorkoutInput {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("日期的格式不對");
+  if (input.date > today) throw new Error("不能記還沒到的日子");
+  if (!(input.distance_km > 0 && input.distance_km <= 200)) throw new Error("距離要在 0–200 km 之間");
+  if (!(input.duration_min >= 1 && input.duration_min <= 24 * 60)) throw new Error("時間至少 1 分鐘");
+  // 每公里不到 2 分鐘：多半是距離或時間打錯
+  if (input.duration_min / input.distance_km < 2) throw new Error("配速快過每公里 2 分鐘，請確認距離與時間");
+  if (!Number.isInteger(input.perceived_effort) || input.perceived_effort < 1 || input.perceived_effort > 10) throw new Error("體感要是 1–10");
+  if (input.avg_hr !== null && !(Number.isInteger(input.avg_hr) && input.avg_hr >= 40 && input.avg_hr <= 240)) throw new Error("平均心率要在 40–240 之間");
+  return { ...input, distance_km: Math.round(input.distance_km * 100) / 100, subjective_notes: input.subjective_notes?.trim() || null };
 }
 
 function workoutAsActivity(w: Workout): Activity {
@@ -292,7 +306,7 @@ export class Coach {
    * 提供 onEvent 時以串流方式呼叫模型並回報進度；回覆仍在完成後才寫入對話紀錄。
    * replyTo：選手回覆的那一則（教練會看到它的時間與前段文字）
    */
-  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void, options: { replyTo?: ReplyRef | null } = {}): Promise<ChatReply> {
+  async chat(userMessage: string, onEvent?: (event: ChatEvent) => void, options: { replyTo?: ReplyRef | null; signal?: AbortSignal } = {}): Promise<ChatReply> {
     const rt = this.runtime;
     await this.db.appendConversation("user", userMessage, [], options.replyTo ?? null);
     // 手錶早上才同步的靜息心率、HRV 與睡眠，對話前先取得，教練才不會拿昨天的資料當今天的
@@ -311,14 +325,16 @@ export class Coach {
     };
     let result;
     try {
-      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings, { weather: rt.weather !== null }), executeTool, onEvent);
+      result = await rt.llm.runWithTools(context.system, context.messages, buildTools(rt.settings, { weather: rt.weather !== null }), executeTool, onEvent, options.signal);
     } catch (e) {
       this.logger.error(`LLM API error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
 
     let reply = result.text;
-    if (result.finish === "refused") reply = REFUSED_REPLY;
+    // 停止（規格 12.38）：已經寫出的部分＋（已停止）＋已經做的寫入
+    if (result.finish === "stopped") reply = stoppedReply(result.text, calls.map((c) => c.name));
+    else if (result.finish === "refused") reply = REFUSED_REPLY;
     else if (!result.text.trim()) reply = EMPTY_REPLY;
 
     const sources = sourcesOf(calls);
@@ -333,6 +349,7 @@ export class Coach {
         usage: result.usage,
       },
       sources,
+      stopped: result.finish === "stopped",
     };
   }
 
@@ -549,6 +566,28 @@ export class Coach {
     return { workout: (await this.db.getWorkout(workoutId))!, summary };
   }
 
+  /**
+   * 手動新增一筆跑步（規格 12.36「沒有手錶也能用」）：存檔後和跑後回報一樣產生分析（同一個出口：跑後摘要的模型）.
+   * 分析失敗時紀錄照樣存著，summary 為 null
+   */
+  async addManualWorkout(input: ManualWorkoutInput): Promise<{ workout: Workout; summary: string | null }> {
+    const clean = checkManualWorkout(input, this.today());
+    const id = await this.db.addManualWorkout(clean);
+    return this.addSubjective(id, clean.perceived_effort, clean.subjective_notes ?? "");
+  }
+
+  /** 改手動新增的那一筆，並重新分析 */
+  async updateManualWorkout(id: number, input: ManualWorkoutInput): Promise<{ workout: Workout; summary: string | null }> {
+    const clean = checkManualWorkout(input, this.today());
+    if (!(await this.db.updateManualWorkout(id, clean))) throw new Error("只能改手動新增的紀錄");
+    return this.addSubjective(id, clean.perceived_effort, clean.subjective_notes ?? "");
+  }
+
+  /** 刪掉手動新增的那一筆 */
+  async deleteManualWorkout(id: number): Promise<void> {
+    if (!(await this.db.deleteManualWorkout(id))) throw new Error("只能刪除手動新增的紀錄");
+  }
+
   /** 手動合併：dupId 是 keepId 的重複（教練動態問「是不是同一趟」時選了合併） */
   async mergeWorkouts(keepId: number, dupId: number): Promise<void> {
     if (keepId === dupId) throw new Error("不能和自己合併");
@@ -624,6 +663,11 @@ export class Coach {
     return nextPlan(this.db, this.today());
   }
 
+  /** 課表頁的「之前的週」（規格 12.34）：新的在前，先列 limit 週 */
+  pastPlanWeeks(limit?: number): Promise<{ weeks: PastWeek[]; more: boolean }> {
+    return pastPlanWeeks(this.db, this.today(), { limit, multisport: featureOn(this.settings, "multisport") });
+  }
+
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */
   runCards(days = 30): Promise<RunCard[]> {
     return runCards(this.db, this.today(), days);
@@ -664,6 +708,16 @@ export class Coach {
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
     return changeSession(this.db, this.today(), id, action, { ...options, multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B） */
+  selfChangeSession(id: number, request: SelfChangeRequest): Promise<string> {
+    return selfChangeSession(this.db, this.today(), id, request, { multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 自己改課的原因；null 是取消 */
+  selfChangeReason(id: number, reason: SelfChangeReason | null): Promise<SelfChange> {
+    return selfChangeReason(this.db, id, reason);
   }
 
   // ---------------------------------------------------------------------------

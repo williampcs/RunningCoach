@@ -2,19 +2,24 @@ import { useState } from "react";
 
 import {
   addDays,
+  clearPastPlans,
   FAKE_DEVICES,
   FAKE_SCENARIOS,
   fakeActivity,
   generateActivities,
   generateWellness,
   parsePace,
+  seedPastPlans,
   SYNC_DAYS,
+  TEST_PLAN_WEEKS,
   type FakeDevice,
   type FakeScenario,
   type FakeSpec,
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
+import { clearTestScope, importNormalSettings } from "../storage-scope";
+import { saveTestMode } from "../test-mode";
 import { InfoTip } from "../ui";
 import { useSync } from "../use-sync";
 
@@ -29,7 +34,81 @@ const clock = (totalSec: number) => {
   return `${h ? `${h}:` : ""}${mm}:${String(s % 60).padStart(2, "0")}`;
 };
 
-/** 設定頁的測試模式：啟用／停用、產生情境、新增單筆、模擬日期 */
+/**
+ * 測試模式的重來（9.4 的工作單）：只動測試模式的資料庫與那一份設定，正常模式的資料與設定不受影響.
+ * - 清空資料：測試資料庫與產生的假資料；設定、標記與模擬日期保留
+ * - 整個重置：連測試模式的設定與「做過了」的標記一起清掉，重新載入後像第一次打開（歡迎頁與精靈、新手引導、使用須知）
+ * - 帶入正常設定：再複製一次正常模式的設定（密碼鎖的密文照原樣複製）
+ * 三個都重新載入，讓 Coach 與各頁的狀態一起回到初始
+ */
+export function TestModeReset() {
+  const { db, testMode, llmProblem } = useApp();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run(question: string, action: () => Promise<void> | void) {
+    if (!confirm(question)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      location.reload();
+    } catch (e) {
+      setError(`沒有成功：${errorText(e)}`);
+      setBusy(false);
+    }
+  }
+
+  const clearData = () =>
+    run("清空測試資料庫（對話、訓練紀錄、課表、選手資料、傷病）與產生的假資料？\n設定保留；正常模式的資料與設定不受影響。無法復原。", async () => {
+      await db.reset();
+      saveTestMode({ ...testMode, spec: null, custom: [] });
+    });
+
+  const resetAll = () =>
+    run(
+      "整個重置測試模式，回到第一次打開的狀態？\n會清空測試資料庫，並清掉測試模式的設定（AI、API key、Intervals.icu…）與看過的提示；重新載入後從歡迎頁開始。\n正常模式的資料與設定不受影響，測試模式維持開著。無法復原。",
+      async () => {
+        await db.reset();
+        clearTestScope(localStorage);
+        saveTestMode({ enabled: true, spec: null, custom: [], today: null });
+        // 重新載入後從歡迎頁開始：不要照歷史紀錄再打開設定的面板
+        history.replaceState(null, "");
+      },
+    );
+
+  const importSettings = () =>
+    run(
+      "用正常模式現在的設定（AI、API key、Intervals.icu、天氣、密碼鎖）取代測試模式的設定？\n頁面會重新載入；正常模式開了密碼鎖的話，要輸入正常模式的密碼。",
+      () => importNormalSettings(localStorage),
+    );
+
+  return (
+    <>
+      <p className="row small muted">
+        <span>只動測試模式，正常模式的資料與設定不受影響。</span>
+        <InfoTip label="重來的說明">
+          「清空資料」清掉測試資料庫與產生的假資料，設定保留。「整個重置」連測試模式的設定與看過的提示一起清掉，像新的使用者第一次打開（歡迎頁與設定精靈、新手引導、使用須知）；要回到正常模式，按上方「測試模式」提示的「離開測試模式」或這裡的「停用測試模式」。「帶入正常設定」把正常模式的設定再複製一次，不用重貼 key。
+        </InfoTip>
+      </p>
+      {error && <p className="field-error">{error}</p>}
+      <div className="actions">
+        <button className="danger" disabled={busy} onClick={() => void clearData()}>
+          清空資料
+        </button>
+        <button className="danger" disabled={busy} onClick={() => void resetAll()}>
+          整個重置
+        </button>
+        <button disabled={busy} onClick={() => void importSettings()}>
+          帶入正常設定
+        </button>
+      </div>
+      {llmProblem && <p className="small muted">測試模式的 AI 還沒設定好：{llmProblem}。可以「帶入正常設定」，或到「AI 教練」設定。</p>}
+    </>
+  );
+}
+
+/** 設定頁的測試模式：啟用／停用、產生情境、新增單筆、模擬日期、重來 */
 export function TestModeCard() {
   const { coach, db, testMode, updateTestMode, touch } = useApp();
   const sync = useSync();
@@ -50,6 +129,7 @@ export function TestModeCard() {
 
   const [run, setRun] = useState({ date: "", distance: "", duration: "", avgHr: "", maxHr: "", elevation: "" });
   const [simDate, setSimDate] = useState(testMode.today ?? "");
+  const [pastWeeks, setPastWeeks] = useState("6");
 
   if (!testMode.enabled) {
     return (
@@ -57,13 +137,13 @@ export function TestModeCard() {
         <p className="row">
           <span>用假的跑步紀錄測試教練的反應。</span>
           <InfoTip label="測試模式的說明">
-            例如過度訓練、受傷中斷、賽前減量。測試模式使用另一個資料庫，正式的對話與訓練紀錄不受影響；也不連線 Intervals.icu，不會在那裡留下任何資料。AI 模型照常使用你的設定，會正常計費。
+            例如過度訓練、受傷中斷、賽前減量。測試模式使用另一個資料庫與自己一份設定，正式的對話、訓練紀錄與設定不受影響；也不連線 Intervals.icu，不會在那裡留下任何資料。第一次啟用時從現在的設定複製一份（API key 照樣受密碼鎖保護），AI 模型照常使用，會正常計費。
           </InfoTip>
         </p>
         <div className="actions">
           <button
             onClick={() => {
-              if (confirm("切換到測試模式？頁面會重新載入，改用測試用的資料庫。")) updateTestMode({ ...testMode, enabled: true });
+              if (confirm("切換到測試模式？頁面會重新載入，改用測試用的資料庫與測試模式自己的設定。")) updateTestMode({ ...testMode, enabled: true });
             }}
           >
             啟用測試模式
@@ -168,6 +248,33 @@ export function TestModeCard() {
       kind: "ok",
       text: `已新增 ${activity.date} ${activity.distance_km} 公里（${activity.avg_pace}）。可以到「回報」記下這次的感受，或按「同步」帶入。`,
     });
+  }
+
+  // 只寫進測試模式的資料庫（這張卡只在測試模式開著時出現），課表標成測試產生的，清掉時用標記找
+  async function seedPast() {
+    setBusy(true);
+    try {
+      const { weeks: n, sessions } = await seedPastPlans(coach.db, today, Number(pastWeeks));
+      touch();
+      setMessage({ kind: "ok", text: `已塞進過去 ${n} 週的課表（${sessions} 堂課）。到「計畫」最下面的「之前的週」看；之前塞的已換掉。` });
+    } catch (e) {
+      setMessage({ kind: "error", text: `塞不進去：${errorText(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPast() {
+    setBusy(true);
+    try {
+      const n = await clearPastPlans(coach.db);
+      touch();
+      setMessage({ kind: "ok", text: n ? `已清掉塞進的 ${n} 週課表。` : "沒有塞進的課表。" });
+    } catch (e) {
+      setMessage({ kind: "error", text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
   }
 
   function applyDate(next: string | null) {
@@ -291,6 +398,29 @@ export function TestModeCard() {
         )}
       </div>
 
+      <h3 className="section">過去的課表</h3>
+      <p className="row small muted">
+        <span>塞進今天以前幾週的課表，試計畫頁的「之前的週」。</span>
+        <InfoTip label="過去的課表的說明">
+          照測試資料庫裡的跑步排，每週不同的結果（達成、部分達成、跳過、改用替代、沒做、自己改短或換成輕鬆附原因），教練也看得到最近 4 週的摘要。先按「同步最近 14 天」，最近兩週才有跑步可以對。只寫進測試資料庫，標成測試產生的；再塞一次會換掉之前塞的。
+        </InfoTip>
+      </p>
+      <div className="row">
+        <select aria-label="塞進幾週" value={pastWeeks} onChange={(e) => setPastWeeks(e.target.value)}>
+          {Array.from({ length: TEST_PLAN_WEEKS.max - TEST_PLAN_WEEKS.min + 1 }, (_, i) => String(TEST_PLAN_WEEKS.min + i)).map((n) => (
+            <option key={n} value={n}>
+              {n} 週
+            </option>
+          ))}
+        </select>
+        <button disabled={busy} onClick={() => void seedPast()}>
+          塞進過去的課表
+        </button>
+        <button className="text" disabled={busy} onClick={() => void clearPast()}>
+          清掉塞進的課表
+        </button>
+      </div>
+
       <h3 className="section">模擬今天的日期</h3>
       <p className="muted small">
         目前是 {today}。往後移就像時間過去：之後日期的假資料會陸續出現、賽事倒數也跟著變。
@@ -308,10 +438,15 @@ export function TestModeCard() {
       </div>
 
       {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
+
+      <h3 className="section">重來</h3>
+      <TestModeReset />
+
+      <h3 className="section">回到正常模式</h3>
       <div className="row">
         <button
           onClick={() => {
-            if (confirm("停用測試模式，回到正式資料？測試資料庫會保留，下次啟用時還在。")) {
+            if (confirm("停用測試模式，回到正常模式？測試的資料與設定會保留，下次啟用時還在。")) {
               updateTestMode({ ...testMode, enabled: false, today: null });
               touch();
             }

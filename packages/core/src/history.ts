@@ -9,11 +9,14 @@ import { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type 
 import { planResultsSince, type RunPlanResult } from "./planning";
 import { sportOfType } from "./sports";
 import { computeTrainingValues, intensityDistribution } from "./training-values";
+import { loadOf, type Load, type LoadContext } from "./load";
 import type { OtherActivity, Workout } from "./types";
 import { rideMetrics } from "./ride-analysis";
 
 export interface RunCard {
   workout: Workout;
+  /** 負荷：Intervals.icu 的，沒有時我們估的（load.ts；畫面要標「依體感估」等）；都沒有時為 null */
+  load: Load | null;
   /** 依心率區間的時間（秒）：低強度為閾值心率 90% 以下；沒有區間資料時為 null */
   intensity: { low: number; moderate: number; high: number } | null;
   /** 對應的課；沒有結構化課表的週為 null */
@@ -94,11 +97,13 @@ export function runCardOf(
   workout: Workout,
   lthr: number | null,
   planned: Awaited<ReturnType<typeof planResultsSince>>,
+  loadCtx: LoadContext | null = null,
 ): RunCard {
   const d = intensityDistribution([workout], lthr);
   const p = planned.byWorkout.get(workout.id);
   return {
     workout,
+    load: loadCtx ? loadOf(workout, "run", loadCtx) : workout.training_load != null ? { value: workout.training_load, source: "intervals" } : null,
     intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
     plan: planOf(p),
     outsidePlan: planned.inPlannedWeek.has(workout.id),
@@ -110,6 +115,8 @@ export function runCardOf(
 /** 紀錄頁的一趟騎車（多運動的第 3 階段）：和跑步的卡片同一種樣式，數字換成騎車用的 */
 export interface RideCard {
   activity: OtherActivity;
+  /** 負荷（和跑步的卡片一樣） */
+  load: Load | null;
   /** 依那趟自己的心率區間（騎車的閾值心率）的時間（秒）；沒有區間資料時為 null */
   intensity: { low: number; moderate: number; high: number } | null;
   /** 平均功率（瓦）；沒有功率計時為 null */
@@ -125,12 +132,13 @@ export interface RideCard {
   expectedRpe: [number, number] | null;
 }
 
-export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<typeof planResultsSince>>): RideCard {
+export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<typeof planResultsSince>>, loadCtx: LoadContext | null = null): RideCard {
   const m = rideMetrics(activity);
   const p = planned.byOther.get(activity.intervals_id);
   const result: SessionResult | undefined = p?.result;
   return {
     activity,
+    load: loadCtx ? loadOf(activity, "ride", loadCtx) : activity.training_load != null ? { value: activity.training_load, source: "intervals" } : null,
     intensity: m.intensity,
     watts: m.watts,
     normalizedWatts: m.normalizedWatts,
@@ -144,8 +152,8 @@ export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<
 
 /** 最近 N 天的騎車卡片，新的在前 */
 export async function rideCards(db: Db, today: string, days: number): Promise<RideCard[]> {
-  const [others, planned] = await Promise.all([db.getOtherActivities(days), planResultsSince(db, today, addDays(today, -days))]);
-  return others.filter((a) => sportOfType(a.type) === "ride").map((a) => rideCardOf(a, planned));
+  const [others, planned, values] = await Promise.all([db.getOtherActivities(days), planResultsSince(db, today, addDays(today, -days)), computeTrainingValues(db, today)]);
+  return others.filter((a) => sportOfType(a.type) === "ride").map((a) => rideCardOf(a, planned, values.loadContext));
 }
 
 /** 紀錄頁的騎車累積（簡單的：總次數、時間、距離、這週、最長的一趟） */
@@ -187,7 +195,7 @@ export async function runCards(db: Db, today: string, days: number): Promise<Run
     planResultsSince(db, today, addDays(today, -days)),
   ]);
   const lthr = values.hr?.lthr ?? null;
-  return workouts.map((w) => runCardOf(w, lthr, planned));
+  return workouts.map((w) => runCardOf(w, lthr, planned, values.loadContext));
 }
 
 /** 累積的里程碑（距離都是約略值；國外的是直線距離）：只說到過哪裡與下一站（規格 12.5：休息不會失去任何東西） */

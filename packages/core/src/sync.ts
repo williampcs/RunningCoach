@@ -77,7 +77,7 @@ function message(e: unknown): string {
  * 訓練數值用的運動設定（閾值與區間）與最佳配速曲線，每次同步整份換掉；失敗只記錄.
  * 來源提供各運動的設定時只讀一次：跑步的設定從裡面取，其他運動（騎車等）的另外存（規格 12.24）
  */
-async function refreshTrainingSnapshots(db: Db, activities: ActivitySource, logger: Logger): Promise<void> {
+export async function refreshTrainingSnapshots(db: Db, activities: ActivitySource, logger: Logger): Promise<void> {
   if (activities.fetchSportSettings) {
     try {
       const all = await activities.fetchSportSettings();

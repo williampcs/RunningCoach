@@ -67,8 +67,8 @@ describe("功能開關", () => {
     expect(parseFeatures("")).toEqual([]);
     expect(parseFeatures("multisport")).toEqual(["multisport"]);
     expect(parseFeatures(" MultiSport , nope")).toEqual(["multisport"]);
-    expect(parseFeatures("all")).toEqual(["multisport", "testmode", "devices"]);
-    expect(parseFeatures(undefined, { staging: true })).toEqual(["multisport", "testmode", "devices"]);
+    expect(parseFeatures("all")).toEqual(["multisport", "testmode", "devices", "onboarding"]);
+    expect(parseFeatures(undefined, { staging: true })).toEqual(["multisport", "testmode", "devices", "onboarding"]);
     expect(DEFAULT_SETTINGS.features).toEqual([]);
     expect(featureOn(DEFAULT_SETTINGS, "multisport")).toBe(false);
     expect(featureOn({ features: ["multisport"] }, "multisport")).toBe(true);
@@ -98,11 +98,11 @@ describe("功能開關", () => {
       return provider.calls[0]!.request.system!;
     };
     const [offPrompt, onPrompt] = [await prompt({}), await prompt(MULTI)];
-    expect(offPrompt).toContain("【教練方法 v7】");
+    expect(offPrompt).toContain("【教練方法 v8】");
     expect(offPrompt).toContain("傷病的處理（v7）");
     expect(offPrompt).not.toContain("練的運動");
     expect(offPrompt).not.toContain("交叉訓練的目標（v4）");
-    expect(onPrompt).toContain("【教練方法 v7】");
+    expect(onPrompt).toContain("【教練方法 v8】");
     expect(onPrompt).toContain("傷病的處理（v7）");
     expect(onPrompt).toContain("練的運動：跑步、騎車、肌力訓練");
     expect(onPrompt).toContain("騎車：目標 週末長騎");

@@ -261,6 +261,8 @@ const PAGES = [
     ]) {
       // 資料準備一次（手機的大小），之後換大小與配色檢查每一頁
       const context = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: "Asia/Taipei" });
+      // 開關全開時有設定精靈（新的使用者）：這裡檢查平常的畫面，跳過精靈（精靈本身由 verify-wizard.cjs 檢查）
+      await E2E.skipWizard(context);
       const page = await context.newPage();
       page.on("console", (m) => (m.type() === "error" || m.text().includes("Content Security Policy")) && problems.push(`[${flag} ${step}] ${m.text()}`));
       page.on("pageerror", (e) => problems.push(`[${flag} ${step}] pageerror: ${e.message}`));

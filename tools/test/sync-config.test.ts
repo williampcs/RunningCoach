@@ -53,6 +53,15 @@ describe("fillWranglerToml", () => {
     expect(out).toContain("[observability]\nenabled = false");
   });
 
+  it("fills in the Intervals.icu client_id only when set (規格 12.37)", () => {
+    const without = fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com" });
+    expect(without).toContain('INTERVALS_CLIENT_ID = ""');
+    const withId = fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com", intervalsClientId: "123" });
+    expect(withId).toContain('INTERVALS_CLIENT_ID = "123"');
+    expect(withId).not.toContain("client_secret =");
+    expect(() => fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com", intervalsClientId: 'x"; evil' })).toThrow(/client_id/);
+  });
+
   it("refuses a malformed database id or name", () => {
     expect(() => fillWranglerToml(TOML, { databaseId: "", webUrls: "https://app.zone2mate.com" })).toThrow(/id/);
     expect(() => fillWranglerToml(TOML, { databaseId: 'x"; evil', webUrls: "https://app.zone2mate.com" })).toThrow(/id/);

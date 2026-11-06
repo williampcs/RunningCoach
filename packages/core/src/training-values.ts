@@ -6,6 +6,8 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
+import { detailsOf, wellnessFitnessOf } from "./activities";
+import { DEFAULT_REST_HR, dailyLoads, FITNESS_DAYS, fitnessSeries, loadCountsText, loadOf, type HrBasis, type LoadContext, type LoadCounts } from "./load";
 import { allocationLine, allocationText, weekAllocation, type WeekAllocation } from "./allocation";
 import { planningRules } from "./coaching-method";
 import { athleteSports, DEFAULT_RIDE_KMH, sportOfType, sportTargets, sportTargetsText, type SportTargets } from "./sports";
@@ -15,7 +17,7 @@ import { addDays, daysBetween, isoWeekLabel, weekdayIndex } from "./dates";
 import type { Db } from "./db";
 import { raceOutcome } from "./races";
 import { formatPace } from "./fake-activities";
-import type { OtherActivity, PaceCurveSummary, Race, RunSettings, SportSettings, Workout } from "./types";
+import type { OtherActivity, PaceCurveSummary, Race, RunSettings, SportSettings, WellnessDay, Workout } from "./types";
 
 /** 推算 VDOT 用的比賽與最佳表現，只看最近這麼多天：太久以前的成績不代表現在的體能 */
 export const VDOT_LOOKBACK_DAYS = 90;
@@ -103,8 +105,11 @@ export function danielsPaces(vdot: number): DanielsPaces {
 
 export interface VdotEstimate {
   value: number;
-  /** race：選手回報的比賽成績；race_effort：Intervals.icu 標為比賽的活動；best_effort：訓練中的最佳表現 */
-  kind: "race" | "race_effort" | "best_effort";
+  /**
+   * race：選手回報的比賽成績；race_effort：Intervals.icu 標為比賽的活動；best_effort：訓練中的最佳表現；
+   * profile：選手資料填的個人最佳（沒有日期，只在沒有其他依據時用；規格 12.36「沒有手錶也能用」）
+   */
+  kind: "race" | "race_effort" | "best_effort" | "profile";
   distanceM: number;
   secs: number;
   date: string | null;
@@ -118,8 +123,19 @@ export function parseDuration(text: string | null | undefined): number | null {
   return Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-/** 最近 90 天的比賽成績與最佳表現中，VDOT 最高的一個 */
-export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, today: string): VdotEstimate | null {
+/** 選手資料的個人最佳（欄位與距離） */
+const PROFILE_PBS: [string, number][] = [
+  ["pb_5k", 5000],
+  ["pb_10k", 10_000],
+  ["pb_half", 21_097.5],
+  ["pb_full", 42_195],
+];
+
+/**
+ * 最近 90 天的比賽成績與最佳表現中，VDOT 最高的一個；都沒有時用選手資料填的個人最佳（短的距離優先：
+ * 沒有手錶的人多半只知道 5 km、10 km 的時間）
+ */
+export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, today: string, profile: Record<string, string> = {}): VdotEstimate | null {
   const since = addDays(today, -VDOT_LOOKBACK_DAYS);
   const candidates: VdotEstimate[] = [];
   for (const r of races) {
@@ -138,7 +154,13 @@ export function estimateVdot(races: Race[], curve: PaceCurveSummary | null, toda
   candidates.sort((a, b) => b.value - a.value);
   const [top, second] = candidates;
   if (top && second && top.kind !== "race" && top.value > second.value * OUTLIER_RATIO) return second;
-  return top ?? null;
+  if (top) return top;
+  for (const [key, distanceM] of PROFILE_PBS) {
+    const secs = parseDuration(profile[key]);
+    const value = secs === null ? null : vdotOf(distanceM, secs);
+    if (value !== null) return { value, kind: "profile", distanceM, secs: secs!, date: null };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +230,27 @@ export function heartRateInfo(profile: Record<string, string>, settings: RunSett
   };
 }
 
+/** 選手怎麼記錄跑步（選手資料的 record_with，新手引導第一步問的）：手錶、手機的跑步 App、沒有在記錄（手動記） */
+export type RecordWith = "watch" | "phone" | "none";
+export const RECORD_WITH_LABELS: Record<RecordWith, string> = { watch: "手錶", phone: "手機的跑步 App", none: "沒有在記錄，手動記" };
+export function recordWithOf(profile: Record<string, string>): RecordWith | null {
+  const v = profile.record_with;
+  return v === "watch" || v === "phone" || v === "none" ? v : null;
+}
+
+/**
+ * 心率的區間用不用得到：沒有量心率的裝置（選手說用手機或手動記）、或最近 3 次以上的跑步都沒有心率時，
+ * 推算或設定的區間都量不到，課表的目標與看板不拿來用（規格 12.36）. 最近有一趟有心率就照用.
+ * 回傳用不到的原因；用得到時為 null
+ */
+export function hrUnusable(profile: Record<string, string>, recent: Pick<Workout, "avg_hr">[]): string | null {
+  if (recent.some((w) => w.avg_hr != null)) return null;
+  const how = recordWithOf(profile);
+  if (how === "phone" || how === "none") return `選手${how === "phone" ? "用手機記錄" : "手動記錄"}，沒有量心率的裝置`;
+  if (recent.length >= 3) return `最近 ${recent.length} 次跑步都沒有心率`;
+  return null;
+}
+
 export const HR_SOURCE_LABELS: Record<HeartRateInfo["source"], string> = {
   intervals: "Intervals.icu 的跑步設定",
   profile: "選手資料的實測最大心率",
@@ -222,21 +265,6 @@ export function zonesText(hr: HeartRateInfo): string {
 // 強度分配、每週的量、體能與疲勞
 // ---------------------------------------------------------------------------
 
-type Raw = Record<string, unknown>;
-
-function parseRaw(json: string | null | undefined): Raw {
-  if (!json) return {};
-  try {
-    const raw: unknown = JSON.parse(json);
-    return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-const numbers = (value: unknown): number[] | null =>
-  Array.isArray(value) && value.every((x) => typeof x === "number" && Number.isFinite(x)) ? (value as number[]) : null;
-const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 export interface IntensityDistribution {
   runs: number;
@@ -254,10 +282,8 @@ export interface IntensityDistribution {
 export function intensityDistribution(workouts: { raw_json?: string | null }[], fallbackLthr: number | null): IntensityDistribution {
   const out: IntensityDistribution = { runs: workouts.length, withZones: 0, lowSecs: 0, moderateSecs: 0, highSecs: 0 };
   for (const w of workouts) {
-    const raw = parseRaw(w.raw_json);
-    const times = numbers(raw.icu_hr_zone_times);
-    const bounds = numbers(raw.icu_hr_zones);
-    const lthr = num(raw.lthr) ?? fallbackLthr;
+    const { hrZoneTimes: times, hrZones: bounds, lthr: ownLthr } = detailsOf(w.raw_json);
+    const lthr = ownLthr ?? fallbackLthr;
     if (!times?.length || !bounds?.length || !lthr) continue;
     out.withZones += 1;
     times.forEach((secs, i) => {
@@ -292,24 +318,41 @@ export interface WeekSummary {
   runs: number;
   km: number;
   minutes: number;
-  /** 訓練負荷的合計；沒有一筆有負荷時為 null */
+  /** 訓練負荷的合計（Intervals.icu 的；沒有的用我們估的，load.ts）；沒有一筆有負荷時為 null */
   load: number | null;
+  /** 負荷裡有我們估的（依心率、配速或體感） */
+  loadEstimated: boolean;
   /** session RPE（體感 × 分鐘）的合計；沒有一筆有體感時為 null */
   srpe: number | null;
   longestKm: number;
   /** 跑步以外的運動（騎車、游泳、肌力訓練等）：不算跑量，但會累積疲勞 */
-  other: { count: number; minutes: number; load: number | null };
+  other: { count: number; minutes: number; load: number | null; loadEstimated: boolean };
+}
+
+/** 一組紀錄的負荷合計；loadCtx 是 null 時只算來源算好的（舊的行為） */
+function sumLoads(list: (Pick<Workout, "duration_min" | "avg_hr" | "training_load"> & { distance_km?: number | null; perceived_effort?: number | null })[], sport: (i: number) => string, loadCtx: LoadContext | null): { load: number | null; estimated: boolean } {
+  let total = 0;
+  let any = false;
+  let estimated = false;
+  list.forEach((a, i) => {
+    const load = loadCtx ? loadOf(a, sport(i), loadCtx) : a.training_load != null ? { value: a.training_load, source: "intervals" as const } : null;
+    if (!load) return;
+    total += load.value;
+    any = true;
+    if (load.source !== "intervals") estimated = true;
+  });
+  return { load: any ? total : null, estimated };
 }
 
 /** 最近 N 週（週一起算，含這週），舊的在前 */
-export function weeklySummaries(workouts: Workout[], today: string, weeks: number, others: OtherActivity[] = []): WeekSummary[] {
+export function weeklySummaries(workouts: Workout[], today: string, weeks: number, others: OtherActivity[] = [], loadCtx: LoadContext | null = null): WeekSummary[] {
   const thisMonday = addDays(today, -weekdayIndex(today));
   const out: WeekSummary[] = [];
   for (let i = weeks - 1; i >= 0; i--) {
     const start = addDays(thisMonday, -7 * i);
     const end = addDays(start, 6);
     const inWeek = workouts.filter((w) => w.date >= start && w.date <= end);
-    const loads = inWeek.flatMap((w) => (w.training_load != null ? [w.training_load] : []));
+    const runLoad = sumLoads(inWeek, () => "run", loadCtx);
     const srpes = inWeek.flatMap((w) =>
       w.perceived_effort != null && w.duration_min != null ? [w.perceived_effort * w.duration_min] : [],
     );
@@ -319,16 +362,18 @@ export function weeklySummaries(workouts: Workout[], today: string, weeks: numbe
       runs: inWeek.length,
       km: inWeek.reduce((sum, w) => sum + (w.distance_km ?? 0), 0),
       minutes: inWeek.reduce((sum, w) => sum + (w.duration_min ?? 0), 0),
-      load: loads.length ? loads.reduce((a, b) => a + b, 0) : null,
+      load: runLoad.load,
+      loadEstimated: runLoad.estimated,
       srpe: srpes.length ? Math.round(srpes.reduce((a, b) => a + b, 0)) : null,
       longestKm: Math.max(0, ...inWeek.map((w) => w.distance_km ?? 0)),
       other: (() => {
         const list = others.filter((a) => a.date >= start && a.date <= end);
-        const otherLoads = list.flatMap((a) => (a.training_load != null ? [a.training_load] : []));
+        const otherLoad = sumLoads(list, (i) => sportOfType(list[i]!.type), loadCtx);
         return {
           count: list.length,
           minutes: list.reduce((sum, a) => sum + (a.duration_min ?? 0), 0),
-          load: otherLoads.length ? otherLoads.reduce((a, b) => a + b, 0) : null,
+          load: otherLoad.load,
+          loadEstimated: otherLoad.estimated,
         };
       })(),
     });
@@ -344,22 +389,75 @@ export interface FitnessSnapshot {
   atl: number;
   /** 體能的每週變化 */
   rampRate: number | null;
-  /** wellness：Intervals.icu 每天的值；activity：最近一筆跑步當時的值 */
-  source: "wellness" | "activity";
+  /** wellness：Intervals.icu 每天的值；activity：最近一筆跑步當時的值；estimate：我們從每趟的負荷算的（load.ts） */
+  source: "wellness" | "activity" | "estimate";
+  /** estimate：算進去的紀錄依負荷的來源的筆數，與最早一筆有負荷的日期（不到 6 週時體能偏低） */
+  counts?: LoadCounts;
+  since?: string | null;
+}
+
+/**
+ * 我們自己算的體能與疲勞（沒有 Intervals.icu 的值時用，規格 12.37）：最近 FITNESS_DAYS 天每一趟的負荷
+ * （有 Intervals.icu 算好的就用它，沒有的依心率、配速或體感估）. 一筆有負荷的都沒有時為 null
+ */
+export function estimatedFitness(items: Parameters<typeof dailyLoads>[0], loadCtx: LoadContext, today: string): FitnessSnapshot | null {
+  const { daily, counts } = dailyLoads(items, loadCtx);
+  if (!daily.size) return null;
+  const series = fitnessSeries(daily, addDays(today, -FITNESS_DAYS), today);
+  const last = series[series.length - 1]!;
+  const weekAgo = series[series.length - 8];
+  return {
+    date: today,
+    ctl: last.ctl,
+    atl: last.atl,
+    rampRate: weekAgo ? last.ctl - weekAgo.ctl : null,
+    source: "estimate",
+    counts,
+    since: [...daily.keys()].sort()[0] ?? null,
+  };
+}
+
+/** 中位數；沒有資料時為 null */
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+/**
+ * 估負荷用的依據（load.ts）：心率只用量到的（Intervals.icu 各運動的設定、選手填的實測最大心率，不用 220 − 年齡）；
+ * 靜止心率是最近恢復資料的中位數；閾值配速用 Intervals.icu 的設定，沒有時用 VDOT 的 T 配速
+ */
+export function loadContextOf(
+  profile: Record<string, string>,
+  settings: RunSettings | null,
+  sportSettings: SportSettings[] | null,
+  wellness: Pick<WellnessDay, "resting_hr">[],
+  vdot: VdotEstimate | null,
+): LoadContext {
+  const hr: Record<string, HrBasis> = {};
+  for (const s of sportSettings ?? []) {
+    const sport = sportOfType(s.types[0] ?? "");
+    if (sport !== "run" && !hr[sport] && (s.lthr || s.max_hr)) hr[sport] = { maxHr: s.max_hr ?? null, lthr: s.lthr ?? null };
+  }
+  hr.run = { maxHr: intOf(profile.max_hr) ?? settings?.max_hr ?? null, lthr: settings?.lthr ?? null };
+  const rest = median(wellness.flatMap((w) => (w.resting_hr && w.resting_hr > 25 ? [w.resting_hr] : [])));
+  return {
+    hr,
+    restHr: rest ?? DEFAULT_REST_HR,
+    thresholdPaceSec: settings?.threshold_pace ? 1000 / settings.threshold_pace : vdot ? danielsPaces(vdot.value).threshold : null,
+  };
 }
 
 /** 最新的體能與疲勞：優先用恢復資料（每天都有），沒有時用最近一筆跑步當時的值 */
 export function latestFitness(wellness: { date: string; raw_json: string | null }[], workouts: Workout[]): FitnessSnapshot | null {
   for (const w of [...wellness].sort((a, b) => b.date.localeCompare(a.date))) {
-    const raw = parseRaw(w.raw_json);
-    const ctl = num(raw.ctl);
-    const atl = num(raw.atl);
-    if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate: num(raw.rampRate), source: "wellness" };
+    const { ctl, atl, rampRate } = wellnessFitnessOf(w.raw_json);
+    if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate, source: "wellness" };
   }
   for (const w of [...workouts].sort((a, b) => b.date.localeCompare(a.date))) {
-    const raw = parseRaw(w.raw_json);
-    const ctl = num(raw.icu_ctl);
-    const atl = num(raw.icu_atl);
+    const { ctl, atl } = detailsOf(w.raw_json);
     if (ctl !== null && atl !== null) return { date: w.date, ctl, atl, rampRate: null, source: "activity" };
   }
   return null;
@@ -374,6 +472,8 @@ export interface TrainingValues {
   /** 最近 28 天的跑步中，各種資料有幾次：缺的不補、不估，只說明 */
   coverage: { runs: number; withHr: number; withZones: number; rated: number };
   hr: HeartRateInfo | null;
+  /** 量不到心率的原因（hrUnusable）；這時 hr 是 null. 量得到時為 null */
+  noHr: string | null;
   vdot: VdotEstimate | null;
   /** 課表用的配速（依最近強度課的結果可能放慢）；預測完賽時間仍用 vdot */
   paces: DanielsPaces | null;
@@ -394,6 +494,8 @@ export interface TrainingValues {
   athleteSports: string[];
   /** 這週與下週的額度（練騎車的人，allocation.ts）；沒有時為 null */
   allocation: { thisWeek: WeekAllocation; nextWeek: WeekAllocation } | null;
+  /** 估負荷的依據（load.ts）：紀錄卡片、檢查器的每週負荷用同一份 */
+  loadContext: LoadContext;
 }
 
 export interface RideWeek {
@@ -417,21 +519,21 @@ export interface RideValues {
 }
 
 /** 騎車的量：最近 N 週（週一起算，含這週）、最長的一趟、均速、eFTP */
-export function rideValues(others: OtherActivity[], today: string, weeks: number): RideValues {
+export function rideValues(others: OtherActivity[], today: string, weeks: number, loadCtx: LoadContext | null = null): RideValues {
   const rides = others.filter((a) => sportOfType(a.type) === "ride");
   const thisMonday = addDays(today, -weekdayIndex(today));
   const out: RideWeek[] = [];
   for (let i = weeks - 1; i >= 0; i--) {
     const start = addDays(thisMonday, -7 * i);
     const inWeek = rides.filter((a) => a.date >= start && a.date <= addDays(start, 6));
-    const loads = inWeek.flatMap((a) => (a.training_load != null ? [a.training_load] : []));
+    const rideLoad = sumLoads(inWeek, () => "ride", loadCtx);
     out.push({
       label: isoWeekLabel(start),
       start,
       rides: inWeek.length,
       minutes: inWeek.reduce((sum, a) => sum + (a.duration_min ?? 0), 0),
       km: inWeek.reduce((sum, a) => sum + (a.distance_km ?? 0), 0),
-      load: loads.length ? loads.reduce((a, b) => a + b, 0) : null,
+      load: rideLoad.load,
       longestMin: Math.max(0, ...inWeek.map((a) => a.duration_min ?? 0)),
     });
   }
@@ -441,7 +543,7 @@ export function rideValues(others: OtherActivity[], today: string, weeks: number
   const kmh = hours >= 1 ? timed.reduce((sum, a) => sum + a.distance_km!, 0) / hours : DEFAULT_RIDE_KMH;
   let eftp: RideValues["eftp"] = null;
   for (const a of [...rides].sort((x, y) => y.date.localeCompare(x.date))) {
-    const value = num(parseRaw(a.raw_json).icu_eftp);
+    const value = detailsOf(a.raw_json).eftp;
     if (value && value > 0) {
       eftp = { watts: Math.round(value), date: a.date };
       break;
@@ -457,7 +559,7 @@ export const SNAPSHOT_PACE_CURVE = "pace_curve";
 export const SNAPSHOT_SPORT_SETTINGS = "sport_settings";
 
 export async function computeTrainingValues(db: Db, today: string, weeks = 4): Promise<TrainingValues> {
-  const [profile, settings, curve, races, workouts, wellness, others, sportSettings] = await Promise.all([
+  const [profile, settings, curve, races, workouts, wellness, others, sportSettings, restDays] = await Promise.all([
     db.getProfile(),
     // 來源沒有跑步設定或配速曲線時，同步存的是 null
     db.getSnapshot<RunSettings | null>(SNAPSHOT_RUN_SETTINGS),
@@ -467,10 +569,13 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     db.getWellnessRaw(7),
     db.getOtherActivities(Math.max(weeks * 7, 31)),
     db.getSnapshot<SportSettings[] | null>(SNAPSHOT_SPORT_SETTINGS),
+    db.getWellness(DISTRIBUTION_DAYS, today),
   ]);
-  const hr = heartRateInfo(profile, settings?.value ?? null, today);
-  const vdot = estimateVdot(races, curve?.value ?? null, today);
   const recent = workouts.filter((w) => daysBetween(w.date, today) < DISTRIBUTION_DAYS);
+  const noHr = hrUnusable(profile, recent);
+  // 量不到心率時不給區間（220－年齡推算的也不給）：課表的目標改成配速與體感
+  const hr = noHr ? null : heartRateInfo(profile, settings?.value ?? null, today);
+  const vdot = estimateVdot(races, curve?.value ?? null, today, profile);
   const distribution = intensityDistribution(recent, hr?.lthr ?? null);
   const efforts = effortDistribution(recent);
   const basePaces = vdot ? danielsPaces(vdot.value) : null;
@@ -489,6 +594,15 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
       )
     : { penalty: 0, reason: null };
   const adjustment = adjust.penalty > 0 && adjust.reason ? { penalty: adjust.penalty, reason: adjust.reason } : null;
+  const loadContext = loadContextOf(profile, settings?.value ?? null, sportSettings?.value ?? null, restDays, vdot);
+  // 體能與疲勞：有 Intervals.icu 的值先照舊用；沒有時用我們從每趟的負荷算的（規格 12.37）
+  const fitness =
+    latestFitness(wellness, workouts) ??
+    estimatedFitness(
+      (await db.getActivities(FITNESS_DAYS)).filter((a) => a.date <= today),
+      loadContext,
+      today,
+    );
   return {
     today,
     coverage: {
@@ -498,19 +612,21 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
       rated: efforts.rated,
     },
     hr,
+    noHr,
     vdot,
     paces: vdot ? (adjustment ? danielsPaces(vdot.value - adjustment.penalty) : basePaces) : null,
     adjustment,
     curve: curve?.value ?? null,
     thresholdPace: settings?.value?.threshold_pace ?? null,
-    weeks: weeklySummaries(workouts, today, weeks, others),
+    weeks: weeklySummaries(workouts, today, weeks, others, loadContext),
     distribution,
     efforts,
-    fitness: latestFitness(wellness, workouts),
+    fitness,
     sports: (["ride", "swim"] as const).map((sport) => sportTargets(sportSettings?.value, sport, today)),
-    ride: rideValues(others, today, weeks),
+    ride: rideValues(others, today, weeks, loadContext),
     athleteSports: athleteSports(profile),
     allocation: await allocationFor(db, profile, races, today),
+    loadContext,
   };
 }
 
@@ -564,6 +680,8 @@ function vdotSourceText(v: VdotEstimate): string {
       return `最近 ${VDOT_LOOKBACK_DAYS} 天的最佳 ${what}（${v.date ?? "日期不明"}，Intervals.icu 標為比賽）`;
     case "best_effort":
       return `最近 ${VDOT_LOOKBACK_DAYS} 天的最佳 ${what}（${v.date ?? "日期不明"}），來自訓練、不是比賽，可能低估`;
+    case "profile":
+      return `選手資料填的個人最佳 ${what}（沒有日期，可能不是現在的體能：先照這個排，強度課做起來太難就放慢，並請選手回報最近的比賽或做一次 5 km 計時跑）`;
   }
 }
 
@@ -595,6 +713,11 @@ function runningLines(v: TrainingValues): string[] {
     lines.push(`・區間：${zonesText(v.hr)}`);
     lines.push(`・輕鬆跑的心率上限：${v.hr.easyMax} bpm（${v.hr.easyMaxNote}）`);
     if (v.coverage.runs && !v.coverage.withHr) lines.push("最近的跑步都沒有心率，這些區間暫時用不到，強度以配速與體感為主。");
+  } else if (v.noHr) {
+    lines.push(
+      `量不到心率（${v.noHr}）：不要用心率的目標（不要寫 {"hr":"easy"} 以外的心率區間，也不要寫「心率不超過」）；` +
+        "強度用配速與體感，輕鬆的強度用說話測試（能說完整的句子）。手機 GPS 的配速會飄，以體感為主、配速為輔。",
+    );
   } else {
     lines.push("沒有心率的依據（沒有 Intervals.icu 的閾值心率，選手資料也沒有最大心率或出生年）：強度以配速與體感為主。");
   }
@@ -619,7 +742,7 @@ function runningLines(v: TrainingValues): string[] {
   } else {
     lines.push(
       `最近 ${VDOT_LOOKBACK_DAYS} 天沒有可以推算的比賽成績或最佳表現（需要 1.5 km 以上、3.5 分鐘以上的全力跑）。` +
-        "配速以體感與心率為主；需要配速時，可以請選手回報最近的比賽成績，或做一次 5 km 計時跑。",
+        `配速以體感${v.hr ? "與心率" : ""}為主；需要配速時，可以請選手回報最近的比賽成績（或在選手資料填 5 km、10 km 的個人最佳），或做一次 5 km 計時跑。`,
     );
   }
   if (v.curve?.critical_speed) {
@@ -649,7 +772,11 @@ function runningLines(v: TrainingValues): string[] {
     }
     lines.push(`・${w.label}（${w.start.slice(5)} 起）：${parts.join("｜")}`);
   }
-  lines.push("（負荷是 Intervals.icu 的訓練負荷；sRPE 是體感 × 分鐘，只算有回報體感的；其他運動不算跑量）");
+  lines.push(
+    v.weeks.some((w) => w.loadEstimated || w.other.loadEstimated)
+      ? "（負荷：有 Intervals.icu 的訓練負荷就用它，沒有的依心率、配速或體感估，同一個尺度〔閾值強度 1 小時 = 100〕，是估計值；sRPE 是體感 × 分鐘，只算有回報體感的；其他運動不算跑量）"
+      : "（負荷是 Intervals.icu 的訓練負荷；sRPE 是體感 × 分鐘，只算有回報體感的；其他運動不算跑量）",
+  );
 
   lines.push("", `【強度分配】最近 ${DISTRIBUTION_DAYS} 天`);
   const d = v.distribution;
@@ -680,8 +807,17 @@ function commonLines(v: TrainingValues, options: { multisport?: boolean }): stri
     const form = f.ctl - f.atl;
     const parts = [`體能（CTL）${round1(f.ctl)}`, `疲勞（ATL）${round1(f.atl)}`, `狀態（CTL−ATL）${round1(form)}`];
     if (f.rampRate !== null) parts.push(`體能每週變化 ${f.rampRate >= 0 ? "+" : ""}${round1(f.rampRate)}`);
-    lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : "，包含所有運動"}）`);
-    lines.push(parts.join("｜"));
+    if (f.source === "estimate") {
+      lines.push("", `【體能與疲勞】我們估的（${f.date}，包含所有運動；${loadCountsText(f.counts ?? {})}）`);
+      lines.push(parts.join("｜"));
+      lines.push(
+        "依每趟的負荷算（體能是 42 天、疲勞是 7 天的平均）；沒有 Intervals.icu 的負荷時依心率、配速或體感估，是估計值，看趨勢就好，不要當成精確的數字。" +
+          (f.since && daysBetween(f.since, f.date) < 42 ? `紀錄從 ${f.since} 才開始，不到 6 週，體能會偏低。` : ""),
+      );
+    } else {
+      lines.push("", `【體能與疲勞】Intervals.icu（${f.date}${f.source === "activity" ? "，最近一筆跑步當時" : "，包含所有運動"}）`);
+      lines.push(parts.join("｜"));
+    }
   }
   if (options.multisport) {
     lines.push("", "【跑步以外的運動的區間】Intervals.icu 各運動自己的設定；交叉訓練的目標用這些，不要用跑步的區間");

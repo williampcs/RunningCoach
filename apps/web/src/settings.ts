@@ -10,10 +10,12 @@ import {
 } from "@running-coach/core";
 
 import { createLock, openLock, passwordMatches, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
+import { SCOPED_KEYS, storageKey } from "./storage-scope";
 
-const STORAGE_KEY = "running-coach.settings.v1";
+// 測試模式用自己一份（storage-scope.ts）：這個頁面在測試模式時，兩個都是測試的那一份
+const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
 /** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
-const LOCK_KEY = "running-coach.lock.v1";
+const LOCK_KEY = () => storageKey(SCOPED_KEYS.lock);
 
 /** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
 let lockSession: LockSession | null = null;
@@ -31,7 +33,11 @@ export interface AppSettings {
   models: Record<Purpose, string>;
   chatEffort: Effort;
   proxy: { url: string; token: string };
-  intervals: { apiKey: string; athleteId: string };
+  /**
+   * Intervals.icu：API key（Basic），或用 Intervals.icu 登入拿到的 token（Bearer，規格 12.37）與那個帳號.
+   * token 和 API key 一樣只存在這台（密碼鎖開著時加密），不同步
+   */
+  intervals: { apiKey: string; athleteId: string; accessToken: string; account: { id: string | null; name: string | null } | null };
   /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
   sync: { url: string; key: string };
   timeZone: string;
@@ -76,7 +82,7 @@ export function defaultSettings(): AppSettings {
     models: { ...CLAUDE_MODELS },
     chatEffort: "medium",
     proxy: { url: import.meta.env.VITE_PROXY_URL ?? "", token: "" },
-    intervals: { apiKey: "", athleteId: "" },
+    intervals: { apiKey: "", athleteId: "", accessToken: "", account: null },
     sync: { url: import.meta.env.VITE_SYNC_URL ?? "", key: "" },
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Taipei",
     weather: null,
@@ -88,7 +94,7 @@ export function defaultSettings(): AppSettings {
 function loadPlainSettings(): AppSettings {
   const defaults = defaultSettings();
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<AppSettings> | null;
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY()) ?? "null") as Partial<AppSettings> | null;
     if (!stored) return defaults;
     return {
       ...defaults,
@@ -105,7 +111,7 @@ function loadPlainSettings(): AppSettings {
 }
 
 function secretsOf(s: AppSettings): Secrets {
-  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey, syncKey: s.sync.key };
+  return { apiKey: s.apiKey, proxyToken: s.proxy.token, intervalsApiKey: s.intervals.apiKey, syncKey: s.sync.key, intervalsToken: s.intervals.accessToken };
 }
 
 function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
@@ -113,12 +119,21 @@ function withSecrets(s: AppSettings, secrets: Secrets): AppSettings {
     ...s,
     apiKey: secrets.apiKey,
     proxy: { ...s.proxy, token: secrets.proxyToken },
-    intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey },
+    intervals: { ...s.intervals, apiKey: secrets.intervalsApiKey, accessToken: secrets.intervalsToken ?? "" },
     sync: { ...s.sync, key: secrets.syncKey ?? "" },
   };
 }
 
-const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "" };
+const NO_SECRETS: Secrets = { apiKey: "", proxyToken: "", intervalsApiKey: "", syncKey: "", intervalsToken: "" };
+
+/** 這個瀏覽器存過設定嗎（設定精靈只給從來沒設定過的人，規格 12.35 的 A） */
+export function hasStoredSettings(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY()) !== null || localStorage.getItem(LOCK_KEY()) !== null;
+  } catch {
+    return false;
+  }
+}
 
 /** 設定；啟用密碼鎖時，憑證只有在解鎖後才會出現 */
 export function loadSettings(): AppSettings {
@@ -130,18 +145,18 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   if (lockEnabled()) {
     if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
     const sealed = await sealSecrets(lockSession, secretsOf(settings));
-    localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+    localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
+    localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
     unlockedSecrets = secretsOf(settings);
     return;
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
 }
 
 /** 刪除儲存的設定（含 API key 與密碼鎖），下次載入時回到預設值 */
 export function clearSettings(): void {
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.removeItem(STORAGE_KEY());
+  localStorage.removeItem(LOCK_KEY());
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +165,7 @@ export function clearSettings(): void {
 
 export function lockEnabled(): boolean {
   try {
-    return localStorage.getItem(LOCK_KEY) !== null;
+    return localStorage.getItem(LOCK_KEY()) !== null;
   } catch {
     return false;
   }
@@ -163,7 +178,7 @@ export function needsUnlock(): boolean {
 
 /** 密碼錯誤時丟出 WrongPasswordError */
 export async function unlock(password: string): Promise<void> {
-  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY()) ?? "null") as SealedSecrets | null;
   if (!sealed) throw new Error("沒有啟用密碼鎖");
   const opened = await openLock(sealed, password);
   lockSession = opened.session;
@@ -172,7 +187,7 @@ export async function unlock(password: string): Promise<void> {
 
 /** 已解鎖後再確認一次密碼（顯示復原碼、新增裝置前，規格 12.26）；不改變解鎖的狀態 */
 export async function checkPassword(password: string): Promise<boolean> {
-  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null") as SealedSecrets | null;
+  const sealed = JSON.parse(localStorage.getItem(LOCK_KEY()) ?? "null") as SealedSecrets | null;
   if (!sealed) throw new Error("沒有啟用密碼鎖");
   return passwordMatches(sealed, password);
 }
@@ -180,23 +195,23 @@ export async function checkPassword(password: string): Promise<boolean> {
 /** 以密碼加密目前的憑證，明文設定裡的憑證改為空白 */
 export async function enableLock(password: string, settings: AppSettings): Promise<void> {
   const { sealed, session } = await createLock(password, secretsOf(settings));
-  localStorage.setItem(LOCK_KEY, JSON.stringify(sealed));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(withSecrets(settings, NO_SECRETS)));
+  localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
   lockSession = session;
   unlockedSecrets = secretsOf(settings);
 }
 
 /** 停用密碼鎖：憑證改回以明文保存 */
 export function disableLock(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
+  localStorage.removeItem(LOCK_KEY());
   lockSession = null;
   unlockedSecrets = null;
 }
 
 /** 忘記密碼：刪除加密的憑證（其餘設定保留），之後要重新填寫 key */
 export function forgetLockedSecrets(): void {
-  localStorage.removeItem(LOCK_KEY);
+  localStorage.removeItem(LOCK_KEY());
   lockSession = null;
   unlockedSecrets = null;
 }
@@ -216,6 +231,9 @@ export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERS
  * 第一次用的人在設定的「AI 教練」和資料流向一起勾選，不另外問
  */
 export const needsTermsConfirm = (s: AppSettings) => s.consents.length > 0 && !termsAccepted(s);
+
+/** 連上 Intervals.icu 了嗎（API key 或登入） */
+export const intervalsConnected = (s: AppSettings) => s.intervals.apiKey.trim() !== "" || s.intervals.accessToken !== "";
 
 /** LLM 設定是否完整到可以開始對話；不完整時回傳缺少的項目 */
 export function llmProblem(s: AppSettings): string | null {
@@ -238,7 +256,8 @@ export function buildProvider(s: AppSettings): LlmProvider {
   const apiKey = s.apiKey.trim();
   switch (s.provider) {
     case "anthropic":
-      return new AnthropicProvider({ apiKey, browser: true });
+      // VITE_ANTHROPIC_BASE_URL 只給 E2E 用（指向模擬上游）；正式的建置不設定
+      return new AnthropicProvider({ apiKey, browser: true, baseURL: import.meta.env.VITE_ANTHROPIC_BASE_URL || undefined });
     case "openai":
     case "gemini":
       return new OpenAICompatibleProvider({ ...OPENAI_COMPATIBLE_PRESETS[s.provider], apiKey });

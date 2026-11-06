@@ -287,7 +287,7 @@ describe("教練存課表與調整", () => {
     expect(results[2]).toMatch(/^課表已儲存（2026-W42）/);
     expect(results[3]).toMatch(/^課表已儲存（2026-W42）/);
     expect(results[4]).toContain("[session_id=5] 10-15（星期四）｜T 閾值：4×1 km 閾值");
-    expect(results[4]).toMatch(/4 ×（1 km \d:\d\d–\d:\d\d\/km（T） ＋ 1 分鐘 能聊天的強度/);
+    expect(results[4]).toMatch(/4 ×（1 km \d:\d\d–\d:\d\d\/km（T） ＋ 1 分鐘 約 \d:\d\d–\d:\d\d\/km（能說完整的句子/);
     expect(results[4]).toContain("排課的原因：照目前的跑量排第一週");
     expect(results[5]).toBe("已改用替代的課（session_id=5）。");
     expect(results[6]).toMatch(/^已移動（session_id=4）。/);

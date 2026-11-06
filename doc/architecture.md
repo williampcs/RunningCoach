@@ -31,7 +31,7 @@ flowchart LR
     sync --> d1
   end
   llm["AI 服務<br/>Anthropic、OpenAI、Gemini 或相容服務"]
-  icu["Intervals.icu<br/>跑步與恢復資料"]
+  icu["Intervals.icu<br/>跑步與恢復資料（選用：沒有手錶的人手動記）"]
   meteo["Open-Meteo<br/>天氣"]
   discord["Discord"]
   pages -. 下載網頁 .-> web
@@ -92,7 +92,7 @@ flowchart TB
   end
   subgraph domain["訓練的規則"]
     tv["training-values.ts / sports.ts / coaching-method.ts<br/>配速、心率區間、VDOT；各運動的區間；跑步與單車的教練方法"]
-    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、多運動的每週額度"]
+    plan["plan.ts / planning.ts / plan-match.ts / plan-timeline.ts / plan-history.ts / allocation.ts<br/>課表、檢查器、和實際紀錄對照、課表頁的時間軸、之前的週與最近 4 週的摘要、多運動的每週額度"]
     races["races.ts<br/>賽事的規則"]
     recovery["recovery.ts / injuries.ts / red-flags.ts<br/>恢復狀況的判讀、傷病紀錄、就醫提示的字詞"]
     feed["feed.ts<br/>教練動態"]
@@ -101,6 +101,7 @@ flowchart TB
   end
   subgraph data["資料"]
     db["db.ts<br/>schema、migration、所有 SQL"]
+    acts["activities.ts / load.ts<br/>不分來源的紀錄、來源原始資料的轉換；負荷與體能疲勞"]
     sync["sync.ts / history-import.ts / dedupe.ts<br/>從 Intervals.icu 同步、匯入、去重"]
     ds["device-sync/<br/>多裝置同步：加密、配對、合併"]
     icu["intervals.ts<br/>Intervals.icu 的 API"]
@@ -157,18 +158,26 @@ sequenceDiagram
 | 資料 | 存在哪裡 | 會同步到其他裝置嗎 |
 |---|---|---|
 | 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
-| API key、AI 的設定、Intervals.icu 的 key、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key） | 不會 |
+| API key、AI 的設定、Intervals.icu 的 key 或登入的 token（規格 12.37）、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key 與 token） | 不會 |
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
+| 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
+| 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
+| 測試模式（規格 6.1、9.4） | 另一個資料庫檔（OPFS 的 `/coach-test.db`）；設定與上面那些小狀態也是自己一份（localStorage 的 `running-coach.test.` 開頭，`apps/web/src/storage-scope.ts`），第一次進測試模式時從正常模式複製（密碼鎖的密文照原樣），之後各改各的 | 不會：測試模式不同步 |
+| 「先看看」的範例（規格 12.35 的 B） | 記憶體裡的另一個資料庫（worker 的 `:memory:`），範例的狀態在 sessionStorage | 不會；不碰真的資料庫，離開就清掉 |
 
 App 打開時呼叫 `navigator.storage.persist()`，要求瀏覽器不要在空間不足或閒置時自動清掉這些資料；設定頁的「資料」顯示瀏覽器有沒有答應（`apps/web/src/update-check.ts`，規格 12.18）。
 
 OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-lock.ts` 用 Web Locks（鎖的名稱 `zone2mate-db`）記哪個分頁在用：拿到鎖才打開 App（`views/TabGate.tsx`）；拿不到時顯示「已經在另一個分頁開著」。按「在這裡使用」時先排進鎖的佇列，再用 BroadcastChannel（`zone2mate-tabs`）請正在用的分頁交出來；那個分頁先收起 App、關掉資料庫並放開 OPFS 的檔案（worker 的 `close`：`db.close()` 與 `pauseVfs()`，`db/driver.ts` 的 `closeBrowserDb`），才放開鎖，所以不會兩邊同時寫。被接手的分頁按「在這裡繼續」時重新載入並直接接手。瀏覽器沒有這兩個 API 時照舊直接打開；真的沒有 OPFS（例如無痕視窗）才退回記憶體資料庫。
 
+用 Intervals.icu 登入（規格 12.37，OAuth）：網頁帶著 client_id、回呼網址（網站的根目錄）與只有讀的權限到 Intervals.icu 同意；回來時 `main.tsx` 在任何請求之前讀走網址上的 code 並清掉（`apps/web/src/intervals-login.ts`）；code 送到同步服務的 `POST /v1/intervals/token`（`apps/sync/src/intervals-token.ts`：帶上 Worker 的 secret `INTERVALS_CLIENT_SECRET` 向 Intervals.icu 換 token，只轉送、不存、不碰 D1），token 存進這台的設定；之後 `IntervalsClient` 用 Bearer 直接讀。沒有設定 client_id 時按鈕不出現。
+
+新的使用者第一次打開時（`onboarding` 開著）先走設定精靈（`apps/web/src/wizard.ts` 判斷誰是新的使用者、記進度；畫面在 `views/Wizard.tsx`，整頁取代平常的分頁）。貼上 AI 的 key 時用核心的 `checkLlmKey`（`llm/check.ts`）打一次最小的請求再存。「先看看」（`apps/web/src/demo.ts`）打開時換成記憶體裡的資料庫、預設的設定（沒有 key、沒有同步）、假的活動來源與不會送出請求的 AI 替身，由核心的 `seedDemo`（`demo.ts`）寫進範例；不走分頁的鎖與密碼鎖。
+
 使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
 
-## 資料庫的 schema（目前是第 17 版）
+## 資料庫的 schema（目前是第 19 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -188,7 +197,7 @@ erDiagram
   daily_checkins }o--o| wellness : "同一天：選手自評與手錶數據"
 ```
 
-（`planned_sessions` 和實際跑步、騎車的對應不存在資料庫裡，每次依日期與內容重新比對算出來。）
+（`planned_sessions` 和實際跑步、騎車的對應不存在資料庫裡，每次依日期與內容重新比對算出來。過去的週也一樣：課表頁的「之前的週」與教練系統提示裡的【最近 4 週照課表的情形】由 `plan-history.ts` 拿每週最新的一份課表〔已停用的也算〕重新比對，規格 12.34。）
 
 **選手與目標**
 - `athlete_profile`：選手資料，key-value（例：`goal_long_term`、`pb_10k`、`injuries`、`pref_*` 訓練偏好、`region`）；多運動的共通設定與騎車的卡也是 `pref_*`（`pref_sports`、`pref_primary_sport`、`pref_days_per_week`、`pref_intensity_ride`、`pref_ride_hours` 等，跑步的卡沿用原本的鍵）。
@@ -197,20 +206,22 @@ erDiagram
 - `injuries`：傷病紀錄（schema 17，規格 12.33）：部位 `area`、哪一側 `side`、開始日期、狀態（進行中、好轉中、好了）、會痛的運動 `sports`（逗號分隔，空的是不知道、當成全部）、紅旗 `red_flag`、備註，疼痛的分數 `scores`（JSON：`[{date, score, when}]`，同一天同一個時間點蓋掉舊的）。教練用 `record_injury`、`update_injury` 寫，選手在「選手 → 身體」改；檢查器依它擋課（`plan.ts` 的 `injuryWarnings`：會痛的運動在疼痛超過 3/10 或超過 3 天沒有分數時，強度課與長課不能存；有紅旗時所有課都不能存），已經排好的課算出「先不要做」（`planning.ts` 的 `injuryHolds`）。
 
 **訓練紀錄**
-- `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。
+- `workouts`：每一趟跑步。客觀數據（距離、時間、心率、配速、爬升、負荷）、選手的體感與感受、原始資料 `raw_json`；`intervals_id` 是跨裝置共通的 id；`duplicate_of` 標記重複的那筆（多個裝置上傳同一趟），`removed_at` 標記 Intervals.icu 上已刪除的。手動新增的（`source` 是 `manual`，規格 12.36「沒有手錶也能用」）沒有 `intervals_id` 與 `raw_json`（所以沒有開始時間，不會自動合併；同一天距離與時間相近的由教練動態問），改用 `sync_id` 當跨裝置的 id、`updated_at` 是修改時間（schema 19）；可以整筆改與刪（`Db.addManualWorkout`、`updateManualWorkout`、`deleteManualWorkout`，`Coach` 的同名方法先檢查欄位、存了用跑後摘要的模型產生分析）。
 - `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
 - `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
 - `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
 - `activity_summaries`：騎車的 AI 分析（騎後分析，schema 16，規格 12.31）。和體感一樣另外存、用 `intervals_id` 對應；用跑後摘要的模型，存了騎車的體感（回報、補填、教練的 `save_activity_feedback`）或按「請教練分析」時產生（`ride-analysis.ts`）。
+- **不分來源的紀錄**（`activities.ts`，規格 12.37「不分來源的核心」）：跑步（`workouts`）與其他運動（`other_activities`，含 `activity_feedback`、`activity_summaries`）在 `Db.getActivities(days, { sports })` 合成同一個格式 `ActivityRecord`（運動、來源 `intervals`／`manual`／`strava`／`fake`／`import`、日期、時間、距離、心率、配速、體感、分析）。來源的原始資料 `raw_json` 只在 `detailsOf` 裡解讀，轉成 `SourceDetails`（開始時間、經過時間、心率區間的時間與閾值心率、Intervals.icu 算好的負荷與體能疲勞、功率、氣溫）；去重、強度分配、比對課表、騎車的數字、天氣、比賽成績都讀 `SourceDetails`，不自己 parse。資料表這一版不變：搬成一張表的時機與步驟見規格 12.37 的「實作」。之後加一個來源（Apple 健康、FIT 檔）只要寫一個轉換。
+- **負荷與體能疲勞**（`load.ts`，規格 12.37）：每一趟的負荷有 Intervals.icu 算好的就用，沒有時依心率（hrSS）、配速（rTSS，只有跑步）或體感估，都是 TSS 的尺度；體能（42 天）與疲勞（7 天）是每天負荷合計的指數平均，有 Intervals.icu 的值時照舊用它的。估負荷的依據（各運動量到的最大心率與閾值心率、靜止心率、閾值配速）由 `training-values.ts` 的 `loadContextOf` 組好，放在 `TrainingValues.loadContext`，紀錄卡片與檢查器用同一份。都是算出來的，不存進資料庫。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
 - `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
-- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。
+- `planned_sessions`：結構化課表的每一堂課：日期、種類、標題、步驟（JSON，目標寫代號，顯示時才換算成配速）、目的、完成的標準、替代的課、狀態（照原本、跳過、改用替代）；交叉訓練的運動 `sport`（ride、swim、other，心率與功率的目標用那項運動的設定換算；單車的課 `ride_*` 一律是 ride）、選手回報做完了的時間 `done_at`（肌力等沒有手錶紀錄的課）（schema 12，規格 12.24）；教練只改這堂課的內容的時間 `edited_at`（`edit_planned_session`，課表頁標「已調整」，原因寫在 `note`；schema 14，規格 12.31）。選手自己改短或換成輕鬆的紀錄 `self_change`（JSON：改法、幾成、原因、時間、原本的內容與估計的時間距離；課的內容換成改過的，「恢復」時換回；schema 18，規格 12.34 第 3 點 B）。
 
 **對話**
 - `conversations`：每則訊息（角色、內容、時間），加上教練回覆的依據 `sources`、回覆的引用 `reply_to`、是否已整理進摘要 `archived`。
@@ -234,7 +245,8 @@ erDiagram
 | `m:sync_id` | 一則記住的事 |
 | `in:sync_id` | 一個傷（含疼痛的分數；schema 17，舊版不認得，不套用也不刪） |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
-| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」 |
+| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」（跑步 id：`i`＋Intervals.icu 的活動 id、`s`＋Strava 的 id，手動新增的是 `m`＋sync_id） |
+| `mw:sync_id` | 手動新增的一趟跑步，整筆（日期、距離、時間、平均心率、配速、體感與感受、修改時間；schema 19，舊版不認得，不套用也不刪）；體感在這裡，不另外送 `w:` |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 
@@ -285,6 +297,7 @@ sequenceDiagram
 
 兩個環境怎麼分（規格 12.19）：
 - 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
+- 用 Intervals.icu 登入（規格 12.37，選填）：Variables 的 `INTERVALS_CLIENT_ID`（staging：`STAGING_INTERVALS_CLIENT_ID`）在部署同步服務時寫進 `wrangler.toml` 的 var、建置網頁時是 `VITE_INTERVALS_CLIENT_ID`；Secrets 的 `INTERVALS_CLIENT_SECRET`（staging：`STAGING_INTERVALS_CLIENT_SECRET`）在部署同步服務後用 `wrangler secret put` 從 stdin 寫入，不印出。沒設定時登入的按鈕不出現。
 - 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
 - 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。

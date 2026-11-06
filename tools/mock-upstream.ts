@@ -7,7 +7,11 @@
  *   GET  /intervals/athlete/:id/wellness      恢復資料、體能與疲勞
  *   GET  /intervals/athlete/:id               選手與運動設定（跑步與騎車的閾值心率與區間，騎車的 FTP 與功率區間）
  *   GET  /intervals/athlete/:id/pace-curves.json  最近 90 天的最佳配速曲線與臨界速度
- *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）
+ *   *    /sync/v1/...                          多裝置同步服務（apps/sync，資料只在記憶體裡）；/sync/v1/intervals/token 是換 token（client_id mock-client）
+ *   GET  /intervals/oauth/authorize           模擬 Intervals.icu 的授權頁：直接帶 code 轉回 redirect_uri（login_hint=deny 時回 access_denied）
+ *   POST /intervals/api/oauth/token           模擬換 token（client_secret 要是 mock-secret；code 只能用一次）
+ *   DELETE /intervals/disconnect-app          模擬中斷連結（Bearer）
+ *   GET  /_mock/oauth                         E2E 檢查：授權頁收到的參數、換 token 與中斷連結的次數
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
  *   GET  /_mock/requests                      最近送到模擬服務的模型請求（與回傳的用量）、天氣查詢（E2E 檢查送出了什麼）
  *
@@ -23,6 +27,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createSyncHandler } from "../apps/sync/src/handler";
+import { handleIntervalsToken, isIntervalsTokenPath } from "../apps/sync/src/intervals-token";
 import { SyncStore } from "../apps/sync/src/store";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8788);
@@ -32,7 +37,28 @@ const CHUNK_MS = Number(process.env.MOCK_CHUNK_MS ?? 25);
 // 長回覆寫慢一點（約 10 秒）：E2E 要在串流中點開段落、看「寫作中」（規格 12.30）
 const chunkMs = (text: string) => (text === LONG_REPLY ? CHUNK_MS * 4 : CHUNK_MS);
 
+// 模擬別的時間（例：MOCK_NOW=2026-10-29T23:50:00+08:00 測跨日）：時鐘從那個時間開始照常走；E2E 的瀏覽器用 E2E_NOW 對上
+if (process.env.MOCK_NOW) {
+  const offset = Date.parse(process.env.MOCK_NOW) - Date.now();
+  if (Number.isNaN(offset)) throw new Error(`MOCK_NOW 不是時間：${process.env.MOCK_NOW}`);
+  const RealDate = Date;
+  class ShiftedDate extends RealDate {
+    constructor(...args: unknown[]) {
+      if (args.length) super(...(args as [string]));
+      else super(RealDate.now() + offset);
+    }
+    static override now() {
+      return RealDate.now() + offset;
+    }
+  }
+  globalThis.Date = ShiftedDate as DateConstructor;
+}
+
 type Block = { type: string; [key: string]: unknown };
+/** 思考多久：回覆的區塊帶 thinkMs 時用它（E2E 的「等很久」） */
+const thinkMs = (content: Block[]) => content.map((b) => b.thinkMs).find((v): v is number => typeof v === "number") ?? THINK_MS;
+/** 工具呼叫前的那句（E2E 檢查它不像正式回覆閃過） */
+const PRE_TOOL_TEXT = "Let me remove the session first.";
 type Message = { role: string; content: string | Block[] };
 
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
@@ -229,6 +255,59 @@ function samplePlan(text: string, multisport = false) {
               : []),
           ]
         : []),
+    ],
+  };
+}
+
+/**
+ * 量不到心率的選手的課表（規格 12.36）：今天 30 分鐘輕鬆跑（目標 {"hr":"easy"}，程式換算成配速與說話測試）；
+ * 這週還有的日子再排一堂 T 與一堂長跑. 完成的標準用體感與說話測試，不寫心率
+ */
+function noHrPlan() {
+  const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const day = (offset: number) => daysAgo(weekday - offset);
+  const later = (offset: number) => offset > weekday;
+  return {
+    week_start: day(0),
+    style: "fixed",
+    reason: "（模擬）沒有手錶：以體感與說話測試為主",
+    accept_warnings: true,
+    warning_notes: "（模擬）測試用的課表",
+    sessions: [
+      { date: today(), kind: "easy", title: "輕鬆跑", steps: [{ duration_min: 30, target: { hr: "easy" } }], purpose: "有氧基礎", success: "全程能說完整的句子" },
+      ...(later(3)
+        ? [{ date: day(3), kind: "threshold", title: "3×1 km 閾值", steps: [{ duration_min: 10, target: { hr: "easy" } }, { repeat: 3, steps: [{ distance_km: 1, target: { pace: "T" } }, { duration_min: 2, target: { hr: "easy" } }] }, { duration_min: 10, target: { hr: "easy" } }], purpose: "提高閾值", success: "只能說幾個字，體感 6–7" }]
+        : []),
+      ...(later(6) ? [{ date: day(6), kind: "long", title: "長跑", steps: [{ duration_min: 60, target: { pace: "E" } }], purpose: "耐力", success: "全程能說完整的句子" }] : []),
+    ],
+  };
+}
+
+/** weeksAgo 週以前的課表（「之前的週」與自己改課的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
+function pastPlan(weeksAgo: number) {
+  const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const day = (offset: number) => daysAgo(weekday + 7 * weeksAgo - offset);
+  const easy = (date: string, title: string, minutes: number) => ({ date, kind: "easy", title, steps: [{ duration_min: minutes, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" });
+  return {
+    week_start: day(0),
+    style: "fixed",
+    reason: `（模擬）${weeksAgo} 週前的課表`,
+    accept_warnings: true,
+    warning_notes: "（模擬）測試用的過去課表",
+    sessions: [
+      easy(day(1), "輕鬆跑", 45),
+      easy(day(2), "週三的輕鬆跑", 40),
+      {
+        date: day(3),
+        kind: "threshold",
+        title: "20 分鐘閾值",
+        steps: [{ duration_min: 15, target: { hr: "easy" } }, { duration_min: 20, target: { pace: "T" } }, { duration_min: 10, target: { hr: "easy" } }],
+        purpose: "提高閾值",
+        success: "配速在範圍內",
+        fallback: "改成 40 分鐘輕鬆跑",
+      },
+      // 2 週前的長跑排得比假資料長（24 km 只跑了約 16 km）：「之前的週」看得到部分達成
+      { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: weeksAgo === 2 ? 24 : 16, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
     ],
   };
 }
@@ -431,9 +510,17 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
   }
   if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
+  // 工具呼叫前先寫一句英文（staging 試用的回饋，規格 12.38）：參數寫 2.5 秒，介面不能把那句當成回覆顯示
+  // 想很久才回（介面的「還在處理，有點久」）：思考 6 秒
+  if (/想久一點/.test(lastText)) return [{ type: "text", text: "（模擬回覆）想好了。這週照原本的課表練，週四的閾值課照常，週日的長跑維持輕鬆的配速，有不舒服再跟我說。", thinkMs: 6000 }];
+  if (/先看一下課表再說/.test(lastText)) return [{ type: "text", text: PRE_TOOL_TEXT }, { ...toolUse("get_training_plan"), slowMs: 2500 }];
   if (/(跑步和騎車|只騎車|騎車的).*課表/.test(lastText) && hasCycling(body.tools)) {
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }
+  // 之前的週（規格 12.34）：測試模式的假資料（每週 3 次：週二輕鬆、週四強度、週日長跑）對得上的過去 10 週課表，週三多一堂不會有紀錄的
+  if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i)));
+  // 量不到心率的選手（沒有手錶，規格 12.36）：今天一堂輕鬆跑（手動記的那趟對得上），完成的標準用說話測試
+  if (/排.*課表|幫我排/.test(lastText) && systemText.includes("心率：量不到")) return [toolUse("save_training_plan", noHrPlan())];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
   // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
   if (/調整這週接下來的課/.test(lastText)) {
@@ -463,7 +550,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   // 萬用字元不涵蓋 authorization，要另外列出
   "access-control-allow-headers": "*, authorization",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -578,7 +665,7 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
     },
   });
   send("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } });
-  await sleep(THINK_MS);
+  await sleep(thinkMs(content));
   send("content_block_delta", { index: 0, delta: { type: "signature_delta", signature: "mock-signature" } });
   send("content_block_stop", { index: 0 });
 
@@ -591,7 +678,10 @@ async function streamAnthropic(res: ServerResponse, model: string, content: Bloc
         await sleep(chunkMs(String(block.text)));
       }
     } else {
-      send("content_block_start", { index, content_block: { ...block, input: {} } });
+      const { slowMs, ...tool } = block;
+      send("content_block_start", { index, content_block: { ...tool, input: {} } });
+      // 參數很長時（例如整週的課表）要寫好幾秒
+      if (typeof slowMs === "number") await sleep(slowMs);
       send("content_block_delta", { index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
     }
     send("content_block_stop", { index });
@@ -625,7 +715,7 @@ function toOpenAI(content: Block[]) {
   const text = content.filter((b) => b.type === "text").map((b) => String(b.text)).join("\n");
   const toolCalls = content
     .filter((b) => b.type === "tool_use")
-    .map((b) => ({ id: String(b.id), type: "function", function: { name: String(b.name), arguments: JSON.stringify(b.input) } }));
+    .map((b) => ({ id: String(b.id), type: "function", function: { name: String(b.name), arguments: JSON.stringify(b.input) }, slowMs: typeof b.slowMs === "number" ? b.slowMs : 0 }));
   return { text, toolCalls, finishReason: toolCalls.length ? "tool_calls" : "stop" };
 }
 
@@ -637,13 +727,14 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage,
   const { text, toolCalls, finishReason } = toOpenAI(content);
 
   chunk({ role: "assistant", content: "" });
-  await sleep(THINK_MS);
+  await sleep(thinkMs(content));
   for (const piece of pieces(text)) {
     chunk({ content: piece });
     await sleep(chunkMs(text));
   }
   for (const [index, call] of toolCalls.entries()) {
     chunk({ tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: "" } }] });
+    if (call.slowMs) await sleep(call.slowMs);
     chunk({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
   }
   chunk({}, finishReason);
@@ -669,7 +760,12 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   req.on("end", () => {
     const hasBody = req.method !== "GET" && req.method !== "HEAD" && chunks.length > 0;
     const headers = Object.entries(req.headers).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : []));
-    void syncHandle(new Request(`http://localhost${path}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined })).then(
+    const request = new Request(`http://localhost${path}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined });
+    // 換 token（規格 12.37）：和正式的同一份程式，向模擬的 Intervals.icu 換
+    const handled = isIntervalsTokenPath(new URL(request.url).pathname)
+      ? handleIntervalsToken(request, { clientId: MOCK_CLIENT_ID, clientSecret: MOCK_CLIENT_SECRET, allowedOrigins: ["*"], tokenUrl: `http://127.0.0.1:${PORT}/intervals/api/oauth/token` })
+      : syncHandle(request);
+    void handled.then(
       async (response) => {
         res.writeHead(response.status, Object.fromEntries(response.headers));
         res.end(Buffer.from(await response.arrayBuffer()));
@@ -677,6 +773,17 @@ function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
     );
   });
 }
+
+/** 模擬的 Intervals.icu OAuth（規格 12.37） */
+const MOCK_CLIENT_ID = "mock-client";
+const MOCK_CLIENT_SECRET = "mock-secret";
+const MOCK_OAUTH_TOKEN = "mock-oauth-token";
+const oauth = { authorize: [] as Record<string, string>[], issuedCodes: new Set<string>(), exchanges: 0, disconnects: 0, revoked: false, bearerPaths: [] as string[] };
+/**
+ * 登入的 token 讀得到哪些端點、各要哪個權限範圍（規格 12.37；依 Intervals.icu 論壇的說明，還沒以真實帳號確認，
+ * 要在 staging 實測）：/athlete/{id}（運動設定、閾值）SETTINGS:READ；activities 與 pace-curves.json ACTIVITY:READ；
+ * wellness WELLNESS:READ. 我們要的就是這三個（INTERVALS_SCOPES），ATHLETES 範圍（論壇說對 Bearer 會 403）不用
+ */
 
 /** 模擬的 Open-Meteo：每天一樣，白天濕熱 */
 function mockWeather(url: URL) {
@@ -732,6 +839,44 @@ createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
   if (req.method === "GET" && path === "/_mock/requests") return send(200, recent);
+  if (req.method === "GET" && path === "/_mock/oauth") return send(200, { authorize: oauth.authorize, exchanges: oauth.exchanges, disconnects: oauth.disconnects, bearerPaths: oauth.bearerPaths });
+  // Intervals.icu 的授權頁：不顯示畫面，直接當成選手按了同意（login_hint=deny 時當成拒絕）
+  if (req.method === "GET" && path === "/intervals/oauth/authorize") {
+    const q = Object.fromEntries(url.searchParams);
+    oauth.authorize.push(q);
+    const back = new URL(q.redirect_uri ?? "http://localhost/");
+    if (q.client_id !== MOCK_CLIENT_ID) back.searchParams.set("error", "invalid_client");
+    else if (q.login_hint === "deny") back.searchParams.set("error", "access_denied");
+    else {
+      const code = `mock-code-${oauth.authorize.length}`;
+      oauth.issuedCodes.add(code);
+      back.searchParams.set("code", code);
+    }
+    if (q.state) back.searchParams.set("state", q.state);
+    res.writeHead(302, { location: back.toString() });
+    return void res.end();
+  }
+  if (req.method === "POST" && path === "/intervals/api/oauth/token") {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString());
+      oauth.exchanges++;
+      const code = form.get("code") ?? "";
+      if (form.get("client_id") !== MOCK_CLIENT_ID || form.get("client_secret") !== MOCK_CLIENT_SECRET || !oauth.issuedCodes.delete(code)) {
+        return send(400, { error: "invalid_grant" });
+      }
+      oauth.revoked = false;
+      send(200, { token_type: "Bearer", access_token: MOCK_OAUTH_TOKEN, scope: "ACTIVITY:READ,WELLNESS:READ,SETTINGS:READ", athlete: { id: "i777", name: "Mock Runner" } });
+    });
+    return;
+  }
+  if (req.method === "DELETE" && path === "/intervals/disconnect-app") {
+    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}`) return send(401, { status: 401, error: "Unauthorized" });
+    oauth.disconnects++;
+    oauth.revoked = true;
+    return send(200, {});
+  }
   if (req.method === "GET" && path.startsWith("/weather/v1/")) {
     record("weather", { path, query: Object.fromEntries(url.searchParams) });
     if (path === "/weather/v1/forecast") return send(200, mockWeather(url));
@@ -749,6 +894,15 @@ createServer((req, res) => {
         ],
       });
     }
+  }
+  // 登入的 token：中斷連結之後就不能用；記下用 Bearer 讀了哪些端點
+  if (path.startsWith("/intervals/athlete/") && req.headers.authorization?.startsWith("Bearer ")) {
+    if (req.headers.authorization !== `Bearer ${MOCK_OAUTH_TOKEN}` || oauth.revoked) return send(401, { status: 401, error: "Unauthorized" });
+    oauth.bearerPaths.push(path);
+  }
+  // 錯的 Intervals.icu key（設定精靈的檢查）：API_KEY:bad-key
+  if (path.startsWith("/intervals/") && req.headers.authorization === `Basic ${Buffer.from("API_KEY:bad-key").toString("base64")}`) {
+    return send(403, { status: 403, error: "Access denied" });
   }
   if (req.method === "GET" && /^\/intervals\/athlete\/[^/]+\/activities$/.test(path)) {
     if (!req.headers.authorization) return send(401, { status: 401, error: "Unauthorized" });
@@ -798,6 +952,12 @@ createServer((req, res) => {
     return send(200, wellness());
   }
   if (req.method === "POST" && path === "/v1/messages") {
+    // 設定精靈的 key 檢查（規格 12.35 的 A）：特定的 key 回 Anthropic 的錯誤
+    const apiKey = String(req.headers["x-api-key"] ?? "");
+    if (apiKey === "bad-key") return send(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } });
+    if (apiKey === "no-credit-key") {
+      return send(400, { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } });
+    }
     void readJson(req).then(async (body) => {
       record("llm", body);
       const content = reply(body);
@@ -837,7 +997,7 @@ createServer((req, res) => {
           {
             index: 0,
             finish_reason: finishReason,
-            message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+            message: { role: "assistant", content: toolCalls.length ? null : text, ...(toolCalls.length ? { tool_calls: toolCalls.map(({ slowMs: _s, ...c }) => c) } : {}) },
           },
         ],
         usage: openAIUsage(usage),

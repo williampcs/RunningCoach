@@ -12,6 +12,8 @@ enabled = false
 
 [vars]
 ALLOWED_ORIGINS = ""
+# 用 Intervals.icu 登入（規格 12.37）：部署時由 Variables 填入；client_secret 是 Worker 的 secret（wrangler secret put），不寫在這裡
+INTERVALS_CLIENT_ID = ""
 
 [[d1_databases]]
 binding = "DB"
