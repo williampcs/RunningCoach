@@ -380,11 +380,12 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
     <section className="card totals">
       <div className="totals-hero">
         <span className="tile-label">累積跑了</span>
-        <DataSource text={dataSourceLine(totals.sources)} />
         <span className="num hero-value">
           {number(km, 1)}
           <small> km</small>
         </span>
+        {/* 資料來源（KI-048）：緊接在總量下面 */}
+        <DataSource text={dataSourceLine(totals.sources)} />
         {totals.passed && <span className="tile-sub">已經超過{placeText(totals.track.stations[totals.track.at]!)}</span>}
         <Journey totals={totals} />
         <RegionHint region={totals.region} />
