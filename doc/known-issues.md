@@ -1195,7 +1195,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-048] Garmin 的資料可能不能再經 Intervals.icu 的 API 取得；Garmin 資料要標示來源
 
 **發現時機**：2026-11-09，協調 session 讀 Intervals.icu 官方建議的論壇文章（「API access to Intervals.icu」、「Intervals.icu API Terms and Conditions」）。
-**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示待做。
+**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示開發中（2026-11-09，工作單「標示 Garmin 的資料來源」）。詳細的調查見規格 12.40。
 
 **內容**（論壇原文的重點，2026-10）：
 - 「API access to Intervals.icu」的首篇：2026-10-09「Garmin 的條款更新了，我們很可能很快要擋掉經 API 取得 Garmin 的資料」；10-14「這是 Garmin Connect 開發者計畫重新開放的一部分，個人與 App 取得 Garmin 資料會有比較容易的路」。
