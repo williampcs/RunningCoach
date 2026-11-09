@@ -1191,3 +1191,41 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - 驗證：`npm test`、`npm run typecheck`；`verify-weather`、`verify-injury` 在現在（台北上午）、模擬的台北 23:30、23:50、00:10 與跨過午夜（23:58 開始跑）都 `ALL OK`，`verify-injury` 修改前現在跑就失敗；全部的 E2E 腳本照過（含 `verify-design`）。
 - 沒驗證到：Playwright 的 clock 只改頁面的時間，資料庫的 worker 用的是真的時間（worker 裡沒有用到「今天」）。
 - 使用者要做的：在 staging 清除或改天氣的城市後回到對話，看板的天氣提醒馬上跟著變。
+
+## [KI-048] Garmin 的資料可能不能再經 Intervals.icu 的 API 取得；Garmin 資料要標示來源
+
+**發現時機**：2026-11-09，協調 session 讀 Intervals.icu 官方建議的論壇文章（「API access to Intervals.icu」、「Intervals.icu API Terms and Conditions」）。
+**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示已推上 v2（2026-11-09，工作單「標示 Garmin 的資料來源」，實作見規格 12.40 的「Garmin 標示的實作」）；空殼的偵測與提示、Garmin 個人 API 的測試腳本已推上 v2（2026-11-09，見下面與規格 12.40）。詳細的調查見規格 12.40。
+
+**內容**（論壇原文的重點，2026-10）：
+- 「API access to Intervals.icu」的首篇：2026-10-09「Garmin 的條款更新了，我們很可能很快要擋掉經 API 取得 Garmin 的資料」；10-14「這是 Garmin Connect 開發者計畫重新開放的一部分，個人與 App 取得 Garmin 資料會有比較容易的路」。
+- 作者在討論中（10-24）：把 Intervals.icu 當橋取得使用者資料的 App 會受限，「你要自己接 Garmin 才拿得到活動資料」；恢復資料（wellness）與上傳課表會怎樣還不確定；由 Garmin 原始資料算出來的數字可能也受影響，「都還沒定案」（10-26）；可能像 Strava 一樣只回一個帶 Garmin ID 的空殼。Strava 的資料本來就拿不到。
+- 其他開發者回報：Garmin Connect 開發者計畫的 Starter 方案申請很快，但授權畫面會標「未驗證的 App」，上限 1,000 位使用者，要拿掉標示或超過上限要 Enterprise 方案（費用高）；Garmin 會把資料推到開發者的伺服器（webhook）。
+- API 條款（2025-10-23 生效）1.1：顯示由 Garmin 來源的資料算出的資訊時，要照 Garmin 的品牌規範標示 Garmin。
+
+**影響**：我們目前所有手錶使用者（大多是 Garmin）的活動都經 Intervals.icu 的 API。若被擋，Garmin 使用者的跑步紀錄、心率、負荷可能抓不到或只剩空殼；作者自己的資料也可能受影響（個人 API key 是否一樣被擋，原文沒有分開說）。
+
+**選項**（待使用者決定）：
+1. 先觀察：論壇有新的消息時更新這一則；同步時偵測到「只有空殼」的活動就提示原因與替代方式。
+2. App 讀手機的健康資料（Garmin Connect 會寫進 Apple 健康、Health Connect，細節有限；12.37 的資料的路）。
+3. 讀 FIT 檔（Garmin 匯出、手錶的檔案；已有讀 Garmin FIT 的腳本）。
+4. 自己接 Garmin Connect 開發者計畫：資料會推到我們的伺服器，和資料原則（不經過、不保存）有衝突，要選用、說清楚，且有 1,000 人與「未驗證」的限制；不建議現在做。
+5. Garmin 的標示：在顯示 Garmin 來源的活動與數字的地方加上「Garmin」的標示（照 Garmin 的品牌規範），合規需要，建議盡快做。
+
+**Garmin 標示的修正**（2026-11-09，已推上 v2）：
+- 判斷：活動的 `device_name` 以 Garmin 開頭，或 `source` 是 `GARMIN_CONNECT`（`activities.ts` 的 `garminLabelOf`）。單趟寫「Garmin〔型號〕」，由多趟算的在標題下方寫「資料來源：Garmin、…」，教練的「參考了」加「（含 Garmin 的資料）」。只用文字，不放標誌。
+- 驗證：單元測試 `garmin-attribution.test.ts`、E2E `verify-garmin.cjs`（模擬資料：Garmin、其他品牌、手動記）。
+- 沒驗證到：真實帳號的 `source` 與 `device_name` 的值（照 API 說明寫的）；恢復資料是否來自 Garmin 是推測（最近有經 Garmin Connect 同步的紀錄）。
+- 使用者要做的：在 staging 同步後看紀錄頁、回報、選手頁與看板；在本機跑 `npx tsx tools/intervals-sources.ts`，看「依來源」那張表的來源是不是 `GARMIN_CONNECT`、裝置是不是「Garmin Forerunner …」的寫法，不是的話告訴協調 session。
+
+**空殼的偵測與提示；Garmin 個人 API 的測試**（2026-11-09，已推上 v2；實作見規格 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」）：
+- 原因（順便查到的錯誤）：同步只看類型，Strava 的空殼若類型是 Run 會被存成 0 公里的跑步（匯入完整歷史本來就排除）；Garmin 若也變成空殼，最近 14 天已經存的 Garmin 紀錄會被當成「在 Intervals.icu 刪了」而移除。
+- 修正：空殼不存、不算負荷；已經存了內容的紀錄在變成空殼時不刪；舊版存的 0 公里空殼移除；看板一則提示（幾筆、來自哪裡、手動記一趟、其他方式），✕ 收起後當天不再出現。
+- Garmin 個人 API：`tools/garmin-personal-api.ts`（本機、只讀，報告不含數值）與 `--serve` 的 CORS 測試網頁。官方文件沒寫的：換 token 的回應格式、資料端點的驗證標頭、速率限制、CORS、條款全文（只在 Garmin Connect 產生 key 的頁面）。
+- 驗證：單元測試 `unavailable.test.ts`、`tools/test/garmin-personal-api.test.ts`；E2E `verify-shells.cjs`；腳本與 CORS 網頁對模擬上游跑過。
+- 沒驗證到：真的 Garmin API（雲端環境連不到）；Garmin 空殼的真實格式（Intervals.icu 還沒公布，判斷是推測的，公布時改 `unavailableOriginOf`）。
+- 使用者要做的：
+  1. Garmin Connect 網站登入 → 帳號設定的「Personal API Key」→ Create Key → 讀條款（請存一份，看「能不能用在別人做的 App」「資料能不能存」「要不要標示 Garmin」）→ 效期選 30 天 → Create，key 只顯示一次。
+  2. 在自己電腦的 repo 根目錄 `.env` 加一行 `GARMIN_PERSONAL_API_KEY=…`（不要貼到對話）。
+  3. `git pull` 後在 repo 根目錄跑 `npx tsx tools/garmin-personal-api.ts --serve`：終端機印出報告（也存到 `data/garmin-personal-api/report-日期.md`），並開好 `http://localhost:8790/`；用 Chrome（可以的話再用 Safari）打開，貼 key、按「開始測試」、按「複製結果」。按 Ctrl+C 結束。
+  4. 把報告與網頁的結果貼給協調 session（貼之前自己看一次）。測完可以在 Garmin Connect 把 key 刪掉。

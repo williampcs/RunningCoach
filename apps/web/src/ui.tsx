@@ -235,3 +235,12 @@ export function EmojiText({ text, size = 18 }: { text: string; size?: number }) 
 export function stripEmoji(text: string): string {
   return text.replace(/^(?:\p{Extended_Pictographic}️?\s*)+/u, "").replace(/\p{Extended_Pictographic}️?\s?/gu, "");
 }
+
+/**
+ * 資料來源的標示（KI-048、設計準則「資料來源的標示」）：放在資料的標題旁邊或下方的一行小字，
+ * 單趟是「Garmin Forerunner 265」，由多趟算的是「資料來源：Garmin、手動記」. 不收進 ⓘ 或「細節」. 沒有時不出現
+ */
+export function DataSource({ text }: { text: string | null | undefined }) {
+  if (!text) return null;
+  return <p className="data-source small muted">{text}</p>;
+}

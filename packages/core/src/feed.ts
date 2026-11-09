@@ -4,6 +4,7 @@
  * 全部依本機資料的固定規則產生，不呼叫模型：沒有費用、打開就看得到。
  * 內容只有這一份；之後的通知（推播、LINE、Discord）只負責提醒使用者來看，不另外產生內容。
  */
+import { dataSourceLine, dataSourcesOfRows, garminOf, GARMIN, usesGarminConnect } from "./activities";
 import { addDays, daysBetween, shortDateLabel, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
@@ -18,6 +19,7 @@ import { injuryName, SCORE_STALE_DAYS } from "./injuries";
 import type { CoachSettings } from "./types";
 import { WEATHER_CREDIT, weatherNotice, type WeatherForecast, type WeatherHour } from "./weather";
 import { raceHours, raceWeatherSummary, raceWindowText } from "./race-weather";
+import { unavailableCountText, unavailableForFeed } from "./unavailable";
 
 export type FeedAction =
   | { type: "checkin" }
@@ -31,19 +33,28 @@ export type FeedAction =
   | { type: "merge"; keepId: number; dupId: number }
   | { type: "distinct"; aId: number; bId: number }
   /** 就醫提示的「我知道了」（規格 12.33） */
-  | { type: "ack" };
+  | { type: "ack" }
+  /** 手動記一趟（拿不到內容的活動，KI-048） */
+  | { type: "manual" }
+  /** 打開使用說明的那一段 */
+  | { type: "help"; topic: string; label: string };
 
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
   /** medical：就醫提示（網頁版依選手寫的文字加上，規格 12.33）；injury：傷病的分數 */
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross" | "medical" | "injury";
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross" | "medical" | "injury" | "unavailable";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
   actions: FeedAction[];
   /** 資料來源的標示（天氣：Open-Meteo 的授權要求） */
   credit?: { label: string; href: string };
+  /**
+   * Garmin 的標示（KI-048）：提到某一趟時是「Garmin Forerunner 265」，由多趟算的是「資料來源：Garmin、手動記」；
+   * 畫面放在標題的下方
+   */
+  source?: string;
   /** 一行一項（今天的課：每堂課一行，前面是運動的圖示，規格 12.28） */
   lines?: { sport: "run" | "ride" | "strength" | "swim" | "other"; text: string }[];
   /** 右邊的數字（賽事的倒數，例：12 天） */
@@ -59,6 +70,8 @@ const VOLUME_SPIKE = 1.3;
 const RACE_SOON_DAYS = 30;
 /** 賽前幾天起在看板放「比賽日的天氣」（規格 12.31） */
 export const RACE_WEATHER_FEED_DAYS = 3;
+/** 看板提示最近幾天拿不到內容的活動（和同步的範圍一樣） */
+const UNAVAILABLE_FEED_DAYS = 14;
 
 const ask = (label: string, message: string): FeedAction => ({ type: "ask", label, message });
 
@@ -98,7 +111,9 @@ function crossItems(active: ActivePlan, today: string): FeedItem[] {
       .filter(Boolean)
       .join("、");
     const heavy = minutes >= 90 || load >= 60;
+    const garmin = garminOf(a);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `cross-${a.intervals_id}`,
       kind: "cross",
       tone: "info",
@@ -249,10 +264,13 @@ export async function buildFeed(
   const recovery = analyzeRecovery(wellness, checkins, today);
   // 手錶早上同步之前，最新的恢復資料是昨天的：寫明是昨天的
   const watchSays = recovery.latest && recovery.latest.date !== today ? "手錶昨天的資料顯示" : "手錶顯示";
+  // 手錶的恢復資料（睡眠、HRV）看不出來源：有經 Garmin Connect 同步的紀錄時當成來自 Garmin（KI-048）
+  const watchSource = recovery.watchFlags.length && usesGarminConnect([...workouts, ...others]) ? { source: dataSourceLine([GARMIN])! } : {};
 
   // 身體狀況：先問感受；手錶的數據只當參考
   if (!recovery.checkin) {
     items.push({
+      ...watchSource,
       id: `checkin-${today}`,
       kind: "checkin",
       tone: "info",
@@ -267,6 +285,7 @@ export async function buildFeed(
     const watch = recovery.watchFlags;
     if (self.length) {
       items.push({
+        ...watchSource,
         id: `recovery-self-${today}`,
         kind: "recovery",
         tone: "warn",
@@ -281,6 +300,7 @@ export async function buildFeed(
       });
     } else if (watch.length) {
       items.push({
+        ...watchSource,
         id: `recovery-watch-${today}`,
         kind: "recovery",
         tone: "info",
@@ -315,7 +335,9 @@ export async function buildFeed(
       const [keep, dup] = keepScore(b) > keepScore(a) || (keepScore(b) === keepScore(a) && b.id < a.id) ? [b, a] : [a, b];
       const day = a.date === today ? "今天" : daysBetween(a.date, today) === 1 ? "昨天" : a.date;
       const describe = (w: typeof a) => `${km(w.distance_km ?? 0)}・${Math.round(w.duration_min ?? 0)} 分`;
+      const pairSource = dataSourceLine(dataSourcesOfRows([a, b]));
       items.push({
+        ...(pairSource ? { source: pairSource } : {}),
         id: `duplicate-${pair}`,
         kind: "duplicate",
         tone: "info",
@@ -333,7 +355,9 @@ export async function buildFeed(
   // 最近一次跑步還沒回報感受（今天或昨天）
   const latest = workouts[0];
   if (latest && latest.perceived_effort == null && daysBetween(latest.date, today) <= 1) {
+    const garmin = garminOf(latest);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `report-${latest.id}`,
       kind: "report",
       tone: "info",
@@ -346,7 +370,9 @@ export async function buildFeed(
   // 多運動：最近一次騎車還沒回報感受（今天或昨天，練騎車的人）
   const latestRide = rides[0];
   if (sports.includes("ride") && latestRide && latestRide.perceived_effort == null && daysBetween(latestRide.date, today) <= 1) {
+    const garmin = garminOf(latestRide);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `report-ride-${latestRide.intervals_id}`,
       kind: "report",
       tone: "info",
@@ -437,7 +463,9 @@ export async function buildFeed(
     workouts.filter((w) => daysBetween(w.date, today) >= 7 && daysBetween(w.date, today) < 28).reduce((s, w) => s + (w.distance_km ?? 0), 0) / 3;
   if (priorKm >= 10 && recentKm >= priorKm * VOLUME_SPIKE) {
     const pct = Math.round((recentKm / priorKm - 1) * 100);
+    const volumeSource = dataSourceLine(dataSourcesOfRows(workouts.filter((w) => daysBetween(w.date, today) < 28)));
     items.push({
+      ...(volumeSource ? { source: volumeSource } : {}),
       id: `volume-${today}`,
       kind: "volume",
       tone: "warn",
@@ -503,6 +531,21 @@ export async function buildFeed(
         actions: [{ type: "checkin" }],
       });
     }
+  }
+
+  // 拿不到內容的活動（空殼，KI-048）：說明原因與替代方式；「知道了」之後當天不再出現
+  const shells = await unavailableForFeed(db, today, UNAVAILABLE_FEED_DAYS);
+  const shellCounts = unavailableCountText(shells);
+  if (shellCounts) {
+    items.push({
+      id: `unavailable-${today}`,
+      kind: "unavailable",
+      tone: "info",
+      title: `${shellCounts} 的活動，拿不到內容`,
+      // 看板的說明最多兩行：替代方式（之後的 App、Garmin 的個人 API）寫在使用說明
+      detail: "Intervals.icu 不能再提供，這幾筆不記成跑步、不算負荷；可以先手動記。",
+      actions: [{ type: "manual" }, { type: "help", topic: "unavailable", label: "其他方式" }],
+    });
   }
 
   // 需要注意的排前面

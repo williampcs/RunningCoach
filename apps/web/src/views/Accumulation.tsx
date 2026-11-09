@@ -1,11 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, dataSourceLine, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
-import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
+import { DataSource, Disclosure, Icon, InfoTip, SportIcon } from "../ui";
 import { SCOPED_KEYS, storageKey } from "../storage-scope";
 
 /** 最多畫幾格；更早的以「+N」表示 */
@@ -304,7 +304,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           )}
           {result.unavailable > 0 && (
             <p className="small">
-              另有 {number(result.unavailable)} 筆是從 Strava 匯入 Intervals.icu 的，Intervals.icu 不經 API 提供它們的內容，所以沒有匯入。
+              另有 {number(result.unavailable)} 筆 Intervals.icu 不經 API 提供內容（例如從 Strava 匯入的；之後 Garmin 的可能也是），所以沒有匯入。
             </p>
           )}
         </div>
@@ -384,6 +384,8 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
           {number(km, 1)}
           <small> km</small>
         </span>
+        {/* 資料來源（KI-048）：緊接在總量下面 */}
+        <DataSource text={dataSourceLine(totals.sources)} />
         {totals.passed && <span className="tile-sub">已經超過{placeText(totals.track.stations[totals.track.at]!)}</span>}
         <Journey totals={totals} />
         <RegionHint region={totals.region} />

@@ -22,6 +22,7 @@ import { generateWorkoutSummary } from "./tools";
 import { SNAPSHOT_PACE_CURVE, SNAPSHOT_RUN_SETTINGS, SNAPSHOT_SPORT_SETTINGS, VDOT_LOOKBACK_DAYS } from "./training-values";
 import type { ActivitySource, Activity, Logger } from "./types";
 import { runWeatherNote, type WeatherSource } from "./weather";
+import { refreshUnavailable, unavailableSyncNote } from "./unavailable";
 
 /** 同步時拉取的天數 */
 export const SYNC_DAYS = 14;
@@ -34,6 +35,7 @@ async function syncOtherActivities(
   db: Db,
   activities: ActivitySource,
   logger: Logger,
+  keepIds: string[] = [],
 ): Promise<{ counts: Map<string, number>; stored: boolean } | null> {
   let types: string[];
   let stored = false;
@@ -42,8 +44,10 @@ async function syncOtherActivities(
       const others = await activities.fetchOtherActivities(SYNC_DAYS);
       const today = db.today();
       await db.upsertOtherActivities(others);
+      // 之前匯入的檔案（騎車等）和 Intervals.icu 的同一趟：留 Intervals.icu 的（規格 12.40「讀 FIT 檔」）
+      await db.dropImportedOthersCoveredBy(others);
       await db.removeOtherActivitiesMissing(
-        others.map((a) => a.intervals_id),
+        [...others.map((a) => a.intervals_id), ...keepIds],
         addDays(today, -(SYNC_DAYS - 1)),
         today,
       );
@@ -138,21 +142,25 @@ export async function runSync(deps: {
     return `❌ 拉取 Intervals.icu 資料時發生錯誤：${message(e)}`;
   }
 
+  // 拿不到內容的活動（空殼，KI-048）：不存、不算負荷，記下來讓看板說明；本機已經存了內容的照舊留著
+  const unavailable = await refreshUnavailable(db, activities, SYNC_DAYS, logger);
+  const unavailableNote = unavailableSyncNote(unavailable.shells);
+
   // 跟著 Intervals.icu：同步範圍內本機有、這次沒拿到的（已刪除，或類型不再是跑步），標記為已移除。
   // 只在成功拿到清單時做，連線失敗不能當成全部被刪了。
   // 範圍最舊的那天不比對：兩邊對「最舊那天」是否包含的認定若不同，那天的紀錄會被誤判為已刪除
   const today = db.today();
   const removedCount = await db.markRemovedMissing(
-    fetched.flatMap((a) => (a.intervals_id ? [a.intervals_id] : [])),
+    [...fetched.flatMap((a) => (a.intervals_id ? [a.intervals_id] : [])), ...unavailable.keepIds],
     addDays(today, -(SYNC_DAYS - 1)),
     today,
   );
   const removedNote = removedCount ? `移除 ${removedCount} 筆在 Intervals.icu 已刪除或不再是跑步的紀錄` : "";
   await refreshTrainingSnapshots(db, activities, logger);
-  const others = await syncOtherActivities(db, activities, logger);
+  const others = await syncOtherActivities(db, activities, logger, unavailable.keepIds);
 
   if (!fetched.length && deps.multisport && others?.stored && !athleteSports(await db.getProfile()).includes("run")) {
-    return `✅ Intervals.icu 同步完成：其他運動 ${countsText(others.counts)}（教練會參考）${removedNote ? `，${removedNote}` : ""}${wellnessDays ? `，更新恢復資料 ${wellnessDays} 天` : ""}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
+    return `✅ Intervals.icu 同步完成：其他運動 ${countsText(others.counts)}（教練會參考）${removedNote ? `，${removedNote}` : ""}${unavailableNote ? `，${unavailableNote}` : ""}${wellnessDays ? `，更新恢復資料 ${wellnessDays} 天` : ""}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
   }
   if (!fetched.length) {
     // 有其他活動時，上傳的路是通的，常見的是跑步被記成走路：說明怎麼改，不必檢查上傳
@@ -160,9 +168,10 @@ export async function runSync(deps: {
       ? `另有 ${countsText(others.counts)}，${others.stored ? "已一併記下，教練會參考" : "教練目前只讀跑步"}；` +
         "如果其中有跑步，可以在 Intervals.icu 把類型改成 Run。"
       : "";
+    // 有空殼時上傳的路是通的，只是拿不到內容：不必請選手檢查上傳
     return (
       `Intervals.icu 最近 ${SYNC_DAYS} 天無跑步活動。${othersNote}${removedNote ? `已${removedNote}。` : ""}` +
-      `${wellnessNote}${others ? "" : NO_RUNS_HINT}`
+      `${unavailableNote ? `${unavailableNote}。` : ""}${wellnessNote}${others || unavailableNote ? "" : NO_RUNS_HINT}`
     );
   }
 
@@ -236,7 +245,8 @@ export async function runSync(deps: {
   await db.cleanupOldPendingSubjective();
 
   if (newCount === 0 && !duplicateCount && !restoredCount && !removedCount) {
-    return (skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : "✅ Intervals.icu 同步完成") + wellnessNote;
+    const base = skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : `✅ Intervals.icu 同步完成${unavailableNote ? "。" : ""}`;
+    return base + (unavailableNote ? `${unavailableNote}。` : "") + wellnessNote;
   }
   const details: string[] = [];
   if (newCount) details.push(`新增 ${newCount} 筆訓練紀錄`);
@@ -246,6 +256,7 @@ export async function runSync(deps: {
   if (removedNote) details.push(removedNote);
   if (skippedCount) details.push(`略過 ${skippedCount} 筆已存在資料`);
   if (others?.stored) details.push(`其他運動 ${countsText(others.counts)}（教練會參考）`);
+  if (unavailableNote) details.push(unavailableNote);
   if (wellnessDays) details.push(`更新恢復資料 ${wellnessDays} 天`);
   return `✅ Intervals.icu 同步完成：${details.join("，")}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
 }

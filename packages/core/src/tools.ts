@@ -1,4 +1,5 @@
 /** 主對話可用的工具：定義（供模型呼叫）與執行器. */
+import { dataSourcesOf, GARMIN, usesGarminConnect } from "./activities";
 import { RECENT_WORKOUT_DAYS } from "./context";
 import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
@@ -696,6 +697,7 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
       ? `平均心率：${bpmOrMissing(workout.avg_hr)}\n最高心率：${bpmOrMissing(workout.max_hr)}\n`
       : "心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）\n") +
     (workout.source === "manual" ? "來源：選手手動記錄（距離與時間是選手自己填的，沒有分段與爬升）\n" : "") +
+    (workout.source === "file" ? "來源：選手匯入的活動檔（FIT／GPX／TCX，手錶記的數字）\n" : "") +
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +
@@ -770,6 +772,43 @@ function positiveInt(value: unknown): number | null {
 export function sourcesOf(calls: { name: string; input: Record<string, unknown> }[]): string[] {
   const labels = calls.flatMap(({ name, input }) => (SOURCE_LABELS[name] ? [SOURCE_LABELS[name](input)] : []));
   return [...new Set(labels)];
+}
+
+/** 「參考了：…」用到 Garmin 的資料時加在最後（KI-048）；存在 sources 裡當作最後一項 */
+export const GARMIN_SOURCE_NOTE = "（含 Garmin 的資料）";
+
+/** 讀紀錄的工具各看最近幾天（判斷這次回覆有沒有用到 Garmin 的資料；大約就好，寧可多標） */
+const ACTIVITY_DAYS: Record<string, (input: Record<string, unknown>) => number> = {
+  get_training_values: () => 70,
+  get_recent_workouts: (input) => positiveInt(input.days) ?? RECENT_WORKOUT_DAYS,
+  get_pace_trend: (input) => (positiveInt(input.weeks) ?? 4) * 7,
+  get_training_plan: () => 7,
+  fetch_latest_activity: () => 7,
+  fetch_latest_strava_activity: () => 7,
+  save_workout: () => 7,
+  // 比賽可能是很久以前的：看全部
+  get_race_activity: () => 365 * 100,
+};
+
+/**
+ * 這次讀過的資料有沒有 Garmin 的（KI-048）：讀紀錄的工具看的期間裡有 Garmin 的紀錄；
+ * 恢復狀況（睡眠、HRV）看最近有沒有經 Garmin Connect 同步的紀錄（恢復資料本身看不出來源）
+ */
+export async function usedGarminData(db: Db, calls: { name: string; input: Record<string, unknown> }[]): Promise<boolean> {
+  const days = Math.max(0, ...calls.map(({ name, input }) => ACTIVITY_DAYS[name]?.(input) ?? 0));
+  if (days > 0 && dataSourcesOf(await db.getActivities(days)).includes(GARMIN)) return true;
+  if (calls.some((c) => c.name === "get_recovery_status")) {
+    const [runs, others] = await Promise.all([db.getRecentWorkouts(28), db.getOtherActivities(28)]);
+    return usesGarminConnect([...runs, ...others]);
+  }
+  return false;
+}
+
+/** 「參考了：A、B（含 Garmin 的資料）」；沒有讀過資料時是空字串 */
+export function sourcesText(sources: string[]): string {
+  const garmin = sources.includes(GARMIN_SOURCE_NOTE);
+  const labels = sources.filter((s) => s !== GARMIN_SOURCE_NOTE);
+  return labels.length ? `參考了：${labels.join("、")}${garmin ? GARMIN_SOURCE_NOTE : ""}` : "";
 }
 
 /** 工具執行失敗時的回傳開頭（見 createToolExecutor） */

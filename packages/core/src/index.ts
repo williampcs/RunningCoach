@@ -20,7 +20,27 @@ export {
 } from "./coach";
 export { RECENT_WORKOUT_DAYS, type LayerChars, type StatusSummary } from "./context";
 export { DEFAULT_REST_HR, estimateLoad, FITNESS_DAYS, fitnessSeries, hrLoad, LOAD_SOURCE_LABELS, loadCountsText, loadOf, loadText, paceLoad, RPE_INTENSITY, rpeLoad, type FitnessPoint, type HrBasis, type Load, type LoadContext, type LoadCounts, type LoadInput, type LoadSource } from "./load";
-export { byNewest, detailsOf, recordOfOther, recordOfWorkout, wellnessFitnessOf, type ActivityRecord, type ActivitySourceKind, type SourceDetails } from "./activities";
+export {
+  byNewest,
+  dataSourceLine,
+  dataSourceOf,
+  dataSourcesOf,
+  dataSourcesOfRows,
+  detailsOf,
+  GARMIN,
+  garminDeviceLabel,
+  garminLabelOf,
+  garminOf,
+  mergeDataSources,
+  recordOfOther,
+  recordOfWorkout,
+  usesGarminConnect,
+  wellnessFitnessOf,
+  type ActivityRecord,
+  type ActivitySourceKind,
+  type DataSourceLabel,
+  type SourceDetails,
+} from "./activities";
 export { Db, manualPace, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type ManualWorkoutInput, type RaceUpdate, type SaveResult } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
 export { addDays, daysBetween, isoWeekLabel, isoWeekStart, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
@@ -99,7 +119,15 @@ export {
 } from "./weather";
 export { splitReplySections, type ReplySection, type ReplySections } from "./reply-sections";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
-export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
+export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, unavailableOriginOf, type IntervalsOptions } from "./intervals";
+export {
+  SNAPSHOT_UNAVAILABLE,
+  refreshUnavailable,
+  unavailableCountText,
+  unavailableForFeed,
+  unavailableSyncNote,
+  type UnavailableSnapshot,
+} from "./unavailable";
 export {
   AnthropicProvider,
   LlmError,
@@ -190,7 +218,7 @@ export { STOPPED_MARK, stoppedReply } from "./stopped";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
-export type { OtherActivity, Sport, SportSettings } from "./types";
+export type { OtherActivity, Sport, SportSettings, UnavailableActivity, UnavailableOrigin } from "./types";
 export { ALL_FEATURES, featureOn, FEATURES, parseFeatures, type Feature } from "./features";
 export {
   athleteSports,
@@ -256,3 +284,6 @@ export {
 } from "./injuries";
 export { detectRedFlags, RED_FLAG_TERMS, redFlagAdvice } from "./red-flags";
 export { DEMO_QUESTION, DEMO_REPLY, demoSource, demoSpec, seedDemo, type DemoSource } from "./demo";
+export { GARMIN_SOURCE_NOTE, sourcesText } from "./tools";
+export * from "./activity-files";
+export type { FileImportResult } from "./db";

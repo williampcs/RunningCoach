@@ -1,6 +1,7 @@
 import {
   athleteSports,
   computeTrainingValues,
+  dataSourceLine,
   formatPace,
   INJURY_STATUS_LABELS,
   injuryName,
@@ -16,7 +17,7 @@ import { Bookmark, ChevronLeft, ChevronRight, HeartPulse, Import, SlidersHorizon
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { errorText, useApp } from "../app-context";
-import { Disclosure, Icon, ListRow, SportIcon } from "../ui";
+import { DataSource, Disclosure, Icon, ListRow, SportIcon } from "../ui";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
 import { ConversationSummaryCard, MemoriesCard } from "./Memories";
@@ -249,6 +250,7 @@ function MyNumbers({ open }: { open: () => void }) {
         </span>
         <Icon as={ChevronRight} />
       </button>
+      <DataSource text={dataSourceLine(values.sources)} />
       {numbers.length > 0 ? (
         <div className="my-numbers-values">
           {numbers.map((n) => (

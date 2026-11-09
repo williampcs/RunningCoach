@@ -117,7 +117,7 @@ let failPage = null;
   const doneText = await done.innerText();
   console.log("IMPORT", doneText.replace(/\s+/g, " "));
   check.importAdded = /新增 \d+ 趟/.test(doneText) && doneText.includes("最早的一趟是 2024-01-05") && doneText.includes("2024：");
-  check.importStravaNote = doneText.includes("另有 1 筆是從 Strava 匯入");
+  check.importStravaNote = doneText.includes("另有 1 筆 Intervals.icu 不經 API 提供內容");
   await page.waitForTimeout(1500);
   const after = await totalsCard.innerText();
   check.totalsGrew = /從 2024-01-05 起/.test(after) && (await totalsCard.locator(".block").count()) > 100;

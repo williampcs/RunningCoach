@@ -6,7 +6,7 @@
  * - 配速：Daniels 的 VDOT，由最近 90 天的比賽成績或最佳表現推算；臨界速度只拿來對照。
  * - 強度分配：Intervals.icu 算好的各心率區間時間，依閾值心率分成低、中、高（80/20）。
  */
-import { detailsOf, wellnessFitnessOf } from "./activities";
+import { dataSourcesOfRows, detailsOf, wellnessFitnessOf, type DataSourceLabel } from "./activities";
 import { DEFAULT_REST_HR, dailyLoads, FITNESS_DAYS, fitnessSeries, loadCountsText, loadOf, type HrBasis, type LoadContext, type LoadCounts } from "./load";
 import { allocationLine, allocationText, weekAllocation, type WeekAllocation } from "./allocation";
 import { planningRules } from "./coaching-method";
@@ -496,6 +496,8 @@ export interface TrainingValues {
   allocation: { thisWeek: WeekAllocation; nextWeek: WeekAllocation } | null;
   /** 估負荷的依據（load.ts）：紀錄卡片、檢查器的每週負荷用同一份 */
   loadContext: LoadContext;
+  /** 這些數字用到的紀錄的來源（KI-048：有 Garmin 時在標題下方標示） */
+  sources: DataSourceLabel[];
 }
 
 export interface RideWeek {
@@ -627,6 +629,7 @@ export async function computeTrainingValues(db: Db, today: string, weeks = 4): P
     athleteSports: athleteSports(profile),
     allocation: await allocationFor(db, profile, races, today),
     loadContext,
+    sources: dataSourcesOfRows(workouts, others),
   };
 }
 

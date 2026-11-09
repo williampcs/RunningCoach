@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ChevronDown,
   CloudSun,
+  CloudOff,
   Copy,
   Flag,
   Bandage,
@@ -71,6 +72,7 @@ const ICONS: Record<FeedItem["kind"], LucideIcon> = {
   cross: Activity,
   medical: Siren,
   injury: Bandage,
+  unavailable: CloudOff,
 };
 
 const SCALES = [
@@ -297,6 +299,14 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
       case "distinct":
         void coach.markDistinct(action.aId, action.bId).then(touch);
         return;
+      case "manual":
+        // 回報頁下面有「手動記一趟」
+        goTo("report");
+        return;
+      case "help":
+        // 和教練回覆裡的說明連結一樣：#help/段落
+        location.hash = `help/${action.topic}`;
+        return;
     }
   }
 
@@ -318,6 +328,10 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
         return "合併";
       case "distinct":
         return "不是同一趟";
+      case "manual":
+        return "手動記一趟";
+      case "help":
+        return action.label;
     }
   };
 
@@ -369,6 +383,8 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
             <div className="feed-body">
               <div className="feed-text">
                 <span className="feed-title">{item.title}</span>
+                {/* Garmin 的標示（KI-048）：標題下方 */}
+                {item.source && <span className="feed-source small muted">{item.source}</span>}
                 {item.lines && (
                   <ul className="feed-lines">
                     {item.lines.map((line, i) => (

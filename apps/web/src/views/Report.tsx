@@ -23,6 +23,7 @@ import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
 import { kmText, RunCardView, SummaryView } from "./RunCard";
+import { ImportFiles } from "./ImportFiles";
 import { ManualRunForm } from "./ManualRun";
 import { useSync } from "../use-sync";
 
@@ -100,6 +101,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   // 手動記的（沒有連接 Interv.icu，或手錶沒記到）：剛存的那一筆；manualOpen 是連著 Intervals.icu 時打開的表單
   const [manual, setManual] = useState<{ workout: Workout; summary: string | null } | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
   const savedId = manual ? manual.workout.id : report?.status === "saved" ? report.workoutId : null;
@@ -213,6 +215,16 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
           }}
         />
         {manualResult}
+        {/* 有手錶的檔案（FIT、zip）：匯入成紀錄，體感在紀錄頁補（規格 12.40） */}
+        {importOpen ? (
+          <ImportFiles onClose={() => setImportOpen(false)} />
+        ) : (
+          <div className="actions">
+            <button className="text" onClick={() => setImportOpen(true)}>
+              有手錶的檔案？匯入檔案
+            </button>
+          </div>
+        )}
       </section>
     );
   }
@@ -256,10 +268,10 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                       </span>
                       <span className="list-row-sub">
                         {isOther(c)
-                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${kmText(c.activity.distance_km)} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null]
+                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${kmText(c.activity.distance_km)} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null, c.garmin]
                               .filter(Boolean)
                               .join(" · ")
-                          : [`${kmText(c.activity.distance_km)} km`, `${c.activity.duration_min == null ? "?" : Math.round(c.activity.duration_min)} 分`, c.activity.avg_pace].filter(Boolean).join(" · ")}
+                          : [`${kmText(c.activity.distance_km)} km`, `${c.activity.duration_min == null ? "?" : Math.round(c.activity.duration_min)} 分`, c.activity.avg_pace, c.garmin].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {selected === key && <Icon as={CircleCheck} className="icon choice-check" />}
@@ -353,10 +365,18 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
               onCancel={() => setManualOpen(false)}
             />
           </>
+        ) : importOpen ? (
+          <ImportFiles onClose={() => setImportOpen(false)} />
         ) : (
-          <button className="text" onClick={() => setManualOpen(true)}>
-            手錶沒記到？手動記一趟
-          </button>
+          <div className="actions">
+            <button className="text" onClick={() => setManualOpen(true)}>
+              手錶沒記到？手動記一趟
+            </button>
+            {/* 手錶的檔案（FIT、zip；Intervals.icu 拿不到時的保底，規格 12.40） */}
+            <button className="text" onClick={() => setImportOpen(true)}>
+              匯入手錶的檔案
+            </button>
+          </div>
         )}
         {manualResult}
       </section>

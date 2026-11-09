@@ -61,7 +61,7 @@ flowchart LR
 | `apps/discord` | Discord bot：讀 `.env`、把 Discord 的訊息與指令接到核心 | 300 |
 | `apps/sync` | 多裝置同步服務：Cloudflare Worker + D1（本機開發用 Node 版） | 500 |
 | `apps/proxy` | 訂閱模式的代理（未上線） | 750 |
-| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具 | |
+| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`） | |
 | `doc/` | 規格、KI 紀錄、這份架構說明 | |
 | `src/` | v1 的 Python 版，觀察期結束後移除 | |
 
@@ -162,6 +162,7 @@ sequenceDiagram
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
+| 匯入的活動檔（FIT、GPX、TCX、zip，規格 12.40）：只存摘要，檔案本身不存、不上傳 | 資料庫 | 會（跑步 `fw:`、其他運動 `fo:`，整筆的摘要） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 | 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
 | 測試模式（規格 6.1、9.4） | 另一個資料庫檔（OPFS 的 `/coach-test.db`）；設定與上面那些小狀態也是自己一份（localStorage 的 `running-coach.test.` 開頭，`apps/web/src/storage-scope.ts`），第一次進測試模式時從正常模式複製（密碼鎖的密文照原樣），之後各改各的 | 不會：測試模式不同步 |
@@ -210,14 +211,15 @@ erDiagram
 - `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
 - `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
-- `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
+- 匯入的活動檔（規格 12.40「讀 FIT 檔」）：跑步存進 `workouts`（`source` 是 `file`，`sync_id` 是「運動＋開始時間到分鐘」的雜湊，同一個檔再匯或兩台各匯一次都是同一個），其他運動存進 `other_activities`（`intervals_id` 是 `file:`＋同一個雜湊）。`raw_json` 用和 Intervals.icu 一樣的欄位名稱（`source: "FILE"`、開始時間、經過與移動時間、距離、心率、爬升、`device_name`、分圈；知道心率區間時算好的 `icu_hr_zone_times` 與 `hr_zones_source`），只有摘要、沒有每秒的資料。和 Intervals.icu 的同一趟：跑步照原本的時間重疊規則合併（`Db.importFileActivity`）；其他運動匯入時有就不存，之後同步進來的同一趟刪掉檔案那筆、體感與分析搬過去（`dropCoveredFileOthers`）。Intervals.icu 的「來源已刪除」不動匯入的。
+- `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除（匯入的檔案 `file:` 除外）。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
 - `activity_summaries`：騎車的 AI 分析（騎後分析，schema 16，規格 12.31）。和體感一樣另外存、用 `intervals_id` 對應；用跑後摘要的模型，存了騎車的體感（回報、補填、教練的 `save_activity_feedback`）或按「請教練分析」時產生（`ride-analysis.ts`）。
-- **不分來源的紀錄**（`activities.ts`，規格 12.37「不分來源的核心」）：跑步（`workouts`）與其他運動（`other_activities`，含 `activity_feedback`、`activity_summaries`）在 `Db.getActivities(days, { sports })` 合成同一個格式 `ActivityRecord`（運動、來源 `intervals`／`manual`／`strava`／`fake`／`import`、日期、時間、距離、心率、配速、體感、分析）。來源的原始資料 `raw_json` 只在 `detailsOf` 裡解讀，轉成 `SourceDetails`（開始時間、經過時間、心率區間的時間與閾值心率、Intervals.icu 算好的負荷與體能疲勞、功率、氣溫）；去重、強度分配、比對課表、騎車的數字、天氣、比賽成績都讀 `SourceDetails`，不自己 parse。資料表這一版不變：搬成一張表的時機與步驟見規格 12.37 的「實作」。之後加一個來源（Apple 健康、FIT 檔）只要寫一個轉換。
+- **不分來源的紀錄**（`activities.ts`，規格 12.37「不分來源的核心」）：跑步（`workouts`）與其他運動（`other_activities`，含 `activity_feedback`、`activity_summaries`）在 `Db.getActivities(days, { sports })` 合成同一個格式 `ActivityRecord`（運動、來源 `intervals`／`manual`／`file`／`strava`／`fake`／`import`、日期、時間、距離、心率、配速、體感、分析）。來源的原始資料 `raw_json` 只在 `detailsOf` 裡解讀，轉成 `SourceDetails`（開始時間、經過時間、心率區間的時間與閾值心率、Intervals.icu 算好的負荷與體能疲勞、功率、氣溫）；去重、強度分配、比對課表、騎車的數字、天氣、比賽成績都讀 `SourceDetails`，不自己 parse。資料表這一版不變：搬成一張表的時機與步驟見規格 12.37 的「實作」。之後加一個來源（Apple 健康）只要寫一個轉換；FIT／GPX／TCX 檔就是這樣加的（`activity-files/`：`fit.ts`、`gpx.ts` 解析，`zip.ts` 隨機讀大 zip，`scan.ts` 掃一批檔，`convert.ts` 轉成紀錄，`import.ts` 存與說明；只用標準的 JavaScript，瀏覽器與 Node 都能跑）。
 - **負荷與體能疲勞**（`load.ts`，規格 12.37）：每一趟的負荷有 Intervals.icu 算好的就用，沒有時依心率（hrSS）、配速（rTSS，只有跑步）或體感估，都是 TSS 的尺度；體能（42 天）與疲勞（7 天）是每天負荷合計的指數平均，有 Intervals.icu 的值時照舊用它的。估負荷的依據（各運動量到的最大心率與閾值心率、靜止心率、閾值配速）由 `training-values.ts` 的 `loadContextOf` 組好，放在 `TrainingValues.loadContext`，紀錄卡片與檢查器用同一份。都是算出來的，不存進資料庫。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
-- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
+- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`；另有 `unavailable_activities`（最近 14 天拿不到內容的活動〔空殼〕的 id、日期與原本的來源，看板提示用，KI-048）。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。
@@ -245,8 +247,9 @@ erDiagram
 | `m:sync_id` | 一則記住的事 |
 | `in:sync_id` | 一個傷（含疼痛的分數；schema 17，舊版不認得，不套用也不刪） |
 | `c:內容雜湊`、`cs:內容雜湊` | 一則對話、一份對話摘要 |
-| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」（跑步 id：`i`＋Intervals.icu 的活動 id、`s`＋Strava 的 id，手動新增的是 `m`＋sync_id） |
+| `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」（跑步 id：`i`＋Intervals.icu 的活動 id、`s`＋Strava 的 id，手動新增的是 `m`＋sync_id、匯入的檔案是 `f`＋sync_id） |
 | `mw:sync_id` | 手動新增的一趟跑步，整筆（日期、距離、時間、平均心率、配速、體感與感受、修改時間；schema 19，舊版不認得，不套用也不刪）；體感在這裡，不另外送 `w:` |
+| `fw:sync_id`、`fo:雜湊` | 匯入的活動檔（規格 12.40）：跑步整筆（日期、距離、時間、心率、配速、爬升、卡路里、`raw_json` 的摘要、體感與感受、修改時間；跑步 id 是 `f`＋sync_id）、其他運動整筆（日期、類型、時間、距離、平均心率、`raw_json`；體感與分析照舊用 `af:`、`as:`，id 是 `file:雜湊`）。套用時這台已經有同一趟的：跑步標成重複、其他運動留 Intervals.icu 的。舊版不認得，不套用也不刪 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 

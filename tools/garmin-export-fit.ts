@@ -20,17 +20,13 @@
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { deflateRawSync, inflateRawSync } from "node:zlib";
+import { deflateRawSync } from "node:zlib";
+
+import { bufferSource, fitInfo, localOf, zipEntries, zipRead, type ActivityInfo, type Source } from "./lib/fit";
 
 // ---------------------------------------------------------------------------
-// 讀 zip（含 zip64 與壓縮檔裡的壓縮檔），不把整個大檔讀進記憶體
+// 讀 zip 與 FIT 的程式在 lib/fit.ts；這裡只有讀磁碟上的檔案
 // ---------------------------------------------------------------------------
-
-/** 可以隨機讀取的資料：磁碟上的檔案，或記憶體中的內容（壓縮檔裡的壓縮檔） */
-interface Source {
-  size: number;
-  read(offset: number, length: number): Buffer;
-}
 
 function fileSource(path: string): Source & { close(): void } {
   const fd = openSync(path, "r");
@@ -50,185 +46,9 @@ function fileSource(path: string): Source & { close(): void } {
   };
 }
 
-function bufferSource(buf: Buffer): Source {
-  return { size: buf.length, read: (offset, length) => buf.subarray(offset, offset + length) };
-}
-
-interface ZipEntry {
-  name: string;
-  method: number;
-  compressedSize: number;
-  size: number;
-  localOffset: number;
-}
-
-const u64 = (buf: Buffer, at: number) => Number(buf.readBigUInt64LE(at));
-
-function zipEntries(src: Source): ZipEntry[] {
-  // 中央目錄的結尾在最後 64 KB 內（註解最長 65535 位元組）
-  const tailSize = Math.min(src.size, 65_557);
-  const tail = src.read(src.size - tailSize, tailSize);
-  let eocd = -1;
-  for (let i = tail.length - 22; i >= 0; i--) {
-    if (tail.readUInt32LE(i) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) throw new Error("不是 zip 檔，或檔案不完整（下載中斷？）");
-  let count = tail.readUInt16LE(eocd + 10);
-  let cdSize = tail.readUInt32LE(eocd + 12);
-  let cdOffset = tail.readUInt32LE(eocd + 16);
-  if (cdOffset === 0xffffffff || count === 0xffff || cdSize === 0xffffffff) {
-    // zip64：結尾前面還有一段定位資料
-    const locator = tail.subarray(eocd - 20, eocd);
-    if (locator.readUInt32LE(0) !== 0x07064b50) throw new Error("zip64 的格式無法辨識");
-    const rec = src.read(u64(locator, 8), 56);
-    count = u64(rec, 32);
-    cdSize = u64(rec, 40);
-    cdOffset = u64(rec, 48);
-  }
-  const cd = src.read(cdOffset, cdSize);
-  const entries: ZipEntry[] = [];
-  let p = 0;
-  for (let i = 0; i < count && p + 46 <= cd.length; i++) {
-    if (cd.readUInt32LE(p) !== 0x02014b50) break;
-    const nameLen = cd.readUInt16LE(p + 28);
-    const extraLen = cd.readUInt16LE(p + 30);
-    const commentLen = cd.readUInt16LE(p + 32);
-    const entry: ZipEntry = {
-      method: cd.readUInt16LE(p + 10),
-      compressedSize: cd.readUInt32LE(p + 20),
-      size: cd.readUInt32LE(p + 24),
-      localOffset: cd.readUInt32LE(p + 42),
-      name: cd.toString("utf8", p + 46, p + 46 + nameLen),
-    };
-    // zip64 的大小與位置放在額外欄位，順序固定，只有 0xffffffff 的那幾個才有
-    let e = p + 46 + nameLen;
-    const extraEnd = e + extraLen;
-    while (e + 4 <= extraEnd) {
-      const id = cd.readUInt16LE(e);
-      const len = cd.readUInt16LE(e + 2);
-      if (id === 0x0001) {
-        let q = e + 4;
-        if (entry.size === 0xffffffff) {
-          entry.size = u64(cd, q);
-          q += 8;
-        }
-        if (entry.compressedSize === 0xffffffff) {
-          entry.compressedSize = u64(cd, q);
-          q += 8;
-        }
-        if (entry.localOffset === 0xffffffff) entry.localOffset = u64(cd, q);
-      }
-      e += 4 + len;
-    }
-    entries.push(entry);
-    p = extraEnd + commentLen;
-  }
-  return entries;
-}
-
-function zipRead(src: Source, entry: ZipEntry): Buffer | null {
-  const local = src.read(entry.localOffset, 30);
-  if (local.readUInt32LE(0) !== 0x04034b50) return null;
-  const start = entry.localOffset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
-  const data = src.read(start, entry.compressedSize);
-  if (entry.method === 0) return data;
-  if (entry.method === 8) return inflateRawSync(data);
-  return null;
-}
-
 // ---------------------------------------------------------------------------
-// 活動檔的日期與運動類型
+// TCX、GPX 的日期
 // ---------------------------------------------------------------------------
-
-/** FIT 的時間從 1989-12-31 00:00 UTC 起算 */
-const FIT_EPOCH = Date.UTC(1989, 11, 31) / 1000;
-
-interface ActivityInfo {
-  /** 當地時間，例：2022-07-03T06:30 */
-  local: string;
-  run: boolean | null;
-}
-
-const localOf = (utcSeconds: number) => {
-  const d = new Date(utcSeconds * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-/**
- * 讀 FIT：file_id（類型、建立時間）、activity 的 local_timestamp（當地時間）、session 的 sport.
- * 不是活動（例如每日的健康資料）時回傳 null
- */
-function fitInfo(buf: Buffer): ActivityInfo | null {
-  if (buf.length < 12 || buf.toString("ascii", 8, 12) !== ".FIT") return null;
-  const headerSize = buf[0]!;
-  const end = Math.min(buf.length, headerSize + buf.readUInt32LE(4));
-  const defs = new Map<number, { global: number; big: boolean; fields: [number, number][]; devSize: number }>();
-  let fileType: number | null = null;
-  let created: number | null = null;
-  let localTs: number | null = null;
-  let sessionStart: number | null = null;
-  let sport: number | null = null;
-  let p = headerSize;
-  while (p < end) {
-    const h = buf[p++]!;
-    if (h & 0x80) {
-      // 壓縮時間戳記的資料訊息
-      const def = defs.get((h >> 5) & 0x03);
-      if (!def) return null;
-      p += def.fields.reduce((s, [, size]) => s + size, 0) + def.devSize;
-      continue;
-    }
-    const localType = h & 0x0f;
-    if (h & 0x40) {
-      const big = buf[p + 1] === 1;
-      const global = big ? buf.readUInt16BE(p + 2) : buf.readUInt16LE(p + 2);
-      const n = buf[p + 4]!;
-      const fields: [number, number][] = [];
-      let q = p + 5;
-      for (let i = 0; i < n; i++, q += 3) fields.push([buf[q]!, buf[q + 1]!]);
-      let devSize = 0;
-      if (h & 0x20) {
-        const dn = buf[q++]!;
-        for (let i = 0; i < dn; i++, q += 3) devSize += buf[q + 1]!;
-      }
-      defs.set(localType, { global, big, fields, devSize });
-      p = q;
-      continue;
-    }
-    const def = defs.get(localType);
-    if (!def) return null;
-    let q = p;
-    for (const [num, size] of def.fields) {
-      const value = (): number | null => {
-        if (q + size > buf.length) return null;
-        if (size === 1) return buf[q]! === 0xff ? null : buf[q]!;
-        if (size === 4) {
-          const v = def.big ? buf.readUInt32BE(q) : buf.readUInt32LE(q);
-          return v === 0xffffffff ? null : v;
-        }
-        return null;
-      };
-      if (def.global === 0 && num === 0) fileType = value();
-      else if (def.global === 0 && num === 4) created = value();
-      else if (def.global === 34 && num === 5) localTs = value();
-      else if (def.global === 18 && num === 2) sessionStart ??= value();
-      else if (def.global === 18 && num === 5) sport ??= value();
-      q += size;
-    }
-    p = q + def.devSize;
-  }
-  // 4 = 活動
-  if (fileType !== 4) return null;
-  const local = localTs !== null ? new Date((localTs + FIT_EPOCH) * 1000).toISOString().slice(0, 16) : null;
-  const utc = sessionStart ?? created;
-  if (!local && utc === null) return null;
-  // 1 = 跑步（含跑步機、越野等子類型）
-  return { local: local ?? localOf(utc! + FIT_EPOCH), run: sport === null ? null : sport === 1 };
-}
 
 /** TCX、GPX：取第一個時間；TCX 的 Sport 屬性看得出是不是跑步 */
 function xmlInfo(text: string, ext: string): ActivityInfo | null {

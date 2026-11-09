@@ -129,6 +129,7 @@ function build(
   maxHr: number,
   elevationM: number,
   startTime: string | null = null,
+  device: FakeDevice | null = null,
 ): Activity {
   const distance = Math.round(distanceKm * 100) / 100;
   const durationMin = Math.round((distance * paceSec) / 6) / 10;
@@ -153,9 +154,19 @@ function build(
     elevation_m: Math.round(elevationM),
     calories: Math.round(distance * 62),
     training_load: load,
-    raw_json: JSON.stringify({ fake: true, icu_training_load: load, ...timing, ...hrZones }),
+    raw_json: JSON.stringify({ fake: true, icu_training_load: load, ...timing, ...hrZones, ...(device ? FAKE_SOURCES[device] : {}) }),
   };
 }
+
+/**
+ * 假資料的來源欄位（Intervals.icu 的 source、device_name）：測試模式看得到 Garmin 的標示（KI-048）.
+ * 只有 iPhone 時沒有手錶，不寫
+ */
+const FAKE_SOURCES: Record<FakeDevice, Record<string, string>> = {
+  garmin: { source: "GARMIN_CONNECT", device_name: "Garmin Forerunner 265" },
+  apple_watch: { source: "OAUTH_CLIENT", device_name: "Apple Watch Series 9" },
+  iphone: {},
+};
 
 /** 同一趟從手機（經「健康」與 Intervals.icu Companion）再上傳一次：沒有心率與負荷，開始晚 40 秒、距離與時間略有差異 */
 function phoneCopy(run: Activity): Activity {
@@ -251,6 +262,7 @@ export function generateActivities(spec: FakeSpec): Activity[] {
       spec.maxHr,
       20 + rand() * 60 + distance * 2,
       START_TIME[kind],
+      spec.device ?? "garmin",
     );
     // 只有 iPhone：沒有心率，Intervals.icu 也算不出訓練負荷
     const run = iphone

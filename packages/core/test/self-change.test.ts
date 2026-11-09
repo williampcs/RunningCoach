@@ -200,6 +200,7 @@ const past = (kind: SessionDraft["kind"], date: string, selfChange: SelfChange |
   activityId: null,
   byAthlete: false,
   selfChange,
+  garmin: null,
 });
 const week = (weekStart: string, sessions: PastSession[]): PastWeek => ({
   weekStart,
@@ -209,6 +210,7 @@ const week = (weekStart: string, sessions: PastSession[]): PastWeek => ({
   planned: { km: 0, minutes: 0 },
   actual: { km: 0, minutes: 0, runs: 0, others: 0 },
   unit: "km",
+  sources: [],
 });
 
 describe("摘要：選手自己改的（給教練）", () => {

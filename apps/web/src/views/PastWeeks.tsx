@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { monthDay, OUTCOME_LABELS, PAST_WEEKS_PAGE, ratioText, weekdayName, type PastSession, type PastWeek } from "@running-coach/core";
+import { dataSourceLine, mergeDataSources, monthDay, OUTCOME_LABELS, PAST_WEEKS_PAGE, ratioText, weekdayName, type PastSession, type PastWeek } from "@running-coach/core";
 import { Check, ChevronRight, Circle, CircleCheck, CircleDashed, CircleDot, CircleMinus, type LucideIcon } from "lucide-react";
 
 import { useApp } from "../app-context";
-import { Disclosure, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
+import { DataSource, Disclosure, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
 
 type Outcome = PastSession["outcome"];
 
@@ -92,7 +92,7 @@ function WeekSessions({ week }: { week: PastWeek }) {
             </span>
             <span className="list-row-text">
               <span className="list-row-title">{s.title}</span>
-              <span className="list-row-sub">{[when, selfText(s), s.actual].filter(Boolean).join(" · ")}</span>
+              <span className="list-row-sub">{[when, selfText(s), s.actual, s.garmin].filter(Boolean).join(" · ")}</span>
             </span>
             <span className="list-row-end">
               <span className={`badge ${s.outcome}`}>
@@ -146,6 +146,8 @@ export function PastWeeks() {
   return (
     <section className="card past-weeks-card">
       <Disclosure className="past-weeks" summary="之前的週">
+        {/* 每週的實際總量用到 Garmin 的資料時（KI-048） */}
+        <DataSource text={dataSourceLine(mergeDataSources(data.weeks.map((w) => w.sources)))} />
         <p className="past-legend small muted">
           {LEGEND.map(([o, label]) => (
             <span key={o}>

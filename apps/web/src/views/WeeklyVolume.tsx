@@ -1,8 +1,8 @@
 import { useState } from "react";
 
-import type { WeekVolume } from "@running-coach/core";
+import { dataSourceLine, type DataSourceLabel, type WeekVolume } from "@running-coach/core";
 
-import { Disclosure, SportIcon } from "../ui";
+import { DataSource, Disclosure, SportIcon } from "../ui";
 
 /** 長條的一段：值與樣式（強度的顏色，或跑步、騎車的中性色） */
 interface Segment {
@@ -75,7 +75,7 @@ function WeekBars({
  *    避免和上面的強度混淆.
  * 點任一根長條，兩張圖一起選那週，下面一行寫那週的數字；「每週的數字」是表格
  */
-export function WeeklyVolumeCard({ weeks }: { weeks: WeekVolume[] }) {
+export function WeeklyVolumeCard({ weeks, sources = [] }: { weeks: WeekVolume[]; sources?: readonly DataSourceLabel[] }) {
   const [selected, setSelected] = useState(weeks.length - 1);
   const [metric, setMetric] = useState<"minutes" | "load">("minutes");
   const week = weeks[selected] ?? weeks.at(-1)!;
@@ -102,6 +102,7 @@ export function WeeklyVolumeCard({ weeks }: { weeks: WeekVolume[] }) {
         <SportIcon sport="ride" />
         騎車的每週
       </h2>
+      <DataSource text={dataSourceLine(sources)} />
       <WeekBars
         weeks={weeks}
         selected={selected}

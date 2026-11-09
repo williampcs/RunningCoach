@@ -1,7 +1,10 @@
 /** SQLite schema 與查詢 — schema 與 v1（Python 版）相容，v1 的資料庫檔可直接使用. */
 import { byNewest, recordOfOther, recordOfWorkout, type ActivityRecord } from "./activities";
 import { addDays, nowIso } from "./dates";
-import { keepScore, sameRun } from "./dedupe";
+import type { ImportRecord } from "./activity-files/convert";
+import { dropCoveredFileOthers } from "./activity-files/store";
+import { keepScore, maybeSameRun, sameRun } from "./dedupe";
+import { sportOfType } from "./sports";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
 import type { PlannedSession, PlanStyle, SelfChange, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
@@ -83,6 +86,15 @@ export interface SaveResult {
    * replaced：和既有的一筆是同一趟，新的資料較完整（例如有心率），改保留新的這筆
    */
   status: "new" | "existing" | "duplicate" | "replaced";
+}
+
+/**
+ * 匯入一趟檔案（規格 12.40「讀 FIT 檔」）的結果：
+ * new：新的；existing：這一趟之前匯入過（同一個檔）；merged：和已經有的一趟（例如 Intervals.icu 的）是同一趟，合併了
+ * （保留資料多的那筆）；maybe：新的，但同一天有一筆距離與時間都很接近、沒有開始時間的（手動記的），看板會問是不是同一趟
+ */
+export interface FileImportResult {
+  status: "new" | "existing" | "merged" | "maybe";
 }
 
 type WorkoutRow = Pick<
@@ -1221,7 +1233,7 @@ export class Db {
   deleteManualWorkout(id: number): Promise<boolean> {
     const d = this.driver;
     return this.tx(async () => {
-      const row = (await d.all("SELECT id FROM workouts WHERE id=? AND source='manual'", [id]))[0];
+      const row = (await d.all("SELECT id FROM workouts WHERE id=? AND source IN ('manual', 'file')", [id]))[0];
       if (!row) return false;
       await d.run("UPDATE workouts SET duplicate_of = NULL WHERE duplicate_of = ?", [id]);
       await d.run("DELETE FROM workout_distinct WHERE a = ? OR b = ?", [id, id]);
@@ -1229,6 +1241,76 @@ export class Db {
       await d.run("DELETE FROM workouts WHERE id = ?", [id]);
       return true;
     });
+  }
+
+  /**
+   * 匯入一趟檔案（規格 12.40）. 跑步存進 workouts（source 'file'，sync_id 是 fileActivityId，跟著多裝置同步），
+   * 和已經有的同一趟（時間重疊，dedupe.ts）照原本的規則合併、保留資料多的；
+   * 其他運動存進 other_activities（id 是 file:<雜湊>），已經有同一運動、時間重疊的（Intervals.icu 的）就不存
+   */
+  importFileActivity(rec: ImportRecord): Promise<FileImportResult> {
+    const d = this.driver;
+    return this.tx(async () => {
+      // 存之前再檢查一次（畫面上先比對過，這裡是保險）
+      const check = await this.fileActivityStatus(rec);
+      if (check.status === "existing") return check;
+      if (rec.kind === "other") {
+        if (check.status === "merged") return check;
+        const a = rec.activity;
+        await d.run(
+          `INSERT INTO other_activities (intervals_id, date, type, duration_min, distance_km, avg_hr, training_load, raw_json, synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [a.intervals_id, a.date, a.type, a.duration_min, a.distance_km, a.avg_hr, a.training_load, a.raw_json ?? null, this.stamp()],
+        );
+        return check;
+      }
+      const a = rec.activity;
+      const match = await this.findSameRun(a, null);
+      const result = await d.run(
+        `INSERT INTO workouts
+           (date, type, distance_km, duration_min, avg_hr, max_hr, avg_pace, elevation_m, calories, training_load, raw_json, source, sync_id, updated_at, synced_at)
+         VALUES (?, 'run', ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'file', ?, ?, ?)`,
+        [a.date, a.distance_km, a.duration_min, a.avg_hr, a.max_hr, a.avg_pace, a.elevation_m, a.calories, a.raw_json, rec.id, this.stamp(), this.stamp()],
+      );
+      if (match) await this.resolveSameRun(result.lastInsertRowid, a, match);
+      return check;
+    });
+  }
+
+  /**
+   * 匯入之前先比對（不寫入）：existing 是之前匯入過；merged 是和已經有的一趟（Intervals.icu 的等）是同一趟；
+   * maybe 是同一天有一筆很像的手動紀錄（沒有開始時間，看板會問）；其他是 new
+   */
+  async fileActivityStatus(rec: ImportRecord): Promise<FileImportResult> {
+    const d = this.driver;
+    if (rec.kind === "other") {
+      const a = rec.activity;
+      if ((await d.all("SELECT 1 FROM other_activities WHERE intervals_id=?", [a.intervals_id])).length) return { status: "existing" };
+      const nearby = (await d.all("SELECT type, raw_json FROM other_activities WHERE date BETWEEN ? AND ?", [addDays(a.date, -1), addDays(a.date, 1)])) as {
+        type: string;
+        raw_json: string | null;
+      }[];
+      const same = nearby.some((o) => sportOfType(o.type) === sportOfType(a.type) && sameRun(o as never, { raw_json: a.raw_json ?? null } as never));
+      return { status: same ? "merged" : "new" };
+    }
+    const a = rec.activity;
+    if ((await d.all("SELECT 1 FROM workouts WHERE sync_id=?", [rec.id])).length) return { status: "existing" };
+    if (await this.findSameRun(a, null)) return { status: "merged" };
+    const sameDay = (await d.all(`SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json FROM workouts w WHERE ${ACTIVE} AND date = ?`, [
+      a.date,
+    ])) as unknown as WorkoutRow[];
+    return { status: sameDay.some((w) => maybeSameRun(w, a)) ? "maybe" : "new" };
+  }
+
+  /**
+   * 同步 Intervals.icu 拿到的其他運動（騎車等）和之前匯入的檔案是同一趟：刪掉檔案那筆，
+   * 體感與分析搬到 Intervals.icu 那筆（還沒有的時候）. 回傳刪掉的筆數
+   */
+  async dropImportedOthersCoveredBy(list: OtherActivity[]): Promise<number> {
+    const from = list.filter((a) => !a.intervals_id.startsWith("file:"));
+    if (!from.length) return 0;
+    const dates = from.map((a) => a.date).sort();
+    return this.tx(() => dropCoveredFileOthers(this.driver, from.map((a) => a.intervals_id), { from: dates[0]!, to: dates[dates.length - 1]! }));
   }
 
   getWorkoutByIntervalsId(intervalsId: string): Promise<Workout | null> {
@@ -1553,11 +1635,12 @@ export class Db {
     }
   }
 
-  /** 範圍內本機有、這次沒拿到的（在來源已刪除）直接刪掉：這些紀錄沒有選手填的內容 */
+  /** 範圍內本機有、這次沒拿到的（在來源已刪除）直接刪掉：這些紀錄沒有選手填的內容. 匯入的檔案不刪 */
   async removeOtherActivitiesMissing(seenIds: string[], since: string, until: string): Promise<void> {
     const placeholders = seenIds.map(() => "?").join(", ");
     await this.run(
-      `DELETE FROM other_activities WHERE date >= ? AND date <= ?${seenIds.length ? ` AND intervals_id NOT IN (${placeholders})` : ""}`,
+      // 匯入的檔案（file:）不是 Intervals.icu 來的，不跟著它刪
+      `DELETE FROM other_activities WHERE date >= ? AND date <= ? AND intervals_id NOT LIKE 'file:%'${seenIds.length ? ` AND intervals_id NOT IN (${placeholders})` : ""}`,
       [since, until, ...seenIds],
     );
   }
