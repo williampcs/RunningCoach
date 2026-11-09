@@ -758,7 +758,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     2. Garmin 個人 API 的可行性測試：`tools/` 一支在使用者本機跑的腳本（使用者自己的 key，放 `.env`，不印出、不寫進檔案），測：用 key 換 access token、列最近的活動（JSON）、下載一趟的 FIT（看欄位完不完整，用現有讀 FIT 的程式解析，只印欄位名稱與筆數，不印數值）、健康資料（睡眠、靜止心率）；另外一個本機的小網頁，從瀏覽器直接呼叫同樣的端點，看 CORS 允不允許。結果寫成一份報告（不含使用者的資料），使用者貼給協調 session。腳本要寫清楚 Garmin 個人 API 的條款限制。
   - 不做：把 Garmin 個人 API 做成正式功能（等測試結果與條款確認）；Business Starter。
   - 驗收：單元測試（空殼的判斷、不存、不算負荷、提示的次數）；E2E（模擬上游回空殼時看板的提示、紀錄頁沒有 0 公里的紀錄）；測試腳本對模擬的回應跑過一次；全部 E2E 照過。
-  - 狀態：已推上 v2（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」）；實作、驗證、和工作單不同的地方與 Garmin 官方文件的重點見 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」。不在功能開關後面。待使用者：在 staging 看（模擬不出空殼，平常不會出現；Strava 匯入的活動在最近 14 天內才會看到）；在自己的電腦產生 Garmin 個人 API key、跑 `npx tsx tools/garmin-personal-api.ts --serve`，把報告與網頁的結果貼給協調 session。
+  - 狀態：已推上 v2（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」）；實作、驗證、和工作單不同的地方與 Garmin 官方文件的重點見 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」。不在功能開關後面。待使用者：在 staging 看（模擬不出空殼，平常不會出現；Strava 匯入的活動在最近 14 天內才會看到）；在自己的電腦產生 Garmin 個人 API key、跑 `npx tsx tools/garmin-personal-api.ts --serve`，把報告與網頁的結果貼給協調 session。 協調 session 檢查過（2026-11-09：pull、`npm test` 602 項、typecheck；腳本與測試網頁只連 Garmin、不存 key）。待使用者在本機跑測試。
 
 - **標示 Garmin 的資料來源**（KI-048、12.40；2026-11-09 使用者：「Garmin 的標示要不要現在做？要」）
   - 依據：Intervals.icu 的 API 條款 1.1（顯示由 Garmin 來源的資料算出的資訊要照 Garmin 的品牌規範標示）、Garmin 的 API 品牌規範（「Garmin〔裝置型號〕」，不知道型號時「Garmin」；在資料的標題旁邊或下方、看得到，不放在提示或註腳；不改動、不動畫 Garmin 的標誌，也不要把標誌放在心率等數字裡；分享或匯出到 App 以外也要標）。這次**只用文字**，不放 Garmin 的標誌圖。
