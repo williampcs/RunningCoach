@@ -177,7 +177,8 @@ export function wellnessFitnessOf(rawJson: string | null | undefined): { ctl: nu
 }
 
 /** 紀錄的來源 */
-export type ActivitySourceKind = "intervals" | "manual" | "strava" | "fake" | "import" | "other";
+/** file：選手匯入的檔案（FIT、GPX、TCX，規格 12.40） */
+export type ActivitySourceKind = "intervals" | "manual" | "file" | "strava" | "fake" | "import" | "other";
 
 /** 不分運動、不分來源的一筆紀錄 */
 export interface ActivityRecord {
@@ -208,7 +209,7 @@ export interface ActivityRecord {
 }
 
 function sourceKind(source: string | null | undefined, intervalsId: string | null): ActivitySourceKind {
-  if (source === "manual" || source === "fake" || source === "strava" || source === "intervals" || source === "import") return source;
+  if (source === "manual" || source === "file" || source === "fake" || source === "strava" || source === "intervals" || source === "import") return source;
   if (!source) return intervalsId ? "intervals" : "other";
   return "other";
 }
@@ -246,7 +247,7 @@ export function recordOfOther(a: OtherActivity): ActivityRecord {
     intervalsId: a.intervals_id,
     sport: sportOfType(a.type),
     type: a.type,
-    source: a.intervals_id.startsWith("fake-") ? "fake" : "intervals",
+    source: a.intervals_id.startsWith("fake-") ? "fake" : a.intervals_id.startsWith("file:") ? "file" : "intervals",
     date: a.date,
     duration_min: a.duration_min ?? null,
     distance_km: a.distance_km ?? null,
@@ -273,13 +274,14 @@ export function byNewest(a: ActivityRecord, b: ActivityRecord): number {
  */
 export const GARMIN = "Garmin";
 /** 多來源的列法：Garmin 在最前面，其他照這個順序 */
-const SOURCE_ORDER = [GARMIN, "其他裝置", "手動記", "匯入的紀錄"] as const;
+const SOURCE_ORDER = [GARMIN, "其他裝置", "檔案", "手動記", "匯入的紀錄"] as const;
 export type DataSourceLabel = (typeof SOURCE_ORDER)[number];
 
 /** 一筆紀錄算哪一種來源 */
 export function dataSourceOf(record: Pick<ActivityRecord, "source" | "details">): DataSourceLabel {
   if (record.details.garmin) return GARMIN;
   if (record.source === "manual") return "手動記";
+  if (record.source === "file") return "檔案";
   if (record.source === "import" || record.source === "strava") return "匯入的紀錄";
   return "其他裝置";
 }

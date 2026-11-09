@@ -227,6 +227,7 @@
 | 2.0-draft | 2026-11-09 | 小修（協調 session）：Garmin 個人 API 測試腳本換 token 時不再帶 `Accept: application/json`（Garmin 回 406）；使用者已送出 Garmin Business Starter 的申請（12.40） |
 | 2.0-draft | 2026-11-09 | Garmin 個人 API 第二次測試：全部可以讀（FIT 完整），瀏覽器不行 → 作者自用的備案（12.40）；工作單：讀 FIT 檔＋作者自用的 Garmin 抓檔腳本（9.4） |
 | 2.0-draft | 2026-11-09 | 討論：App 版用使用者自己的 Garmin 個人 API key 直接拉（技術可行、不受 CORS 限制；條款灰色，要先問 Garmin）（12.40） |
+| 2.0-draft | 2026-11-09 | 讀 FIT 檔（保底的資料來源，不在功能開關後面）：紀錄頁「匯入檔案」（回報頁也有入口）讀 FIT、GPX、TCX 與 zip（Garmin Connect 單趟下載、帳號資料匯出的大 zip、個人 API 下載的），在瀏覽器裡解析不上傳；跑步存成一般的紀錄（標「檔案」、Garmin 的標型號）、騎車等存成其他運動，只存摘要；和 Intervals.icu 的同一趟照時間重疊合併；跟著多裝置同步（`fw:`、`fo:`）；作者自用的 `tools/garmin-fetch-fit.ts`（12.40 的「讀 FIT 檔：實作」） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -766,7 +767,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：恢復資料（睡眠、HRV）的匯入（之後看需要）；把個人 API 做進網頁版；GPX／TCX 若太花時間可以先只做 FIT 與 zip，回報說明。
   - 驗收：單元測試（FIT 與 zip 的解析、Garmin 型號、各種壞檔、去重、大檔的篩選）；E2E（選一個 FIT、一個單趟 zip、一個含多趟的匯出 zip，紀錄頁出現、標示正確、和 Intervals.icu 的同一趟合併、教練看得到；手機與電腦的截圖）；測試用的 FIT 用程式產生（`tools/lib/fit-fixture.ts`），不要放真實的檔案；全部 E2E 照過。
   - 注意：使用者的真實檔案不進雲端 session；請使用者在 staging 用自己的檔案試。
-  - 狀態：開發中（2026-11-09，開發 session「讀 FIT 檔」）。
+  - 狀態：已推上 v2（2026-11-09，開發 session「讀 FIT 檔」）；實作、驗證與和工作單不同的地方見 12.40 的「讀 FIT 檔：實作」。不在功能開關後面（保底的資料來源）。待協調 session 檢查；待使用者：在 staging 用自己的檔案試（單趟的 FIT 或 zip、帳號資料匯出的大 zip），在本機跑 `npx tsx tools/garmin-fetch-fit.ts` 抓自己的 FIT 再匯入。
 
 - **Garmin 空殼的偵測與提示；Garmin 個人 API 的可行性測試**（12.40、KI-048；2026-11-09 使用者：「可以做」；排在「標示 Garmin 的資料來源」之後）
   - 要做什麼：
@@ -4551,3 +4552,53 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - 等使用者：在本機跑 `npx tsx tools/intervals-sources.ts` 確認 Garmin 的來源與裝置欄位（Garmin 標示用）；在 staging 看 Garmin 標示；FIT 匯入好了之後用自己的檔案試。
   - 等外部：Starter 核准 → 讀完整的文件（取件網址的期限、Backfill、Starter 能拿哪些資料）、問 Garmin「App 用使用者自己的個人 key」→ 決定要不要做「經過但不保存」；Intervals.icu 公布 Garmin 空殼的格式 → 改 `unavailableOriginOf` 一處並補測試。
   - 之後：推課表到 Garmin 手錶（Starter 的 Training API，和 12.31 的「推到手錶」同一件事）；iOS 試做時實測 Garmin Connect 寫進 Apple 健康的內容；Enterprise 只有超過約 1,000 人才需要。
+
+**讀 FIT 檔：實作**（2026-11-09，開發 session「讀 FIT 檔」，已推上 v2；設計先給協調 session 看過，回覆的 6 點都照做）
+
+*解析*（`packages/core/src/activity-files/`，只用標準的 JavaScript：Uint8Array、DataView、DecompressionStream，瀏覽器與 Node 都能跑；沒有新的套件）
+- `fit.ts`：讀 file_id、device_info、session、lap、record（每秒的心率，只用來算區間的時間）、activity；壓縮的時間戳記、大小端、開發者欄位（略過）、FIT 的無效值。多項運動的檔每一段一趟，轉換區略過；沒有 session 的用每秒的紀錄湊一趟；截斷的檔讀得到多少用多少。當地時間用 activity 的 local_timestamp 與 timestamp 的差；沒有時用這台的時區。sport／sub_sport 轉成 Intervals.icu 的類型（Run、TrailRun、VirtualRun、Ride、VirtualRide、MountainBikeRide、GravelRide、Swim、OpenWaterSwim、WeightTraining、Workout、Walk、Hike…）。
+- 裝置：device_info 第 0 台（建立檔案的）的製造商與 product_name，沒有時看 file_id。製造商是 Garmin（1）→「Garmin〔型號〕」，**檔案沒有型號的字串時只寫「Garmin」**（產品編號的對照表沒有可靠的來源，不猜；協調 session 同意）；COROS、Polar、Suunto、Wahoo、Zwift 寫品牌（＋型號），其他不認得的不寫。
+- `gpx.ts`：GPX（距離用座標算、`gpxtpx:hr` 的心率、兩點相差超過 30 秒當成暫停）與 TCX（分圈、距離、卡路里、心率、Creator 的裝置）；用文字比對，不靠 DOM。`creator="Garmin Connect"` 或 TCX 的作者是 Garmin Connect 時標 Garmin。
+- `zip.ts`：隨機讀取（`File.slice`），不把大檔讀進記憶體；zip64；壓縮檔裡的壓縮檔（沒壓縮的直接切一段讀，有壓縮的邊讀邊解成 Blob）。
+- `scan.ts`：一批檔案（.fit、.gpx、.tcx、.zip）→ 活動；不是活動的 FIT（每日的健康資料等）、不支援的運動（只匯入跑步、騎車、游泳、肌力；走路、健行等略過）、比選的期間舊的、同一趟出現兩次的都略過並記下數字；壞檔記下原因、不中斷；每讀一個檔回報進度；可以取消。心率區間的時間在掃描時就算好、清掉每秒的心率（幾千趟也不佔記憶體）。
+
+*存*（`convert.ts`、`import.ts`、`Db.importFileActivity`）
+- 只存摘要（每秒的資料現有的功能沒有用到）：跑步 → `workouts`（`source` 'file'，`sync_id` 是「運動＋開始時間到分鐘」的雜湊），其他運動 → `other_activities`（`file:`＋雜湊）。不改 schema（仍是 19）。
+- `raw_json` 用 Intervals.icu 的欄位名稱（`source: "FILE"`、`file_type`、`start_date_local`、`start_date`、`elapsed_time`、`moving_time`、`distance`、心率、爬升、`device_name`、分圈），所以 detailsOf、去重、Garmin 的標示、強度分配都照原本的讀法。
+- 心率區間的時間：Intervals.icu 那項運動的設定（沒有騎車的設定時騎車不算），跑步沒有時用選手資料的實測最大心率換算的（220 − 年齡的估計不用）；存進 `icu_hr_zone_times`、`icu_hr_zones`、`lthr`，並記 `hr_zones_source`（「Intervals.icu 的運動設定」或「選手資料的最大心率」，協調 session 第 4 點）。
+- 負荷：沒有來源算好的負荷，照 load.ts 的規則估（有心率是依心率估）。
+- 一筆一個交易、舊的先存；畫面顯示存到第幾趟。
+
+*去重*（協調 session 同意用時間重疊，比只看開始時間準）
+- 同一個檔再匯（或兩台各匯一次）：雜湊相同 → 「已經有了」。
+- 跑步：照 dedupe.ts 的時間重疊（達較短那筆的一半）合併，保留 keepScore 高的（Intervals.icu 的有負荷，通常留它；檔案先進來、Intervals.icu 後進來時一樣換成留 Intervals.icu 的，體感與分析帶過去）。手動記的沒有開始時間 → 低可信度，最近 7 天的由看板問；匯入的說明會說有幾趟。
+- 騎車等：匯入時同一運動、時間重疊的 Intervals.icu 紀錄已經在 → 不存（算「已經有了」）；之後同步進來的同一趟 → 刪檔案那筆，體感與分析搬過去（`dropCoveredFileOthers`，同步 Intervals.icu 時呼叫）。
+- Intervals.icu 的「來源已刪除」：跑步的 `markRemovedMissing` 只看有 `intervals_id` 的；其他運動的 `removeOtherActivitiesMissing` 跳過 `file:`（協調 session 第 2 點，有測試）。
+
+*多裝置同步*：跑步 `fw:sync_id`（整筆的摘要、體感與感受；跑步 id 是 `f`＋sync_id）、其他運動 `fo:雜湊`；舊版不認得的種類本來就略過（正式版不受影響）。套用時這台已經有同一趟的：跑步照規則標成重複、其他運動留 Intervals.icu 的（刪掉的會同步成刪除）。刪除也帶過去。
+
+*畫面*（`apps/web/src/views/ImportFiles.tsx`）
+- 入口：紀錄頁卡片標題旁的「匯入檔案」（在「新增一筆」旁）、還沒有紀錄時「記第一筆」旁、回報頁的「匯入手錶的檔案」（沒有連 Intervals.icu 時是「有手錶的檔案？匯入檔案」）。
+- 步驟：選檔或拖進來（可以一次選好幾個）＋「匯入的期間」（最近 3、6、12 個月或全部，預設 12）→ 讀的進度（讀了幾個檔、找到幾趟，可以停止）→ 找到幾趟與日期範圍、略過的（期間、不支援的運動、不是活動的檔、讀不了的檔，讀不了的檔名收在「讀不了的檔」）→「匯入 N 趟」→ 進度條 → 結果（協調 session 第 5 點：新增幾趟、已經有了幾趟〔其中幾趟合併〕、存不進去的、看板會問的低可信度重複）。
+- 紀錄頁：匯入的跑步標「檔案」、Garmin 的在副標寫型號；點開可以補體感、請教練分析、「刪除這一筆」（再確認；`deleteManualWorkout` 也接受 `file`）。
+- 教練：分析的提示寫「來源：選手匯入的活動檔」；讀最近訓練的工具與系統提示照舊看得到。
+- 資料來源的列法多一項「檔案」（Garmin 的檔案算 Garmin）。
+- 使用說明新的一段「匯入手錶的檔案」（Garmin Connect 單趟下載、帳號資料匯出的步驟）；「拿不到內容的活動」的替代方式加上匯入檔案；隱私說明：存在裝置上的資料、多裝置同步的內容、異動紀錄（協調 session 第 6 點：在瀏覽器裡解析、不上傳；摘要加密同步）。
+
+*作者自用的抓檔腳本*（`tools/garmin-fetch-fit.ts`）
+- 用 `.env` 的 `GARMIN_PERSONAL_API_KEY` 換 token（只帶 Authorization，回應是純文字或 JSON 都可以）→ 每 28 天一段、每段分頁列活動（Bearer）→ 下載 `/download-service/files/activity/{id}` 的 zip 存到 `data/garmin-fit/`（不進版控；檔名「日期_類型_id.zip」），已經有的不重抓；每抓一個停 1 秒，429 時停下來說之後再跑。選項 `--days`（預設 30）、`--types running,cycling`、`--out`。
+- 開頭與執行時印條款（只能自己用在自己的工具、不得分享 key、Garmin 可以限制用量、不要做成給別人用的服務）；key 與 token 不印、不寫進檔案。
+
+*驗證*
+- 單元測試：`packages/core/test/activity-files.test.ts`（FIT：跑步的時間距離心率分圈當地時間、Garmin 型號的規則與其他品牌、各運動類型、壓縮的時間戳記、沒有 session、沒有心率、沒有當地時間、不是活動、壞檔與截斷；GPX、TCX；轉成紀錄與 detailsOf 讀得出來；心率區間的時間與來源；掃描單一 FIT、單趟 zip、帳號匯出〔壓縮檔裡的壓縮檔、健康資料、走路〕、期間的篩選、同一趟兩次、壞檔、取消）、`file-import.test.ts`（新增與再匯、負荷依心率估、和 Intervals.icu 兩種順序的合併、「來源已刪除」不動、手動記的低可信度、騎車的三種情況、說明文字、刪除、多裝置同步的 fw／fo 套用、合併、重套、刪除）、`tools/test/garmin-fetch-fit.test.ts`（純文字的 token、分段列活動、只抓指定類型、已經有的不重抓、下載失敗、key 不對、不印 key 與 token）。測試用的檔全部由 `tools/lib/fit-fixture.ts` 產生（加了 `fakeFit` 的選項與 `zipMany`）。
+- E2E：新的 `verify-import.cjs`（手機淺色、電腦深色；截圖看過）；全部 E2E 照 README 跑過（結果見回報）。
+- 抓檔腳本對模擬上游的 `/garmin/…` 跑過一次，下載的 zip 用 `scanFiles` 讀得出來。
+- 沒驗證到：真實的 Garmin、COROS 等的 FIT（雲端 session 不放使用者的檔；欄位照 FIT SDK 的 Profile 寫，請使用者在 staging 試）；真的帳號資料匯出檔的資料夾結構（照公開的說明：`DI_CONNECT/DI-Connect-Uploaded-Files/UploadedFiles_*.zip`，程式不依賴路徑，任何層的 .fit／.gpx／.tcx 都會找）；幾 GB 的大檔在手機瀏覽器上的速度與記憶體；Safari 的 DecompressionStream（16.4 以上才有）。
+
+*和工作單不同的地方*
+- 去重用時間重疊（工作單寫開始時間與距離）：協調 session 同意。
+- 只匯入跑步、騎車、游泳、肌力；走路、健行等略過並說明（Intervals.icu 同步時這些會存成其他運動；檔案匯入照工作單「只匯入跑步與騎車等支援的運動」）。
+- GPX、TCX 一起做了。
+- 匯入的跑步可以刪（工作單沒寫；匯錯時要有路）。
+
+*沒做*：每秒的資料與圖；恢復資料的匯入；Garmin 產品編號的對照表；把個人 API 做進網頁版；Discord 沒有匯入的入口（Discord 用自己的資料庫，網頁版匯入的不會到 Discord）。

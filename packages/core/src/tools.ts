@@ -697,6 +697,7 @@ export async function generateWorkoutSummary(llm: Llm, workout: WorkoutSummaryIn
       ? `平均心率：${bpmOrMissing(workout.avg_hr)}\n最高心率：${bpmOrMissing(workout.max_hr)}\n`
       : "心率：沒有資料（只用手機記錄，或沒有配戴心率裝置）\n") +
     (workout.source === "manual" ? "來源：選手手動記錄（距離與時間是選手自己填的，沒有分段與爬升）\n" : "") +
+    (workout.source === "file" ? "來源：選手匯入的活動檔（FIT／GPX／TCX，手錶記的數字）\n" : "") +
     `爬升：${workout.elevation_m || 0}m\n` +
     `${effortLine}\n` +
     (workout.recovery ? `當天身體狀況：${workout.recovery}\n` : "") +

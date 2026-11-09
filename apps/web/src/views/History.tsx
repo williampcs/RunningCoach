@@ -12,9 +12,10 @@ import { FirstSync } from "./FirstSync";
 import { SyncNotice } from "./PhoneGuide";
 import { useSync } from "../use-sync";
 import { dayText, IntensityBar, kmText, PlanBadge, RideCardView, RideTotals, RunCardView } from "./RunCard";
-import { Plus } from "lucide-react";
+import { FileUp, Plus } from "lucide-react";
 import { EffortPicker, Icon, SportIcon } from "../ui";
 import { WeeklyVolumeCard } from "./WeeklyVolume";
+import { ImportFiles } from "./ImportFiles";
 import { ManualRunForm } from "./ManualRun";
 
 const HISTORY_DAYS = 30;
@@ -26,7 +27,7 @@ const WEEKLY_WEEKS = 10;
  * focus：從課表頁的「之前的週」點來的那一趟（規格 12.34）：列到那一天、打開並捲到那一列
  */
 export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocus | null; onFocusUsed?: () => void } = {}) {
-  const { coach, revision, touch, goTo, activitiesReady } = useApp();
+  const { coach, revision, touch, goTo, activitiesReady, toast } = useApp();
   const sync = useSync();
   const today = coach.today();
   // 平常列最近 30 天；要打開更早的那一趟時列到那一天
@@ -52,6 +53,9 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   // 手動新增一筆（規格 12.36）：「新增」打開表單；改手動記的那一筆時是它的 id
   const [adding, setAdding] = useState(false);
+  // 匯入檔案（FIT、GPX、TCX、zip，規格 12.40）
+  const [importing, setImporting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [editingManual, setEditingManual] = useState<number | null>(null);
 
   useEffect(() => {
@@ -312,6 +316,34 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
           )}
         </div>
         {backfilled?.workout.id === w.id && !backfilled.summary && <p className="muted small">體感已存檔；這次沒有重新產生分析。</p>}
+        {/* 匯入的檔案：匯錯了可以刪（再匯一次會回來） */}
+        {w.source === "file" &&
+          (confirmDelete === w.id ? (
+            <div className="actions">
+              <span className="small">刪掉這一筆匯入的紀錄？</span>
+              <button
+                className="danger"
+                onClick={() =>
+                  void coach.deleteManualWorkout(w.id).then(() => {
+                    setConfirmDelete(null);
+                    toast("已刪除這一筆。");
+                    touch();
+                  })
+                }
+              >
+                刪除
+              </button>
+              <button className="text" onClick={() => setConfirmDelete(null)}>
+                取消
+              </button>
+            </div>
+          ) : (
+            <div className="actions">
+              <button className="text danger" onClick={() => setConfirmDelete(w.id)}>
+                刪除這一筆
+              </button>
+            </div>
+          ))}
       </>
     );
   }
@@ -327,13 +359,20 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
             最近 {days} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
           </h2>
           {/* 還沒有紀錄、沒連接 Intervals.icu 時，下面已經有「記第一筆」 */}
-          {!adding && !(totals?.runs === 0 && !activitiesReady) && (
-            <button className="text" onClick={() => setAdding(true)}>
-              <Icon as={Plus} size={18} />
-              新增一筆
-            </button>
+          {!adding && !importing && !(totals?.runs === 0 && !activitiesReady) && (
+            <span className="card-head-actions">
+              <button className="text" onClick={() => setImporting(true)}>
+                <Icon as={FileUp} size={18} />
+                匯入檔案
+              </button>
+              <button className="text" onClick={() => setAdding(true)}>
+                <Icon as={Plus} size={18} />
+                新增一筆
+              </button>
+            </span>
           )}
         </div>
+        {importing && <ImportFiles onClose={() => setImporting(false)} />}
         {adding && (
           <div className="manual-add">
             <h3>手動記一趟跑步</h3>
@@ -358,11 +397,13 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
                 <FirstSync sync={sync} />
               ) : (
                 // 沒有連接 Intervals.icu：手動記（規格 12.36）；要抓手錶的紀錄到設定連接
-                !adding && (
+                !adding &&
+                !importing && (
                   <div className="actions">
                     <button className="primary" onClick={() => setAdding(true)}>
                       記第一筆
                     </button>
+                    <button onClick={() => setImporting(true)}>匯入檔案</button>
                   </div>
                 )
               )}
@@ -395,6 +436,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
                     {w.perceived_effort == null && <span className="badge">未填體感</span>}
                     {(w.duplicate_count ?? 0) > 0 && <span className="badge missed">已合併</span>}
                     {w.source === "manual" && <span className="badge">手動</span>}
+                    {w.source === "file" && <span className="badge">檔案</span>}
                   </span>
                   {card.intensity && !expanded && <IntensityBar intensity={card.intensity} compact />}
                 </button>

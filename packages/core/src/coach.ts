@@ -591,7 +591,7 @@ export class Coach {
 
   /** 刪掉手動新增的那一筆 */
   async deleteManualWorkout(id: number): Promise<void> {
-    if (!(await this.db.deleteManualWorkout(id))) throw new Error("只能刪除手動新增的紀錄");
+    if (!(await this.db.deleteManualWorkout(id))) throw new Error("只能刪除手動新增或匯入的紀錄");
   }
 
   /** 手動合併：dupId 是 keepId 的重複（教練動態問「是不是同一趟」時選了合併） */

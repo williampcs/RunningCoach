@@ -98,7 +98,7 @@ describe("FIT helpers", () => {
     expect(fitFromDownload(fit)).toBe(fit);
     expect(fitFromDownload(Buffer.from("not a fit"))).toBeNull();
     const summary = fitFieldSummary(fit)!;
-    expect(summary.map((m) => `${m.name}:${m.count}`)).toEqual(["file_id:1", "session:1", "lap:1", "record:20", "activity:1"]);
+    expect(summary.map((m) => `${m.name}:${m.count}`)).toEqual(["file_id:1", "session:1", "lap:1", "record:20", "device_info:1", "activity:1"]);
     expect(summary.find((m) => m.name === "record")?.fields.find((f) => f.name === "heart_rate")?.withValue).toBe(10);
     expect(fitInfo(fit)).toEqual({ local: "2026-10-10T06:30", run: true });
   });

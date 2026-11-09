@@ -284,3 +284,5 @@ export {
 export { detectRedFlags, RED_FLAG_TERMS, redFlagAdvice } from "./red-flags";
 export { DEMO_QUESTION, DEMO_REPLY, demoSource, demoSpec, seedDemo, type DemoSource } from "./demo";
 export { GARMIN_SOURCE_NOTE, sourcesText } from "./tools";
+export * from "./activity-files";
+export type { FileImportResult } from "./db";

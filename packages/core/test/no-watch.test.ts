@@ -44,7 +44,7 @@ describe("手動新增一筆（規格 12.36）", () => {
     const { coach } = await makeCoach();
     const id = await coach.db.saveWorkout(activity());
     await expect(coach.updateManualWorkout(id, run())).rejects.toThrow("只能改手動新增的紀錄");
-    await expect(coach.deleteManualWorkout(id)).rejects.toThrow("只能刪除手動新增的紀錄");
+    await expect(coach.deleteManualWorkout(id)).rejects.toThrow("只能刪除手動新增或匯入的紀錄");
   });
 
   it("欄位檢查：未來的日子、距離、時間、體感、心率與太快的配速", () => {

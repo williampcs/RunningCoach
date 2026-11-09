@@ -3944,3 +3944,27 @@ a.button {
     font-size: var(--fs-sub);
   }
 }
+
+/* 匯入檔案（規格 12.40「讀 FIT 檔」）：選檔或拖進來 */
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-6) var(--sp-4);
+  border: 2px dashed var(--border);
+  border-radius: var(--r-card);
+  text-align: center;
+  color: var(--muted);
+}
+
+.drop-zone.over {
+  border-color: var(--accent);
+  background: var(--info-bg);
+}
+
+.import-files progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}

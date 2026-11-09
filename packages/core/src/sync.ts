@@ -44,6 +44,8 @@ async function syncOtherActivities(
       const others = await activities.fetchOtherActivities(SYNC_DAYS);
       const today = db.today();
       await db.upsertOtherActivities(others);
+      // 之前匯入的檔案（騎車等）和 Intervals.icu 的同一趟：留 Intervals.icu 的（規格 12.40「讀 FIT 檔」）
+      await db.dropImportedOthersCoveredBy(others);
       await db.removeOtherActivitiesMissing(
         [...others.map((a) => a.intervals_id), ...keepIds],
         addDays(today, -(SYNC_DAYS - 1)),
