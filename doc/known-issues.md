@@ -1191,3 +1191,23 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - 驗證：`npm test`、`npm run typecheck`；`verify-weather`、`verify-injury` 在現在（台北上午）、模擬的台北 23:30、23:50、00:10 與跨過午夜（23:58 開始跑）都 `ALL OK`，`verify-injury` 修改前現在跑就失敗；全部的 E2E 腳本照過（含 `verify-design`）。
 - 沒驗證到：Playwright 的 clock 只改頁面的時間，資料庫的 worker 用的是真的時間（worker 裡沒有用到「今天」）。
 - 使用者要做的：在 staging 清除或改天氣的城市後回到對話，看板的天氣提醒馬上跟著變。
+
+## [KI-048] Garmin 的資料可能不能再經 Intervals.icu 的 API 取得；Garmin 資料要標示來源
+
+**發現時機**：2026-11-09，協調 session 讀 Intervals.icu 官方建議的論壇文章（「API access to Intervals.icu」、「Intervals.icu API Terms and Conditions」）。
+**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示待做。
+
+**內容**（論壇原文的重點，2026-10）：
+- 「API access to Intervals.icu」的首篇：2026-10-09「Garmin 的條款更新了，我們很可能很快要擋掉經 API 取得 Garmin 的資料」；10-14「這是 Garmin Connect 開發者計畫重新開放的一部分，個人與 App 取得 Garmin 資料會有比較容易的路」。
+- 作者在討論中（10-24）：把 Intervals.icu 當橋取得使用者資料的 App 會受限，「你要自己接 Garmin 才拿得到活動資料」；恢復資料（wellness）與上傳課表會怎樣還不確定；由 Garmin 原始資料算出來的數字可能也受影響，「都還沒定案」（10-26）；可能像 Strava 一樣只回一個帶 Garmin ID 的空殼。Strava 的資料本來就拿不到。
+- 其他開發者回報：Garmin Connect 開發者計畫的 Starter 方案申請很快，但授權畫面會標「未驗證的 App」，上限 1,000 位使用者，要拿掉標示或超過上限要 Enterprise 方案（費用高）；Garmin 會把資料推到開發者的伺服器（webhook）。
+- API 條款（2025-10-23 生效）1.1：顯示由 Garmin 來源的資料算出的資訊時，要照 Garmin 的品牌規範標示 Garmin。
+
+**影響**：我們目前所有手錶使用者（大多是 Garmin）的活動都經 Intervals.icu 的 API。若被擋，Garmin 使用者的跑步紀錄、心率、負荷可能抓不到或只剩空殼；作者自己的資料也可能受影響（個人 API key 是否一樣被擋，原文沒有分開說）。
+
+**選項**（待使用者決定）：
+1. 先觀察：論壇有新的消息時更新這一則；同步時偵測到「只有空殼」的活動就提示原因與替代方式。
+2. App 讀手機的健康資料（Garmin Connect 會寫進 Apple 健康、Health Connect，細節有限；12.37 的資料的路）。
+3. 讀 FIT 檔（Garmin 匯出、手錶的檔案；已有讀 Garmin FIT 的腳本）。
+4. 自己接 Garmin Connect 開發者計畫：資料會推到我們的伺服器，和資料原則（不經過、不保存）有衝突，要選用、說清楚，且有 1,000 人與「未驗證」的限制；不建議現在做。
+5. Garmin 的標示：在顯示 Garmin 來源的活動與數字的地方加上「Garmin」的標示（照 Garmin 的品牌規範），合規需要，建議盡快做。
