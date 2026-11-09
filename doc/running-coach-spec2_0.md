@@ -4602,3 +4602,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 匯入的跑步可以刪（工作單沒寫；匯錯時要有路）。
 
 *沒做*：每秒的資料與圖；恢復資料的匯入；Garmin 產品編號的對照表；把個人 API 做進網頁版；Discord 沒有匯入的入口（Discord 用自己的資料庫，網頁版匯入的不會到 Discord）。
+- 2026-11-09 使用者跑 `tools/intervals-sources.ts`：來源 `GARMIN_CONNECT`；裝置名稱有「GARMIN INSTINCT_2」「GARMIN VENU4」「Garmin Venu 4」「GARMIN CONNECT」（只記型號的寫法，不記筆數）。現在的標示會顯示「Garmin INSTINCT_2」「Garmin CONNECT」→ 小修交給「讀 FIT 檔」的開發 session 先做：型號整理成「Garmin Instinct 2」「Garmin Venu 4」，「GARMIN CONNECT」只標「Garmin」。使用者已在 staging 看到標示。使用者問正式版要不要盡快更新讓它也有 Garmin 標示 → 協調 session 建議小修後發 v0.6.1（Garmin 標示、空殼的偵測與「已存的紀錄變成空殼時保留」的保護、手機輸入框放大、送出／停止按鈕），讀 FIT 檔下一版再發。
