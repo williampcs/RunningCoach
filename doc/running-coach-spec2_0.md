@@ -224,6 +224,7 @@
 | 2.0-draft | 2026-11-09 | 優先順序：代理延後，先處理資料的路（標示 Garmin → 空殼偵測與個人 API 測試 → 讀 FIT 檔 → Garmin 個人 API 或 Starter → iOS 讀健康資料）（12.40） |
 | 2.0-draft | 2026-11-09 | 拿不到內容的活動（空殼）：同步時不存成跑步或其他運動、不算負荷，看板一則「N 筆來自 Garmin（Strava）的活動，拿不到內容」（手動記一趟、其他方式 → 使用說明新的一段；✕ 收起後當天不再出現；那天手動記了就不提）；之前存了內容的紀錄之後變成空殼時不刪；舊版存成 0 公里的空殼會被移除；E2E `verify-shells.cjs`。Garmin 個人 API 的可行性測試：本機腳本 `tools/garmin-personal-api.ts`（換 token、活動、FIT 的欄位、睡眠與靜止心率、CORS 的回應標頭，報告不含數值）與 `--serve` 的 CORS 測試網頁；讀 zip 與 FIT 的程式移到 `tools/lib/fit.ts`（12.40、KI-048、9.4） |
 | 2.0-draft | 2026-11-09 | Garmin 個人 API 的測試結果（瀏覽器被 CORS 擋、條款不能分享 key → 不做成網頁版的功能）；Garmin Business Starter 申請表的欄位（12.40）；RunningCoach 環境另外允許 www.garmin.com |
+| 2.0-draft | 2026-11-09 | 小修（協調 session）：Garmin 個人 API 測試腳本換 token 時不再帶 `Accept: application/json`（Garmin 回 406）；使用者已送出 Garmin Business Starter 的申請（12.40） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -4510,7 +4511,8 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 
 **Garmin 個人 API 的測試結果與條款**（2026-11-09 使用者在本機跑 `tools/garmin-personal-api.ts --serve`）
 - 瀏覽器（Edge／Chrome 155）：換 token 與列活動都被擋（TypeError），Garmin 的回應**沒有 CORS 標頭** → 網頁版不能從瀏覽器直接呼叫 Garmin 個人 API。
-- 腳本（本機 Node）：結論列「換 token：不行」，原因待使用者貼報告前段（狀態碼）。
+- 腳本（本機 Node）：換 token 回 **406**（錯誤的本文有 clientMessage、error、errorId）。原因：腳本帶了 `Accept: application/json`，官方的 cURL 範例只帶 `Authorization: ApiKey …`；協調 session 改成 `Accept: */*`（小修，`tools/garmin-personal-api.ts`），請使用者再跑一次。
+- 使用者 2026-11-09 已送出 Garmin Business Starter 的申請。
 - 條款（「Garmin Connect 個人 API 補充條款」，2026-10-01 更新，使用者貼的全文）：key 屬個人所有，**僅限本人用於為自身用途而開發或操作的應用程式、服務或工具**；**不得販售、轉讓、再授權、發佈、揭露給任何第三方或分享**；Garmin 可以設用量限制；違反會停權、撤銷 key。沒有提到資料能不能存、要不要標 Garmin。
 - 協調 session 的結論：網頁版要用就得經過我們的伺服器轉送，等於把使用者的 key 交給第三方（我們），違反條款 → **不做成網頁版的功能**。手機 App 可以從裝置直接呼叫（沒有 CORS），但 Garmin 的 FAQ 說個人 API「不是給服務多位使用者的商業 App」，也不適合當產品的路。可以當**作者自己**的備案（本機腳本抓自己的 FIT，再用之後的「讀 FIT 檔」匯入）。Garmin 使用者的產品路線回到 Business Starter（或 App 讀健康資料）。
 

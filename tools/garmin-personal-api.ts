@@ -158,7 +158,8 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
   steps.push(tokenStep);
   let token: string | null = null;
   try {
-    const res = await f(tokenUrl, { method: "POST", headers: { Authorization: `ApiKey ${apiKey}`, Accept: "application/json" }, signal: AbortSignal.timeout(20_000) });
+    // 照官方的 cURL 範例只帶 Authorization：帶 Accept: application/json 時 Garmin 回 406（2026-11-09 使用者實測）
+    const res = await f(tokenUrl, { method: "POST", headers: { Authorization: `ApiKey ${apiKey}`, Accept: "*/*" }, signal: AbortSignal.timeout(20_000) });
     tokenStep.status = res.status;
     tokenStep.notes.push(`Content-Type：${res.headers.get("content-type") ?? "（沒有）"}`);
     const text = await res.text();
@@ -186,7 +187,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
       tokenStep.notes.push("回應的本文就是 token（不是 JSON 物件）");
     }
     tokenStep.ok = res.ok && token !== null;
-    if (!res.ok) tokenStep.notes.push(res.status === 401 || res.status === 403 ? "key 不對、過期或被刪了" : "換 token 失敗");
+    if (!res.ok) tokenStep.notes.push(res.status === 401 || res.status === 403 ? "key 不對、過期或被刪了" : res.status === 406 ? "換 token 失敗（406：伺服器不接受請求的格式）" : "換 token 失敗");
   } catch (e) {
     tokenStep.notes.push(`連線失敗：${scrub(e instanceof Error ? e.message : String(e), secrets)}`);
   }
