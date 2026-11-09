@@ -230,6 +230,7 @@
 | 2.0-draft | 2026-11-09 | 讀 FIT 檔（保底的資料來源，不在功能開關後面）：紀錄頁「匯入檔案」（回報頁也有入口）讀 FIT、GPX、TCX 與 zip（Garmin Connect 單趟下載、帳號資料匯出的大 zip、個人 API 下載的），在瀏覽器裡解析不上傳；跑步存成一般的紀錄（標「檔案」、Garmin 的標型號）、騎車等存成其他運動，只存摘要；和 Intervals.icu 的同一趟照時間重疊合併；跟著多裝置同步（`fw:`、`fo:`）；作者自用的 `tools/garmin-fetch-fit.ts`（12.40 的「讀 FIT 檔：實作」） |
 | 2.0-draft | 2026-11-09 | 小修：Garmin 的型號整理成好讀的樣子（「GARMIN INSTINCT_2」→「Garmin Instinct 2」、「GARMIN VENU4」→「Garmin Venu 4」，「GARMIN CONNECT」是服務 → 只標「Garmin」；FIT 的型號同一個整理，`garminDeviceLabel`，12.40） |
 | 0.7.0 | 2026-11-09 | **發版 v0.7.0**：可以匯入手錶的檔案（FIT、GPX、TCX、zip：Garmin Connect 單趟下載、帳號資料匯出），在瀏覽器裡解析、不上傳，和 Intervals.icu 同一趟會自動合併，匯入前就先告訴你哪些已經有了；Garmin 的資料標示來源（「Garmin Instinct 2」這樣的型號，或「資料來源：Garmin」），照 Intervals.icu 的 API 條款與 Garmin 的規範；Intervals.icu 只給空殼的活動（Strava，以及之後可能的 Garmin）不再存成 0 公里的跑步，看板會提示原因與替代方式；已經存好的紀錄在 Intervals.icu 變成空殼時保留，不會被刪；手機點輸入框不再放大頁面；送出與停止按鈕和輸入框一致。 |
+| 2.0-draft | 2026-11-09 | v0.7.0 已部署（網頁版、同步服務、Discord bot、標籤都成功）；9.4 的工作單標已部署 |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -769,7 +770,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：恢復資料（睡眠、HRV）的匯入（之後看需要）；把個人 API 做進網頁版；GPX／TCX 若太花時間可以先只做 FIT 與 zip，回報說明。
   - 驗收：單元測試（FIT 與 zip 的解析、Garmin 型號、各種壞檔、去重、大檔的篩選）；E2E（選一個 FIT、一個單趟 zip、一個含多趟的匯出 zip，紀錄頁出現、標示正確、和 Intervals.icu 的同一趟合併、教練看得到；手機與電腦的截圖）；測試用的 FIT 用程式產生（`tools/lib/fit-fixture.ts`），不要放真實的檔案；全部 E2E 照過。
   - 注意：使用者的真實檔案不進雲端 session；請使用者在 staging 用自己的檔案試。
-  - 狀態：已推上 v2（2026-11-09，開發 session「讀 FIT 檔」）；實作、驗證與和工作單不同的地方見 12.40 的「讀 FIT 檔：實作」。不在功能開關後面（保底的資料來源）。待協調 session 檢查；待使用者：在 staging 用自己的檔案試（單趟的 FIT 或 zip、帳號資料匯出的大 zip），在本機跑 `npx tsx tools/garmin-fetch-fit.ts` 抓自己的 FIT 再匯入。
+  - 狀態：已推上 v2（2026-11-09，開發 session「讀 FIT 檔」）；實作、驗證與和工作單不同的地方見 12.40 的「讀 FIT 檔：實作」。不在功能開關後面（保底的資料來源）。待協調 session 檢查；待使用者：在 staging 用自己的檔案試（單趟的 FIT 或 zip、帳號資料匯出的大 zip），在本機跑 `npx tsx tools/garmin-fetch-fit.ts` 抓自己的 FIT 再匯入。 **已部署**（v0.7.0，2026-11-09）。
 
 - **Garmin 空殼的偵測與提示；Garmin 個人 API 的可行性測試**（12.40、KI-048；2026-11-09 使用者：「可以做」；排在「標示 Garmin 的資料來源」之後）
   - 要做什麼：
@@ -777,7 +778,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     2. Garmin 個人 API 的可行性測試：`tools/` 一支在使用者本機跑的腳本（使用者自己的 key，放 `.env`，不印出、不寫進檔案），測：用 key 換 access token、列最近的活動（JSON）、下載一趟的 FIT（看欄位完不完整，用現有讀 FIT 的程式解析，只印欄位名稱與筆數，不印數值）、健康資料（睡眠、靜止心率）；另外一個本機的小網頁，從瀏覽器直接呼叫同樣的端點，看 CORS 允不允許。結果寫成一份報告（不含使用者的資料），使用者貼給協調 session。腳本要寫清楚 Garmin 個人 API 的條款限制。
   - 不做：把 Garmin 個人 API 做成正式功能（等測試結果與條款確認）；Business Starter。
   - 驗收：單元測試（空殼的判斷、不存、不算負荷、提示的次數）；E2E（模擬上游回空殼時看板的提示、紀錄頁沒有 0 公里的紀錄）；測試腳本對模擬的回應跑過一次；全部 E2E 照過。
-  - 狀態：已推上 v2（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」）；實作、驗證、和工作單不同的地方與 Garmin 官方文件的重點見 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」。不在功能開關後面。待使用者：在 staging 看（模擬不出空殼，平常不會出現；Strava 匯入的活動在最近 14 天內才會看到）；在自己的電腦產生 Garmin 個人 API key、跑 `npx tsx tools/garmin-personal-api.ts --serve`，把報告與網頁的結果貼給協調 session。 協調 session 檢查過（2026-11-09：pull、`npm test` 602 項、typecheck；腳本與測試網頁只連 Garmin、不存 key）。待使用者在本機跑測試。
+  - 狀態：已推上 v2（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」）；實作、驗證、和工作單不同的地方與 Garmin 官方文件的重點見 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」。不在功能開關後面。待使用者：在 staging 看（模擬不出空殼，平常不會出現；Strava 匯入的活動在最近 14 天內才會看到）；在自己的電腦產生 Garmin 個人 API key、跑 `npx tsx tools/garmin-personal-api.ts --serve`，把報告與網頁的結果貼給協調 session。 協調 session 檢查過（2026-11-09：pull、`npm test` 602 項、typecheck；腳本與測試網頁只連 Garmin、不存 key）。待使用者在本機跑測試。 **已部署**（v0.7.0，2026-11-09）。
 
 - **標示 Garmin 的資料來源**（KI-048、12.40；2026-11-09 使用者：「Garmin 的標示要不要現在做？要」）
   - 依據：Intervals.icu 的 API 條款 1.1（顯示由 Garmin 來源的資料算出的資訊要照 Garmin 的品牌規範標示）、Garmin 的 API 品牌規範（「Garmin〔裝置型號〕」，不知道型號時「Garmin」；在資料的標題旁邊或下方、看得到，不放在提示或註腳；不改動、不動畫 Garmin 的標誌，也不要把標誌放在心率等數字裡；分享或匯出到 App 以外也要標）。這次**只用文字**，不放 Garmin 的標誌圖。
@@ -789,7 +790,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     5. 匯出：使用者自己的備份不用；之後若有分享功能要記得標（寫進設計準則）。
   - 不做：Garmin 的標誌圖；Garmin 空殼的偵測與提示（另外一張）。
   - 驗收：單元測試（判斷 Garmin 的規則與轉換、多來源的列法）；E2E（測試資料要有 Garmin、其他品牌、手動記三種；各頁看得到標示、不在提示裡、手動與其他品牌不標；手機與電腦的截圖）；全部 E2E 照過；設計準則加一條「資料來源的標示」並照檢查清單過一遍。
-  - 狀態：已推上 v2（2026-11-09，開發 session「標示 Garmin 的資料來源」；實作見 12.40 的「Garmin 標示的實作」）。不在功能開關後面（合規）。待使用者：在 staging 同步後看紀錄頁、回報、選手頁、看板與教練的回覆；在本機用 `tools/intervals-sources.ts` 確認自己的活動 `source` 是 `GARMIN_CONNECT`、`device_name` 是「Garmin 型號」的寫法。 協調 session 檢查過（2026-11-09：pull、`npm test` 590 項、typecheck）。待使用者在 staging 看，並在本機跑 `npx tsx tools/intervals-sources.ts` 確認 Garmin 的來源與裝置欄位。
+  - 狀態：已推上 v2（2026-11-09，開發 session「標示 Garmin 的資料來源」；實作見 12.40 的「Garmin 標示的實作」）。不在功能開關後面（合規）。待使用者：在 staging 同步後看紀錄頁、回報、選手頁、看板與教練的回覆；在本機用 `tools/intervals-sources.ts` 確認自己的活動 `source` 是 `GARMIN_CONNECT`、`device_name` 是「Garmin 型號」的寫法。 協調 session 檢查過（2026-11-09：pull、`npm test` 590 項、typecheck）。待使用者在 staging 看，並在本機跑 `npx tsx tools/intervals-sources.ts` 確認 Garmin 的來源與裝置欄位。 **已部署**（v0.7.0，2026-11-09）。
 
 - **測試模式：清空資料與重置成第一次打開**（2026-11-05 使用者：「希望測試模式在清除資料後可以回到第一次打開的狀態，或是分為現在的清除或整個重置兩種」）
   - 現況（協調 session 查的）：測試模式用另一個資料庫檔（`/coach-test.db`），但**設定與「做過了」的標記和正常模式共用**（`localStorage` 的 `running-coach.settings.v1`、`wizard.v1`、`getting-started.dismissed`、`feed.v1`、`region-hint.dismissed`、`red-flag-alert`，以及使用須知與資料流向的同意）。所以在測試模式裡沒辦法回到「第一次打開」，否則會連正常模式的設定一起清掉；現在只有「產生（會清空測試資料庫）」「清空手動新增的紀錄」「清掉塞進的課表」。
