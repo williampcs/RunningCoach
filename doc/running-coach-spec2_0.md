@@ -4546,3 +4546,8 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 技術上可以：CORS 是**瀏覽器**才有的限制；手機 App（原生，或 Capacitor 用原生的 HTTP）直接呼叫 Garmin 不受 CORS 影響，key 與資料都只在使用者的手機上，不經過我們。網頁版（含加到主畫面的 PWA）還是瀏覽器，一樣被擋。
 - 條款上是灰色地帶：補充條款說 key「僅限本人用於為自身用途而開發**或操作**的應用程式」、「不得揭露給第三方」——App 在使用者自己的手機上跑、key 不交給我們，可以解讀成「使用者自己操作」；但 Garmin 的 FAQ 說個人 API「不是給服務多位使用者的商業 App」。做之前要先問 Garmin（Starter 核准後透過開發者入口網站或支援詢問），拿到書面的答覆再做；沒有答覆不做，避免使用者的 key 被撤銷。
 - 不經過我們的伺服器、現在或之後就有的路：讀 FIT 檔（網頁版，開發中）、App 讀 Apple 健康／Health Connect。
+- 2026-11-09 使用者：「好，等 Starter 核准後再問 Garmin。接下來有關 Garmin 還有哪些要做」→ 協調 session 整理的 Garmin 清單：
+  - 開發中：讀 FIT 檔＋作者自用的抓檔腳本。
+  - 等使用者：在本機跑 `npx tsx tools/intervals-sources.ts` 確認 Garmin 的來源與裝置欄位（Garmin 標示用）；在 staging 看 Garmin 標示；FIT 匯入好了之後用自己的檔案試。
+  - 等外部：Starter 核准 → 讀完整的文件（取件網址的期限、Backfill、Starter 能拿哪些資料）、問 Garmin「App 用使用者自己的個人 key」→ 決定要不要做「經過但不保存」；Intervals.icu 公布 Garmin 空殼的格式 → 改 `unavailableOriginOf` 一處並補測試。
+  - 之後：推課表到 Garmin 手錶（Starter 的 Training API，和 12.31 的「推到手錶」同一件事）；iOS 試做時實測 Garmin Connect 寫進 Apple 健康的內容；Enterprise 只有超過約 1,000 人才需要。
