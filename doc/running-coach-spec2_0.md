@@ -4461,3 +4461,10 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   5. iOS App 讀 Apple 健康的試做（長期的主要路）。
   - Intervals.icu 的 OAuth（改 PKCE）對 Garmin 以外的品牌仍有用，排在可以順手做的時候。
 - 使用者可以先做的：申請 Intervals.icu 的 OAuth App；申請 Garmin Business Starter（免費，看完整的文件）；在 Garmin Connect 產生個人 API key（給第 2 步的測試用）。
+- 2026-11-09 使用者：「好，照這個順序做。順便幫我整理一下我現在的待辦順序」。使用者的待辦（協調 session 整理，依先後）：
+  1. 在 Garmin Connect 產生個人 API key（第 2 步的測試要用；放在自己電腦 repo 的 `.env`，不要貼到對話）。
+  2. 申請 Garmin Business Starter（看完整的文件，給第 4 步評估）。
+  3. 申請 Intervals.icu 的 OAuth App（填表、等核准；核准後的設定等改成 PKCE 時再一起弄）。
+  4. 「標示 Garmin 的資料來源」推上 staging 後去看（協調 session 會通知）。
+  5. 第 2 步的測試腳本好了之後在本機跑，把報告貼給協調 session。
+  - 不急的：`doc/product-brief.md` 第 5 題「成功的樣子」；Cloudflare 儀表板看正式站有沒有人用；代理的 4 個問題（延後）；KI-023：Discord bot 的 VM 若指定 2026-11-30 退役的模型會壞（bot 暫時沒在用，可以不管）。
