@@ -105,9 +105,38 @@ export function garminLabelOf(raw: Record<string, unknown>): string | null {
   if (typeof raw._note === "string" && raw._note) return null;
   const device = deviceNameOf(raw.device_name);
   const fromConnect = String(raw.source ?? "").toUpperCase() === "GARMIN_CONNECT";
-  if (device && /^garmin(\s|$)/i.test(device)) return `Garmin${device.slice(6)}`;
-  if (fromConnect) return device ? `Garmin ${device}` : "Garmin";
+  if (device && /^garmin(\s|_|$)/i.test(device)) return garminDeviceLabel(device);
+  if (fromConnect) return device ? garminDeviceLabel(device) : "Garmin";
   return null;
+}
+
+/** 一個字：全大寫（可以帶數字）的轉成首字大寫，字母與數字黏在一起時中間加空白；原本大小寫混合的照原樣 */
+function readableWord(word: string): string {
+  // 只有兩個以上的大寫字母才算全大寫的名字（「7X」這類型號的尾巴照原樣）
+  if (!/[A-Z]{2}/.test(word) || /[a-z]/.test(word)) return word;
+  return word
+    .replace(/([A-Z])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Z])/g, "$1 $2")
+    .split(" ")
+    .map((w) => (/^[A-Z]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w))
+    .join(" ");
+}
+
+/**
+ * Garmin 的裝置名稱 → 好讀的「Garmin〔型號〕」（Intervals.icu 的 device_name、FIT 的 product_name 共用）.
+ * 真實的例子（2026-11-09 使用者跑 tools/intervals-sources.ts）：「GARMIN INSTINCT_2」→「Garmin Instinct 2」、
+ * 「GARMIN VENU4」→「Garmin Venu 4」、「Garmin Venu 4」照原樣；「GARMIN CONNECT」是服務不是裝置 →「Garmin」.
+ * 前面沒有 Garmin 的（例：Forerunner 265）補上
+ */
+export function garminDeviceLabel(name: string): string {
+  const model = name
+    .trim()
+    .replace(/^garmin(?=\s|_|$)/i, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!model || /^connect(\s+(mobile|iq))?$/i.test(model)) return "Garmin";
+  return `Garmin ${model.split(" ").map(readableWord).join(" ")}`;
 }
 
 /**

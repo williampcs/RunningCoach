@@ -228,6 +228,7 @@
 | 2.0-draft | 2026-11-09 | Garmin 個人 API 第二次測試：全部可以讀（FIT 完整），瀏覽器不行 → 作者自用的備案（12.40）；工作單：讀 FIT 檔＋作者自用的 Garmin 抓檔腳本（9.4） |
 | 2.0-draft | 2026-11-09 | 討論：App 版用使用者自己的 Garmin 個人 API key 直接拉（技術可行、不受 CORS 限制；條款灰色，要先問 Garmin）（12.40） |
 | 2.0-draft | 2026-11-09 | 讀 FIT 檔（保底的資料來源，不在功能開關後面）：紀錄頁「匯入檔案」（回報頁也有入口）讀 FIT、GPX、TCX 與 zip（Garmin Connect 單趟下載、帳號資料匯出的大 zip、個人 API 下載的），在瀏覽器裡解析不上傳；跑步存成一般的紀錄（標「檔案」、Garmin 的標型號）、騎車等存成其他運動，只存摘要；和 Intervals.icu 的同一趟照時間重疊合併；跟著多裝置同步（`fw:`、`fo:`）；作者自用的 `tools/garmin-fetch-fit.ts`（12.40 的「讀 FIT 檔：實作」） |
+| 2.0-draft | 2026-11-09 | 小修：Garmin 的型號整理成好讀的樣子（「GARMIN INSTINCT_2」→「Garmin Instinct 2」、「GARMIN VENU4」→「Garmin Venu 4」，「GARMIN CONNECT」是服務 → 只標「Garmin」；FIT 的型號同一個整理，`garminDeviceLabel`，12.40） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -4460,6 +4461,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - `source` 是 `GARMIN_CONNECT` 但裝置名稱沒有 Garmin 字樣 → 補上「Garmin 」；沒有裝置名稱 → 「Garmin」。
   - 不標：其他品牌（COROS、Wahoo、Apple Watch…）、手動記、匯入的舊紀錄、拿不到內容的空殼（有 `_note`）。
   - 依據：規格「資料的來源與缺值」寫的「活動看 `source`、`device_name`、`file_type`」與 Intervals.icu 的 API 說明；**這兩個欄位的實際值還沒用真實帳號確認**（`tools/intervals-sources.ts` 會列出各來源與裝置名稱，請使用者在本機跑一次）。若真實的 `source` 不是 `GARMIN_CONNECT` 或裝置名稱沒有 Garmin 字樣，改 `garminLabelOf` 一處就好。
+- 型號的整理（2026-11-09 小修，使用者跑 `tools/intervals-sources.ts` 看到的真實寫法：「GARMIN INSTINCT_2」「GARMIN VENU4」「Garmin Venu 4」「GARMIN CONNECT」）：`garminDeviceLabel` 把底線換空白、全大寫的字轉成首字大寫、字母與數字黏在一起時加空白（「Garmin Instinct 2」「Garmin Venu 4」），大小寫混合的照原樣，「GARMIN CONNECT」（服務不是裝置）只標「Garmin」；FIT 匯入的型號也走這裡。
 - 多來源的列法（`dataSourcesOf`、`dataSourceLine`）：Garmin、其他裝置、手動記、匯入的紀錄，Garmin 在最前面；只有在用到 Garmin 時才出現「資料來源：…」那一行，沒有 Garmin 時整行不出現。
 - 單趟（「Garmin Forerunner 265」）：回報的選項（副標）與存了之後的結果卡片、紀錄頁的列（副標）與點開的跑步卡、騎車卡（標題下方第一行）、之前的週點開的課（副標）、看板裡提到某一趟的（還沒回報的那一趟、課表外的運動；在標題下方）。
 - 由多趟算的（「資料來源：Garmin、…」，標題下方）：紀錄頁的累積、騎車的累積、騎車的每週（最近 10 週的跑步與騎車）、選手頁的我的數字與訓練數值（含體能疲勞，看最近 28–31 天的紀錄）、之前的週（列出的週合起來）、看板的「兩筆看起來是同一趟」與跑量的提醒。

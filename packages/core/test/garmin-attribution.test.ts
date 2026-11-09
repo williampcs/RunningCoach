@@ -1,8 +1,11 @@
 /** Garmin 的資料來源標示（KI-048）：判斷的規則、轉換、多來源的列法、卡片、看板與「參考了」 */
 import { describe, expect, it } from "vitest";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
+import { fakeFit } from "../../../tools/lib/fit-fixture";
 
 import {
+  garminDeviceLabel,
+  parseFit,
   buildFeed,
   dataSourceLine,
   dataSourcesOf,
@@ -71,6 +74,27 @@ describe("哪些活動來自 Garmin", () => {
 
 const workout = (id: number, source: string, fields: Record<string, unknown> = {}): Workout =>
   ({ id, date: "2026-10-09", source, raw_json: raw(fields) }) as Workout;
+
+describe("Garmin 的型號整理成好讀的樣子", () => {
+  it("真實的 device_name（使用者 2026-11-09 跑 intervals-sources.ts）", () => {
+    const label = (device_name: string) => garminLabelOf({ source: "GARMIN_CONNECT", device_name });
+    expect(label("GARMIN INSTINCT_2")).toBe("Garmin Instinct 2");
+    expect(label("GARMIN VENU4")).toBe("Garmin Venu 4");
+    expect(label("Garmin Venu 4")).toBe("Garmin Venu 4");
+    expect(label("GARMIN CONNECT")).toBe("Garmin");
+  });
+
+  it("大小寫混合的照原樣；沒有 Garmin 字樣的補上；FIT 的型號也走同一個整理", () => {
+    expect(garminDeviceLabel("Forerunner 265")).toBe("Garmin Forerunner 265");
+    expect(garminDeviceLabel("Garmin Forerunner 965")).toBe("Garmin Forerunner 965");
+    expect(garminDeviceLabel("fenix 7X")).toBe("Garmin fenix 7X");
+    expect(garminDeviceLabel("EDGE_840")).toBe("Garmin Edge 840");
+    expect(garminDeviceLabel("garmin")).toBe("Garmin");
+    expect(garminLabelOf({ source: "UPLOAD", device_name: "GARMIN VENU4" })).toBe("Garmin Venu 4");
+    expect(garminLabelOf({ source: "UPLOAD", device_name: "COROS PACE 3" })).toBeNull();
+    expect(parseFit(fakeFit({ productName: "INSTINCT_2" }))[0]!.device).toBe("Garmin Instinct 2");
+  });
+});
 
 describe("由多趟算的：資料來源的列法", () => {
   it("Garmin 在最前面，其他照固定的順序，同樣的只列一次", () => {

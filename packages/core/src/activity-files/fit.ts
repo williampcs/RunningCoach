@@ -5,6 +5,7 @@
  * session（每一段運動的摘要）、lap（分圈）、record（每秒的心率，只用來算心率區間的時間，不存）、activity（當地時間）.
  * 不認得的訊息與欄位略過；開發者欄位（例如 Stryd）略過.
  */
+import { garminDeviceLabel } from "../activities";
 import type { ParsedActivity, ParsedLap } from "./types";
 
 /** FIT 的時間從 1989-12-31 00:00 UTC 起算 */
@@ -251,7 +252,7 @@ export function deviceOf(m: FitMessages): { manufacturer: number | null; name: s
   const brand = manufacturer !== null ? (MANUFACTURERS[manufacturer] ?? null) : null;
   if (brand === "Garmin") {
     // Garmin 的型號只用檔案裡寫的名字；產品編號的對照表沒有可靠的來源，不猜（只標「Garmin」，品牌規範允許）
-    if (productName) return { manufacturer, name: /^garmin(\s|$)/i.test(productName) ? `Garmin${productName.slice(6)}` : `Garmin ${productName}` };
+    if (productName) return { manufacturer, name: garminDeviceLabel(productName) };
     return { manufacturer, name: "Garmin" };
   }
   if (productName) return { manufacturer, name: brand && !productName.toLowerCase().startsWith(brand.toLowerCase()) ? `${brand} ${productName}` : productName };

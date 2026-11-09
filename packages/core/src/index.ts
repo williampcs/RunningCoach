@@ -28,6 +28,7 @@ export {
   dataSourcesOfRows,
   detailsOf,
   GARMIN,
+  garminDeviceLabel,
   garminLabelOf,
   garminOf,
   mergeDataSources,
