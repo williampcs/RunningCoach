@@ -4480,7 +4480,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 
 *驗證*
 - 單元測試：`packages/core/test/unavailable.test.ts`（判斷的規則、不存、不算負荷、已存的不刪、舊的 0 公里移除、只有空殼時的訊息、看板的提示與手動記之後、下次同步消失）、`tools/test/garmin-personal-api.test.ts`（模擬的 Garmin：每一步、報告沒有 key／token／數值／id／名稱／日期、Bearer 被拒時改用 key、key 錯與沒有 CORS 標頭、FIT 的摘要與日期）。
-- E2E `verify-shells.cjs`（手機淺色、電腦深色；截圖看過）。
+- E2E `verify-shells.cjs`（手機淺色、電腦深色；截圖看過）。全部 E2E（34 支，含新的 `verify-shells.cjs`）通過；`npm test` 602 項、typecheck 通過。
 - 腳本對模擬上游跑過一次（`GARMIN_TOKEN_URL`、`GARMIN_API_BASE` 指向 `/garmin/…`）；CORS 網頁用 Playwright 對 `/garmin/`（讀得到回應）與 `/garmin-nocors/`（被擋下）各跑一次。
 - 沒驗證到：真的 Garmin（這個環境連不到 `personal.connectapi.garmin.com`）；Intervals.icu 的 Garmin 空殼的真實格式（還沒公布）；Strava 空殼的真實欄位（照說明寫的）。
 
