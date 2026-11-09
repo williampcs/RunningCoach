@@ -117,6 +117,24 @@ export const WEB_GUIDE: GuideSection[] = [
 更早的跑步用“紀錄”頁的「匯入完整歷史」。`,
   },
   {
+    id: "unavailable",
+    title: "拿不到內容的活動（Garmin、Strava）",
+    keywords: ["拿不到內容", "空殼", "Garmin", "Strava", "0 公里", "活動不見了", "Intervals.icu 不能提供"],
+    body: `Intervals.icu 不能經 API 轉出從 Strava 匯入的活動，只給 id、時間與來源；Garmin 改了條款，Garmin 的活動之後可能也一樣。同步時遇到這種活動：
+
+- 不記成跑步（不會出現 0 公里的紀錄），也不算進訓練負荷。
+- 教練動態出現一則，說有幾筆、來自哪裡的活動拿不到內容；按 ✕ 收起後當天不再出現。那一天手動記了一趟，就不再提那一筆。
+- 之前已經同步進來的紀錄照舊留著，不會因為之後變成拿不到內容而被刪掉。
+
+替代的方式：
+
+1. 先手動記那幾趟：「回報」的「手錶沒記到？手動記一趟」，或看板上的「手動記一趟」。
+2. 之後的 App 會讀手機的健康資料（Garmin Connect 可以寫進 Apple 健康、Health Connect）。
+3. Garmin 的個人 API（使用者自己在 Garmin Connect 產生 key）還在測試中，確定可以用再加進來。
+
+Intervals.icu 網站裡的功能不受影響，只是不能轉給其他 App。`,
+  },
+  {
     id: "history",
     title: "紀錄",
     keywords: ["歷史", "跑步紀錄", "補填體感", "不是同一趟", "重複"],

@@ -1,6 +1,17 @@
 /** Intervals.icu — API 連線、活動拉取、資料正規化. */
 import { addDays } from "./dates";
-import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, SportSettings, WellnessDay } from "./types";
+import type {
+  Activity,
+  ActivitySource,
+  BestEffort,
+  OtherActivity,
+  PaceCurveSummary,
+  RunSettings,
+  SportSettings,
+  UnavailableActivity,
+  UnavailableOrigin,
+  WellnessDay,
+} from "./types";
 
 /** 預設的 API 網址（隱私說明頁列出網頁版會連的網址，測試會對照） */
 export const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
@@ -52,12 +63,29 @@ function isRun(activity: RawActivity): boolean {
 }
 
 /**
- * Intervals.icu 不經 API 提供從 Strava 匯入的活動，只列出一筆沒有內容的紀錄（附 _note）。
- * 欄位依搜尋到的說明，還沒有以真實帳號確認：有 _note，或來源是 Strava 又沒有距離與時間，就當成拿不到內容
+ * 空殼（KI-048）：Intervals.icu 不經 API 提供從 Strava 匯入的活動，只列出一筆沒有內容的紀錄（id、時間、來源與 _note）；
+ * Garmin 的之後可能一樣（作者說「可能只留 Garmin 的 ID」，格式還沒公布）.
+ * 判斷：有 _note；或來源是 Strava／Garmin Connect 又沒有距離與時間（Garmin 再加上沒有經過時間與心率，
+ * 不會把沒有距離的肌力訓練當成空殼）. Strava 的欄位依搜尋到的說明、Garmin 的是推測，都還沒以真實帳號確認；
+ * Intervals.icu 公布 Garmin 的格式時改這裡
  */
+export function unavailableOriginOf(activity: Record<string, unknown>): UnavailableOrigin | null {
+  const source = String(activity.source ?? "").toUpperCase();
+  const origin: UnavailableOrigin = source.includes("GARMIN") ? "garmin" : source.includes("STRAVA") ? "strava" : "other";
+  if (typeof activity._note === "string" && activity._note) {
+    if (origin !== "other") return origin;
+    // 來源沒寫時看說明的文字（例：「STRAVA activities are not available via the API」）
+    const note = activity._note.toUpperCase();
+    return note.includes("GARMIN") ? "garmin" : note.includes("STRAVA") ? "strava" : "other";
+  }
+  const noContent = activity.distance == null && activity.moving_time == null;
+  if (origin === "strava" && noContent) return "strava";
+  if (origin === "garmin" && noContent && activity.elapsed_time == null && activity.average_heartrate == null) return "garmin";
+  return null;
+}
+
 function isUnavailable(activity: RawActivity): boolean {
-  if (typeof activity._note === "string" && activity._note) return true;
-  return String(activity.source ?? "").toUpperCase() === "STRAVA" && activity.distance == null && activity.moving_time == null;
+  return unavailableOriginOf(activity) !== null;
 }
 
 function byStartDesc(a: RawActivity, b: RawActivity): number {
@@ -231,7 +259,7 @@ export class IntervalsClient implements ActivitySource {
 
   /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等） */
   async fetchOtherActivities(days = 14): Promise<OtherActivity[]> {
-    return (await this.queryActivities(days)).filter((a) => !isRun(a) && a.id != null).map((raw) => {
+    return (await this.queryActivities(days)).filter((a) => !isUnavailable(a) && !isRun(a) && a.id != null).map((raw) => {
       const start = typeof raw.start_date_local === "string" ? raw.start_date_local : "";
       const seconds = num(raw.moving_time) || num(raw.elapsed_time);
       const meters = num(raw.distance);
@@ -251,7 +279,7 @@ export class IntervalsClient implements ActivitySource {
   /** 最近 N 天跑步以外的活動類型，例：["Walk", "Ride"] */
   async fetchOtherActivityTypes(days = 14): Promise<string[]> {
     return (await this.queryActivities(days))
-      .filter((a) => !isRun(a))
+      .filter((a) => !isUnavailable(a) && !isRun(a))
       .map((a) => String(a.type ?? a.sport_type ?? "Other"));
   }
 
@@ -263,6 +291,17 @@ export class IntervalsClient implements ActivitySource {
   }
 
   private async queryRuns(days: number): Promise<RawActivity[]> {
-    return (await this.queryActivities(days)).filter(isRun).sort(byStartDesc);
+    return (await this.queryActivities(days)).filter((a) => !isUnavailable(a) && isRun(a)).sort(byStartDesc);
+  }
+
+  /** 最近 N 天拿不到內容的活動（空殼，KI-048）：不存、不算負荷，只在看板說明 */
+  async fetchUnavailableActivities(days = 14): Promise<UnavailableActivity[]> {
+    return (await this.queryActivities(days)).flatMap((raw) => {
+      const origin = unavailableOriginOf(raw);
+      if (!origin || raw.id == null) return [];
+      const start = typeof raw.start_date_local === "string" ? raw.start_date_local : "";
+      const type = raw.type ?? raw.sport_type;
+      return [{ intervals_id: String(raw.id), date: start ? start.slice(0, 10) : this.options.today(), origin, type: type ? String(type) : null }];
+    });
   }
 }

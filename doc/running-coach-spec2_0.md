@@ -222,6 +222,7 @@
 | 2.0-draft | 2026-11-09 | 調查：Business Starter 能不能「經過但不保存」（用 Ping／Pull，12.40）；工作單：Garmin 空殼的偵測與提示、Garmin 個人 API 的可行性測試（9.4，待開發） |
 | 2.0-draft | 2026-11-09 | 標示 Garmin 的資料來源（不在功能開關後面）：依 Intervals.icu 活動的 `source`（`GARMIN_CONNECT`）與 `device_name`（Garmin 開頭）判斷；單趟（回報的選項與結果、紀錄頁的列與卡片、之前的週、看板）寫「Garmin〔型號〕」，由多趟算的（累積、騎車的累積與每週、我的數字、訓練數值、之前的週、看板的跑量與恢復）在標題下方寫「資料來源：Garmin、…」；教練回覆的「參考了」用到 Garmin 的資料時加「（含 Garmin 的資料）」（網頁與 Discord）；設計準則加「資料來源的標示」；E2E `verify-garmin.cjs`（12.40、KI-048、9.4） |
 | 2.0-draft | 2026-11-09 | 優先順序：代理延後，先處理資料的路（標示 Garmin → 空殼偵測與個人 API 測試 → 讀 FIT 檔 → Garmin 個人 API 或 Starter → iOS 讀健康資料）（12.40） |
+| 2.0-draft | 2026-11-09 | 拿不到內容的活動（空殼）：同步時不存成跑步或其他運動、不算負荷，看板一則「N 筆來自 Garmin（Strava）的活動，拿不到內容」（手動記一趟、其他方式 → 使用說明新的一段；✕ 收起後當天不再出現；那天手動記了就不提）；之前存了內容的紀錄之後變成空殼時不刪；舊版存成 0 公里的空殼會被移除；E2E `verify-shells.cjs`。Garmin 個人 API 的可行性測試：本機腳本 `tools/garmin-personal-api.ts`（換 token、活動、FIT 的欄位、睡眠與靜止心率、CORS 的回應標頭，報告不含數值）與 `--serve` 的 CORS 測試網頁；讀 zip 與 FIT 的程式移到 `tools/lib/fit.ts`（12.40、KI-048、9.4） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -757,7 +758,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     2. Garmin 個人 API 的可行性測試：`tools/` 一支在使用者本機跑的腳本（使用者自己的 key，放 `.env`，不印出、不寫進檔案），測：用 key 換 access token、列最近的活動（JSON）、下載一趟的 FIT（看欄位完不完整，用現有讀 FIT 的程式解析，只印欄位名稱與筆數，不印數值）、健康資料（睡眠、靜止心率）；另外一個本機的小網頁，從瀏覽器直接呼叫同樣的端點，看 CORS 允不允許。結果寫成一份報告（不含使用者的資料），使用者貼給協調 session。腳本要寫清楚 Garmin 個人 API 的條款限制。
   - 不做：把 Garmin 個人 API 做成正式功能（等測試結果與條款確認）；Business Starter。
   - 驗收：單元測試（空殼的判斷、不存、不算負荷、提示的次數）；E2E（模擬上游回空殼時看板的提示、紀錄頁沒有 0 公里的紀錄）；測試腳本對模擬的回應跑過一次；全部 E2E 照過。
-  - 狀態：開發中（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」；RunningCoach 環境另外允許 developer.garmin.com 讀文件）。
+  - 狀態：已推上 v2（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」）；實作、驗證、和工作單不同的地方與 Garmin 官方文件的重點見 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」。不在功能開關後面。待使用者：在 staging 看（模擬不出空殼，平常不會出現；Strava 匯入的活動在最近 14 天內才會看到）；在自己的電腦產生 Garmin 個人 API key、跑 `npx tsx tools/garmin-personal-api.ts --serve`，把報告與網頁的結果貼給協調 session。
 
 - **標示 Garmin 的資料來源**（KI-048、12.40；2026-11-09 使用者：「Garmin 的標示要不要現在做？要」）
   - 依據：Intervals.icu 的 API 條款 1.1（顯示由 Garmin 來源的資料算出的資訊要照 Garmin 的品牌規範標示）、Garmin 的 API 品牌規範（「Garmin〔裝置型號〕」，不知道型號時「Garmin」；在資料的標題旁邊或下方、看得到，不放在提示或註腳；不改動、不動畫 Garmin 的標誌，也不要把標誌放在心率等數字裡；分享或匯出到 App 以外也要標）。這次**只用文字**，不放 Garmin 的標誌圖。
@@ -4450,6 +4451,42 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 驗證：單元測試 `garmin-attribution.test.ts`（判斷的規則、空殼、轉換、多來源的列法、卡片、看板、「參考了」）、Discord 的「參考了」；E2E `verify-garmin.cjs`（手機淺色、電腦深色；Garmin、其他品牌、手動記三種；標示看得到、不在 ⓘ 或細節裡、在標題下方；截圖看過）。
 - 全部 E2E（34 支，含新的 `verify-garmin.cjs`）通過；`verify-history` 第一次因為「資料來源」那行夾在「累積跑了」與總量之間而失敗，改放在總量下面後通過。
 - 沒做：Garmin 的標誌圖；Garmin 空殼的偵測與提示（另一張）；之後有分享功能時要標（寫在設計準則）；使用者自己的備份不標。
+
+**空殼的偵測與 Garmin 個人 API 的測試：實作**（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」，已推上 v2）
+
+*空殼的偵測與提示*
+- 判斷（`intervals.ts` 的 `unavailableOriginOf`）：有 `_note` → 依 `source`（或 `_note` 的字）分成 Garmin、Strava、其他；沒有 `_note` 時，`source` 是 Strava 又沒有距離與移動時間，或 `source` 是 Garmin Connect 又沒有距離、移動時間、經過時間與平均心率（不會把沒有距離的肌力訓練當成空殼）。Strava 的格式照之前查到的說明；**Garmin 的是推測**（作者說「可能只留 Garmin 的 ID」），Intervals.icu 公布格式時改這一處。
+- 同步（`sync.ts`、新的 `unavailable.ts`）：空殼不進跑步、其他運動與最新一筆（原本 `fetchActivities` 只看類型，Strava 的空殼若類型是 Run 會被存成 0 公里的跑步；匯入完整歷史本來就排除）。另外讀一次空殼（`fetchUnavailableActivities`）記在 `source_snapshots` 的 `unavailable_activities`（每次同步整份換掉；本機已經存了內容的不算）。
+  - 之前已經存了內容的紀錄，之後在 Intervals.icu 變成空殼（Garmin 被擋之後最近 14 天的紀錄就會這樣）：比對「在 Intervals.icu 刪了」時當成還在，不刪；本機存的本身就是空殼（舊版存的 0 公里）的不保護，照舊移除。
+  - 同步的訊息加一句「另有 1 筆來自 Garmin、2 筆來自 Strava 的活動，Intervals.icu 不能提供內容，沒有記成紀錄（看板有說明）」；只有空殼、沒有跑步時不再請選手「確認手錶已上傳」。
+- 看板（`feed.ts`，kind `unavailable`）：標題「1 筆來自 Garmin、1 筆來自 Strava 的活動，拿不到內容」，說明「Intervals.icu 不能再提供，這幾筆不記成跑步、不算負荷；可以先手動記。」，按鈕「手動記一趟」（到回報頁，下面有「手錶沒記到？手動記一趟」）與「其他方式」（打開使用說明新的一段「拿不到內容的活動（Garmin、Strava）」：原因、替代方式〔手動記、之後的 App 讀健康資料、Garmin 個人 API 測試中〕、之前的紀錄不會被刪）。只看最近 14 天；那一天已經有紀錄（例如手動記了）就不算那一筆；下一次同步沒有空殼時消失。
+  - 「一天最多一次、可以收起」：用看板原本的「知道了」（✕）：收起後當天不再出現，隔天還有空殼時再出現一次。
+- 匯入完整歷史的訊息改成「另有 N 筆 Intervals.icu 不經 API 提供內容（例如從 Strava 匯入的…）」，不再只說 Strava。
+- 模擬上游：`POST /_mock/shells?mode=garmin` 把 Garmin 的活動換成空殼，另加昨天一筆 Garmin、前天一筆 Strava 的空殼（`mode=off` 回到平常）。
+
+*Garmin 個人 API 的可行性測試*
+- `tools/garmin-personal-api.ts`（只在使用者的電腦跑；key 放 repo 根目錄的 `.env` 的 `GARMIN_PERSONAL_API_KEY`，不印、不寫進檔案；報告寫到 `data/garmin-personal-api/`，不進版控）：照順序測換 token（`POST …/personal-api-key/token`，`Authorization: ApiKey <key>`）、列最近 30 天的活動、一趟跑步的細節、下載原始檔（zip 裡的 FIT，用 `tools/lib/fit.ts` 讀：每種訊息幾筆、每個欄位有值的筆數）、睡眠（7 天）、每日摘要（昨天的靜止心率、7 天）、心率（昨天）、HRV（7 天）；每一步記狀態、Content-Type、欄位名稱與型別、筆數。資料端點的驗證方式文件沒寫：先試 `Bearer <token>`，401 再試直接用 key，報告寫哪一種成功。CORS：對換 token 與列活動送預檢（`OPTIONS`，`Origin: http://localhost:8790`、要求 `authorization` 標頭），記回應的 `Access-Control-Allow-*`。報告不含任何數值、日期、id、名稱或位置（單元測試檢查）。
+- `--serve`：在 `http://localhost:8790/` 開 `tools/garmin-cors-test.html`，從瀏覽器直接呼叫換 token 與列活動（key 只留在那一頁的記憶體）；fetch 被擋時寫「被擋下或連不上」，結果只有狀態與筆數，可以複製。
+- 讀 zip 與 FIT 的程式從 `tools/garmin-export-fit.ts` 移到 `tools/lib/fit.ts`（兩支共用），另加 `fitFieldSummary`、`fitFromDownload`；`garmin-export-fit.ts` 對同一份假的匯出檔輸出和改之前一樣。假的 FIT 與 zip 在 `tools/lib/fit-fixture.ts`（模擬上游與測試用）。
+- 模擬上游加了 `/garmin/…`（照 Garmin 的路徑，key 是 `mock-garmin-key`，有 CORS 標頭）與 `/garmin-nocors/…`（沒有 CORS 標頭）。
+
+*Garmin 官方文件的重點*（2026-11-09 讀 developer.garmin.com 的 Personal API 說明、FAQ 與 Swagger；Garmin Connect 的頁面這個環境連不到）
+- 產生 key：登入 Garmin Connect 網站 → 帳號設定的 Personal API Key 頁（`connect.garmin.com/app/settings/personalApiToken`）→ Create Key → 讀並同意條款 → 選效期（30、90、180 天或 1 年）→ Create；key 只顯示一次，弄丟要刪掉重建；到期前約一週寄信；可以隨時刪除，刪了 key 與 token 都失效。
+- 換 token：`POST https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token`，標頭 `Authorization: ApiKey <key>`；token 24 小時有效（或到 key 過期）；沒有 refresh token，過期再換。**回應的欄位名稱文件沒寫（待確認）。**
+- 資料端點（Swagger，全部 GET，伺服器 `personal.connectapi.garmin.com`，另有 `.cn`）：列活動 `/activitylist-service/activities/search/activities`（`startDate`、`endDate`、`start`、`limit` 預設 99，最大值沒寫）、細節 `/activity-service/activity/{id}`、原始檔 `/download-service/files/activity/{id}`（zip，沒有格式參數）、睡眠 `/sleep-service/sleep/dailySleepSummariesByDate`（最多 31 天）、每日摘要 `/usersummary-service/usersummary/daily`（含 `restingHeartRate`）與 `/usersummary-service/v2/dailysummaries`（最多 1 年）、心率 `/wellness-service/wellness/dailyHeartRate`、HRV `/hrv-service/hrv/daily/{from}/{to}`（沒資料回 204）；另有 Body Battery、步數、壓力、體重、女性健康等。只能用拉的（Pull）。
+- **資料端點的驗證標頭文件沒寫（待確認）**：FAQ 只說是「OAuth2 access token」，Swagger 沒有 security 的定義；腳本先試 Bearer。
+- **速率限制、CORS 文件沒寫（待確認）**：只有各端點的日期範圍上限（28、31 天、1 年）。
+- 條款：FAQ 說個人 API「給想用自己的 Garmin 資料做個人 App 的人」「不是給服務多位使用者的商業 App」；key 要像密碼一樣保管。**條款全文只在 Garmin Connect 產生 key 的頁面上**（開發者網站沒有，`/personal/terms/` 是 404）：「能不能把 key 貼進別人做的 App」「資料能不能存」「要不要標示 Garmin」都要等使用者產生 key 時看條款。品牌規範（`/brand-guidelines/api-brand-guidelines/`）要求標題、次要畫面、匯出與衍生資料都要標 Garmin，沒說是否適用個人 API。
+
+*驗證*
+- 單元測試：`packages/core/test/unavailable.test.ts`（判斷的規則、不存、不算負荷、已存的不刪、舊的 0 公里移除、只有空殼時的訊息、看板的提示與手動記之後、下次同步消失）、`tools/test/garmin-personal-api.test.ts`（模擬的 Garmin：每一步、報告沒有 key／token／數值／id／名稱／日期、Bearer 被拒時改用 key、key 錯與沒有 CORS 標頭、FIT 的摘要與日期）。
+- E2E `verify-shells.cjs`（手機淺色、電腦深色；截圖看過）。
+- 腳本對模擬上游跑過一次（`GARMIN_TOKEN_URL`、`GARMIN_API_BASE` 指向 `/garmin/…`）；CORS 網頁用 Playwright 對 `/garmin/`（讀得到回應）與 `/garmin-nocors/`（被擋下）各跑一次。
+- 沒驗證到：真的 Garmin（這個環境連不到 `personal.connectapi.garmin.com`）；Intervals.icu 的 Garmin 空殼的真實格式（還沒公布）；Strava 空殼的真實欄位（照說明寫的）。
+
+*沒做*
+- 把 Garmin 個人 API 做成正式功能（等測試結果與條款）；Business Starter。
+- Discord：同步的訊息有那一句，沒有看板。
 
 **優先順序調整**（2026-11-09 使用者：「代理先延後，先搞定資料鏈的問題，不然好不容易從當初 1.0 改成現在這樣又要壞掉，我是有點不爽的」）
 - 代理、輕量帳號、每日免費上限（12.39）延後；先處理資料的路，目標：**不管 Garmin 與 Intervals.icu 怎麼變，使用者的紀錄都進得來**。

@@ -61,7 +61,7 @@ flowchart LR
 | `apps/discord` | Discord bot：讀 `.env`、把 Discord 的訊息與指令接到核心 | 300 |
 | `apps/sync` | 多裝置同步服務：Cloudflare Worker + D1（本機開發用 Node 版） | 500 |
 | `apps/proxy` | 訂閱模式的代理（未上線） | 750 |
-| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具 | |
+| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`） | |
 | `doc/` | 規格、KI 紀錄、這份架構說明 | |
 | `src/` | v1 的 Python 版，觀察期結束後移除 | |
 
@@ -217,7 +217,7 @@ erDiagram
 - **負荷與體能疲勞**（`load.ts`，規格 12.37）：每一趟的負荷有 Intervals.icu 算好的就用，沒有時依心率（hrSS）、配速（rTSS，只有跑步）或體感估，都是 TSS 的尺度；體能（42 天）與疲勞（7 天）是每天負荷合計的指數平均，有 Intervals.icu 的值時照舊用它的。估負荷的依據（各運動量到的最大心率與閾值心率、靜止心率、閾值配速）由 `training-values.ts` 的 `loadContextOf` 組好，放在 `TrainingValues.loadContext`，紀錄卡片與檢查器用同一份。都是算出來的，不存進資料庫。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
-- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`。
+- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`；另有 `unavailable_activities`（最近 14 天拿不到內容的活動〔空殼〕的 id、日期與原本的來源，看板提示用，KI-048）。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。

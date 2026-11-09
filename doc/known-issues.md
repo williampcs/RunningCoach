@@ -1195,7 +1195,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-048] Garmin 的資料可能不能再經 Intervals.icu 的 API 取得；Garmin 資料要標示來源
 
 **發現時機**：2026-11-09，協調 session 讀 Intervals.icu 官方建議的論壇文章（「API access to Intervals.icu」、「Intervals.icu API Terms and Conditions」）。
-**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示已推上 v2（2026-11-09，工作單「標示 Garmin 的資料來源」，實作見規格 12.40 的「Garmin 標示的實作」）。詳細的調查見規格 12.40。
+**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示已推上 v2（2026-11-09，工作單「標示 Garmin 的資料來源」，實作見規格 12.40 的「Garmin 標示的實作」）；空殼的偵測與提示、Garmin 個人 API 的測試腳本已推上 v2（2026-11-09，見下面與規格 12.40）。詳細的調查見規格 12.40。
 
 **內容**（論壇原文的重點，2026-10）：
 - 「API access to Intervals.icu」的首篇：2026-10-09「Garmin 的條款更新了，我們很可能很快要擋掉經 API 取得 Garmin 的資料」；10-14「這是 Garmin Connect 開發者計畫重新開放的一部分，個人與 App 取得 Garmin 資料會有比較容易的路」。
@@ -1217,3 +1217,15 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - 驗證：單元測試 `garmin-attribution.test.ts`、E2E `verify-garmin.cjs`（模擬資料：Garmin、其他品牌、手動記）。
 - 沒驗證到：真實帳號的 `source` 與 `device_name` 的值（照 API 說明寫的）；恢復資料是否來自 Garmin 是推測（最近有經 Garmin Connect 同步的紀錄）。
 - 使用者要做的：在 staging 同步後看紀錄頁、回報、選手頁與看板；在本機跑 `npx tsx tools/intervals-sources.ts`，看「依來源」那張表的來源是不是 `GARMIN_CONNECT`、裝置是不是「Garmin Forerunner …」的寫法，不是的話告訴協調 session。
+
+**空殼的偵測與提示；Garmin 個人 API 的測試**（2026-11-09，已推上 v2；實作見規格 12.40 的「空殼的偵測與 Garmin 個人 API 的測試：實作」）：
+- 原因（順便查到的錯誤）：同步只看類型，Strava 的空殼若類型是 Run 會被存成 0 公里的跑步（匯入完整歷史本來就排除）；Garmin 若也變成空殼，最近 14 天已經存的 Garmin 紀錄會被當成「在 Intervals.icu 刪了」而移除。
+- 修正：空殼不存、不算負荷；已經存了內容的紀錄在變成空殼時不刪；舊版存的 0 公里空殼移除；看板一則提示（幾筆、來自哪裡、手動記一趟、其他方式），✕ 收起後當天不再出現。
+- Garmin 個人 API：`tools/garmin-personal-api.ts`（本機、只讀，報告不含數值）與 `--serve` 的 CORS 測試網頁。官方文件沒寫的：換 token 的回應格式、資料端點的驗證標頭、速率限制、CORS、條款全文（只在 Garmin Connect 產生 key 的頁面）。
+- 驗證：單元測試 `unavailable.test.ts`、`tools/test/garmin-personal-api.test.ts`；E2E `verify-shells.cjs`；腳本與 CORS 網頁對模擬上游跑過。
+- 沒驗證到：真的 Garmin API（雲端環境連不到）；Garmin 空殼的真實格式（Intervals.icu 還沒公布，判斷是推測的，公布時改 `unavailableOriginOf`）。
+- 使用者要做的：
+  1. Garmin Connect 網站登入 → 帳號設定的「Personal API Key」→ Create Key → 讀條款（請存一份，看「能不能用在別人做的 App」「資料能不能存」「要不要標示 Garmin」）→ 效期選 30 天 → Create，key 只顯示一次。
+  2. 在自己電腦的 repo 根目錄 `.env` 加一行 `GARMIN_PERSONAL_API_KEY=…`（不要貼到對話）。
+  3. `git pull` 後在 repo 根目錄跑 `npx tsx tools/garmin-personal-api.ts --serve`：終端機印出報告（也存到 `data/garmin-personal-api/report-日期.md`），並開好 `http://localhost:8790/`；用 Chrome（可以的話再用 Safari）打開，貼 key、按「開始測試」、按「複製結果」。按 Ctrl+C 結束。
+  4. 把報告與網頁的結果貼給協調 session（貼之前自己看一次）。測完可以在 Garmin Connect 把 key 刪掉。

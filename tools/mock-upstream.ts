@@ -13,6 +13,10 @@
  *   DELETE /intervals/disconnect-app          模擬中斷連結（Bearer）
  *   GET  /_mock/oauth                         E2E 檢查：授權頁收到的參數、換 token 與中斷連結的次數
  *   GET  /weather/v1/forecast|air-quality|search  模擬 Open-Meteo（濕熱、午後可能下雨、空氣品質普通）
+ *   POST /_mock/shells?mode=garmin|off        空殼（KI-048）：garmin 時 Intervals.icu 的 Garmin 活動只剩空殼（id、時間、來源），
+ *                                             另加昨天一筆 Garmin、前天一筆 Strava 的空殼；off 回到平常
+ *   *    /garmin/...                           模擬 Garmin 的個人 API（tools/garmin-personal-api.ts 的測試）：key 是 mock-garmin-key；
+ *                                             /garmin-nocors/... 一樣，但不回 CORS 標頭（瀏覽器會擋下）
  *   GET  /_mock/requests                      最近送到模擬服務的模型請求（與回傳的用量）、天氣查詢（E2E 檢查送出了什麼）
  *
  * 請求帶快取標記（cache_control）時模擬 Prompt Caching，回傳快取的讀與寫（見 cachedUsage）。
@@ -29,6 +33,8 @@ import { openNodeSqlite } from "@running-coach/sqlite-node";
 import { createSyncHandler } from "../apps/sync/src/handler";
 import { handleIntervalsToken, isIntervalsTokenPath } from "../apps/sync/src/intervals-token";
 import { SyncStore } from "../apps/sync/src/store";
+
+import { fakeRunFit, zipOne } from "./lib/fit-fixture";
 
 const PORT = Number(process.env.MOCK_PORT ?? 8788);
 // 模擬思考的停頓與串流時每段文字的間隔（毫秒）
@@ -119,7 +125,70 @@ function history() {
   return runs;
 }
 
-function activities() {
+/**
+ * 模擬 Garmin 的個人 API（KI-048）：路徑照 Garmin 的 Swagger；換 token 的回應格式文件沒寫，這裡用 OAuth 常見的 access_token、expires_in。
+ * 資料端點收 Bearer token。數值都是編的
+ */
+const GARMIN_TOKEN = "mock-garmin-access-token-0123456789";
+function handleGarmin(req: IncomingMessage, res: ServerResponse, url: URL): void {
+  const cors = url.pathname.startsWith("/garmin/");
+  const headers = (type: string) => ({ "content-type": type, ...(cors ? { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization", "access-control-allow-methods": "GET, POST, OPTIONS" } : {}) });
+  const json = (status: number, payload: unknown) => void res.writeHead(status, headers("application/json")).end(JSON.stringify(payload));
+  if (req.method === "OPTIONS") return void res.writeHead(cors ? 204 : 403, headers("text/plain")).end();
+  const path = url.pathname.replace(/^\/garmin(-nocors)?/, "");
+  const auth = req.headers.authorization ?? "";
+  if (path === "/personalapitoken-service/personal-api/personal-api-key/token") {
+    if (req.method !== "POST") return json(405, { error: "method" });
+    if (auth !== "ApiKey mock-garmin-key") return json(401, { error: "invalid key" });
+    return json(200, { access_token: GARMIN_TOKEN, token_type: "Bearer", expires_in: 86400 });
+  }
+  if (auth !== `Bearer ${GARMIN_TOKEN}`) return json(401, { error: "unauthorized" });
+  const day = (n: number) => daysAgo(n);
+  if (path === "/activitylist-service/activities/search/activities") {
+    return json(200, [
+      { activityId: 90000000001, activityName: "（模擬）晨跑", startTimeLocal: `${day(0)} 06:30:00`, activityType: { typeId: 1, typeKey: "running" }, distance: 10021.4, duration: 3306, averageHR: 152, maxHR: 171, deviceId: 1 },
+      { activityId: 90000000002, activityName: "（模擬）騎車", startTimeLocal: `${day(1)} 17:30:00`, activityType: { typeId: 2, typeKey: "cycling" }, distance: 30000, duration: 3600, averageHR: 128, deviceId: 2 },
+    ]);
+  }
+  if (/^\/activity-service\/activity\/\d+$/.test(path)) {
+    return json(200, { activityId: 90000000001, activityName: "（模擬）晨跑", activityTypeDTO: { typeKey: "running" }, summaryDTO: { distance: 10021.4, duration: 3306, averageHR: 152, maxHR: 171, trainingEffect: 3.1 }, metadataDTO: { deviceManufacturer: "GARMIN" } });
+  }
+  if (/^\/download-service\/files\/activity\/\d+$/.test(path)) {
+    res.writeHead(200, headers("application/x-zip-compressed"));
+    return void res.end(zipOne("90000000001_ACTIVITY.fit", fakeRunFit()));
+  }
+  if (path === "/sleep-service/sleep/dailySleepSummariesByDate") {
+    return json(200, [0, 1, 2].map((n) => ({ calendarDate: day(n), sleepTimeSeconds: 25200 - n * 600, deepSleepSeconds: 5400, sleepScores: { overall: { value: 80 } } })));
+  }
+  if (path === "/usersummary-service/usersummary/daily") return json(200, { calendarDate: url.searchParams.get("calendarDate"), restingHeartRate: 48, totalSteps: 9000, bodyBatteryMostRecentValue: 60 });
+  if (path === "/usersummary-service/v2/dailysummaries") return json(200, [{ calendarDate: day(1), restingHeartRate: 48 }, { calendarDate: day(2), restingHeartRate: 49 }]);
+  if (path === "/wellness-service/wellness/dailyHeartRate") return json(200, { calendarDate: url.searchParams.get("date"), restingHeartRate: 48, heartRateValues: [[1, 60], [2, 62]] });
+  if (path.startsWith("/hrv-service/hrv/daily/")) return void res.writeHead(204, headers("application/json")).end();
+  return json(404, { error: "not found" });
+}
+
+/** 空殼的模式（KI-048）：E2E 用 POST /_mock/shells 切換 */
+let shellMode: "off" | "garmin" = "off";
+
+/**
+ * Garmin 的空殼：Intervals.icu 作者說「可能只留 Garmin 的 ID」，格式還沒公布；這裡用推測的樣子
+ * （id、類型、時間、來源，沒有距離、時間、心率；不帶 _note）
+ */
+function garminShell(a: Record<string, unknown>): Record<string, unknown> {
+  return { id: a.id, type: a.type, start_date_local: a.start_date_local, source: "GARMIN_CONNECT", external_id: `garmin-${String(a.id)}` };
+}
+
+function activities(): Record<string, unknown>[] {
+  const list = baseActivities();
+  if (shellMode === "off") return list;
+  return [
+    ...list.map((a) => (a.source === "GARMIN_CONNECT" ? garminShell(a) : a)),
+    garminShell({ id: "i-shell-garmin", type: "Run", start_date_local: `${daysAgo(1)}T06:40:00` }),
+    { id: "i-shell-strava", type: "Run", start_date_local: `${daysAgo(2)}T07:00:00`, source: "STRAVA", _note: "STRAVA activities are not available via the API" },
+  ];
+}
+
+function baseActivities(): Record<string, unknown>[] {
   return [
     {
       id: "i-mock-today",
@@ -847,11 +916,19 @@ createServer((req, res) => {
     res.writeHead(status, { "content-type": "application/json", ...CORS });
     res.end(JSON.stringify(payload));
   };
+  {
+    const garminUrl = new URL(req.url ?? "/", "http://localhost");
+    if (/^\/garmin(-nocors)?\//.test(garminUrl.pathname)) return handleGarmin(req, res, garminUrl);
+  }
   if (req.method === "OPTIONS") return void res.writeHead(204, CORS).end();
 
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
   if (req.method === "GET" && path === "/_mock/requests") return send(200, recent);
+  if (req.method === "POST" && path === "/_mock/shells") {
+    shellMode = url.searchParams.get("mode") === "garmin" ? "garmin" : "off";
+    return send(200, { mode: shellMode });
+  }
   if (req.method === "GET" && path === "/_mock/oauth") return send(200, { authorize: oauth.authorize, exchanges: oauth.exchanges, disconnects: oauth.disconnects, bearerPaths: oauth.bearerPaths });
   // Intervals.icu 的授權頁：不顯示畫面，直接當成選手按了同意（login_hint=deny 時當成拒絕）
   if (req.method === "GET" && path === "/intervals/oauth/authorize") {

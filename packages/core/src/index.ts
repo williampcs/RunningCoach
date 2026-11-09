@@ -118,7 +118,15 @@ export {
 } from "./weather";
 export { splitReplySections, type ReplySection, type ReplySections } from "./reply-sections";
 export { formatStatus, formatTokenFooter, heartRateText, formatUsd } from "./format";
-export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, type IntervalsOptions } from "./intervals";
+export { INTERVALS_BASE_URL, IntervalsClient, IntervalsError, speedToPace, unavailableOriginOf, type IntervalsOptions } from "./intervals";
+export {
+  SNAPSHOT_UNAVAILABLE,
+  refreshUnavailable,
+  unavailableCountText,
+  unavailableForFeed,
+  unavailableSyncNote,
+  type UnavailableSnapshot,
+} from "./unavailable";
 export {
   AnthropicProvider,
   LlmError,
@@ -209,7 +217,7 @@ export { STOPPED_MARK, stoppedReply } from "./stopped";
 export { LATER_RACE_DAYS, monthDay, planTimeline, type PlanTimeline, type TimelineDay, type TimelineSession, type TimelineWeek } from "./plan-timeline";
 export { DIFFICULTY_LABELS, OUTCOME_LABELS, type Difficulty, type Outcome, type SessionResult } from "./plan-match";
 export { activityLabel } from "./activity-labels";
-export type { OtherActivity, Sport, SportSettings } from "./types";
+export type { OtherActivity, Sport, SportSettings, UnavailableActivity, UnavailableOrigin } from "./types";
 export { ALL_FEATURES, featureOn, FEATURES, parseFeatures, type Feature } from "./features";
 export {
   athleteSports,

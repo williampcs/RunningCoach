@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Garmin CORS 測試</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f7f8fa; --fg: #1a1d21; --muted: #5d6670; --card: #fff; --line: #d8dde3; --ok: #1a7f4b; --bad: #b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111418; --fg: #e8eaed; --muted: #9aa3ad; --card: #1b1f24; --line: #2e343b; --ok: #4cc38a; --bad: #ff7a6b; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 4px; }
+  input { box-sizing: border-box; width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); }
+  button { font: inherit; min-height: 44px; padding: 0 18px; border-radius: 22px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; margin-top: 16px; }
+  button.primary { background: #137a64; border-color: #137a64; color: #fff; }
+  details { margin-top: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 14px; background: var(--bg); padding: 12px; border-radius: 8px; }
+  .small { font-size: 14px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Garmin 個人 API：瀏覽器能不能直接呼叫</h1>
+  <p class="small">這一頁從你的瀏覽器直接呼叫 Garmin 的個人 API，看 Garmin 的伺服器允不允許網頁呼叫（CORS）。key 只留在這一頁的記憶體裡、只送到 Garmin，不存、不顯示；結果只有狀態與筆數，不含你的資料。</p>
+
+  <section class="card">
+    <label for="key">Garmin 個人 API key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="貼上 key（不會顯示）">
+    <details>
+      <summary class="small">網址（通常不用改）</summary>
+      <label for="tokenUrl">換 token</label>
+      <input id="tokenUrl" value="__TOKEN_URL__">
+      <label for="apiBase">API</label>
+      <input id="apiBase" value="__API_BASE__">
+    </details>
+    <button id="run" class="primary">開始測試</button>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <strong id="verdict"></strong>
+    <pre id="report"></pre>
+    <button id="copy">複製結果</button>
+    <p class="small">把結果貼給協調 session。另外用 Safari 或手機再測一次，瀏覽器的結果可能不一樣。</p>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const lines = [];
+  const log = (line) => lines.push(line);
+
+  // 瀏覽器擋下 CORS 時 fetch 會丟 TypeError，看不到狀態碼；這時開發者工具的 Console 會有 CORS 的訊息
+  async function attempt(label, url, init) {
+    try {
+      const res = await fetch(url, { ...init, mode: "cors", credentials: "omit", cache: "no-store" });
+      log(`${label}：狀態 ${res.status}（瀏覽器讀得到回應）`);
+      return res;
+    } catch (e) {
+      log(`${label}：被擋下或連不上（${e && e.name ? e.name : "錯誤"}）。打開開發者工具的 Console 看有沒有「CORS」的訊息`);
+      return null;
+    }
+  }
+
+  async function run() {
+    lines.length = 0;
+    const key = $("key").value.trim();
+    if (!key) {
+      $("key").focus();
+      return;
+    }
+    $("run").disabled = true;
+    log(`來源：${location.origin}；瀏覽器：${navigator.userAgent.replace(/\s+/g, " ").slice(0, 160)}`);
+    let token = null;
+    const tokenRes = await attempt("1. 用 key 換 token（POST，Authorization: ApiKey）", $("tokenUrl").value, {
+      method: "POST",
+      headers: { Authorization: `ApiKey ${key}` },
+    });
+    if (tokenRes) {
+      const text = await tokenRes.text().catch(() => "");
+      try {
+        const body = JSON.parse(text);
+        if (body && typeof body === "object") {
+          log(`   回應的欄位：${Object.keys(body).sort().join("、")}`);
+          const entry = Object.entries(body).find(([k, v]) => typeof v === "string" && /token/i.test(k));
+          if (entry) token = entry[1];
+        }
+      } catch {
+        if (tokenRes.ok && text.trim() && !text.trim().startsWith("<")) token = text.trim().replace(/^"|"$/g, "");
+      }
+      log(token ? "   拿到 token" : "   沒有拿到 token");
+    }
+    const auth = token ? `Bearer ${token}` : `ApiKey ${key}`;
+    const listUrl = `${$("apiBase").value.replace(/\/+$/, "")}/activitylist-service/activities/search/activities?start=0&limit=5`;
+    const listRes = await attempt(`2. 列活動（GET，Authorization: ${token ? "Bearer" : "ApiKey"}）`, listUrl, { headers: { Authorization: auth } });
+    if (listRes) {
+      const body = await listRes.json().catch(() => null);
+      log(`   ${Array.isArray(body) ? `${body.length} 筆` : "不是陣列"}`);
+    }
+    token = null;
+    const ok = !!tokenRes && !!listRes;
+    $("verdict").textContent = ok ? "CORS 允許：瀏覽器讀得到 Garmin 的回應（狀態見下面）" : "瀏覽器不能直接呼叫：至少有一步被擋下";
+    $("verdict").className = ok ? "ok" : "bad";
+    $("report").textContent = lines.join("\n");
+    $("resultCard").hidden = false;
+    $("run").disabled = false;
+  }
+
+  $("run").addEventListener("click", () => void run());
+  $("copy").addEventListener("click", () => {
+    void navigator.clipboard?.writeText($("report").textContent).then(() => ($("copy").textContent = "已複製"));
+  });
+})();
+</script>
+</body>
+</html>

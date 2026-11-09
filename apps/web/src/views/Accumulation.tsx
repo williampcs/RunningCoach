@@ -304,7 +304,7 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           )}
           {result.unavailable > 0 && (
             <p className="small">
-              另有 {number(result.unavailable)} 筆是從 Strava 匯入 Intervals.icu 的，Intervals.icu 不經 API 提供它們的內容，所以沒有匯入。
+              另有 {number(result.unavailable)} 筆 Intervals.icu 不經 API 提供內容（例如從 Strava 匯入的；之後 Garmin 的可能也是），所以沒有匯入。
             </p>
           )}
         </div>

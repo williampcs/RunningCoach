@@ -19,6 +19,7 @@ import { injuryName, SCORE_STALE_DAYS } from "./injuries";
 import type { CoachSettings } from "./types";
 import { WEATHER_CREDIT, weatherNotice, type WeatherForecast, type WeatherHour } from "./weather";
 import { raceHours, raceWeatherSummary, raceWindowText } from "./race-weather";
+import { unavailableCountText, unavailableForFeed } from "./unavailable";
 
 export type FeedAction =
   | { type: "checkin" }
@@ -32,13 +33,17 @@ export type FeedAction =
   | { type: "merge"; keepId: number; dupId: number }
   | { type: "distinct"; aId: number; bId: number }
   /** 就醫提示的「我知道了」（規格 12.33） */
-  | { type: "ack" };
+  | { type: "ack" }
+  /** 手動記一趟（拿不到內容的活動，KI-048） */
+  | { type: "manual" }
+  /** 打開使用說明的那一段 */
+  | { type: "help"; topic: string; label: string };
 
 export interface FeedItem {
   /** 同一天內固定，用於「知道了」之後不再顯示 */
   id: string;
   /** medical：就醫提示（網頁版依選手寫的文字加上，規格 12.33）；injury：傷病的分數 */
-  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross" | "medical" | "injury";
+  kind: "checkin" | "recovery" | "report" | "pending" | "race" | "plan" | "volume" | "gap" | "duplicate" | "weather" | "cross" | "medical" | "injury" | "unavailable";
   tone: "warn" | "info" | "ok";
   title: string;
   detail?: string;
@@ -65,6 +70,8 @@ const VOLUME_SPIKE = 1.3;
 const RACE_SOON_DAYS = 30;
 /** 賽前幾天起在看板放「比賽日的天氣」（規格 12.31） */
 export const RACE_WEATHER_FEED_DAYS = 3;
+/** 看板提示最近幾天拿不到內容的活動（和同步的範圍一樣） */
+const UNAVAILABLE_FEED_DAYS = 14;
 
 const ask = (label: string, message: string): FeedAction => ({ type: "ask", label, message });
 
@@ -524,6 +531,21 @@ export async function buildFeed(
         actions: [{ type: "checkin" }],
       });
     }
+  }
+
+  // 拿不到內容的活動（空殼，KI-048）：說明原因與替代方式；「知道了」之後當天不再出現
+  const shells = await unavailableForFeed(db, today, UNAVAILABLE_FEED_DAYS);
+  const shellCounts = unavailableCountText(shells);
+  if (shellCounts) {
+    items.push({
+      id: `unavailable-${today}`,
+      kind: "unavailable",
+      tone: "info",
+      title: `${shellCounts} 的活動，拿不到內容`,
+      // 看板的說明最多兩行：替代方式（之後的 App、Garmin 的個人 API）寫在使用說明
+      detail: "Intervals.icu 不能再提供，這幾筆不記成跑步、不算負荷；可以先手動記。",
+      actions: [{ type: "manual" }, { type: "help", topic: "unavailable", label: "其他方式" }],
+    });
   }
 
   // 需要注意的排前面

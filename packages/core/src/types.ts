@@ -50,6 +50,11 @@ export interface ActivitySource {
    * （Intervals.icu 不經 API 提供從 Strava 匯入的活動）。不支援的來源不實作
    */
   fetchRunsBetween?(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }>;
+  /**
+   * 最近 N 天來源列出、但不提供內容的活動（「空殼」：Strava 的，之後可能還有 Garmin 的；KI-048）.
+   * 不存成紀錄、不算負荷，只用來在看板說明；不支援的來源不實作
+   */
+  fetchUnavailableActivities?(days: number): Promise<UnavailableActivity[]>;
   /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等），教練排課與判斷疲勞時參考；不支援的來源不實作 */
   fetchOtherActivities?(days: number): Promise<OtherActivity[]>;
   /** 跑步的閾值與心率區間（Intervals.icu 的運動設定）；不支援的來源不實作 */
@@ -61,6 +66,18 @@ export interface ActivitySource {
   fetchSportSettings?(): Promise<SportSettings[]>;
   /** 最近 N 天跑步的最佳配速曲線；不支援的來源不實作 */
   fetchPaceCurve?(days: number): Promise<PaceCurveSummary | null>;
+}
+
+/** 空殼的活動原本來自哪裡（KI-048） */
+export type UnavailableOrigin = "garmin" | "strava" | "other";
+
+/** 來源列出、但拿不到內容的活動：只有 id、日期與原本的來源 */
+export interface UnavailableActivity {
+  intervals_id: string;
+  date: string;
+  origin: UnavailableOrigin;
+  /** 類型（例：Run）；空殼可能沒有 */
+  type: string | null;
 }
 
 /** 跑步以外的運動：只記教練用得到的欄位 */
