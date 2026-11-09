@@ -1251,23 +1251,20 @@ export class Db {
   importFileActivity(rec: ImportRecord): Promise<FileImportResult> {
     const d = this.driver;
     return this.tx(async () => {
+      // 存之前再檢查一次（畫面上先比對過，這裡是保險）
+      const check = await this.fileActivityStatus(rec);
+      if (check.status === "existing") return check;
       if (rec.kind === "other") {
+        if (check.status === "merged") return check;
         const a = rec.activity;
-        if ((await d.all("SELECT 1 FROM other_activities WHERE intervals_id=?", [a.intervals_id])).length) return { status: "existing" };
-        const nearby = (await d.all("SELECT type, raw_json FROM other_activities WHERE date BETWEEN ? AND ?", [addDays(a.date, -1), addDays(a.date, 1)])) as {
-          type: string;
-          raw_json: string | null;
-        }[];
-        if (nearby.some((o) => sportOfType(o.type) === sportOfType(a.type) && sameRun(o as never, { raw_json: a.raw_json ?? null } as never))) return { status: "merged" };
         await d.run(
           `INSERT INTO other_activities (intervals_id, date, type, duration_min, distance_km, avg_hr, training_load, raw_json, synced_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [a.intervals_id, a.date, a.type, a.duration_min, a.distance_km, a.avg_hr, a.training_load, a.raw_json ?? null, this.stamp()],
         );
-        return { status: "new" };
+        return check;
       }
       const a = rec.activity;
-      if ((await d.all("SELECT 1 FROM workouts WHERE sync_id=?", [rec.id])).length) return { status: "existing" };
       const match = await this.findSameRun(a, null);
       const result = await d.run(
         `INSERT INTO workouts
@@ -1275,17 +1272,34 @@ export class Db {
          VALUES (?, 'run', ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'file', ?, ?, ?)`,
         [a.date, a.distance_km, a.duration_min, a.avg_hr, a.max_hr, a.avg_pace, a.elevation_m, a.calories, a.raw_json, rec.id, this.stamp(), this.stamp()],
       );
-      const id = result.lastInsertRowid;
-      if (match) {
-        await this.resolveSameRun(id, a, match);
-        return { status: "merged" };
-      }
-      const sameDay = (await d.all(
-        `SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json FROM workouts w WHERE ${ACTIVE} AND date = ? AND id != ?`,
-        [a.date, id],
-      )) as unknown as WorkoutRow[];
-      return { status: sameDay.some((w) => maybeSameRun(w, a)) ? "maybe" : "new" };
+      if (match) await this.resolveSameRun(result.lastInsertRowid, a, match);
+      return check;
     });
+  }
+
+  /**
+   * 匯入之前先比對（不寫入）：existing 是之前匯入過；merged 是和已經有的一趟（Intervals.icu 的等）是同一趟；
+   * maybe 是同一天有一筆很像的手動紀錄（沒有開始時間，看板會問）；其他是 new
+   */
+  async fileActivityStatus(rec: ImportRecord): Promise<FileImportResult> {
+    const d = this.driver;
+    if (rec.kind === "other") {
+      const a = rec.activity;
+      if ((await d.all("SELECT 1 FROM other_activities WHERE intervals_id=?", [a.intervals_id])).length) return { status: "existing" };
+      const nearby = (await d.all("SELECT type, raw_json FROM other_activities WHERE date BETWEEN ? AND ?", [addDays(a.date, -1), addDays(a.date, 1)])) as {
+        type: string;
+        raw_json: string | null;
+      }[];
+      const same = nearby.some((o) => sportOfType(o.type) === sportOfType(a.type) && sameRun(o as never, { raw_json: a.raw_json ?? null } as never));
+      return { status: same ? "merged" : "new" };
+    }
+    const a = rec.activity;
+    if ((await d.all("SELECT 1 FROM workouts WHERE sync_id=?", [rec.id])).length) return { status: "existing" };
+    if (await this.findSameRun(a, null)) return { status: "merged" };
+    const sameDay = (await d.all(`SELECT id, date, distance_km, duration_min, avg_hr, training_load, raw_json FROM workouts w WHERE ${ACTIVE} AND date = ?`, [
+      a.date,
+    ])) as unknown as WorkoutRow[];
+    return { status: sameDay.some((w) => maybeSameRun(w, a)) ? "maybe" : "new" };
   }
 
   /**

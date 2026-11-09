@@ -2,9 +2,10 @@
 // - 檔案用 tools/e2e/make-activity-files.ts 產生（假的資料）：一個 FIT（2 天前 9 km，Garmin Forerunner 965）、
 //   一個 Garmin Connect 單趟的 zip（今天 06:30，和模擬的 Intervals.icu 今天那趟是同一趟）、
 //   一個帳號資料匯出的 zip（壓縮檔裡的壓縮檔：5 天前的跑步 COROS、6 天前的騎車 Garmin Edge 840、走路、每日健康資料、壞檔、400 天前的跑步）
-// - 先照常同步 Intervals.icu → 紀錄頁「匯入檔案」選三個檔 → 找到 4 趟、略過的說明（期間、不支援的運動、不是活動、讀不了）
+// - 先照常同步 Intervals.icu → 紀錄頁「匯入檔案」先只選單趟的 zip → 按匯入之前就說「這些都已經有了」、沒有匯入的按鈕
+//   → 選三個檔 → 找到 4 趟、「3 趟是新的，1 趟已經有了」、略過的說明（期間、不支援的運動、不是活動、讀不了）
 //   → 匯入 → 「新增 3 趟，已經有了 1 趟（已合併）」→ 紀錄頁：Garmin 型號的標示、「檔案」的標籤、COROS 不標 Garmin、
-//   今天那趟「已合併」、騎車在列表上 → 再匯一次同一個檔是「已經有了」→ 教練拿到的最近訓練有匯入的那趟
+//   今天那趟只有一筆、騎車在列表上 → 再選同一個檔：按匯入之前就說「這些都已經有了」→ 教練拿到的最近訓練有匯入的那趟
 // - 回報頁的「匯入手錶的檔案」打開同一個畫面；不左右捲動；手機淺色與電腦深色的截圖（import-*）
 // 這個腳本自己建置一份開著 multisport 的（放在 $E2E_OUT 底下），用 4185 埠開 vite preview；只需要 npm run dev:mock。
 const { spawn, execFileSync } = require("child_process");
@@ -104,12 +105,24 @@ async function flow(browser, view, files, check, problems) {
   await box.locator(".drop-zone").waitFor();
   c("periodDefault12", (await box.getByLabel("匯入的期間").inputValue()) === "12");
   await shot("1-pick", box);
+
+  step = "單趟的 zip 已經有了（和 Intervals.icu 的今天那趟同一趟）：按匯入之前就說";
+  await box.locator("input[type=file]").setInputFiles([files[1]]);
+  await box.locator(".import-preview").waitFor({ timeout: 30000 });
+  c("singleAlreadyHave", (await box.locator(".import-preview").innerText()).startsWith("這些都已經有了"));
+  c("singleNoImportButton", !(await box.getByRole("button", { name: /^匯入 \d+ 趟$/ }).count()) && !(await box.locator("button.primary").count()));
+  await shot("2a-already", box);
+  await box.getByRole("button", { name: "換別的檔" }).click();
+  await box.locator(".drop-zone").waitFor();
+
+  step = "三個檔";
   await box.locator("input[type=file]").setInputFiles(files);
 
   step = "掃描的結果";
   await box.getByRole("button", { name: /^匯入 \d+ 趟$/ }).waitFor({ timeout: 30000 });
   const reviewText = await box.innerText();
   c("found4", /找到 4 趟/.test(reviewText));
+  c("previewSplit", reviewText.includes("3 趟是新的，1 趟已經有了"));
   c("skippedOlder", reviewText.includes("1 趟比選的期間舊"));
   c("skippedWalk", reviewText.includes("1 趟不支援的運動"));
   c("skippedWellness", reviewText.includes("1 個不是活動的檔"));
@@ -120,11 +133,11 @@ async function flow(browser, view, files, check, problems) {
   await shot("2-review", box);
 
   step = "匯入";
-  await box.getByRole("button", { name: "匯入 4 趟" }).click();
+  await box.getByRole("button", { name: "匯入 3 趟" }).click();
   const done = box.locator(".notice.ok");
   await done.waitFor({ timeout: 30000 });
   const doneText = await done.innerText();
-  c("doneCounts", /新增 3 趟/.test(doneText) && /已經有了 1 趟/.test(doneText) && /合併/.test(doneText));
+  c("doneCounts", /新增 3 趟/.test(doneText) && /已經有了 1 趟/.test(doneText) && /同一趟/.test(doneText));
   await shot("3-done", box);
   await box.getByRole("button", { name: "看紀錄" }).click();
   c("closed", !(await page.locator(".import-files").count()));
@@ -142,7 +155,8 @@ async function flow(browser, view, files, check, problems) {
   c("corosNoGarmin", !(await coros.innerText()).includes("Garmin"));
   c("corosBadge", (await coros.locator(".badge", { hasText: "檔案" }).count()) === 1);
   const today = rows.filter({ hasText: "10 km" }).first();
-  c("todayMerged", (await today.locator(".badge", { hasText: "已合併" }).count()) === 1);
+  // 和 Intervals.icu 同一趟的沒有再存一次：今天只有一筆 10 km
+  c("todayOnce", (await rows.filter({ hasText: "10 km" }).count()) === 1);
   c("todayNotFileBadge", !(await today.locator(".badge", { hasText: "檔案" }).count()));
   const ride = rows.filter({ hasText: "Garmin Edge 840" });
   c("rideListed", (await ride.count()) >= 1);
@@ -158,11 +172,10 @@ async function flow(browser, view, files, check, problems) {
   step = "再匯一次";
   await page.getByRole("button", { name: "匯入檔案" }).click();
   await box.locator("input[type=file]").setInputFiles([files[0]]);
-  await box.getByRole("button", { name: "匯入 1 趟" }).click();
-  await box.locator(".notice.ok").waitFor({ timeout: 30000 });
-  const again = await box.locator(".notice.ok").innerText();
-  c("reimportExisting", /新增 0 趟/.test(again) && /已經有了 1 趟/.test(again));
-  await box.getByRole("button", { name: "看紀錄" }).click();
+  await box.locator(".import-preview").waitFor({ timeout: 30000 });
+  c("reimportExisting", (await box.locator(".import-preview").innerText()).startsWith("這些都已經有了") && !(await box.locator("button.primary").count()));
+  await box.getByRole("button", { name: "換別的檔" }).click();
+  await box.getByRole("button", { name: "取消" }).click();
   c("stillOneFileRun", (await rows.filter({ hasText: "9 km" }).count()) === 1);
   c("noUploads", uploads.length === 0);
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fakeFit } from "../../../tools/lib/fit-fixture";
-import { dataSourcesOf, importActivities, importRecordOf, importSummaryText, parseFit, scanSummaryText, type OtherActivity } from "../src";
+import { dataSourcesOf, importActivities, previewImport, previewSummaryText, importRecordOf, importSummaryText, parseFit, scanSummaryText, type OtherActivity } from "../src";
 import { applyEntity, snapshot } from "../src/device-sync/entities";
 import { activity, makeCoach } from "./helpers";
 
@@ -111,7 +111,25 @@ describe("匯入檔案存進資料庫（規格 12.40）", () => {
     expect(scanSummaryText({ activities: [], files: 5, notActivity: 2, unsupported: new Map([["Walk", 1]]), older: 3, problems: [{ name: "x", reason: "y" }] })).toEqual([
       "略過：3 趟比選的期間舊、1 趟不支援的運動（例如走路、健行）、2 個不是活動的檔（例如每日的健康資料）、1 個讀不了的檔。",
     ]);
-    expect(importSummaryText({ added: 3, existing: 1, merged: 2, maybe: 0, failed: 0 })).toBe("新增 3 趟，已經有了 3 趟（其中 2 趟和 Intervals.icu 或之前的紀錄是同一趟，已合併）。");
+    expect(importSummaryText({ added: 3, existing: 1, merged: 2, maybe: 0, failed: 0 })).toBe("新增 3 趟，已經有了 3 趟（其中 2 趟和 Intervals.icu 或之前的紀錄是同一趟）。");
+  });
+
+  it("按匯入之前先比對：新的、之前匯入過、和 Intervals.icu 同一趟、可能和手動記的重複；比對不寫入", async () => {
+    const { coach } = await makeCoach();
+    await coach.db.saveWorkout(intervalsRun());
+    await importActivities(coach.db, [parsed({ start: START - 86_400 })]);
+    await coach.db.addManualWorkout({ date: "2026-10-08", distance_km: 3.6, duration_min: 20, perceived_effort: 3, avg_hr: null, subjective_notes: null });
+    const list = [parsed(), parsed({ start: START - 86_400 }), parsed({ start: START - 2 * 86_400 }), parsed({ start: START - 3 * 86_400 })];
+    const before = await coach.db.countWorkouts();
+    const preview = await previewImport(coach.db, list);
+    expect(preview).toMatchObject({ existing: 1, merged: 1, maybe: 1 });
+    expect(preview.fresh.map((a) => a.startLocal.slice(0, 10))).toEqual(["2026-10-08", "2026-10-07"]);
+    expect(await coach.db.countWorkouts()).toBe(before);
+    expect(previewSummaryText(preview)).toEqual([
+      "2 趟是新的，2 趟已經有了（和 Intervals.icu 或之前的紀錄是同一趟）。",
+      "其中 1 趟和同一天手動記的很像，匯入後最近 7 天內的會在看板上問你是不是同一趟。",
+    ]);
+    expect(previewSummaryText({ fresh: [], maybe: 0, existing: 2, merged: 0 })).toEqual(["0 趟是新的，2 趟已經有了（之前匯入過）。"]);
   });
 
   it("刪掉匯入的那一筆", async () => {

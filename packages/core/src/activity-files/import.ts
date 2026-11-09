@@ -47,6 +47,46 @@ export async function importActivities(
   return counts;
 }
 
+export interface ImportPreview {
+  /** 要匯入的（新的，含 maybe） */
+  fresh: ParsedActivity[];
+  /** 新的裡面，同一天有一筆很像的手動紀錄（看板會問是不是同一趟） */
+  maybe: number;
+  /** 之前匯入過的（同一個檔） */
+  existing: number;
+  /** 和已經有的一趟（Intervals.icu 的等）是同一趟 */
+  merged: number;
+}
+
+/** 按「匯入」之前先比對資料庫（不寫入）：哪些是新的、哪些已經有了 */
+export async function previewImport(db: Db, activities: ParsedActivity[], options: { onProgress?: (done: number) => void } = {}): Promise<ImportPreview> {
+  const preview: ImportPreview = { fresh: [], maybe: 0, existing: 0, merged: 0 };
+  for (let i = 0; i < activities.length; i++) {
+    const a = activities[i]!;
+    const { status } = await db.fileActivityStatus(await importRecordOf(a));
+    if (status === "existing") preview.existing++;
+    else if (status === "merged") preview.merged++;
+    else {
+      preview.fresh.push(a);
+      if (status === "maybe") preview.maybe++;
+    }
+    options.onProgress?.(i + 1);
+  }
+  return preview;
+}
+
+/** 比對的說明：「3 趟是新的，2 趟已經有了」與可能重複的提醒 */
+export function previewSummaryText(p: ImportPreview): string[] {
+  const have = p.existing + p.merged;
+  const lines = [
+    have
+      ? `${p.fresh.length} 趟是新的，${have} 趟已經有了${p.merged ? `（和 Intervals.icu 或之前的紀錄是同一趟）` : "（之前匯入過）"}。`
+      : `${p.fresh.length} 趟都是新的。`,
+  ];
+  if (p.maybe) lines.push(`其中 ${p.maybe} 趟和同一天手動記的很像，匯入後最近 7 天內的會在看板上問你是不是同一趟。`);
+  return lines;
+}
+
 /** 掃描的說明：找到幾趟、略過了什麼 */
 export function scanSummaryText(scan: Pick<ScanResult, "activities" | "files" | "notActivity" | "unsupported" | "older" | "problems">): string[] {
   const lines: string[] = [];
@@ -66,7 +106,7 @@ export function importSummaryText(counts: ImportCounts): string {
   const parts = [
     `新增 ${counts.added} 趟`,
     counts.existing || counts.merged
-      ? `已經有了 ${counts.existing + counts.merged} 趟${counts.merged ? `（其中 ${counts.merged} 趟和 Intervals.icu 或之前的紀錄是同一趟，已合併）` : ""}`
+      ? `已經有了 ${counts.existing + counts.merged} 趟${counts.merged ? `（其中 ${counts.merged} 趟和 Intervals.icu 或之前的紀錄是同一趟）` : ""}`
       : null,
     counts.failed ? `${counts.failed} 趟存不進去` : null,
   ].filter(Boolean);

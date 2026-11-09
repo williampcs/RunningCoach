@@ -6,11 +6,14 @@ import {
   heartRateInfo,
   importActivities,
   importSummaryText,
+  previewImport,
+  previewSummaryText,
   scanFiles,
   scanSummaryText,
   shortDateLabel,
   zoneBasisFor,
   type ImportCounts,
+  type ImportPreview,
   type RunSettings,
   type ScanResult,
   type SportSettings,
@@ -31,7 +34,8 @@ const PERIODS = [
 type Step =
   | { kind: "pick" }
   | { kind: "scanning"; files: number; found: number }
-  | { kind: "review"; scan: ScanResult }
+  | { kind: "checking"; done: number; total: number }
+  | { kind: "review"; scan: ScanResult; preview: ImportPreview }
   | { kind: "saving"; done: number; total: number }
   | { kind: "done"; counts: ImportCounts; scan: ScanResult };
 
@@ -86,7 +90,18 @@ export function ImportFiles({ onClose, onDone }: { onClose: () => void; onDone?:
         setStep({ kind: "pick" });
         return;
       }
-      setStep({ kind: "review", scan: result });
+      // 按匯入之前先比對資料庫：哪些是新的、哪些已經有了
+      setStep({ kind: "checking", done: 0, total: result.activities.length });
+      last = 0;
+      const preview = await previewImport(coach.db, result.activities, {
+        onProgress: (done) => {
+          const now = Date.now();
+          if (now - last < 150) return;
+          last = now;
+          setStep({ kind: "checking", done, total: result.activities.length });
+        },
+      });
+      setStep({ kind: "review", scan: result, preview });
     } catch (e) {
       setError(errorText(e));
       setStep({ kind: "pick" });
@@ -95,14 +110,14 @@ export function ImportFiles({ onClose, onDone }: { onClose: () => void; onDone?:
     }
   }
 
-  async function save(result: ScanResult) {
+  async function save(result: ScanResult, preview: ImportPreview) {
     const controller = new AbortController();
     abort.current = controller;
-    const total = result.activities.length;
+    const total = preview.fresh.length;
     setStep({ kind: "saving", done: 0, total });
     try {
       let last = 0;
-      const counts = await importActivities(coach.db, result.activities, {
+      const counts = await importActivities(coach.db, preview.fresh, {
         signal: controller.signal,
         onProgress: (done) => {
           const now = Date.now();
@@ -113,10 +128,11 @@ export function ImportFiles({ onClose, onDone }: { onClose: () => void; onDone?:
       });
       touch();
       onDone?.();
-      setStep({ kind: "done", counts, scan: result });
+      // 比對時就已經有的也算進「已經有了」
+      setStep({ kind: "done", counts: { ...counts, existing: counts.existing + preview.existing, merged: counts.merged + preview.merged }, scan: result });
     } catch (e) {
       setError(errorText(e));
-      setStep({ kind: "review", scan: result });
+      setStep({ kind: "review", scan: result, preview });
     } finally {
       abort.current = null;
     }
@@ -201,7 +217,18 @@ export function ImportFiles({ onClose, onDone }: { onClose: () => void; onDone?:
         </div>
       )}
 
-      {step.kind === "review" && <Review scan={step.scan} error={error} onImport={() => void save(step.scan)} onBack={() => setStep({ kind: "pick" })} />}
+      {step.kind === "checking" && (
+        <div className="import-progress" role="status">
+          <div className="indeterminate" />
+          <span className="small">
+            比對已經有的紀錄…{number(step.done)}／{number(step.total)} 趟
+          </span>
+        </div>
+      )}
+
+      {step.kind === "review" && (
+        <Review scan={step.scan} preview={step.preview} error={error} onImport={() => void save(step.scan, step.preview)} onBack={() => setStep({ kind: "pick" })} />
+      )}
 
       {step.kind === "saving" && (
         <div className="import-progress" role="status">
@@ -231,8 +258,9 @@ export function ImportFiles({ onClose, onDone }: { onClose: () => void; onDone?:
   );
 }
 
-function Review({ scan, error, onImport, onBack }: { scan: ScanResult; error: string | null; onImport: () => void; onBack: () => void }) {
+function Review({ scan, preview, error, onImport, onBack }: { scan: ScanResult; preview: ImportPreview; error: string | null; onImport: () => void; onBack: () => void }) {
   const list = scan.activities;
+  const fresh = preview.fresh.length;
   const newest = list[0]?.startLocal.slice(0, 10);
   const oldest = list[list.length - 1]?.startLocal.slice(0, 10);
   const skipped = scanSummaryText(scan);
@@ -246,6 +274,16 @@ function Review({ scan, error, onImport, onBack }: { scan: ScanResult; error: st
       ) : (
         <p>沒有找到可以匯入的活動。</p>
       )}
+      {list.length > 0 &&
+        (fresh ? (
+          previewSummaryText(preview).map((line, i) => (
+            <p key={line} className={i ? "small muted" : "import-preview"}>
+              {line}
+            </p>
+          ))
+        ) : (
+          <p className="import-preview">這些都已經有了（之前匯入過，或和 Intervals.icu 的是同一趟）。</p>
+        ))}
       {skipped.map((line) => (
         <p key={line} className="small muted">
           {line}
@@ -265,13 +303,13 @@ function Review({ scan, error, onImport, onBack }: { scan: ScanResult; error: st
       )}
       {error && <div className="notice error">匯入失敗：{error}（再按一次，已存的不會重複）</div>}
       <div className="actions">
-        {list.length > 0 && (
+        {fresh > 0 && (
           <button className="primary" onClick={onImport}>
-            匯入 {number(list.length)} 趟
+            匯入 {number(fresh)} 趟
           </button>
         )}
-        <button className="text" onClick={onBack}>
-          {list.length ? "取消" : "換別的檔"}
+        <button className={fresh ? "text" : ""} onClick={onBack}>
+          {fresh ? "取消" : "換別的檔"}
         </button>
       </div>
     </>

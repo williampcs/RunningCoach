@@ -5,4 +5,4 @@ export { parseGpx, parseTcx, XmlActivityError } from "./gpx";
 export { scanFiles, type ScanInput, type ScanOptions, type ScanProblem, type ScanProgress, type ScanResult } from "./scan";
 export type { ParsedActivity, ParsedLap } from "./types";
 export { blobSource, bytesSource, isZip, ZipError, type RandomAccess } from "./zip";
-export { importActivities, importSummaryText, scanSummaryText, type ImportCounts } from "./import";
+export { importActivities, importSummaryText, previewImport, previewSummaryText, scanSummaryText, type ImportCounts, type ImportPreview } from "./import";
