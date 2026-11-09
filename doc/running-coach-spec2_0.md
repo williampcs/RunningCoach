@@ -231,6 +231,7 @@
 | 2.0-draft | 2026-11-09 | 小修：Garmin 的型號整理成好讀的樣子（「GARMIN INSTINCT_2」→「Garmin Instinct 2」、「GARMIN VENU4」→「Garmin Venu 4」，「GARMIN CONNECT」是服務 → 只標「Garmin」；FIT 的型號同一個整理，`garminDeviceLabel`，12.40） |
 | 0.7.0 | 2026-11-09 | **發版 v0.7.0**：可以匯入手錶的檔案（FIT、GPX、TCX、zip：Garmin Connect 單趟下載、帳號資料匯出），在瀏覽器裡解析、不上傳，和 Intervals.icu 同一趟會自動合併，匯入前就先告訴你哪些已經有了；Garmin 的資料標示來源（「Garmin Instinct 2」這樣的型號，或「資料來源：Garmin」），照 Intervals.icu 的 API 條款與 Garmin 的規範；Intervals.icu 只給空殼的活動（Strava，以及之後可能的 Garmin）不再存成 0 公里的跑步，看板會提示原因與替代方式；已經存好的紀錄在 Intervals.icu 變成空殼時保留，不會被刪；手機點輸入框不再放大頁面；送出與停止按鈕和輸入框一致。 |
 | 2.0-draft | 2026-11-09 | v0.7.0 已部署（網頁版、同步服務、Discord bot、標籤都成功）；9.4 的工作單標已部署 |
+| 2.0-draft | 2026-11-09 | Garmin Business Starter 通過；開 session 審閱條款（12.40） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -4607,3 +4608,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 
 *沒做*：每秒的資料與圖；恢復資料的匯入；Garmin 產品編號的對照表；把個人 API 做進網頁版；Discord 沒有匯入的入口（Discord 用自己的資料庫，網頁版匯入的不會到 Discord）。
 - 2026-11-09 使用者跑 `tools/intervals-sources.ts`：來源 `GARMIN_CONNECT`；裝置名稱有「GARMIN INSTINCT_2」「GARMIN VENU4」「Garmin Venu 4」「GARMIN CONNECT」（只記型號的寫法，不記筆數）。現在的標示會顯示「Garmin INSTINCT_2」「Garmin CONNECT」→ 小修交給「讀 FIT 檔」的開發 session 先做：型號整理成「Garmin Instinct 2」「Garmin Venu 4」，「GARMIN CONNECT」只標「Garmin」。使用者已在 staging 看到標示。使用者問正式版要不要盡快更新讓它也有 Garmin 標示 → 協調 session 建議小修後發 v0.6.1（Garmin 標示、空殼的偵測與「已存的紀錄變成空殼時保留」的保護、手機輸入框放大、送出／停止按鈕），讀 FIT 檔下一版再發。
+- 2026-11-09 使用者：Garmin Business Starter 的申請**通過了**；請協調 session 開一個 session 看條款有沒有要注意的地方 → 開了「Garmin Starter 條款審閱」session（只讀與寫文件；條款全文要使用者從開發者入口網站下載後上傳或貼給那個 session）。
