@@ -111,6 +111,8 @@ function history() {
       max_heartrate: 165 + (i % 6) * 3,
       total_elevation_gain: 30 + (i % 4) * 25,
       icu_training_load: Math.round(km * 6),
+      source: "GARMIN_CONNECT",
+      device_name: "Garmin Forerunner 255",
     });
   }
   runs.push({ id: "i-strava-1", start_date_local: "2023-06-01T07:00:00", source: "STRAVA", _note: "STRAVA activities are not available via the API" });
@@ -122,6 +124,9 @@ function activities() {
     {
       id: "i-mock-today",
       type: "Run",
+      // 資料來源（KI-048）：今天的跑步與騎車來自 Garmin，3 天前的跑步是其他品牌（不標 Garmin）
+      source: "GARMIN_CONNECT",
+      device_name: "Garmin Forerunner 265",
       start_date_local: `${today()}T06:30:00`,
       distance: 10021.4,
       moving_time: 3306,
@@ -142,6 +147,8 @@ function activities() {
     {
       id: "i-mock-ride",
       type: "Ride",
+      source: "GARMIN_CONNECT",
+      device_name: "Garmin Edge 540",
       start_date_local: `${today()}T17:30:00`,
       distance: 30000,
       moving_time: 3600,
@@ -156,6 +163,8 @@ function activities() {
     {
       id: "i-mock-ride-4d",
       type: "Ride",
+      source: "UPLOAD",
+      device_name: "Wahoo ELEMNT BOLT",
       start_date_local: `${daysAgo(4)}T07:00:00`,
       distance: 32000,
       moving_time: 4500,
@@ -169,6 +178,8 @@ function activities() {
     {
       id: "i-mock-ride-8d",
       type: "VirtualRide",
+      source: "ZWIFT",
+      device_name: "Zwift",
       start_date_local: `${daysAgo(8)}T20:00:00`,
       distance: 38000,
       moving_time: 5100,
@@ -185,6 +196,8 @@ function activities() {
     {
       id: "i-mock-3d",
       type: "Run",
+      source: "COROS",
+      device_name: "COROS PACE 3",
       start_date_local: `${daysAgo(3)}T19:10:00`,
       distance: 8000,
       moving_time: 2760,

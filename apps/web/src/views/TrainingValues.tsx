@@ -1,5 +1,6 @@
 import {
   computeTrainingValues,
+  dataSourceLine,
   distanceText,
   durationText,
   formatPace,
@@ -11,7 +12,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { useApp } from "../app-context";
-import { InfoTip } from "../ui";
+import { DataSource, InfoTip } from "../ui";
 
 const PREDICTIONS: [number, string][] = [
   [5000, "5 km"],
@@ -78,6 +79,7 @@ export function TrainingValuesCard() {
         <h2>訓練數值</h2>
         <InfoTip label="訓練數值的說明">由程式依你的資料計算，教練排課表時用這些數字；同步後更新。</InfoTip>
       </div>
+      <DataSource text={dataSourceLine(values.sources)} />
 
       <h3>心率</h3>
       {hr ? (

@@ -2,6 +2,7 @@
  * 過去幾週的課表與達成（規格 12.34 第 1、2 點）：課表頁的「之前的週」與教練看到的最近 4 週摘要.
  * 結果和這週一樣用比對算（matchWeek），不另存；過去的週課表已停用但資料還在.
  */
+import { dataSourcesOfRows, garminOf, type DataSourceLabel } from "./activities";
 import { addDays, daysBetween, isoWeekStart, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { activeSelfChange, SELF_CHANGE_REASONS, SESSION_KINDS, sessionView, sortSessions, type SelfChange, type SelfChangeAction, type SelfChangeReason, type SessionKind } from "./plan";
@@ -39,6 +40,8 @@ export interface PastSession {
   byAthlete: boolean;
   /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）；之後教練又改過的不算 */
   selfChange: SelfChange | null;
+  /** 配到的紀錄來自 Garmin 時的標示（「Garmin Forerunner 265」，KI-048）；其他是 null */
+  garmin: string | null;
 }
 
 export interface PastWeek {
@@ -54,6 +57,8 @@ export interface PastWeek {
   actual: { km: number; minutes: number; runs: number; others: number };
   /** 只有跑步的週寫距離，有其他運動時寫時間 */
   unit: "km" | "time";
+  /** 這週實際的總量用到的資料來源（KI-048） */
+  sources: DataSourceLabel[];
 }
 
 interface Candidate {
@@ -101,8 +106,9 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
       runs: runs.length,
       others: weekOthers.length,
     };
+    const sources = dataSourcesOfRows(runs, weekOthers);
     if (c.text) {
-      weeks.push({ weekStart: c.weekStart, range: weekRange(c.weekStart), text: true, sessions: [], planned: null, actual, unit: weekOthers.length ? "time" : "km" });
+      weeks.push({ weekStart: c.weekStart, range: weekRange(c.weekStart), text: true, sessions: [], planned: null, actual, unit: weekOthers.length ? "time" : "km", sources });
       continue;
     }
     const planned = await db.getPlannedSessions(c.plan.id);
@@ -121,6 +127,7 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
         minutes += v.minutes;
       }
       const outcome = !r || r.outcome === "pending" ? "missed" : r.outcome;
+      const matched = r?.workoutId != null ? workouts.find((w) => w.id === r.workoutId) : r?.activityId ? others.find((a) => a.intervals_id === r.activityId) : undefined;
       sessions.push({
         id: s.id,
         date: s.date,
@@ -137,6 +144,7 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
         activityId: r?.activityId ?? null,
         byAthlete: s.status !== "planned" && s.note === ATHLETE_ADJUST_NOTE,
         selfChange: activeSelfChange(v),
+        garmin: matched ? garminOf(matched) : null,
       });
     }
     const onlyRuns = sessions.every((s) => s.isRun) && !weekOthers.length;
@@ -148,6 +156,7 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
       planned: { km: round1(km), minutes: Math.round(minutes) },
       actual,
       unit: onlyRuns ? "km" : "time",
+      sources,
     });
   }
   return weeks;

@@ -1195,7 +1195,7 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 ## [KI-048] Garmin 的資料可能不能再經 Intervals.icu 的 API 取得；Garmin 資料要標示來源
 
 **發現時機**：2026-11-09，協調 session 讀 Intervals.icu 官方建議的論壇文章（「API access to Intervals.icu」、「Intervals.icu API Terms and Conditions」）。
-**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示開發中（2026-11-09，工作單「標示 Garmin 的資料來源」）。詳細的調查見規格 12.40。
+**狀態**：觀察中（Intervals.icu 說還沒定案）；Garmin 的標示已推上 v2（2026-11-09，工作單「標示 Garmin 的資料來源」，實作見規格 12.40 的「Garmin 標示的實作」）。詳細的調查見規格 12.40。
 
 **內容**（論壇原文的重點，2026-10）：
 - 「API access to Intervals.icu」的首篇：2026-10-09「Garmin 的條款更新了，我們很可能很快要擋掉經 API 取得 Garmin 的資料」；10-14「這是 Garmin Connect 開發者計畫重新開放的一部分，個人與 App 取得 Garmin 資料會有比較容易的路」。
@@ -1211,3 +1211,9 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 3. 讀 FIT 檔（Garmin 匯出、手錶的檔案；已有讀 Garmin FIT 的腳本）。
 4. 自己接 Garmin Connect 開發者計畫：資料會推到我們的伺服器，和資料原則（不經過、不保存）有衝突，要選用、說清楚，且有 1,000 人與「未驗證」的限制；不建議現在做。
 5. Garmin 的標示：在顯示 Garmin 來源的活動與數字的地方加上「Garmin」的標示（照 Garmin 的品牌規範），合規需要，建議盡快做。
+
+**Garmin 標示的修正**（2026-11-09，已推上 v2）：
+- 判斷：活動的 `device_name` 以 Garmin 開頭，或 `source` 是 `GARMIN_CONNECT`（`activities.ts` 的 `garminLabelOf`）。單趟寫「Garmin〔型號〕」，由多趟算的在標題下方寫「資料來源：Garmin、…」，教練的「參考了」加「（含 Garmin 的資料）」。只用文字，不放標誌。
+- 驗證：單元測試 `garmin-attribution.test.ts`、E2E `verify-garmin.cjs`（模擬資料：Garmin、其他品牌、手動記）。
+- 沒驗證到：真實帳號的 `source` 與 `device_name` 的值（照 API 說明寫的）；恢復資料是否來自 Garmin 是推測（最近有經 Garmin Connect 同步的紀錄）。
+- 使用者要做的：在 staging 同步後看紀錄頁、回報、選手頁與看板；在本機跑 `npx tsx tools/intervals-sources.ts`，看「依來源」那張表的來源是不是 `GARMIN_CONNECT`、裝置是不是「Garmin Forerunner …」的寫法，不是的話告訴協調 session。

@@ -2,10 +2,10 @@ import type { ReactNode } from "react";
 
 import { Check } from "lucide-react";
 
-import { addDays, LOAD_SOURCE_LABELS, loadText, shortDateLabel, type RideAccumulation, type RideCard, type RunCard } from "@running-coach/core";
+import { addDays, dataSourceLine, LOAD_SOURCE_LABELS, loadText, shortDateLabel, type RideAccumulation, type RideCard, type RunCard } from "@running-coach/core";
 
 import { Markdown } from "../Markdown";
-import { Disclosure, Icon, ICON_CHIP, SportIcon } from "../ui";
+import { DataSource, Disclosure, Icon, ICON_CHIP, SportIcon } from "../ui";
 
 /** 今天、昨天；更早的顯示 10/27（二） */
 export function dayText(date: string, today: string): string {
@@ -125,6 +125,8 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
           <PlanBadge card={card} />
         </div>
       )}
+      {/* Garmin 的標示（KI-048）：標題下方，看得到的地方 */}
+      <DataSource text={card.garmin} />
       {card.plan && card.plan.reasons.length > 0 && <p className="small">{card.plan.reasons.join("、")}</p>}
       <dl className="stats">
         <Stat label="距離" value={kmText(w.distance_km)} unit="km" />
@@ -162,6 +164,7 @@ export function RideCardView({ card, children }: { card: RideCard; children?: Re
   const a = card.activity;
   return (
     <div className="run-card ride-card">
+      <DataSource text={card.garmin} />
       {card.plan && card.plan.reasons.length > 0 && <p className="small">{card.plan.reasons.join("、")}</p>}
       <dl className="stats">
         <Stat label="時間" {...minutesText(a.duration_min)} />
@@ -198,6 +201,7 @@ export function RideTotals({ totals }: { totals: RideAccumulation }) {
         <SportIcon sport="ride" />
         騎車的累積
       </h2>
+      <DataSource text={dataSourceLine(totals.sources)} />
       <dl className="stats">
         <Stat label="騎了" value={totals.rides} unit="次" />
         <Stat label="時間" value={Math.round(totals.minutes / 6) / 10} unit="小時" />

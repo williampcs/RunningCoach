@@ -256,10 +256,10 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
                       </span>
                       <span className="list-row-sub">
                         {isOther(c)
-                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${kmText(c.activity.distance_km)} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null]
+                          ? [`${Math.round(c.activity.duration_min ?? 0)} 分`, c.activity.distance_km ? `${kmText(c.activity.distance_km)} km` : null, c.activity.avg_hr != null ? `心率 ${c.activity.avg_hr}` : null, c.garmin]
                               .filter(Boolean)
                               .join(" · ")
-                          : [`${kmText(c.activity.distance_km)} km`, `${c.activity.duration_min == null ? "?" : Math.round(c.activity.duration_min)} 分`, c.activity.avg_pace].filter(Boolean).join(" · ")}
+                          : [`${kmText(c.activity.distance_km)} km`, `${c.activity.duration_min == null ? "?" : Math.round(c.activity.duration_min)} 分`, c.activity.avg_pace, c.garmin].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                     {selected === key && <Icon as={CircleCheck} className="icon choice-check" />}

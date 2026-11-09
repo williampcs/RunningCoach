@@ -12,9 +12,12 @@ import { computeTrainingValues, intensityDistribution } from "./training-values"
 import { loadOf, type Load, type LoadContext } from "./load";
 import type { OtherActivity, Workout } from "./types";
 import { rideMetrics } from "./ride-analysis";
+import { dataSourcesOfRows, garminOf, type DataSourceLabel } from "./activities";
 
 export interface RunCard {
   workout: Workout;
+  /** Garmin 的標示（「Garmin Forerunner 265」或「Garmin」，KI-048）；不是 Garmin 的是 null */
+  garmin: string | null;
   /** 負荷：Intervals.icu 的，沒有時我們估的（load.ts；畫面要標「依體感估」等）；都沒有時為 null */
   load: Load | null;
   /** 依心率區間的時間（秒）：低強度為閾值心率 90% 以下；沒有區間資料時為 null */
@@ -103,6 +106,7 @@ export function runCardOf(
   const p = planned.byWorkout.get(workout.id);
   return {
     workout,
+    garmin: garminOf(workout),
     load: loadCtx ? loadOf(workout, "run", loadCtx) : workout.training_load != null ? { value: workout.training_load, source: "intervals" } : null,
     intensity: d.withZones ? { low: d.lowSecs, moderate: d.moderateSecs, high: d.highSecs } : null,
     plan: planOf(p),
@@ -115,6 +119,8 @@ export function runCardOf(
 /** 紀錄頁的一趟騎車（多運動的第 3 階段）：和跑步的卡片同一種樣式，數字換成騎車用的 */
 export interface RideCard {
   activity: OtherActivity;
+  /** Garmin 的標示（和跑步的卡片一樣） */
+  garmin: string | null;
   /** 負荷（和跑步的卡片一樣） */
   load: Load | null;
   /** 依那趟自己的心率區間（騎車的閾值心率）的時間（秒）；沒有區間資料時為 null */
@@ -138,6 +144,7 @@ export function rideCardOf(activity: OtherActivity, planned: Awaited<ReturnType<
   const result: SessionResult | undefined = p?.result;
   return {
     activity,
+    garmin: garminOf(activity),
     load: loadCtx ? loadOf(activity, "ride", loadCtx) : activity.training_load != null ? { value: activity.training_load, source: "intervals" } : null,
     intensity: m.intensity,
     watts: m.watts,
@@ -164,6 +171,8 @@ export interface RideAccumulation {
   since: string | null;
   thisWeek: { rides: number; km: number; minutes: number } | null;
   longest: { minutes: number; km: number | null; date: string } | null;
+  /** 用到的資料來源（KI-048：有 Garmin 時標示） */
+  sources: DataSourceLabel[];
 }
 
 export function accumulateRides(others: OtherActivity[], today: string): RideAccumulation {
@@ -179,6 +188,7 @@ export function accumulateRides(others: OtherActivity[], today: string): RideAcc
     since: rides[0]?.date ?? null,
     thisWeek: week.length ? { rides: week.length, km: round1(sum(week, "distance_km")), minutes: Math.round(sum(week, "duration_min")) } : null,
     longest: longest?.duration_min ? { minutes: Math.round(longest.duration_min), km: longest.distance_km, date: longest.date } : null,
+    sources: dataSourcesOfRows([], rides),
   };
 }
 
@@ -449,6 +459,8 @@ export interface Accumulation {
   track: Track;
   /** 每一趟一格，由舊到新：依距離分級（0：5 km 以下、1：5–10、2：10–21、3：21 以上） */
   blocks: { id: number; date: string; size: 0 | 1 | 2 | 3 }[];
+  /** 用到的資料來源（KI-048：有 Garmin 時標示） */
+  sources: DataSourceLabel[];
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -491,6 +503,7 @@ export function accumulate(workouts: Workout[], today: string, region: Region = 
       const d = w.distance_km ?? 0;
       return { id: w.id, date: w.date, size: d >= 21 ? 3 : d >= 10 ? 2 : d >= 5 ? 1 : 0 };
     }),
+    sources: dataSourcesOfRows(runs),
   };
 }
 

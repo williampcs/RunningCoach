@@ -1,5 +1,5 @@
 /** Coach — 組合 context、執行工具、呼叫模型；各外殼（Discord、網頁）只跟這個類別互動. */
-import { detailsOf } from "./activities";
+import { dataSourcesOf, detailsOf, garminOf, type DataSourceLabel } from "./activities";
 import { buildExtractionPrompt, parseExtraction, type ImportSuggestion } from "./athlete-import";
 import { ContextManager, type LayerChars, type StatusSummary } from "./context";
 import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
@@ -28,6 +28,8 @@ import {
   createToolExecutor,
   generateWorkoutSummary,
   sourcesOf,
+  GARMIN_SOURCE_NOTE,
+  usedGarminData,
   TOOL_FAILED_PREFIX,
   type ToolExecutor,
 } from "./tools";
@@ -97,6 +99,8 @@ export interface ReportCandidate {
   startTime: string | null;
   /** 哪種運動（多運動）；跑步是 run */
   sport: Sport;
+  /** 來自 Garmin 時的標示（「Garmin Forerunner 265」，KI-048）；其他是 null */
+  garmin: string | null;
 }
 
 /** 跑後回報列出幾天內的跑步：今天、昨天、前天 */
@@ -338,6 +342,7 @@ export class Coach {
     else if (!result.text.trim()) reply = EMPTY_REPLY;
 
     const sources = sourcesOf(calls);
+    if (sources.length && (await usedGarminData(this.db, calls))) sources.push(GARMIN_SOURCE_NOTE);
     await this.db.appendConversation("assistant", reply, sources);
     // 剛送出的訊息先存進資料庫才組合 context，所以也算在層5；頁尾另列為「訊息」，層5扣掉以免重複計算
     const sentChars = context.messages.at(-1)?.content.length ?? 0;
@@ -447,19 +452,20 @@ export class Coach {
         activity,
         startTime: startTimeOf(activity.raw_json),
         sport: "run",
+        garmin: garminOf(activity),
       });
     }
     // 已同步、但這次沒從來源拿到的（例如連不上 Intervals.icu）
     for (const w of saved) {
       if (listed.has(w.id) || w.perceived_effort != null) continue;
-      candidates.push({ target: { kind: "saved", workoutId: w.id }, activity: workoutAsActivity(w), startTime: startTimeOf(w.raw_json), sport: "run" });
+      candidates.push({ target: { kind: "saved", workoutId: w.id }, activity: workoutAsActivity(w), startTime: startTimeOf(w.raw_json), sport: "run", garmin: garminOf(w) });
     }
     // 多運動：已同步、還沒回報的騎車等其他運動（肌力訓練用課表頁的「做完了」）
     if (featureOn(this.runtime.settings, "multisport")) {
       for (const a of await this.db.getOtherActivities(REPORT_LOOKBACK_DAYS)) {
         const sport = sportOfType(a.type);
         if (a.perceived_effort != null || sport === "strength") continue;
-        candidates.push({ target: { kind: "other", intervalsId: a.intervals_id }, activity: otherAsActivity(a), startTime: startTimeOf(a.raw_json), sport });
+        candidates.push({ target: { kind: "other", intervalsId: a.intervals_id }, activity: otherAsActivity(a), startTime: startTimeOf(a.raw_json), sport, garmin: garminOf(a) });
       }
     }
     candidates.sort(
@@ -671,6 +677,14 @@ export class Coach {
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */
   runCards(days = 30): Promise<RunCard[]> {
     return runCards(this.db, this.today(), days);
+  }
+
+  /**
+   * 最近 N 天的紀錄用到的資料來源（KI-048：由多趟算出來的數字，用到 Garmin 時在標題下方標示）.
+   * sports 有指定時只看那幾種運動
+   */
+  async dataSources(days: number, sports?: readonly string[]): Promise<DataSourceLabel[]> {
+    return dataSourcesOf(await this.db.getActivities(days, sports ? { sports } : {}));
   }
 
   /** 紀錄頁頁首的累積（只增不減） */

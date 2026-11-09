@@ -220,6 +220,7 @@
 | 2.0-draft | 2026-11-09 | 讀 Intervals.icu 官方的三篇論壇：OAuth 申請是自己填表、核准後任何人可用、支援 PKCE 公開客戶端（不需 client_secret）、頻率限制（12.37）；Garmin 資料可能被擋與 Garmin 標示（KI-048）；新開 RunningCoach 專用的雲端環境（只多允許 forum.intervals.icu） |
 | 2.0-draft | 2026-11-09 | 調查：Garmin 的資料怎麼取得（12.40）；工作單：標示 Garmin 的資料來源（9.4） |
 | 2.0-draft | 2026-11-09 | 調查：Business Starter 能不能「經過但不保存」（用 Ping／Pull，12.40）；工作單：Garmin 空殼的偵測與提示、Garmin 個人 API 的可行性測試（9.4，待開發） |
+| 2.0-draft | 2026-11-09 | 標示 Garmin 的資料來源（不在功能開關後面）：依 Intervals.icu 活動的 `source`（`GARMIN_CONNECT`）與 `device_name`（Garmin 開頭）判斷；單趟（回報的選項與結果、紀錄頁的列與卡片、之前的週、看板）寫「Garmin〔型號〕」，由多趟算的（累積、騎車的累積與每週、我的數字、訓練數值、之前的週、看板的跑量與恢復）在標題下方寫「資料來源：Garmin、…」；教練回覆的「參考了」用到 Garmin 的資料時加「（含 Garmin 的資料）」（網頁與 Discord）；設計準則加「資料來源的標示」；E2E `verify-garmin.cjs`（12.40、KI-048、9.4） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -767,7 +768,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     5. 匯出：使用者自己的備份不用；之後若有分享功能要記得標（寫進設計準則）。
   - 不做：Garmin 的標誌圖；Garmin 空殼的偵測與提示（另外一張）。
   - 驗收：單元測試（判斷 Garmin 的規則與轉換、多來源的列法）；E2E（測試資料要有 Garmin、其他品牌、手動記三種；各頁看得到標示、不在提示裡、手動與其他品牌不標；手機與電腦的截圖）；全部 E2E 照過；設計準則加一條「資料來源的標示」並照檢查清單過一遍。
-  - 狀態：開發中（2026-11-09，開發 session「標示 Garmin 的資料來源」）。
+  - 狀態：已推上 v2（2026-11-09，開發 session「標示 Garmin 的資料來源」；實作見 12.40 的「Garmin 標示的實作」）。不在功能開關後面（合規）。待使用者：在 staging 同步後看紀錄頁、回報、選手頁、看板與教練的回覆；在本機用 `tools/intervals-sources.ts` 確認自己的活動 `source` 是 `GARMIN_CONNECT`、`device_name` 是「Garmin 型號」的寫法。
 
 - **測試模式：清空資料與重置成第一次打開**（2026-11-05 使用者：「希望測試模式在清除資料後可以回到第一次打開的狀態，或是分為現在的清除或整個重置兩種」）
   - 現況（協調 session 查的）：測試模式用另一個資料庫檔（`/coach-test.db`），但**設定與「做過了」的標記和正常模式共用**（`localStorage` 的 `running-coach.settings.v1`、`wizard.v1`、`getting-started.dismissed`、`feed.v1`、`region-hint.dismissed`、`red-flag-alert`，以及使用須知與資料流向的同意）。所以在測試模式裡沒辦法回到「第一次打開」，否則會連正常模式的設定一起清掉；現在只有「產生（會清空測試資料庫）」「清空手動新增的紀錄」「清掉塞進的課表」。
@@ -4432,3 +4433,18 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - 我們要先申請 Starter，才看得到完整的文件（含取件網址的期限、Backfill 的限制、Starter 能用哪些資料）。
 - 建議：先做 Garmin 個人 API 的可行性測試（使用者自己的 key、本機），同時可以先申請 Starter（免費、核准快）拿到文件再評估；真的要做時寫成工作單。
 - 2026-11-09 使用者：「可以做」→ 9.4 排兩張：同步偵測 Garmin 空殼並提示、Garmin 個人 API 的可行性測試（接在「標示 Garmin 的資料來源」之後）。
+
+**Garmin 標示的實作**（2026-11-09，開發 session「標示 Garmin 的資料來源」，已推上 v2）
+- 判斷（`activities.ts` 的 `garminLabelOf`，`detailsOf` 帶出 `device`、`garmin`、`garminConnect`）：同步存的 `raw_json` 本來就是 Intervals.icu 完整的活動，不用改 schema，舊的紀錄也標得出來。
+  - `device_name` 以 Garmin 開頭（例「Garmin Forerunner 265」）→ 照原樣（大小寫統一成 Garmin）；上傳的 Garmin 手錶 FIT 檔也算（資料一樣是 Garmin 裝置量的）。
+  - `source` 是 `GARMIN_CONNECT` 但裝置名稱沒有 Garmin 字樣 → 補上「Garmin 」；沒有裝置名稱 → 「Garmin」。
+  - 不標：其他品牌（COROS、Wahoo、Apple Watch…）、手動記、匯入的舊紀錄、拿不到內容的空殼（有 `_note`）。
+  - 依據：規格「資料的來源與缺值」寫的「活動看 `source`、`device_name`、`file_type`」與 Intervals.icu 的 API 說明；**這兩個欄位的實際值還沒用真實帳號確認**（`tools/intervals-sources.ts` 會列出各來源與裝置名稱，請使用者在本機跑一次）。若真實的 `source` 不是 `GARMIN_CONNECT` 或裝置名稱沒有 Garmin 字樣，改 `garminLabelOf` 一處就好。
+- 多來源的列法（`dataSourcesOf`、`dataSourceLine`）：Garmin、其他裝置、手動記、匯入的紀錄，Garmin 在最前面；只有在用到 Garmin 時才出現「資料來源：…」那一行，沒有 Garmin 時整行不出現。
+- 單趟（「Garmin Forerunner 265」）：回報的選項（副標）與存了之後的結果卡片、紀錄頁的列（副標）與點開的跑步卡、騎車卡（標題下方第一行）、之前的週點開的課（副標）、看板裡提到某一趟的（還沒回報的那一趟、課表外的運動；在標題下方）。
+- 由多趟算的（「資料來源：Garmin、…」，標題下方）：紀錄頁的累積、騎車的累積、騎車的每週（最近 10 週的跑步與騎車）、選手頁的我的數字與訓練數值（含體能疲勞，看最近 28–31 天的紀錄）、之前的週（列出的週合起來）、看板的「兩筆看起來是同一趟」與跑量的提醒。
+- 恢復資料（睡眠、HRV、靜息心率）：Intervals.icu 的 wellness 看不出來源，最近 28 天有經 Garmin Connect 同步的紀錄時當成來自 Garmin，看板的身體狀況那幾列（用到手錶的恢復資料時）標「資料來源：Garmin」。這是推測，不精確。
+- 教練的回覆：這次呼叫了讀紀錄的工具（訓練數值、最近的訓練、配速趨勢、課表、最新一筆、存這次的跑步、比賽當天的紀錄），而工具看的那段期間有 Garmin 的紀錄時，`sources` 最後加一項「（含 Garmin 的資料）」，顯示成「參考了：最近 14 天的訓練（含 Garmin 的資料）」；恢復狀況看是否經 Garmin Connect。期間是大約的（寧可多標）。網頁與 Discord 都經 `sourcesText`；Discord 的跑後分析走同一條（存跑步的工具），所以一樣有。系統提示裡固定帶的最近訓練不算（沒有「參考了」那一行）。
+- 測試模式的假資料：「Garmin 等手錶」產生的帶 `GARMIN_CONNECT`、「Garmin Forerunner 265」；Apple Watch 的是 Apple Watch；只有 iPhone 的沒有。模擬上游的活動：今天的跑步與騎車、舊的紀錄是 Garmin，3 天前的跑步是 COROS，騎車有 Wahoo 與 Zwift。
+- 驗證：單元測試 `garmin-attribution.test.ts`（判斷的規則、空殼、轉換、多來源的列法、卡片、看板、「參考了」）、Discord 的「參考了」；E2E `verify-garmin.cjs`（手機淺色、電腦深色；Garmin、其他品牌、手動記三種；標示看得到、不在 ⓘ 或細節裡、在標題下方；截圖看過）。
+- 沒做：Garmin 的標誌圖；Garmin 空殼的偵測與提示（另一張）；之後有分享功能時要標（寫在設計準則）；使用者自己的備份不標。

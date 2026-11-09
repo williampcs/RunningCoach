@@ -59,10 +59,11 @@ describe("detailsOf：來源的原始資料只在這裡解讀", () => {
     expect(d).toMatchObject({ watts: 160, normalizedWatts: 170, eftp: 212, cadence: 88, powerZoneTimes: [{ id: "Z1", secs: 600 }, { id: "SS", secs: 60 }] });
   });
 
-  it("沒有、壞掉、不是物件的原始資料：每一項都是 null", () => {
+  it("沒有、壞掉、不是物件的原始資料：每一項都是 null（是否經 Garmin Connect 是 false）", () => {
     for (const raw of [null, undefined, "", "not json", "[1,2]", "42"]) {
-      const d = detailsOf(raw);
-      expect(Object.values(d).every((v) => v === null)).toBe(true);
+      const { garminConnect, ...rest } = detailsOf(raw);
+      expect(Object.values(rest).every((v) => v === null)).toBe(true);
+      expect(garminConnect).toBe(false);
     }
   });
 

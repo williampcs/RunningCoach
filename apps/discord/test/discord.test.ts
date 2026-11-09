@@ -97,6 +97,10 @@ describe("訊息分段", () => {
     expect(replyParts("好", null, ["訓練數值", "最近 14 天的訓練"])).toEqual(["好\n-# 參考了：訓練數值、最近 14 天的訓練"]);
     expect(replyParts("好", null, [])).toEqual(["好"]);
   });
+
+  it("用到 Garmin 的資料時（跑後分析也是），「參考了」那行最後加上（含 Garmin 的資料）（KI-048）", () => {
+    expect(replyParts("好", null, ["這次跑步的數據", "（含 Garmin 的資料）"])).toEqual(["好\n-# 參考了：這次跑步的數據（含 Garmin 的資料）"]);
+  });
 });
 
 describe("版號", () => {

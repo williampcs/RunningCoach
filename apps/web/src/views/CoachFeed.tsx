@@ -369,6 +369,8 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
             <div className="feed-body">
               <div className="feed-text">
                 <span className="feed-title">{item.title}</span>
+                {/* Garmin 的標示（KI-048）：標題下方 */}
+                {item.source && <span className="feed-source small muted">{item.source}</span>}
                 {item.lines && (
                   <ul className="feed-lines">
                     {item.lines.map((line, i) => (

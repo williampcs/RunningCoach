@@ -4,6 +4,7 @@
  * 全部依本機資料的固定規則產生，不呼叫模型：沒有費用、打開就看得到。
  * 內容只有這一份；之後的通知（推播、LINE、Discord）只負責提醒使用者來看，不另外產生內容。
  */
+import { dataSourceLine, dataSourcesOfRows, garminOf, GARMIN, usesGarminConnect } from "./activities";
 import { addDays, daysBetween, shortDateLabel, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { keepScore, maybeSameRun } from "./dedupe";
@@ -44,6 +45,11 @@ export interface FeedItem {
   actions: FeedAction[];
   /** 資料來源的標示（天氣：Open-Meteo 的授權要求） */
   credit?: { label: string; href: string };
+  /**
+   * Garmin 的標示（KI-048）：提到某一趟時是「Garmin Forerunner 265」，由多趟算的是「資料來源：Garmin、手動記」；
+   * 畫面放在標題的下方
+   */
+  source?: string;
   /** 一行一項（今天的課：每堂課一行，前面是運動的圖示，規格 12.28） */
   lines?: { sport: "run" | "ride" | "strength" | "swim" | "other"; text: string }[];
   /** 右邊的數字（賽事的倒數，例：12 天） */
@@ -98,7 +104,9 @@ function crossItems(active: ActivePlan, today: string): FeedItem[] {
       .filter(Boolean)
       .join("、");
     const heavy = minutes >= 90 || load >= 60;
+    const garmin = garminOf(a);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `cross-${a.intervals_id}`,
       kind: "cross",
       tone: "info",
@@ -249,10 +257,13 @@ export async function buildFeed(
   const recovery = analyzeRecovery(wellness, checkins, today);
   // 手錶早上同步之前，最新的恢復資料是昨天的：寫明是昨天的
   const watchSays = recovery.latest && recovery.latest.date !== today ? "手錶昨天的資料顯示" : "手錶顯示";
+  // 手錶的恢復資料（睡眠、HRV）看不出來源：有經 Garmin Connect 同步的紀錄時當成來自 Garmin（KI-048）
+  const watchSource = recovery.watchFlags.length && usesGarminConnect([...workouts, ...others]) ? { source: dataSourceLine([GARMIN])! } : {};
 
   // 身體狀況：先問感受；手錶的數據只當參考
   if (!recovery.checkin) {
     items.push({
+      ...watchSource,
       id: `checkin-${today}`,
       kind: "checkin",
       tone: "info",
@@ -267,6 +278,7 @@ export async function buildFeed(
     const watch = recovery.watchFlags;
     if (self.length) {
       items.push({
+        ...watchSource,
         id: `recovery-self-${today}`,
         kind: "recovery",
         tone: "warn",
@@ -281,6 +293,7 @@ export async function buildFeed(
       });
     } else if (watch.length) {
       items.push({
+        ...watchSource,
         id: `recovery-watch-${today}`,
         kind: "recovery",
         tone: "info",
@@ -315,7 +328,9 @@ export async function buildFeed(
       const [keep, dup] = keepScore(b) > keepScore(a) || (keepScore(b) === keepScore(a) && b.id < a.id) ? [b, a] : [a, b];
       const day = a.date === today ? "今天" : daysBetween(a.date, today) === 1 ? "昨天" : a.date;
       const describe = (w: typeof a) => `${km(w.distance_km ?? 0)}・${Math.round(w.duration_min ?? 0)} 分`;
+      const pairSource = dataSourceLine(dataSourcesOfRows([a, b]));
       items.push({
+        ...(pairSource ? { source: pairSource } : {}),
         id: `duplicate-${pair}`,
         kind: "duplicate",
         tone: "info",
@@ -333,7 +348,9 @@ export async function buildFeed(
   // 最近一次跑步還沒回報感受（今天或昨天）
   const latest = workouts[0];
   if (latest && latest.perceived_effort == null && daysBetween(latest.date, today) <= 1) {
+    const garmin = garminOf(latest);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `report-${latest.id}`,
       kind: "report",
       tone: "info",
@@ -346,7 +363,9 @@ export async function buildFeed(
   // 多運動：最近一次騎車還沒回報感受（今天或昨天，練騎車的人）
   const latestRide = rides[0];
   if (sports.includes("ride") && latestRide && latestRide.perceived_effort == null && daysBetween(latestRide.date, today) <= 1) {
+    const garmin = garminOf(latestRide);
     items.push({
+      ...(garmin ? { source: garmin } : {}),
       id: `report-ride-${latestRide.intervals_id}`,
       kind: "report",
       tone: "info",
@@ -437,7 +456,9 @@ export async function buildFeed(
     workouts.filter((w) => daysBetween(w.date, today) >= 7 && daysBetween(w.date, today) < 28).reduce((s, w) => s + (w.distance_km ?? 0), 0) / 3;
   if (priorKm >= 10 && recentKm >= priorKm * VOLUME_SPIKE) {
     const pct = Math.round((recentKm / priorKm - 1) * 100);
+    const volumeSource = dataSourceLine(dataSourcesOfRows(workouts.filter((w) => daysBetween(w.date, today) < 28)));
     items.push({
+      ...(volumeSource ? { source: volumeSource } : {}),
       id: `volume-${today}`,
       kind: "volume",
       tone: "warn",

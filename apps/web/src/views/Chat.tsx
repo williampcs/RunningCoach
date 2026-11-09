@@ -5,6 +5,7 @@ import {
   MEMORY_MAX_CHARS,
   messageTimeLabel,
   REPLY_EXCERPT_CHARS,
+  sourcesText,
   splitReplySections,
   type ChatEvent,
   type ConversationRow,
@@ -424,7 +425,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
                 ) : (
                   m.content
                 )}
-                {m.sources?.length ? <p className="sources">參考了：{m.sources.join("、")}</p> : null}
+                {m.sources?.length ? <p className="sources">{sourcesText(m.sources)}</p> : null}
               </div>
               <div className="msg-meta">
                 {timeOf(m) && (

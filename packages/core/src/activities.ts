@@ -44,6 +44,15 @@ export interface SourceDetails {
   avgTempC: number | null;
   /** 功率區間的時間（Intervals.icu 的 icu_zone_times：Z1、Z2…與甜蜜點等） */
   powerZoneTimes: { id: string; secs: number }[] | null;
+  /** 裝置名稱（Intervals.icu 的 device_name，例：Garmin Forerunner 265）；沒有時是 null */
+  device: string | null;
+  /**
+   * Garmin 的標示（KI-048）：來自 Garmin 時是「Garmin〔型號〕」，不知道型號時是「Garmin」；不是 Garmin 的是 null.
+   * 見 garminLabelOf
+   */
+  garmin: string | null;
+  /** 經 Garmin Connect 的連線同步進來的（source 是 GARMIN_CONNECT）：這個帳號的恢復資料也可能來自 Garmin */
+  garminConnect: boolean;
 }
 
 const EMPTY: SourceDetails = Object.freeze({
@@ -65,6 +74,9 @@ const EMPTY: SourceDetails = Object.freeze({
   normalizedWatts: null,
   avgTempC: null,
   powerZoneTimes: null,
+  device: null,
+  garmin: null,
+  garminConnect: false,
 }) as SourceDetails;
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -75,6 +87,28 @@ const positive = (v: unknown): number | null => {
 const numbers = (v: unknown): number[] | null =>
   Array.isArray(v) && v.every((x) => typeof x === "number" && Number.isFinite(x)) ? (v as number[]) : null;
 const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/** 裝置名稱：去掉前後空白；空的或太長的（不像型號）當成沒有 */
+function deviceNameOf(v: unknown): string | null {
+  const name = typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "";
+  return name && name.length <= 60 ? name : null;
+}
+
+/**
+ * 哪些活動來自 Garmin（KI-048、規格 12.40）. Intervals.icu 的活動有兩個欄位看得出來：
+ * - `source` 是 `GARMIN_CONNECT`：經 Garmin Connect 的連線同步進來的.
+ * - `device_name` 以 Garmin 開頭（例：Garmin Forerunner 265）：手錶的 FIT 檔，上傳的也算（資料一樣是 Garmin 裝置量的）.
+ * 拿不到內容的空殼（Strava 的，有 `_note`）不標：畫面上沒有它的數據.
+ * 回傳「Garmin〔型號〕」；來源是 Garmin Connect 但裝置名稱沒有 Garmin 字樣時補上「Garmin 」，沒有裝置名稱時只寫「Garmin」.
+ */
+export function garminLabelOf(raw: Record<string, unknown>): string | null {
+  if (typeof raw._note === "string" && raw._note) return null;
+  const device = deviceNameOf(raw.device_name);
+  const fromConnect = String(raw.source ?? "").toUpperCase() === "GARMIN_CONNECT";
+  if (device && /^garmin(\s|$)/i.test(device)) return `Garmin${device.slice(6)}`;
+  if (fromConnect) return device ? `Garmin ${device}` : "Garmin";
+  return null;
+}
 
 /**
  * Intervals.icu 的活動（測試模式的假資料、舊的 Strava 紀錄也是同樣的欄位）→ 細節.
@@ -103,6 +137,9 @@ export function detailsFromIntervals(raw: Record<string, unknown>): SourceDetail
     normalizedWatts: positive(raw.icu_weighted_avg_watts) ?? positive(raw.weighted_average_watts),
     avgTempC: num(raw.average_temp),
     powerZoneTimes: zones,
+    device: deviceNameOf(raw.device_name),
+    garmin: garminLabelOf(raw),
+    garminConnect: String(raw.source ?? "").toUpperCase() === "GARMIN_CONNECT" && !(typeof raw._note === "string" && raw._note),
   };
 }
 
@@ -228,4 +265,53 @@ export function recordOfOther(a: OtherActivity): ActivityRecord {
 /** 新的在前；同一天的依開始時間，沒有時間的排後面 */
 export function byNewest(a: ActivityRecord, b: ActivityRecord): number {
   return b.date.localeCompare(a.date) || (b.details.startLocal ?? "").localeCompare(a.details.startLocal ?? "");
+}
+
+/**
+ * 資料來源的標示（KI-048）. 單趟顯示「Garmin〔型號〕」（garminOf）；由多趟算出來的，用到 Garmin 的時候
+ * 在標題下方一行「資料來源：Garmin、手動記」（dataSourceLine）. 不是 Garmin 的單趟不標.
+ */
+export const GARMIN = "Garmin";
+/** 多來源的列法：Garmin 在最前面，其他照這個順序 */
+const SOURCE_ORDER = [GARMIN, "其他裝置", "手動記", "匯入的紀錄"] as const;
+export type DataSourceLabel = (typeof SOURCE_ORDER)[number];
+
+/** 一筆紀錄算哪一種來源 */
+export function dataSourceOf(record: Pick<ActivityRecord, "source" | "details">): DataSourceLabel {
+  if (record.details.garmin) return GARMIN;
+  if (record.source === "manual") return "手動記";
+  if (record.source === "import" || record.source === "strava") return "匯入的紀錄";
+  return "其他裝置";
+}
+
+/** 多筆紀錄用到的來源，Garmin 在前；沒有紀錄時是空的 */
+export function dataSourcesOf(records: Pick<ActivityRecord, "source" | "details">[]): DataSourceLabel[] {
+  const found = new Set(records.map(dataSourceOf));
+  return SOURCE_ORDER.filter((label) => found.has(label));
+}
+
+/** 幾組來源合起來（例：之前的每一週），照同一個順序 */
+export function mergeDataSources(lists: readonly (readonly DataSourceLabel[])[]): DataSourceLabel[] {
+  const found = new Set(lists.flat());
+  return SOURCE_ORDER.filter((label) => found.has(label));
+}
+
+/** 跑步與其他運動（資料表的原樣）用到的來源 */
+export function dataSourcesOfRows(workouts: Workout[], others: OtherActivity[] = []): DataSourceLabel[] {
+  return dataSourcesOf([...workouts.map(recordOfWorkout), ...others.map(recordOfOther)]);
+}
+
+/** 標題下方的一行：用到 Garmin 的資料時「資料來源：Garmin、手動記」；沒有用到 Garmin 時不標（null） */
+export function dataSourceLine(labels: readonly string[]): string | null {
+  return labels.includes(GARMIN) ? `資料來源：${labels.join("、")}` : null;
+}
+
+/** 單趟的 Garmin 標示（「Garmin Forerunner 265」或「Garmin」）；不是 Garmin 的是 null */
+export function garminOf(row: { raw_json?: string | null }): string | null {
+  return detailsOf(row.raw_json).garmin;
+}
+
+/** 有沒有經 Garmin Connect 同步進來的紀錄：恢復資料（睡眠、HRV、靜息心率）也可能來自 Garmin */
+export function usesGarminConnect(rows: { raw_json?: string | null }[]): boolean {
+  return rows.some((r) => detailsOf(r.raw_json).garminConnect);
 }

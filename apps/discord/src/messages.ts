@@ -1,4 +1,4 @@
-import { formatTokenFooter, TERMS_SHORT, type UsageStats } from "@running-coach/core";
+import { formatTokenFooter, sourcesText, TERMS_SHORT, type UsageStats } from "@running-coach/core";
 
 export const DISCORD_MSG_LIMIT = 2000;
 
@@ -21,7 +21,7 @@ export function splitMessage(text: string, limit = DISCORD_MSG_LIMIT): string[] 
 export function replyParts(reply: string, stats: UsageStats | null, sources: string[] = []): string[] {
   const parts = splitMessage(reply);
   const footer = stats ? formatTokenFooter(stats) : "";
-  const notes = [sources.length ? `參考了：${sources.join("、")}` : "", footer].filter(Boolean);
+  const notes = [sourcesText(sources), footer].filter(Boolean);
   if (!notes.length) return parts;
 
   const line = notes.map((n) => `-# ${n}`).join("\n");

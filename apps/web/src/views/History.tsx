@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { checkRedFlags } from "../red-flag-alert";
-import { daysBetween, type Accumulation, type RideAccumulation, type RideCard, type RunCard, type WeekVolume, type Workout } from "@running-coach/core";
+import { daysBetween, type Accumulation, type DataSourceLabel, type RideAccumulation, type RideCard, type RunCard, type WeekVolume, type Workout } from "@running-coach/core";
 
 import { errorText, useApp, type HistoryFocus } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
@@ -45,6 +45,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   const [rides, setRides] = useState<RideCard[]>([]);
   const [rideTotals, setRideTotals] = useState<RideAccumulation | null>(null);
   const [weeks, setWeeks] = useState<WeekVolume[] | null>(null);
+  const [weekSources, setWeekSources] = useState<DataSourceLabel[]>([]);
   const [openRides, setOpenRides] = useState<Set<string>>(new Set());
   const [rideEditing, setRideEditing] = useState<{ id: string; effort: number; notes: string } | null>(null);
   // 正在產生分析的騎車（規格 12.31）
@@ -83,6 +84,8 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
       void coach.rideCards(days).then((c) => alive && setRides(c));
       void coach.rideAccumulation().then((a) => alive && setRideTotals(a));
       void coach.weeklyVolume(WEEKLY_WEEKS).then((w) => alive && setWeeks(w));
+      // 每週的圖用到的紀錄（跑步與騎車）的來源（KI-048）
+      void coach.dataSources(WEEKLY_WEEKS * 7, ["run", "ride"]).then((s) => alive && setWeekSources(s));
     }
     return () => {
       alive = false;
@@ -143,7 +146,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
               <strong>{Math.round(a.duration_min ?? 0)} 分鐘</strong>
             )}
             <span className="muted small run-date">
-              {[dayText(a.date, today), !expanded && a.distance_km ? `${kmText(a.distance_km)} km` : null].filter(Boolean).join(" · ")}
+              {[dayText(a.date, today), !expanded && a.distance_km ? `${kmText(a.distance_km)} km` : null, !expanded ? card.garmin : null].filter(Boolean).join(" · ")}
             </span>
           </span>
           <span className="run-tags">
@@ -317,7 +320,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
     <>
       {totals && totals.runs > 0 && <AccumulationView totals={totals} today={today} onImported={touch} />}
       {multisport && rideTotals && rideTotals.rides > 0 && <RideTotals totals={rideTotals} />}
-      {multisport && rideTotals && rideTotals.rides > 0 && weeks && <WeeklyVolumeCard weeks={weeks} />}
+      {multisport && rideTotals && rideTotals.rides > 0 && weeks && <WeeklyVolumeCard weeks={weeks} sources={weekSources} />}
       <section className="card">
         <div className="card-head">
           <h2>
@@ -385,7 +388,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
                   {/* 點開時數字與橫條在卡片上，列上只留課與標記 */}
                   <span className="run-main">
                     {expanded ? <strong>{card.plan ? `${card.plan.kindLabel}：${card.plan.title}` : "跑步"}</strong> : <strong>{kmText(w.distance_km)} km</strong>}
-                    <span className="muted small run-date">{[dayText(w.date, today), !expanded ? w.avg_pace : null].filter(Boolean).join(" · ")}</span>
+                    <span className="muted small run-date">{[dayText(w.date, today), !expanded ? w.avg_pace : null, !expanded ? card.garmin : null].filter(Boolean).join(" · ")}</span>
                   </span>
                   <span className="run-tags">
                     <PlanBadge card={card} />

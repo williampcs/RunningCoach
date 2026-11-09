@@ -1782,6 +1782,16 @@ span.quote {
 }
 
 /* 資料來源的標示放在自己一行 */
+/* Garmin 的標示（KI-048）：標題下方一行小字 */
+.feed-source {
+  line-height: 1.4;
+}
+
+.data-source {
+  margin: 0;
+  line-height: 1.4;
+}
+
 .feed-text .credit {
   font-size: var(--fs-aux);
   color: var(--muted);

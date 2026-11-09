@@ -1,11 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, dataSourceLine, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
-import { Disclosure, Icon, InfoTip, SportIcon } from "../ui";
+import { DataSource, Disclosure, Icon, InfoTip, SportIcon } from "../ui";
 import { SCOPED_KEYS, storageKey } from "../storage-scope";
 
 /** 最多畫幾格；更早的以「+N」表示 */
@@ -380,6 +380,7 @@ export function AccumulationView({ totals, today, onImported }: { totals: Accumu
     <section className="card totals">
       <div className="totals-hero">
         <span className="tile-label">累積跑了</span>
+        <DataSource text={dataSourceLine(totals.sources)} />
         <span className="num hero-value">
           {number(km, 1)}
           <small> km</small>
