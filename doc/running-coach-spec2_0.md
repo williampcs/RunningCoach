@@ -757,7 +757,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     2. Garmin 個人 API 的可行性測試：`tools/` 一支在使用者本機跑的腳本（使用者自己的 key，放 `.env`，不印出、不寫進檔案），測：用 key 換 access token、列最近的活動（JSON）、下載一趟的 FIT（看欄位完不完整，用現有讀 FIT 的程式解析，只印欄位名稱與筆數，不印數值）、健康資料（睡眠、靜止心率）；另外一個本機的小網頁，從瀏覽器直接呼叫同樣的端點，看 CORS 允不允許。結果寫成一份報告（不含使用者的資料），使用者貼給協調 session。腳本要寫清楚 Garmin 個人 API 的條款限制。
   - 不做：把 Garmin 個人 API 做成正式功能（等測試結果與條款確認）；Business Starter。
   - 驗收：單元測試（空殼的判斷、不存、不算負荷、提示的次數）；E2E（模擬上游回空殼時看板的提示、紀錄頁沒有 0 公里的紀錄）；測試腳本對模擬的回應跑過一次；全部 E2E 照過。
-  - 狀態：待開發（接在「標示 Garmin 的資料來源」之後）。
+  - 狀態：開發中（2026-11-09，開發 session「Garmin 空殼的偵測與個人 API 的測試」；RunningCoach 環境另外允許 developer.garmin.com 讀文件）。
 
 - **標示 Garmin 的資料來源**（KI-048、12.40；2026-11-09 使用者：「Garmin 的標示要不要現在做？要」）
   - 依據：Intervals.icu 的 API 條款 1.1（顯示由 Garmin 來源的資料算出的資訊要照 Garmin 的品牌規範標示）、Garmin 的 API 品牌規範（「Garmin〔裝置型號〕」，不知道型號時「Garmin」；在資料的標題旁邊或下方、看得到，不放在提示或註腳；不改動、不動畫 Garmin 的標誌，也不要把標誌放在心率等數字裡；分享或匯出到 App 以外也要標）。這次**只用文字**，不放 Garmin 的標誌圖。
@@ -769,7 +769,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     5. 匯出：使用者自己的備份不用；之後若有分享功能要記得標（寫進設計準則）。
   - 不做：Garmin 的標誌圖；Garmin 空殼的偵測與提示（另外一張）。
   - 驗收：單元測試（判斷 Garmin 的規則與轉換、多來源的列法）；E2E（測試資料要有 Garmin、其他品牌、手動記三種；各頁看得到標示、不在提示裡、手動與其他品牌不標；手機與電腦的截圖）；全部 E2E 照過；設計準則加一條「資料來源的標示」並照檢查清單過一遍。
-  - 狀態：已推上 v2（2026-11-09，開發 session「標示 Garmin 的資料來源」；實作見 12.40 的「Garmin 標示的實作」）。不在功能開關後面（合規）。待使用者：在 staging 同步後看紀錄頁、回報、選手頁、看板與教練的回覆；在本機用 `tools/intervals-sources.ts` 確認自己的活動 `source` 是 `GARMIN_CONNECT`、`device_name` 是「Garmin 型號」的寫法。
+  - 狀態：已推上 v2（2026-11-09，開發 session「標示 Garmin 的資料來源」；實作見 12.40 的「Garmin 標示的實作」）。不在功能開關後面（合規）。待使用者：在 staging 同步後看紀錄頁、回報、選手頁、看板與教練的回覆；在本機用 `tools/intervals-sources.ts` 確認自己的活動 `source` 是 `GARMIN_CONNECT`、`device_name` 是「Garmin 型號」的寫法。 協調 session 檢查過（2026-11-09：pull、`npm test` 590 項、typecheck）。待使用者在 staging 看，並在本機跑 `npx tsx tools/intervals-sources.ts` 確認 Garmin 的來源與裝置欄位。
 
 - **測試模式：清空資料與重置成第一次打開**（2026-11-05 使用者：「希望測試模式在清除資料後可以回到第一次打開的狀態，或是分為現在的清除或整個重置兩種」）
   - 現況（協調 session 查的）：測試模式用另一個資料庫檔（`/coach-test.db`），但**設定與「做過了」的標記和正常模式共用**（`localStorage` 的 `running-coach.settings.v1`、`wizard.v1`、`getting-started.dismissed`、`feed.v1`、`region-hint.dismissed`、`red-flag-alert`，以及使用須知與資料流向的同意）。所以在測試模式裡沒辦法回到「第一次打開」，否則會連正常模式的設定一起清掉；現在只有「產生（會清空測試資料庫）」「清空手動新增的紀錄」「清掉塞進的課表」。
