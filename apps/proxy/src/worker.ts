@@ -1,7 +1,7 @@
 /** Cloudflare Workers 進入點 — 用量存在 D1. */
 import type { Row, SqlDriver, SqlValue } from "@running-coach/core";
 
-import { createProxy } from "./handler";
+import { createProxy, purgeOld } from "./handler";
 import { loadPolicy } from "./policy";
 import { AccountStore } from "./store";
 
@@ -37,16 +37,30 @@ function d1Driver(db: D1Database): SqlDriver {
 // 每個執行個體只建立一次資料表
 let ready: Promise<AccountStore> | undefined;
 
+function storeOf(env: Env): Promise<AccountStore> {
+  ready ??= (async () => {
+    const store = new AccountStore(d1Driver(env.DB));
+    await store.init();
+    return store;
+  })();
+  return ready;
+}
+
 export default {
+  /** 每天一次（wrangler.toml 的 crons）：刪掉過了保存期限的用量紀錄 */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      (async () => {
+        const removed = await purgeOld(await storeOf(env), loadPolicy(env.PROXY_POLICY));
+        console.log(`purged daily=${removed.daily} monthly=${removed.monthly}`);
+      })(),
+    );
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    ready ??= (async () => {
-      const store = new AccountStore(d1Driver(env.DB));
-      await store.init();
-      return store;
-    })();
 
     const handle = createProxy({
-      store: await ready,
+      store: await storeOf(env),
       policy: loadPolicy(env.PROXY_POLICY),
       upstream: { baseUrl: "https://api.anthropic.com", apiKey: env.ANTHROPIC_API_KEY },
       adminToken: env.ADMIN_TOKEN,

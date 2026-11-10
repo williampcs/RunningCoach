@@ -1,15 +1,22 @@
-# Cloudflare Workers 部署設定（尚未實際部署驗證）
-#
-#   npx wrangler d1 create running-coach-proxy      # 取得 database_id 填入下方
-#   npx wrangler secret put ANTHROPIC_API_KEY
-#   npx wrangler secret put ADMIN_TOKEN
-#   npx wrangler deploy
+# Cloudflare Workers 部署設定（規格 12.39）：由 .github/workflows/proxy.yml（正式）與 staging.yml（staging）部署，
+# 部署前 tools/proxy-config.ts 從 GitHub 的 Variables 填入名稱、D1 的 id 與允許的來源；這裡不寫帳號相關的值.
+# ANTHROPIC_API_KEY、ADMIN_TOKEN 是 Worker 的 secret（workflow 從 stdin 寫入，不印出）.
 name = "running-coach-proxy"
 main = "src/worker.ts"
 compatibility_date = "2026-10-01"
+workers_dev = true
+
+# 請求的內容不記錄；console.log 只有帳號、模型、狀態碼與 token 數（handler.ts）
+[observability]
+enabled = false
+
+# 每天 03:00（台灣）刪掉過了保存期限的用量紀錄
+[triggers]
+crons = ["0 19 * * *"]
 
 [vars]
 ALLOWED_ORIGINS = ""
+PROXY_POLICY = ""
 
 [[d1_databases]]
 binding = "DB"

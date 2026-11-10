@@ -13,6 +13,8 @@ export interface AnthropicProviderOptions {
   baseURL?: string;
   /** 在瀏覽器中直連時必須為 true（key 由使用者自行保管於裝置） */
   browser?: boolean;
+  /** 經免費試用的代理時為 true：每次呼叫帶 x-coach-meter，讓代理算每天的次數（規格 12.39） */
+  meterHeader?: boolean;
 }
 
 function supportsEffort(model: string): boolean {
@@ -23,8 +25,11 @@ export class AnthropicProvider implements LlmProvider {
   private readonly client: Anthropic;
   /** API 拒絕了 strict 的工具（400）之後，這個轉接層之後都不送 strict（規格 12.31 第 2 點）；程式照樣驗證工具的輸入 */
   private strictRejected = false;
+  /** 經免費試用的代理時送 x-coach-meter（規格 12.39） */
+  readonly meterHeader: boolean;
 
   constructor(options: AnthropicProviderOptions) {
+    this.meterHeader = options.meterHeader ?? false;
     this.client = new Anthropic({
       apiKey: options.apiKey,
       baseURL: options.baseURL,
@@ -61,8 +66,12 @@ export class AnthropicProvider implements LlmProvider {
           // 新模型預設開啟思考，思考深度以 effort 控制
           ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
         };
+        // 免費試用的代理用這個標頭算每天的次數（規格 12.39）；直連 Anthropic 時 API 不理會自訂的標頭，但只在經代理時送
+        const headers = request.meter && provider.meterHeader ? { "x-coach-meter": request.meter } : undefined;
         const send = (p: Anthropic.MessageCreateParamsNonStreaming) =>
-          opts.onText ? streamMessage(client, p, opts.onText, opts.onToolStart, opts.signal) : client.messages.create(p, { signal: opts.signal });
+          opts.onText
+            ? streamMessage(client, p, opts.onText, opts.onToolStart, opts.signal, headers)
+            : client.messages.create(p, { signal: opts.signal, headers });
         let response: Anthropic.Message;
         try {
           response = await send(params);
@@ -115,8 +124,9 @@ async function streamMessage(
   onText: (text: string) => void,
   onToolStart?: (name: string) => void,
   signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<Anthropic.Message> {
-  const stream = client.messages.stream(params, { signal });
+  const stream = client.messages.stream(params, { signal, headers });
   let textBlocks = 0;
   for await (const event of stream) {
     if (event.type === "content_block_start" && event.content_block.type === "text") {

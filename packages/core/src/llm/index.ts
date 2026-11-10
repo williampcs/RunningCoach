@@ -15,6 +15,7 @@ import {
   type Effort,
   type LlmProvider,
   type LlmResult,
+  type Meter,
   type NextOptions,
   type Purpose,
   type SystemPrompt,
@@ -72,13 +73,15 @@ export class Llm {
    * 單次生成（無工具、無 system prompt）。
    * 模型拒絕回答或沒有產生任何文字時丟出 LlmError，避免呼叫端把空字串當成結果存檔。
    */
-  async complete(purpose: Purpose, prompt: string, maxTokens: number): Promise<LlmResult> {
+  async complete(purpose: Purpose, prompt: string, maxTokens: number, options: { meter?: Meter } = {}): Promise<LlmResult> {
     const usage = new Usage();
     const session = this.config.provider.startChat({
       model: this.config.models[purpose],
       messages: [{ role: "user", content: prompt }],
       maxTokens,
       effort: COMPLETE_EFFORT,
+      // 免費試用的每天次數（規格 12.39）：壓縮跟著對話發生，摘要是自動的分析；選手自己按的（匯入整理）由呼叫端指定 chat
+      meter: options.meter ?? (purpose === "compress" ? "compress" : "auto"),
     });
     const turn = await session.next();
     usage.add(turn.usage, turnCostUsd(this.config.models[purpose], turn.usage));
@@ -115,6 +118,7 @@ export class Llm {
       tools,
       maxTokens: this.config.maxResponseTokens,
       effort: this.config.chatEffort,
+      meter: "chat",
     });
 
     // 這次模型呼叫已經寫出的文字：停止時存成教練那則的開頭

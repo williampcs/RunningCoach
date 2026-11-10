@@ -1543,8 +1543,37 @@ span.quote {
   border-radius: var(--r-field);
 }
 
-.composer.replying {
+.composer.replying,
+.composer.with-status {
   flex-wrap: wrap;
+}
+
+/* 免費試用（規格 12.39）：輸入框上方一行「今天還剩 N 則」，剩 3 則以下用提醒的顏色 */
+.trial-remaining {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+}
+
+.trial-remaining.low {
+  color: var(--warn-strong);
+}
+
+/* 設定的免費試用：這個帳號的裝置（一台一列，右邊是「移除」） */
+.trial-devices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.trial-devices li {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.trial-link strong {
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .reply-bar {

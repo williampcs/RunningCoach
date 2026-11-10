@@ -236,6 +236,7 @@
 | 2.0-draft | 2026-11-10 | Garmin 原生支援先擱置（條款審閱 session 留著、使用者去信詢問）；接下來處理代理與 App 版（12.40） |
 | 2.0-draft | 2026-11-10 | 代理的決定（邀請碼、內測每天 15 則、每人每月 10 美元、總預算、不做付費）與工作單（9.4）；新增 12.41 App 版（成本、限制、Android、自己寫外掛、要準備的） |
 | 2.0-draft | 2026-11-10 | 12.39 第二輪：帳號為中心（邀請碼＝建立帳號的方式，之後可綁登入）、多裝置的憑證與連結碼；各模型的每則成本粗估；模型對照併進高風險測試；Max 送的 API 額度要確認條款 |
+| 2.0-draft | 2026-11-10 | 免費試用的內測（功能開關 `trial`，staging 開著；還要有代理的網址）：代理（`apps/proxy`）加上邀請碼（一碼用一次、可設到期日與每月預算、可以停用；兌換時建帳號、憑證只回一次）、每天的則數（預設 15；選手送出一則算一則，工具迴圈不重複算；跑後與騎車分析另外每天 2 次；壓縮不顯示但有上限；台灣時間午夜重置）、所有帳號合計的每月總預算（預設 60 美元）與每人每月 10 美元、固定的模型（Haiku 5.5、thinking disabled）、以帳號為中心（每台裝置一個憑證、`identities` 表為之後的 Google／Apple 登入先建好）、「在另一台使用」的連結碼與裝置清單（可以移除某一台）、選手自己刪除試用帳號、每天的次數留 90 天與每月的用量留 13 個月；核心的請求帶 `x-coach-meter`；網頁版的設定與精靈多「免費試用（邀請碼）」、對話頁「今天還剩 N 則」與用完的說明；管理腳本 `tools/proxy-admin.ts`；部署 `proxy.yml` 與 staging 的代理；隱私說明、使用說明、架構說明（12.39 的「實作」、9.4） |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -746,12 +747,12 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | `npm test` | 執行全部測試 |
 | `npm run typecheck` | 型別檢查 |
 | `npm run dev:mock` | 模擬上游（Anthropic 與 OpenAI 相容的 LLM API、Intervals.icu），埠 8788。回覆前停頓模擬思考，可用 `MOCK_THINK_MS`、`MOCK_CHUNK_MS` 調整 |
-| `npm run dev:mock -w @running-coach/proxy` | 薄代理，上游指向模擬服務，埠 8787，管理憑證為 `dev-admin` |
+| `npm run dev:mock -w @running-coach/proxy` | 免費試用的代理（12.39），上游指向模擬服務，埠 8787，管理憑證為 `dev-admin`，資料在 `apps/proxy/data/dev-proxy.db` |
 | `npm run dev:mock -w @running-coach/web` | 網頁版，Intervals.icu 指向模擬服務，埠 5173 |
 | `npm run dev -w @running-coach/web` | 網頁版，連真實服務 |
 | `npm run dev -w @running-coach/discord` | Discord bot，讀取 repo 根目錄的 `.env` |
 
-以模擬服務測試訂閱模式時，先向代理的 `POST /admin/accounts` 建立帳號取得憑證，再到網頁版的設定頁選「訂閱（經代理）」，填入 `http://localhost:8787` 與憑證。
+以模擬服務測試免費試用（12.39）時：網頁版建置或開發時設 `VITE_PROXY_URL=http://localhost:8787` 與 `VITE_FEATURES=trial`（staging 的建置不用設開關）；產生邀請碼：`.env` 寫 `PROXY_URL=http://localhost:8787`、`PROXY_ADMIN_TOKEN=dev-admin`，執行 `npx tsx tools/proxy-admin.ts invite --count 3`；到設定頁或精靈選「免費試用（邀請碼）」貼上。E2E 的 `verify-trial.cjs` 自己開一個代理（8791 埠）。
 
 要測教練在各種訓練情況下的反應，用網頁版設定頁的「測試模式」產生假的跑步紀錄（6.1），不必真的跑出那樣的資料。
 
@@ -777,7 +778,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：Google／Apple 登入、付費、Discord 接代理。
   - 驗收：單元測試（邀請碼的產生、兌換一次、停用；每日上限與重置；總預算；剩餘次數；不記內容）；E2E（用模擬上游：貼邀請碼 → 對話 → 剩餘次數變少 → 用完的說明；總預算用完；精靈的免費試用；資料流向的說明）；全部 E2E 照過。
   - 注意：使用者的 Anthropic API key 只放在 Worker 的 secret；代理只轉送不保存（現有的設計），日誌只有帳號、模型、狀態碼與 token 數。
-  - 狀態：開發中（2026-11-10，開發 session「代理的內測」）。
+  - 狀態：已推上 v2（2026-11-10，開發 session「代理的內測」）；實作、驗證、沒驗證到的與和工作單不同的地方見 12.39 的「實作」。在功能開關 `trial` 後面（staging 開著；正式版要加 `WEB_FEATURES` 的 `trial` 與 `PROXY_URL`）。待使用者：在 Cloudflare 建 staging 與正式的 D1、在 GitHub 設定 Variables 與 Secrets（名稱見 12.39 的「實作」的部署）、在本機用 `tools/proxy-admin.ts --staging` 產生邀請碼並在 staging 試。
 
 - **讀 FIT 檔（保底的資料來源）＋作者自用的 Garmin 抓檔腳本**（12.40 的順序第 3 步；2026-11-09 使用者：「照這個順序做」）
   - 目的：不靠任何平台的 API，使用者自己的檔案就能進來；Garmin、Intervals.icu 的政策怎麼變都能用。
@@ -1313,7 +1314,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 不分來源：之後 | 11-02 | 2026-11-06 比對腳本跑了：依心率估很接近、配速估誤差較大、體感沒有資料；維持現在的規則（12.37）。原本： 「不分來源的核心（第一步）」的開發 session 記下的（細節見下面同名條目）：看比對腳本的結果決定要不要全部改用我們的數字與調體感對照表、搬成一張表的時機、還只看來源負荷的幾處、hrSS 用每秒心率、騎車的功率負荷；待討論 | 下面同名條目、12.37 的「實作」 |
 | 沒有手錶也能用：之後 | 10-29 | 第一批的開發 session 盤點時發現、沒有在第一批做的（細節見下面同名條目）：在對話裡直接記一趟、Discord 的手動記錄、手動記騎車等其他運動、比對看配速、沒有負荷時的恢復週檢查與每週負荷圖、測試模式自訂跑步的假負荷；待討論要不要做、先後 | 下面同名條目、12.36 的「實作」 |
 | 金流（收費） | 10-29 | 使用者：先記起來，保留可能、暫時不做。查到的選項：App 內購＋RevenueCat（最成熟）；網頁用 Paddle、Lemon Squeezy（台灣能否用待確認）、綠界／藍新／TapPay（定期定額、電子發票，個人能否開待問）；稅務問會計師。邀請制的代理（作者的 key、每人上限、不收錢）可以先試完整的體驗。現在的開發不做出之後無法收費的設計。11-02：查了 Apple／Google 的收退費機制與要準備的事（Apple 由 Apple 決定退費、我們不能直接退；Google 我們可以用 API 退；帳號刪除、付費畫面、伺服器通知、說明頁等），見 12.37 | 12.36 第二、三輪、12.37 |
-| 代理、輕量帳號、每日免費上限 | 11-09 | 2026-11-10 決定：先做內測（邀請碼、每天 15 則、每人每月 10 美元、總預算），工作單開發中（9.4）；Google／Apple 登入與正式的免費額度之後 | 12.39、9.4 |
+| 代理、輕量帳號、每日免費上限 | 11-09 | 2026-11-10 決定：先做內測（邀請碼、每天 15 則、每人每月 10 美元、總預算）；內測已推上 v2（功能開關 `trial`），待使用者設定 Cloudflare 與 GitHub 後在 staging 試；Google／Apple 登入與正式的免費額度之後 | 12.39、9.4 |
 | App 版（iOS 先、Android 第二） | 11-10 | 討論中：Capacitor 包網頁＋自己寫或評估讀健康資料的外掛；使用者去申請 Apple 開發者帳號 | 12.41 |
 | Garmin 資料可能不能經 Intervals.icu 取得 | 11-09 | 調查完（12.40）：Intervals.icu 說 Garmin 的活動經 API 很可能變空殼、日期未定；Garmin 10-21 重開開發者計畫（個人 API key、免費的 Starter、收費的 Enterprise）。建議先觀察、偵測空殼時提示、App 以讀健康資料為主、Garmin 個人 API 做小的可行性測試；Garmin 標示開發中 | KI-048、12.40 |
 | App 版用使用者自己的 Garmin 個人 API key | 11-09 | 技術可行（原生 App 沒有 CORS）；條款灰色，等 Starter 核准後問 Garmin，有書面答覆才做 | 12.40 |
@@ -4401,7 +4402,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - App 預設只有擁有者看得到；要讓其他人也能登入，要再請 Intervals.icu 開放給所有使用者。所以作者自己可以先在 staging 測，朋友要等開放之後。
 - 拿到 client_id／secret 後：GitHub 的 Variables 設 `STAGING_INTERVALS_CLIENT_ID`、`INTERVALS_CLIENT_ID`，Secrets 設 `STAGING_INTERVALS_CLIENT_SECRET`、`INTERVALS_CLIENT_SECRET`；重新部署 staging（推 v2 或手動執行 Deploy staging）；正式版要等下一次合併部署（或手動執行 Deploy web app 與 Deploy sync service）。
 
-### 12.39 代理、輕量帳號、每日免費上限（2026-11-09，規劃中）
+### 12.39 代理、輕量帳號、每日免費上限（2026-11-09；內測 2026-11-10 推上 v2）
 
 **使用者的話**（2026-11-09）：「代理、輕量帳號、每日免費上限可以開始規劃，高風險問題放在下一步。」背景：12.37 的順序第 2 步、`doc/product-brief.md` 第 0 節（簡單配置、免費試用〔每日次數、便宜的模型〕、「希望大家是因為免費的夠好才願意付費支持」、保留 BYOK、透明）、資料原則（12.36）。
 
@@ -4639,6 +4640,63 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 3. 預算：使用者「每個月有 100 美元的 API 用量，一人 10 美元 × 5 人，剩下自用加測試也綽綽有餘」→ 每個帳號每月上限 10 美元、所有內測帳號合計上限（例如 60 美元，可以改），超過就暫停並說明。代理要用 Anthropic Console 的 API key（按用量計費的那種），不能用 Claude 的訂閱方案（Pro／Max）——待使用者確認那 100 美元是 API 的額度。
 4. 這一步不做付費：是。
 → 工作單見 9.4「代理的內測：邀請碼、每日上限、總預算」。
+
+**設計的確認**（2026-11-10，開發 session 動手前送協調 session，協調 session 同意並補兩點）
+- 「一則」：核心每次呼叫帶 `x-coach-meter`（chat／auto／compress）；chat 只在最後一則是選手的文字時算（工具迴圈的下一輪最後一則只有 tool_result，不算）。壓縮跟著對話發生，不扣看得到的則數，另有看不到的上限（每天 10 次）。「從其他 AI 帶入」是選手自己按的，算一則對話（協調 session 的決定），不佔自動分析的 2 次。
+- 協調 session 補的：設定裡可以自己「刪除試用帳號」（隨時可以刪除自己的資料）；每天的次數留 90 天、每月的用量留 13 個月，到期自動刪除，寫進隱私說明。
+
+**實作**（2026-11-10，開發 session「代理的內測」）
+- 代理（`apps/proxy`）
+  - 資料表（D1；`store.ts`），以「帳號」為中心（2026-11-10 使用者的方向，協調 session 轉來：邀請碼只是建立帳號的一種方式，之後要能在同一個帳號加綁 Google／Apple 登入〔訪客帳號升級〕）：`accounts`（代號、狀態、每月預算、從哪張邀請碼來；不放憑證）、`account_tokens`（一個帳號多個憑證，每台裝置一個：雜湊、粗略的裝置名稱〔例「iPhone · Safari」〕、加入與最後使用的時間〔一小時內用過不再寫〕、撤銷的時間）、`identities`（type invite／google／apple、subject 的雜湊、帳號；這次只用 invite，表先建好）、`link_codes`（連結碼的雜湊、帳號、到期、用過沒）、`invites`（id、邀請碼的 SHA-256、批次名稱、每月預算、到期日、建立／兌換的時間、兌換成哪個帳號、停用）、`daily_usage`（帳號 × 台灣日期：chat、auto、compress）、`usage`（每月，沿用）、`totals`（所有帳號每月合計；刪掉的帳號也算在內，總預算才準）。沒有對話內容、email、名字、IP。
+  - 邀請碼：`RC-XXXX-XXXX-XXXX`（去掉 0 O 1 I L 的 31 個字元 × 12，約 59 bits），只回傳一次、只存雜湊；貼上時大小寫、空白、連字號不計較。`POST /v1/redeem`（不用登入）：一個 UPDATE 敘述把碼標成用過（沒用過、沒停用、沒過期才成功，同時兌換兩次只有一次成功）→ 建帳號 → 憑證只回這一次；每個 IP 每分鐘 10 次（只在記憶體裡算，IP 不寫進任何地方）。錯誤寫「找不到這個邀請碼」「已經用過了」「已停用」「已過期」。
+  - 每天的次數：`reserveDaily` 用「`UPDATE … SET chat = chat + 1 WHERE chat < 上限`」，加一與比較在同一個敘述裡，同時送出不會一起超過；上游回錯誤或連不上時退回。台灣時間（UTC+8，政策的 `timeZoneOffsetMinutes`）午夜重置；每月的週期也改用台灣時間的月份（和畫面一致）。
+  - 預算：先看所有帳號這個月合計（`totals`）有沒有超過總預算（預設 60 美元），再看這個帳號的（預設 10 美元，邀請碼可以另外設）。
+  - 用完時回 403（Anthropic SDK 不會自動重試）與 `error.type`：`daily_limit`、`daily_auto_limit`、`account_budget`、`beta_budget`，帶 `resets_at`（例 `2026-11-11T00:00:00+08:00`）。
+  - 模型：政策的 `forceModel`（預設 `claude-haiku-5-5`）換掉請求的模型；`disableThinking` 拿掉 `output_config.effort`、送 `thinking: {type: "disabled"}`（Haiku 5.5 在 effort high 以下接受）；`max_tokens` 超過上限時改成上限（原本是拒絕）。費用照實際用的模型算。價格對過 2026-11 的價目：Haiku 5.5 每百萬 token 輸入 0.10、輸出 0.50 美元（提示超過 10 萬 token 時是 0.50／2.50，我們的對話不會到）。
+  - 在另一台裝置使用：已登入的那台 `POST /v1/link-codes` 拿一個連結碼（`XXXX-XXXX`，8 個字約 40 bits、10 分鐘〔政策的 `linkCodeMinutes`〕、用一次；同一個帳號只留最新的一個），另一台 `POST /v1/link` 輸入後拿到自己的憑證（同一個帳號、同一份額度；和兌換邀請碼共用每個 IP 每分鐘 10 次）。`GET /v1/devices` 列出這個帳號的裝置（標出這台），`DELETE /v1/devices/:id` 撤銷某一台（只能撤銷自己帳號的）。刪除帳號時撤銷所有憑證，登入方式與連結碼一起刪。管理端點的「重發憑證」改成撤銷所有裝置、發一個新的。
+  - 之前只在本機開發用過的資料庫（憑證在 `accounts` 裡）打開時搬到 `account_tokens`（代理沒有上線過，正式與 staging 都是新建的）。
+  - `GET /v1/usage` 多回 `today`（用了幾則、上限、自動分析、重置時間）、`model`、`paused`（哪一種額度用完、到什麼時候）。`DELETE /v1/account`：選手自己刪帳號（帳號、每天、每月的紀錄；邀請碼維持用過）。
+  - 管理端點（`ADMIN_TOKEN`）：`POST/GET /admin/invites`、`PATCH /admin/invites/:id {revoked}`、`GET /admin/accounts`（含本月花費、今天幾則）、`PATCH/DELETE /admin/accounts/:id`、`GET /admin/summary`。
+  - 保存期限：`purgeOld`；Worker 每天 03:00（台灣）的 cron、Node 版啟動時與每天一次。
+  - 日誌只有帳號代號、模型、狀態碼、哪一種次數與 token 數、金額；兌換只記成功或失敗的原因，不記邀請碼。
+- 核心：`ChatRequest.meter`；`Llm` 依用途給（主對話 chat、摘要 auto、壓縮 compress，`complete` 可以指定）；`AnthropicProvider` 的 `meterHeader` 開著時（只有經代理時）帶 `x-coach-meter`。
+- 網頁版：功能開關 `trial`（staging 全開；正式版要在 `WEB_FEATURES` 加上）＋建置時的 `VITE_PROXY_URL`，兩個都有才出現。
+  - 設定的「AI 教練」：原本的「訂閱（經代理）」改成「免費試用（邀請碼）」（沒提供的版本不顯示；之前選了的人仍看得到並顯示「這個版本沒有提供」）。欄位是「邀請碼或連結碼」（依長度判斷是哪一種），按「啟用」→ 拿到就存（憑證只拿得到一次）；啟用後顯示「已啟用免費試用」、模型（Claude Haiku 5.5，不思考，不能改）、今天還剩幾則、額度用完的說明、「裝置」清單（標出這台，每台可以「移除」，要確認；移除這台等於這台登出）、「在另一台使用」（顯示連結碼與幾點前有效）、「刪除試用帳號」（紅字、要確認）。免費試用沒有「進階」（模型與思考強度）。代理的網址以建置時的為準。
+  - 設定精靈「選一個 AI」：有提供時第一個選項是「免費試用（邀請碼）」→「輸入邀請碼」→ 資料流向 → 照舊。
+  - 對話頁：輸入框上方一行「今天還剩 N 則」（剩 3 則以下用提醒的顏色）；用完或這個月的額度用完時輸入框換成說明（例「今天的 15 則用完了，明天 00:00（台灣時間）恢復。也可以改用自己的 API key。」）＋「前往設定」。送出時才被代理擋下的（例如在另一台用完）錯誤也換成同樣的說明。
+  - 資料流向（⓪與精靈）：經過 Zone2Mate 的代理轉送到 Anthropic、不保存對話的內容、只記次數與用量、保存期限、怎麼刪。隱私說明頁：開了 `trial` 且有代理網址的建置多一節「免費試用的代理」（什麼時候、送什麼、送到哪裡、存什麼、不存什麼、存多久、誰看得到、怎麼刪）與重點、「我們不做的事」、「你可以做的事」、異動紀錄。使用說明多一則「免費試用（邀請碼）」。
+  - 憑證跟 API key 一樣存在這台的設定（密碼鎖開著時加密），不跟著多裝置同步。
+- 管理工具 `tools/proxy-admin.ts`（在作者的電腦執行，讀 `.env` 的 `PROXY_URL`、`PROXY_ADMIN_TOKEN`；`--staging` 讀 `STAGING_` 開頭的）：`summary`、`invite --count 5 --expires 2026-12-31 [--budget 10] [--label 第一批]`、`invites`、`revoke`、`accounts`、`suspend`、`resume`、`delete`。不印管理憑證。
+- 部署：`.github/workflows/proxy.yml`（正式，push 到 main 且代理有改時；沒有 `PROXY_D1_DATABASE_ID` 只跑測試）、`staging.yml` 加 proxy 的 job（Worker `running-coach-proxy-staging`；沒有 `STAGING_PROXY_D1_DATABASE_ID` 跳過）；`tools/proxy-config.ts` 填 `wrangler.toml`（名稱、D1、允許的來源、檢查過的政策）；secrets 從 stdin 寫入、不印出；部署前檢查 secrets 有沒有設定（只看有沒有）。網頁版的建置多 `VITE_PROXY_URL`；staging 檢查 `STAGING_PROXY_URL` 不能和正式的一樣。
+
+**驗證**
+- 單元測試：`apps/proxy/test/trial.test.ts`（邀請碼的產生只存雜湊、兌換一次、停用、過期、打錯、格式、同時兌換兩次、每個 IP 的次數、帳號停用與恢復；固定的模型與 thinking disabled；每天的則數與工具迴圈不重複算、台灣時間午夜重置、自動分析與壓縮另外算、上游錯誤退回、同時送出不超過；總預算與每人的預算、用量的回應；不記內容；自己刪帳號；保存期限；核心 → 代理端對端的 `x-coach-meter`）、`apps/proxy/test/proxy.test.ts`（原本的，改成不限次數的政策）、`tools/test/proxy-tools.test.ts`（部署設定、管理工具）、`apps/web/test/trial.test.ts`（網頁版和真的代理接起來：兌換、剩幾則、SDK 的錯誤認得出是哪一種、說明的文字、刪除）、`apps/web/test/privacy-page.test.ts`（有沒有免費試用時的隱私說明）、`packages/core/test/llm.test.ts`（meter）。
+- 帳號與多台裝置的單元測試（`trial.test.ts` 的「帳號與多台裝置」）：邀請碼建立帳號與 invite 的登入方式（只存雜湊）、連結碼讓另一台拿到自己的憑證、同一份額度、裝置清單與最後使用的時間、連結碼 10 分鐘過期、用過、新的讓舊的失效、要登入才能拿連結碼、移除某一台只撤銷那台、不能移除別的帳號的裝置、刪除帳號時撤銷所有憑證；舊的資料庫搬到 `account_tokens`。網頁版（`apps/web/test/trial.test.ts`）：連結碼、裝置清單、移除另一台。
+- E2E：新的 `tools/e2e/verify-trial.cjs`（自己建置開著 onboarding 與 trial 的一份、自己開代理〔Node 版，上游是模擬服務〕）：手機淺色走精靈（免費試用是第一個選項 → 錯的邀請碼看到說明 → 對的啟用、存在這台 → 資料流向的說明 → 手動記第一筆〔跑後分析算自動的 1 次、不扣則數〕→ 對話「今天還剩 3 則」→ 會跑工具迴圈的一則只扣一則〔上游收到 2 次以上的請求，都是 Haiku、thinking disabled、沒有 output_config〕→ 剩下的變色 → 用完時輸入框換成說明＋前往設定）；電腦深色走設定（免費試用沒有模型的欄位 → 啟用 → 模型與剩幾則 → 同意後存 → 對話 → 重開代理把總預算設得很小 →「這個月的免費額度用完了（所有試用的人合計）」→「在另一台使用」顯示連結碼 → 手機在設定輸入連結碼 → 裝置清單有兩台（標出這台）、代理那邊仍是同一個帳號 → 手機移除電腦 → 電腦的憑證查不到用量 → 手機刪除試用帳號：代理那邊的帳號少一個、這台的憑證清掉）；截圖 `trial-*`。全部 E2E 照過（結果見 9.4 的狀態）。
+
+**沒驗證到的**
+- 真的 Cloudflare Worker 與 D1（只跑過 Node 版與型別檢查；Workers 的 cron、`ctx.waitUntil` 與 D1 的批次沒有實際跑過）；真的 Anthropic API（Haiku 5.5 收到 `thinking: {type: "disabled"}` 與工具時的行為，只依文件）。
+- 每分鐘的請求數與兌換的次數是每個 Worker 執行個體各自算的（盡力而為），流量大時可能多放一些；有每天的則數與預算擋著。
+- `x-coach-meter` 是客戶端給的：改程式的人可以把對話標成壓縮來繞過則數（壓縮另有每天 10 次的上限），或把每則訊息的最後放成 tool_result；最後都有每人每月 10 美元、每分鐘 20 次與總預算擋著。
+
+**和工作單不同的地方**
+- 以帳號為中心、一個帳號多台裝置（連結碼、裝置清單、移除某一台）、`identities` 表：工作單之後協調 session 轉來的使用者方向（2026-11-10），照做。工作單原本寫「一碼用一次」，現在仍是一碼建立一個帳號，其他裝置用連結碼加入同一個帳號。
+- 「訂閱（經代理）」直接改成「免費試用（邀請碼）」，手動填代理網址與憑證的欄位拿掉（代理網址用建置時的）；之前的訂閱模式沒有上線，沒有使用者受影響。
+- 多一個功能開關 `trial`（大一點的功能放在開關後面，12.25）：正式版要在 `WEB_FEATURES` 加上 `trial` 且設定 `PROXY_URL` 才出現。
+- `max_tokens` 超過上限改成夾到上限，不再拒絕（核心送的上限可能比代理的大，免費試用不應因此失敗）。
+- 每月的週期改用台灣時間的月份（原本是 UTC），和每天一致。
+
+**使用者要做的**（先 staging，正式等「合併部署」時）
+1. Anthropic Console：用按用量計費的 API key（不是 Claude 的 Pro／Max 訂閱）；建議在 Console 的 Limits 另外設每月的花費上限，當作代理以外的第二道保護。
+2. Cloudflare 建兩個 D1（Workers & Pages → D1 → Create，或 `npx wrangler d1 create running-coach-proxy-staging`／`running-coach-proxy`），記下 database id。用來部署的 Cloudflare API token 和同步服務同一個（要有 Workers 與 D1 的編輯權限，已經有了）。
+3. 自己產生管理憑證（staging 與正式各一個，例 `openssl rand -hex 32`），存在自己的密碼管理器。
+4. GitHub → Settings → Secrets and variables → Actions：
+   - Secrets：`PROXY_ANTHROPIC_API_KEY`、`STAGING_PROXY_ADMIN_TOKEN`、`PROXY_ADMIN_TOKEN`（選填 `STAGING_PROXY_ANTHROPIC_API_KEY`，沒有時 staging 用正式的 key）。
+   - Variables：`STAGING_PROXY_D1_DATABASE_ID`（staging）、`PROXY_D1_DATABASE_ID`（正式）；選填 `STAGING_PROXY_POLICY`／`PROXY_POLICY`（例 `{"dailyMessages":20,"totalMonthlyBudgetUsd":80}`）。
+5. 手動執行一次「Deploy staging」→ Actions 的紀錄裡有 Worker 的網址（`https://running-coach-proxy-staging.<子網域>.workers.dev`）→ 設成 Variables 的 `STAGING_PROXY_URL` → 再執行一次「Deploy staging」（網頁版重新建置才會出現免費試用）。
+6. 在自己的電腦，repo 根目錄的 `.env` 加 `STAGING_PROXY_URL=…`、`STAGING_PROXY_ADMIN_TOKEN=…`，產生邀請碼：`npx tsx tools/proxy-admin.ts invite --staging --count 2 --expires 2026-12-31 --label 自己測試`（碼只顯示這一次）；`npx tsx tools/proxy-admin.ts summary --staging` 看用量。
+7. 在 staging 試：設定 →「AI 教練」→「免費試用（邀請碼）」，或清掉資料後走精靈；對話看「今天還剩 N 則」；用完的說明；刪除試用帳號。
+8. 正式（合併部署時）：合併前設好 `PROXY_D1_DATABASE_ID`；部署後把正式代理的網址設成 `PROXY_URL`、`WEB_FEATURES` 加上 `trial`，手動執行一次「Deploy web app」；`.env` 加 `PROXY_URL`、`PROXY_ADMIN_TOKEN` 產生給朋友的邀請碼。
 
 ### 12.41 App 版（2026-11-10，討論中）
 

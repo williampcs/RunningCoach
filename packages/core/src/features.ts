@@ -16,6 +16,8 @@ export const FEATURES = {
   devices: "裝置清單與移除",
   /** 新的使用者第一次打開時的設定精靈與「先看看」（規格 12.35 的 A、B，12.37）；已經設定好的人不受影響 */
   onboarding: "設定精靈與先看看",
+  /** 免費試用（邀請碼）：經作者的代理用 Claude Haiku 對話，每天有則數上限（規格 12.39）；還要建置時設定了代理的網址 */
+  trial: "免費試用（邀請碼）",
 } as const;
 
 export type Feature = keyof typeof FEATURES;

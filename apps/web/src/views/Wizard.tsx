@@ -8,7 +8,7 @@ import {
   type KeyCheck,
 } from "@running-coach/core";
 
-import { ChevronLeft, CircleCheck, ExternalLink, PencilLine, Sparkles, Watch, type LucideIcon } from "lucide-react";
+import { ChevronLeft, CircleCheck, ExternalLink, PencilLine, Sparkles, Ticket, Watch, type LucideIcon } from "lucide-react";
 
 import { errorText, useApp, type Tab } from "../app-context";
 import { featureEnabled } from "../environment";
@@ -24,11 +24,15 @@ import { SyncNotice } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
 import { DataFlow } from "./Settings";
 import { TermsShort } from "./TermsLink";
+import { InviteForm, TRIAL_SUMMARY } from "./Trial";
+import { trialAvailable } from "../trial";
 import { IntervalsLogin, intervalsLoginAvailable } from "./IntervalsLogin";
 import { peekLoginCallback } from "../intervals-login";
 
-/** 精靈裡可以選的 AI（其他相容服務、訂閱在設定頁填） */
+/** 精靈裡可以選的 AI（其他相容服務在設定頁填） */
 type WizardProvider = Exclude<ProviderKind, "openai-compatible">;
+/** 免費試用（邀請碼，規格 12.39）：這個版本有提供時排在最前面 */
+type WizardChoice = WizardProvider | "trial";
 
 /** 「去拿 key」：直接開到產生 key 的那一頁，旁邊寫要按的按鈕（截圖之後由使用者提供再補，規格 9.4） */
 const KEY_PAGES: Record<WizardProvider, { url: string; site: string; steps: ReactNode[]; sub: string }> = {
@@ -303,8 +307,12 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
   const [step, setStepState] = useState<WizardStep>(steps.includes(start) ? start : "welcome");
   const [profile, setProfile] = useState<Record<string, string> | null>(null);
   const [counts, setCounts] = useState({ workouts: 0, others: 0 });
-  const [provider, setProvider] = useState<WizardProvider | null>(() =>
-    settings.llmMode === "byok" && settings.provider !== "openai-compatible" && settings.apiKey ? settings.provider : null,
+  const [provider, setProvider] = useState<WizardChoice | null>(() =>
+    settings.llmMode === "proxy" && settings.proxy.token
+      ? "trial"
+      : settings.llmMode === "byok" && settings.provider !== "openai-compatible" && settings.apiKey
+        ? settings.provider
+        : null,
   );
   const [keyOk, setKeyOk] = useState(false);
   const connected = intervalsConnected(settings);
@@ -395,13 +403,17 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
         <Page
           {...page}
           title="選一個 AI"
-          sub="教練用你自己的 AI 帳號，費用由那個帳號支付（一般一個月幾十到一兩百台幣）。"
+          sub={
+            trialAvailable()
+              ? "有邀請碼可以先免費試用；或用你自己的 AI 帳號，費用由那個帳號支付（一般一個月幾十到一兩百台幣）。"
+              : "教練用你自己的 AI 帳號，費用由那個帳號支付（一般一個月幾十到一兩百台幣）。"
+          }
           footer={
             <>
               {primary("繼續", forward, provider === null)}
               <div className="actions wizard-more">
                 <button className="text" onClick={() => finish("ai")}>
-                  其他服務或訂閱：到設定填
+                  其他服務：到設定填
                 </button>
               </div>
             </>
@@ -410,7 +422,10 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
           <Choices
             label="選一個 AI"
             value={provider}
-            options={WIZARD_PROVIDERS.map((p) => ({ id: p, icon: Sparkles, title: PROVIDER_LABELS[p], sub: KEY_PAGES[p].sub }))}
+            options={[
+              ...(trialAvailable() ? [{ id: "trial" as const, icon: Ticket, title: "免費試用（邀請碼）", sub: "有邀請碼就能用，不用申請 key；每天有則數上限" }] : []),
+              ...WIZARD_PROVIDERS.map((p) => ({ id: p, icon: Sparkles, title: PROVIDER_LABELS[p], sub: KEY_PAGES[p].sub })),
+            ]}
             onPick={setProvider}
           />
         </Page>
@@ -420,6 +435,22 @@ export function Wizard({ start, onFinish }: { start: WizardStep; onFinish: (targ
       if (!provider) {
         go("provider");
         return null;
+      }
+      if (provider === "trial") {
+        const active = settings.llmMode === "proxy" && settings.proxy.token.trim() !== "";
+        return (
+          <Page {...page} title="輸入邀請碼" sub={TRIAL_SUMMARY} footer={primary("繼續", forward, !active)}>
+            {active ? (
+              <p className="key-state" role="status">
+                <span className="ok-text">
+                  <Icon as={CircleCheck} /> 已啟用免費試用
+                </span>
+              </p>
+            ) : (
+              <InviteForm base={settings} />
+            )}
+          </Page>
+        );
       }
       return (
         <Page {...page} title={`貼上 ${PROVIDER_LABELS[provider]} 的 key`} footer={primary("繼續", forward, !keyOk)}>

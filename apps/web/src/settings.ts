@@ -11,6 +11,7 @@ import {
 
 import { createLock, openLock, passwordMatches, sealSecrets, type LockSession, type SealedSecrets, type Secrets } from "./key-lock";
 import { SCOPED_KEYS, storageKey } from "./storage-scope";
+import { TRIAL_MODEL } from "./trial";
 
 // 測試模式用自己一份（storage-scope.ts）：這個頁面在測試模式時，兩個都是測試的那一份
 const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
@@ -24,7 +25,7 @@ let unlockedSecrets: Secrets | null = null;
 export type ProviderKind = "anthropic" | "openai" | "gemini" | "openai-compatible";
 
 export interface AppSettings {
-  /** byok：自己的 API key，直連供應商；proxy：訂閱，經作者的代理轉發 */
+  /** byok：自己的 API key，直連供應商；proxy：免費試用（邀請碼），經作者的代理轉發（規格 12.39） */
   llmMode: "byok" | "proxy";
   provider: ProviderKind;
   apiKey: string;
@@ -100,7 +101,8 @@ function loadPlainSettings(): AppSettings {
       ...defaults,
       ...stored,
       models: { ...defaults.models, ...stored.models },
-      proxy: { ...defaults.proxy, ...stored.proxy },
+      // 代理的網址也以建置時的為準（staging 與正式各有自己的代理）
+      proxy: { ...defaults.proxy, ...stored.proxy, url: defaults.proxy.url || stored.proxy?.url || "" },
       intervals: { ...defaults.intervals, ...stored.intervals },
       // 服務網址以建置時的為準：換了部署位置時不必每台重設
       sync: { ...defaults.sync, key: stored.sync?.key ?? "", url: defaults.sync.url || stored.sync?.url || "" },
@@ -218,7 +220,9 @@ export function forgetLockedSecrets(): void {
 
 /** 切換供應商時的建議模型；Claude 以外的模型名稱由使用者填寫 */
 export function suggestedModels(mode: AppSettings["llmMode"], provider: ProviderKind): Record<Purpose, string> {
-  return mode === "proxy" || provider === "anthropic" ? { ...CLAUDE_MODELS } : { chat: "", summary: "", compress: "" };
+  // 免費試用的模型由代理決定（選手不能改）；本機記成同一個，顯示與費用的估算才一致
+  if (mode === "proxy") return { chat: TRIAL_MODEL, summary: TRIAL_MODEL, compress: TRIAL_MODEL };
+  return provider === "anthropic" ? { ...CLAUDE_MODELS } : { chat: "", summary: "", compress: "" };
 }
 
 export const consentKey = (s: AppSettings) => (s.llmMode === "proxy" ? "proxy" : `byok:${s.provider}`);
@@ -238,7 +242,8 @@ export const intervalsConnected = (s: AppSettings) => s.intervals.apiKey.trim() 
 /** LLM 設定是否完整到可以開始對話；不完整時回傳缺少的項目 */
 export function llmProblem(s: AppSettings): string | null {
   if (s.llmMode === "proxy") {
-    if (!s.proxy.url.trim() || !s.proxy.token.trim()) return "尚未填寫訂閱代理的網址與憑證";
+    if (!s.proxy.url.trim()) return "這個版本沒有提供免費試用";
+    if (!s.proxy.token.trim()) return "還沒輸入免費試用的邀請碼";
   } else {
     if (!s.apiKey.trim()) return "尚未填寫 API key";
     if (s.provider === "openai-compatible" && !s.baseURL.trim()) return "尚未填寫服務網址";
@@ -251,7 +256,8 @@ export function llmProblem(s: AppSettings): string | null {
 
 export function buildProvider(s: AppSettings): LlmProvider {
   if (s.llmMode === "proxy") {
-    return new AnthropicProvider({ apiKey: s.proxy.token.trim(), baseURL: s.proxy.url.trim(), browser: true });
+    // meterHeader：告訴代理這次是對話、自動的分析還是壓縮，代理據此算每天的次數
+    return new AnthropicProvider({ apiKey: s.proxy.token.trim(), baseURL: s.proxy.url.trim(), browser: true, meterHeader: true });
   }
   const apiKey = s.apiKey.trim();
   switch (s.provider) {

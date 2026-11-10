@@ -89,4 +89,15 @@ describe("隱私說明頁（規格 12.20）", () => {
     expect(renderPrivacyPage({ staging: false, syncUrl: "" })).toContain("這個版本沒有設定同步服務");
     expect(page).toContain(`<code>${host(SYNC_URL)}</code>`);
   });
+
+  it("免費試用（功能開關 trial 與代理的網址）有提供時才寫代理存什麼、不存什麼、怎麼刪（規格 12.39）", () => {
+    const trial = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, trialProxyUrl: "https://running-coach-proxy.example.workers.dev" });
+    expect(trial).toContain("<code>running-coach-proxy.example.workers.dev</code>");
+    expect(trial).toContain("不保存對話的內容");
+    expect(trial).toContain("每天的次數 90 天、每月的用量 13 個月");
+    expect(trial).toContain("刪除試用帳號");
+    expect(trial).not.toContain("目前沒有帳號");
+    expect(page).not.toContain("免費試用");
+    expect(page).toContain("目前沒有帳號");
+  });
 });

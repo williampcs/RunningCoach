@@ -92,6 +92,7 @@ function legalPages() {
     devices: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("devices"),
     onboarding: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("onboarding"),
     intervalsLogin: !!process.env.VITE_INTERVALS_CLIENT_ID?.trim() && !!process.env.VITE_SYNC_URL?.trim(),
+    trialProxyUrl: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("trial") ? (process.env.VITE_PROXY_URL ?? "") : "",
   };
   return { privacy: renderPrivacyPage(build), terms: renderTermsPage({ staging }) };
 }
