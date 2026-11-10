@@ -778,7 +778,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：Google／Apple 登入、付費、Discord 接代理。
   - 驗收：單元測試（邀請碼的產生、兌換一次、停用；每日上限與重置；總預算；剩餘次數；不記內容）；E2E（用模擬上游：貼邀請碼 → 對話 → 剩餘次數變少 → 用完的說明；總預算用完；精靈的免費試用；資料流向的說明）；全部 E2E 照過。
   - 注意：使用者的 Anthropic API key 只放在 Worker 的 secret；代理只轉送不保存（現有的設計），日誌只有帳號、模型、狀態碼與 token 數。
-  - 狀態：已推上 v2（2026-11-10，開發 session「代理的內測」）；實作、驗證、沒驗證到的與和工作單不同的地方見 12.39 的「實作」。在功能開關 `trial` 後面（staging 開著；正式版要加 `WEB_FEATURES` 的 `trial` 與 `PROXY_URL`）。待使用者：在 Cloudflare 建 staging 與正式的 D1、在 GitHub 設定 Variables 與 Secrets（名稱見 12.39 的「實作」的部署）、在本機用 `tools/proxy-admin.ts --staging` 產生邀請碼並在 staging 試。
+  - 狀態：已推上 v2（2026-11-10，開發 session「代理的內測」）；實作、驗證、沒驗證到的與和工作單不同的地方見 12.39 的「實作」。在功能開關 `trial` 後面（staging 開著；正式版要加 `WEB_FEATURES` 的 `trial` 與 `PROXY_URL`）。待使用者：在 Cloudflare 建 staging 與正式的 D1、在 GitHub 設定 Variables 與 Secrets（名稱見 12.39 的「實作」的部署）、在本機用 `tools/proxy-admin.ts --staging` 產生邀請碼並在 staging 試。 協調 session 檢查過（2026-11-10：pull、`npm test` 671 項、typecheck；Worker 的觀測記錄關閉、secrets 從 stdin 寫入）。待使用者設定 Cloudflare 與 GitHub 後在 staging 試。
 
 - **讀 FIT 檔（保底的資料來源）＋作者自用的 Garmin 抓檔腳本**（12.40 的順序第 3 步；2026-11-09 使用者：「照這個順序做」）
   - 目的：不靠任何平台的 API，使用者自己的檔案就能進來；Garmin、Intervals.icu 的政策怎麼變都能用。
