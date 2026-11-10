@@ -60,6 +60,7 @@ Zone2Mate 是 AI 跑步教練（之後會擴充到單車等耐力運動）。用
 | `apps/discord` | 自建用的 Discord bot |
 | `apps/proxy` | 訂閱用的薄代理 |
 | `tools/mock-upstream.ts` | 本機開發用的模擬 LLM 與 Intervals.icu |
+| `tools/model-eval.ts` | 模型對照＋高風險問題的測試：同一組情境（假的選手資料）給幾個模型跑，回覆並排（本機用自己的 key；規格 12.43） |
 
 核心只透過幾個介面接觸外界（儲存驅動、LLM 供應商、活動來源、時鐘與時區），各外殼各自實作。資料庫 schema 與 v1 相容，v1 的 `coach.db` 可以直接使用。
 

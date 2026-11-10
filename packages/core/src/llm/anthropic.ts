@@ -15,6 +15,11 @@ export interface AnthropicProviderOptions {
   browser?: boolean;
   /** 經免費試用的代理時為 true：每次呼叫帶 x-coach-meter，讓代理算每天的次數（規格 12.39） */
   meterHeader?: boolean;
+  /**
+   * 關掉思考：不送 output_config 的思考強度、改送 thinking disabled（和免費試用的代理套用的政策一樣，規格 12.39）.
+   * 只有 Claude Haiku 5.5 這類可以關的模型能用（effort high 以下）；Claude Opus 5.5、Sonnet 5.5 送了會回 400
+   */
+  disableThinking?: boolean;
 }
 
 function supportsEffort(model: string): boolean {
@@ -27,9 +32,11 @@ export class AnthropicProvider implements LlmProvider {
   private strictRejected = false;
   /** 經免費試用的代理時送 x-coach-meter（規格 12.39） */
   readonly meterHeader: boolean;
+  readonly disableThinking: boolean;
 
   constructor(options: AnthropicProviderOptions) {
     this.meterHeader = options.meterHeader ?? false;
+    this.disableThinking = options.disableThinking ?? false;
     this.client = new Anthropic({
       apiKey: options.apiKey,
       baseURL: options.baseURL,
@@ -38,6 +45,7 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   effortFor(model: string, effort: Effort): string | null {
+    if (this.disableThinking) return null;
     return supportsEffort(model) ? effort : null;
   }
 
@@ -64,7 +72,12 @@ export class AnthropicProvider implements LlmProvider {
           // 達最大輪數時保留 tools 但禁止再呼叫：對話中已有工具呼叫紀錄，且移除 tools 會讓快取失效
           ...(tools?.length && opts.disableTools ? { tool_choice: { type: "none" as const } } : {}),
           // 新模型預設開啟思考，思考深度以 effort 控制
-          ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
+          // 關掉思考時改送 thinking disabled（不送思考強度，和代理的做法一樣）
+          ...(provider.disableThinking
+            ? { thinking: { type: "disabled" as const } }
+            : supportsEffort(request.model)
+              ? { output_config: { effort: request.effort } }
+              : {}),
         };
         // 免費試用的代理用這個標頭算每天的次數（規格 12.39）；直連 Anthropic 時 API 不理會自訂的標頭，但只在經代理時送
         const headers = request.meter && provider.meterHeader ? { "x-coach-meter": request.meter } : undefined;

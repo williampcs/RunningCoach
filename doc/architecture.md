@@ -66,7 +66,7 @@ flowchart LR
 | `apps/discord` | Discord bot：讀 `.env`、把 Discord 的訊息與指令接到核心 | 300 |
 | `apps/sync` | 多裝置同步服務：Cloudflare Worker + D1（本機開發用 Node 版） | 500 |
 | `apps/proxy` | 免費試用的代理：邀請碼、每天的則數、每人與合計的每月預算、固定的模型；Cloudflare Worker + D1（本機開發用 Node 版） | 1,100 |
-| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`） | |
+| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`）、模型對照＋高風險問題的測試（`model-eval.ts` 與 `model-eval/`：假的選手資料＋核心的教練，只連 AI，規格 12.43） | |
 | `doc/` | 規格、KI 紀錄、這份架構說明 | |
 | `src/` | v1 的 Python 版，觀察期結束後移除 | |
 

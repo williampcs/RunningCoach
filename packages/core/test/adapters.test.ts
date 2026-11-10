@@ -191,6 +191,14 @@ describe("AnthropicProvider", () => {
     expect(provider.effortFor("claude-haiku-4-5", "low")).toBeNull();
     expect(provider.effortFor("claude-haiku-5-5", "low")).toBe("low");
   });
+  it("disableThinking：送 thinking disabled、不送思考強度（和免費試用的代理一樣，規格 12.39）", async () => {
+    const { baseURL, captured } = await mockApi([anthropicMessage([{ type: "text", text: "好" }], "end_turn")]);
+    const provider = new AnthropicProvider({ apiKey: "k", baseURL, disableThinking: true });
+    await provider.startChat({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }], maxTokens: 2000, effort: "medium" }).next();
+    expect(captured[0]!.body.thinking).toEqual({ type: "disabled" });
+    expect(captured[0]!.body.output_config).toBeUndefined();
+    expect(provider.effortFor("claude-haiku-5-5", "medium")).toBeNull();
+  });
   it("串流：文字片段即時交出，結束後的結果與工具往返和非串流相同", async () => {
     const start = (usage: Record<string, number>) => ({
       type: "message_start",
