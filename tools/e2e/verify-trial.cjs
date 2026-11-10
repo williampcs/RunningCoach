@@ -137,6 +137,8 @@ async function remaining(page) {
 async function send(page, text) {
   await page.getByLabel("訊息").fill(text);
   await page.getByRole("button", { name: "送出" }).click();
+  // 先等送出開始（按鈕變成「停止」），再等回覆完成；不然還沒送出就以為完成了
+  await page.getByRole("button", { name: "停止" }).waitFor({ timeout: 10000 }).catch(() => undefined);
   await page.getByRole("button", { name: "停止" }).waitFor({ state: "detached", timeout: 30000 });
 }
 
@@ -204,7 +206,7 @@ async function send(page, text) {
     check.haikuNoThinking = chatCalls.every((r) => r.body.model === "claude-haiku-5-5" && r.body.thinking?.type === "disabled" && !r.body.output_config);
     await page.locator(".trial-remaining", { hasText: "今天還剩 2 則" }).waitFor({ timeout: 10000 }).catch(() => undefined);
     check.oneMessageCounted = (await remaining(page)) === "今天還剩 2 則";
-    if (!check.oneMessageCounted || !check.toolLoopRan) console.log(`debug: ${await remaining(page)} calls=${chatCalls.length}`);
+    if (!check.oneMessageCounted || !check.toolLoopRan) console.log(`debug: ${await remaining(page)} calls=${chatCalls.length} total=${(await requests()).length} last=${JSON.stringify((await requests()).slice(-3).map((r) => [r.kind, r.body.model, JSON.stringify(r.body.messages ?? "").slice(-120)]))}`);
     await page.screenshot({ path: `${OUT}/trial-4-chat-390-light.png`, fullPage: true });
     await send(page, "明天練什麼？");
     check.lowColor = await page.locator(".trial-remaining.low").isVisible();
@@ -232,6 +234,7 @@ async function send(page, text) {
     await page.getByRole("textbox", { name: "邀請碼" }).fill(codeB);
     await page.getByRole("button", { name: "啟用" }).click();
     await page.getByText("已啟用免費試用").waitFor({ timeout: 10000 });
+    await page.locator(".trial-account .trial-remaining").waitFor({ timeout: 10000 });
     const panel = await page.locator(".trial-account").innerText();
     check.settingsModel = panel.includes("Claude Haiku 5.5") && panel.includes("不思考");
     check.settingsRemaining = panel.includes("今天還剩 3 則（共 3 則");
