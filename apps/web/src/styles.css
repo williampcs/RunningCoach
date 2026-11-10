@@ -1824,6 +1824,16 @@ span.quote {
     flex: none;
     justify-content: flex-end;
   }
+
+  /* 自評的表單打開時：文字在上、表單在下，不和文字並排 */
+  .feed-body.with-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .feed-body.with-form .checkin {
+    max-width: 480px;
+  }
 }
 
 .feed-more {

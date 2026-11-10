@@ -380,7 +380,8 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
             <span className="feed-icon">
               <Icon as={ICONS[item.kind]} />
             </span>
-            <div className="feed-body">
+            {/* 自評的表單打開時改成上下排：電腦上不擠在右邊一欄（2026-11-10 使用者回報跑版） */}
+            <div className={`feed-body${item.actions.some((a) => a.type === "checkin") && checkinOpen === item.id ? " with-form" : ""}`}>
               <div className="feed-text">
                 <span className="feed-title">{item.title}</span>
                 {/* Garmin 的標示（KI-048）：標題下方 */}
