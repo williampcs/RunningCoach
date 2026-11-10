@@ -241,6 +241,7 @@
 | 2.0-draft | 2026-11-10 | 工作單：設定精靈在電腦上的版面（使用者回報是手機樣式；先推到另一個分支，等使用者測完免費試用再併進 v2）；開 session 調查 Open Wearables（RunningCoach 環境另外允許 openwearables.io） |
 | 2.0-draft | 2026-11-10 | 調查 Open Wearables（12.42）：MIT 的自架健康資料層，資料集中存在伺服器，和本機優先衝突 → 不當資料層，只參考它的 HealthKit 讀法、統一格式與 Garmin 整合；它整理的 Garmin Starter 只有 Push 待確認（影響 12.40 的「經過但不保存」）；想法的索引加一列 |
 | 2.0-draft | 2026-11-10 | 設定精靈在電腦上的版面（寬 900 以上）：每一頁是畫面正中間的一張卡片，不再是貼在上面的一條窄欄、按鈕被推到視窗最底下；按鈕不滿寬，主要的在右下、次要的在它左邊、文字按鈕在左下；內容多時整頁捲動；手機的版面不變（截圖逐位元相同）；先看看本來就是電腦的版面、不用改（9.4、`doc/design-guidelines.md`）。推在 `v2-wizard-desktop`，待併進 v2 |
+| 2.0-draft | 2026-11-10 | 小修（協調 session）：免費試用的額度用完時，重新整理後有一下子可以輸入與送出、送出後紅字「沒有收到回覆」和黃色的「用完了」同時出現（使用者回報）→ 還沒查到今天的額度時送出鈕停用並寫「讀取今天的額度…」；送出遇到額度用完不當成錯誤，重新查額度改顯示「用完了」的說明；verify-trial、verify-ui-round1、verify-staging-fixes 照過。設定精靈的電腦版面（v2-wizard-desktop）併進 v2 |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -4805,3 +4806,5 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - Android SDK 與 Flutter SDK 沒有讀原始碼；Health Connect 讀到的細節（分圈、跑步動態）沒查。
 
 **來源**：`https://openwearables.io/`（各頁有 `.md` 版，例 `/pricing.md`、`/integrations/garmin.md`、`/platform/mobile-sdks.md`）、`https://github.com/the-momentum/open-wearables`（`README.md`、`docs/providers/garmin-api-integration.mdx`、`docs/providers/coverage.mdx`、`backend/app/models/`）、`https://github.com/the-momentum/open_wearables_ios_sdk`、`https://github.com/the-momentum/open-wearables-react-native-sdk`。
+
+- 2026-11-10 使用者在 staging 測完免費試用（邀請碼、對話、用完的說明）；回報兩件：額度用完時重新整理有一下子可以送出（已修）；「感覺 Haiku 5.5 non thinking 有一點點不太行，我再多試試看」→ 協調 session：可以試 Haiku 開思考（低或中的 effort，成本略增）或 Sonnet，用「模型對照＋高風險測試」比較後再決定內測的模型；政策（PROXY_POLICY）可以改模型。

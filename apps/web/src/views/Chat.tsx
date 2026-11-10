@@ -326,8 +326,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         setFooter(formatTokenFooter(stats));
       } catch (e) {
         // 停止不是錯誤：教練那則已經存成「（已停止）」
+        // 免費試用的額度用完：不當成錯誤，重新查額度，輸入框換成「用完了」的說明（2026-11-10 使用者回報同一句話出現兩次）
         const limit = trialLimitOf(e);
-        if (!controller.signal.aborted) setError(limit ? limitText(limit) : errorText(e));
+        if (limit) trial.refresh();
+        else if (!controller.signal.aborted) setError(errorText(e));
       } finally {
         setReplies((n) => n + 1);
         abort.current = null;
@@ -340,7 +342,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         touch();
       }
     },
-    [coach, touch, load, onEvent, clearDraft],
+    [coach, touch, load, onEvent, clearDraft, trial.refresh],
   );
 
   // 其他分頁交辦的訊息（例如跑後回報的「請教練分析」）
@@ -353,6 +355,8 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
   // 免費試用：今天的則數或這個月的額度用完時，輸入框換成說明（送出中的那則照樣顯示完）
   const usage = !DEMO && settings.llmMode === "proxy" ? trial.usage : null;
   const trialLeft = usage ? Math.max(0, usage.today.messagesLimit - usage.today.messagesUsed) : null;
+  // 免費試用：打開頁面時還沒查到今天的額度，先不給送出（不然用完的人會先送出一則、再看到失敗）
+  const trialLoading = !DEMO && settings.llmMode === "proxy" && trial.usage === null && trial.error === null && settings.proxy.token.trim() !== "";
   const trialOut =
     usage && sending === null
       ? usage.paused
@@ -555,9 +559,10 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
         </div>
       ) : (
         <form
-          className={`composer${replyTo ? " replying" : ""}${trialLeft !== null ? " with-status" : ""}`}
+          className={`composer${replyTo ? " replying" : ""}${trialLeft !== null || trialLoading ? " with-status" : ""}`}
           onSubmit={(e) => {
             e.preventDefault();
+            if (trialLoading) return;
             const text = input;
             const reply = replyTo;
             setInput("");
@@ -573,11 +578,15 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               </button>
             </div>
           )}
-          {trialLeft !== null && (
+          {trialLeft !== null ? (
             <p className={`trial-remaining small${trialLeft <= 3 ? " low" : ""}`} role="status">
               今天還剩 {trialLeft} 則
             </p>
-          )}
+          ) : trialLoading ? (
+            <p className="trial-remaining small" role="status">
+              讀取今天的額度…
+            </p>
+          ) : null}
           {/* Enter 送出、Shift+Enter 換行，輸入法選字時不送出；平常一行高，打字時長高到 6 行 */}
           <AutoGrowTextarea enter="send" value={input} placeholder="輸入訊息…" aria-label="訊息" onChange={(e) => setInput(e.target.value)} />
           {sending !== null ? (
@@ -587,7 +596,7 @@ export function ChatView({ outbox, onOutboxSent }: { outbox: string | null; onOu
               停止
             </button>
           ) : (
-            <button type="submit" className="primary" disabled={!input.trim()}>
+            <button type="submit" className="primary" disabled={!input.trim() || trialLoading}>
               送出
             </button>
           )}
