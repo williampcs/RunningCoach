@@ -199,6 +199,14 @@ describe("AnthropicProvider", () => {
     expect(captured[0]!.body.output_config).toBeUndefined();
     expect(provider.effortFor("claude-haiku-5-5", "medium")).toBeNull();
   });
+  it("maxRetries 0：忙碌（529）時 SDK 不自己重試，錯誤帶狀態碼丟出", async () => {
+    const overloaded = new HttpError(529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
+    const { baseURL, captured } = await mockApi([overloaded, overloaded]);
+    const provider = new AnthropicProvider({ apiKey: "k", baseURL, maxRetries: 0 });
+    const session = provider.startChat({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }], maxTokens: 100, effort: "low" });
+    await expect(session.next()).rejects.toMatchObject({ status: 529 });
+    expect(captured).toHaveLength(1);
+  });
   it("串流：文字片段即時交出，結束後的結果與工具往返和非串流相同", async () => {
     const start = (usage: Record<string, number>) => ({
       type: "message_start",

@@ -215,6 +215,7 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
   let reply = "";
   let finish = "ok";
   let error: string | null = null;
+  let errorStatus: number | null = null;
   let seconds = 0;
   try {
     await coach.init();
@@ -243,6 +244,8 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
     } catch (e) {
       finish = "error";
       error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const status = (e as { status?: unknown }).status;
+      errorStatus = typeof status === "number" ? status : null;
     }
     seconds = Math.round((performance.now() - started) / 100) / 10;
     if (/^這個問題我沒辦法回覆/.test(reply)) finish = "refused";
@@ -251,9 +254,11 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
     return {
       scenario: scenario.id,
       model: model.id,
+      repeat: 1,
       reply,
       finish,
       error,
+      errorStatus,
       toolCalls: recorder.calls,
       saved,
       redFlags: detectRedFlags(scenario.messages.join("\n")),

@@ -20,6 +20,8 @@ export interface AnthropicProviderOptions {
    * 只有 Claude Haiku 5.5 這類可以關的模型能用（effort high 以下）；Claude Opus 5.5、Sonnet 5.5 送了會回 400
    */
   disableThinking?: boolean;
+  /** SDK 自己重試的次數（429、5xx、連線錯誤）；沒給時照 SDK 的預設（2 次）. 模型對照的腳本自己退避重試，設 0 */
+  maxRetries?: number;
 }
 
 function supportsEffort(model: string): boolean {
@@ -41,6 +43,7 @@ export class AnthropicProvider implements LlmProvider {
       apiKey: options.apiKey,
       baseURL: options.baseURL,
       dangerouslyAllowBrowser: options.browser ?? false,
+      ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
     });
   }
 

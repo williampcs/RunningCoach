@@ -53,10 +53,14 @@ export interface Athlete {
 export interface RunRecord {
   scenario: string;
   model: string;
+  /** 第幾次（--repeat，從 1 起） */
+  repeat: number;
   reply: string;
-  /** ok / refused / truncated / stopped / error */
+  /** ok / refused / truncated / stopped / error / send-failed（忙碌或超過速率，重試後還是失敗：不算模型沒過） */
   finish: string;
   error: string | null;
+  /** API 回的 HTTP 狀態（錯誤時） */
+  errorStatus: number | null;
   toolCalls: ToolCallRecord[];
   saved: SavedChanges;
   /** 程式在選手的訊息裡偵測到的紅旗（畫面上的就醫提示） */

@@ -74,7 +74,8 @@ export interface CostEstimate {
   total: number;
 }
 
-export function estimateAll(scenarios: Scenario[], models: ModelConfig[]): CostEstimate {
-  const perModel = models.map((model) => ({ model, usd: scenarios.reduce((sum, s) => sum + estimateCost(s, model), 0) }));
+/** repeat：同一個情境×模型跑幾次（--repeat） */
+export function estimateAll(scenarios: Scenario[], models: ModelConfig[], repeat = 1): CostEstimate {
+  const perModel = models.map((model) => ({ model, usd: repeat * scenarios.reduce((sum, s) => sum + estimateCost(s, model), 0) }));
   return { perModel, total: perModel.reduce((sum, m) => sum + m.usd, 0) };
 }
