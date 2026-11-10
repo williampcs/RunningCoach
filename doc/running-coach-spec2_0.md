@@ -239,6 +239,7 @@
 | 2.0-draft | 2026-11-10 | 免費試用的內測（功能開關 `trial`，staging 開著；還要有代理的網址）：代理（`apps/proxy`）加上邀請碼（一碼用一次、可設到期日與每月預算、可以停用；兌換時建帳號、憑證只回一次）、每天的則數（預設 15；選手送出一則算一則，工具迴圈不重複算；跑後與騎車分析另外每天 2 次；壓縮不顯示但有上限；台灣時間午夜重置）、所有帳號合計的每月總預算（預設 60 美元）與每人每月 10 美元、固定的模型（Haiku 5.5、thinking disabled）、以帳號為中心（每台裝置一個憑證、`identities` 表為之後的 Google／Apple 登入先建好）、「在另一台使用」的連結碼與裝置清單（可以移除某一台）、選手自己刪除試用帳號、每天的次數留 90 天與每月的用量留 13 個月；核心的請求帶 `x-coach-meter`；網頁版的設定與精靈多「免費試用（邀請碼）」、對話頁「今天還剩 N 則」與用完的說明；管理腳本 `tools/proxy-admin.ts`；部署 `proxy.yml` 與 staging 的代理；隱私說明、使用說明、架構說明（12.39 的「實作」、9.4） |
 | 2.0-draft | 2026-11-10 | 想法的索引加「免費試用的帳號和多裝置同步合在一起」 |
 | 2.0-draft | 2026-11-10 | 工作單：設定精靈在電腦上的版面（使用者回報是手機樣式；先推到另一個分支，等使用者測完免費試用再併進 v2）；開 session 調查 Open Wearables（RunningCoach 環境另外允許 openwearables.io） |
+| 2.0-draft | 2026-11-10 | 調查 Open Wearables（12.42）：MIT 的自架健康資料層，資料集中存在伺服器，和本機優先衝突 → 不當資料層，只參考它的 HealthKit 讀法、統一格式與 Garmin 整合；它整理的 Garmin Starter 只有 Push 待確認（影響 12.40 的「經過但不保存」）；想法的索引加一列 |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -1328,6 +1329,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | App 版（iOS 先、Android 第二） | 11-10 | 討論中：Capacitor 包網頁＋自己寫或評估讀健康資料的外掛；使用者去申請 Apple 開發者帳號 | 12.41 |
 | Garmin 資料可能不能經 Intervals.icu 取得 | 11-09 | 調查完（12.40）：Intervals.icu 說 Garmin 的活動經 API 很可能變空殼、日期未定；Garmin 10-21 重開開發者計畫（個人 API key、免費的 Starter、收費的 Enterprise）。建議先觀察、偵測空殼時提示、App 以讀健康資料為主、Garmin 個人 API 做小的可行性測試；Garmin 標示開發中 | KI-048、12.40 |
 | App 版用使用者自己的 Garmin 個人 API key | 11-09 | 技術可行（原生 App 沒有 CORS）；條款灰色，等 Starter 核准後問 Garmin，有書面答覆才做 | 12.40 |
+| Open Wearables（開源的穿戴資料層）有沒有幫助 | 11-10 | 調查完：MIT、自架、資料存在它的 PostgreSQL，和本機優先衝突；SDK 只上傳到它的後端、沒有 Capacitor 版 → 不用它當資料層，只參考（HealthKit 的讀法給 App 外掛、統一格式給不分來源、Garmin 整合）。待確認：Starter 是否只有 Push（交給 Garmin 條款審閱 session） | 12.42 |
 
 - 不分來源：之後（2026-11-02「不分來源的核心（第一步）」的開發 session 記下，都還沒排）：
   1. 使用者在本機跑 `tools/compare-load.ts`（12.37 的「實作」有指令），看我們估的負荷、體能疲勞和 Intervals.icu 差多少：決定要不要全部改用我們的、體感的對照表（`load.ts` 的 `RPE_INTENSITY`）要不要調、靜止心率的預設 60 合不合適。
@@ -4742,3 +4744,60 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - 啟動速度與記憶體：略差，一般感覺不出來。
 - 建議：先包網頁（最快拿到讀健康資料、給朋友用）；讀健康資料、之後的跑步記錄、手錶 App 這些用原生寫成外掛；等某一塊真的卡住再考慮重寫那一塊，不必整個重寫。
 - 2026-11-10 使用者確認：「應該不行把 API key 給人，但可以用邀請碼換發 session token 或 JWT，然後讓 key 留在我們的代理上。這樣是可行的。」→ 正是目前的設計：Anthropic 的 key 只在代理（Worker 的 secret），使用者拿到的是代理發的憑證（隨機字串、代理只存雜湊、每台裝置一個、可以撤銷），不是 key。
+
+### 12.42 Open Wearables 的調查（2026-11-10，調查）
+
+**緣由**：協調 session 請調查 session 看 Open Wearables（`openwearables.io`）對我們有沒有幫助。讀了它的網站（首頁、價格、Garmin、Apple 健康、手機 SDK、Connect App 頁）、文件（repo 裡的 `docs/`）與原始碼（`the-momentum/open-wearables`、iOS SDK、React Native SDK，只讀）。下面是 2026-11-10 看到的樣子。
+
+**它是什麼**
+- 開源、**MIT 授權**（主程式、iOS SDK、React Native SDK 都是），維護者是波蘭的醫療軟體公司 Momentum（`themomentum.ai`）。
+- 成熟度：主程式 2026-11-06 改成 1.0.0（標籤到 0.11.0，11-02）；10-10 之後約 160 個 commit、主要 5–6 位開發者，很活躍；網站寫 GitHub 約 2.6k 星；案例有 Heart Monitor（約 9 萬使用者、6 家來源）、Lifelong、MoveTogether、JustGains 等（網站的說法，沒查證）。GitHub 的 API 這個 session 讀不到（不在授權的 repo 內），星數、issue 數以網站為準。
+- 商業模式：核心自架免費（Core，$0）；Pro 每個部署每月 999 美元起（健康分數、健康 agent、醫療級整合、Connect App 不限人數）；Enterprise 另議；代部署 4,800 美元起、整合進你的 App 9,600 美元起、品牌版 Connect App 每個平台 5,000 美元。**沒有託管的 SaaS**：一律跑在你自己的雲端帳號。
+- 對象：數位健康、醫療院所、遠距照護、研究、企業健康——偏 B2B、重法規（HIPAA、GDPR、資料落地），不是給個人開發者的消費型產品。
+
+**支援的來源與接法**
+- 雲端（伺服器對伺服器的 OAuth）：Garmin、Oura、Whoop、Polar、Suunto、Withings、Strava、Ultrahuman、SensorBio、Google Health API、Fitbit（舊的 Fitbit Web API 已凍結，Google 2026-11-02 關閉，改看 Google Health）。
+- 手機上（SDK 在 App 裡讀）：Apple 健康（HealthKit）、Health Connect、Samsung Health；另可上傳 Apple 健康的 XML 匯出檔。
+- **沒有 Coros**（路線圖只在「推課表到手錶」提到 Coros；Coros 的資料可經它寫進 Apple 健康）。
+- **各家的開發者帳號都要自己申請**（「憑證用你的名義、和來源的關係是你的」），Open Wearables 不提供共用的帳號。Garmin 也一樣：用**我們自己的** Starter／Enterprise 帳號。
+- Garmin 的細節（它的文件 `docs/providers/garmin-api-integration.mdx`）：
+  - 它整理的方案比較：**Starter 只有 Push、沒有歷史資料（Backfill 要 Enterprise）**、上限 1,000 人；Enterprise 有 Push 或 Ping／Pull、約一個月以上的歷史。Open Wearables 只用 Push，所以兩種都能接。
+  - **這和 12.40 的「經過但不保存」構想有關**：那個構想靠 Ping／Pull（只存取件單、裝置上線時才去拿）。如果 Starter 真的只有 Push，Garmin 會把內容直接推到我們的伺服器，裝置不在線上時只能先存（或要另外設計，例如用裝置的公鑰加密後暫存、取走即刪）。**這是 Open Wearables 的整理，不是 Garmin 的原文**；Starter 已核准，可以在 Garmin 開發者入口網站的文件確認（交給「Garmin Starter 條款審閱」session）。
+  - 其他寫到的：申請要有法人、公開網站與隱私權政策；Garmin 不收免費信箱（gmail 等）與通用信箱；Backfill 大約上個月、每種資料通常只能補一次、同意畫面的 Backfill 預設關閉。
+  - 資料：活動（距離、能量、心率範圍、分段、心率與功率區間）、睡眠、每日摘要、時間序列（心率、HRV、靜止心率、呼吸）、身體組成、血氧、VO2max、女性健康；Garmin 自己算的 Body Battery、壓力、睡眠分數照原樣存並標來源。程式也會從 `activityFiles` 的通知下載 **FIT 檔**補細節（`backend/app/services/providers/garmin/data_247.py`）。
+- 涵蓋表（它的 `docs/providers/coverage.mdx`）：Strava 只有活動（沒有睡眠、HRV）；Apple 健康與 Health Connect 有活動、睡眠、全天、時間序列。
+
+**架構**
+- 一定要自架伺服器：FastAPI（Python）＋ PostgreSQL ＋ Redis ＋ Celery（排程與同步）＋ 選用的 Svix（對外 webhook）與 S3（原始資料、XML 匯入）＋ SvelteKit 的開發者後台。Docker Compose 起，一個部署服務一個組織。
+- **資料存在伺服器**：所有來源都轉成統一的格式存進 PostgreSQL（這就是它的用途）；原始的 payload 預設不存、可開；時間序列可以設封存與保留期限。OAuth 的 token 存在資料庫的 `user_connection`（程式裡是一般字串欄位，看不到逐欄加密；設定裡的 Fernet 用在設定值）。
+- 有匿名的使用統計（每天回報一次，可用 `TELEMETRY_ENABLED=false` 關）。
+- API：REST（OpenAPI）、使用者層級的查詢（活動、睡眠、時間序列…）、對外 webhook、MCP server（讓 AI 助理查使用者的資料）。
+- 手機 SDK：iOS（Swift，iOS 14+）、Android（Kotlin，Health Connect 與 Samsung）、Flutter、React Native（Expo 模組）。**沒有 Capacitor 版**。SDK 的設計是「讀健康資料 → 在背景上傳到你的後端」：設定 host、用後端發的短效 token 登入、要權限、開始背景同步；看 iOS SDK 的公開方法（`configure`、`signIn`、`requestAuthorization`、`startBackgroundSync`…），**沒有把讀到的資料交給 App 本機使用的介面**。
+- Connect App：現成的 iOS／Android App，用邀請碼把手機的健康資料同步到你的部署；Core 限 5 人，TestFlight／APK 要到它的 Discord 要。
+
+**對我們的幫助與代價**
+- 和我們的資料原則**根本衝突**：它的核心價值是「把資料集中存在你的伺服器」；我們是本機優先、伺服器不存。直接用就等於我們要經營一個存所有使用者健康資料的資料庫（隱私說明、刪除權、資安、主機費都跟著來），與 12.36、12.40 的原則相反。
+- 技術上也不合：Python＋Postgres＋Redis＋Celery 要一台常駐的主機，我們是 Cloudflare Workers＋D1；SDK 只會上傳到它的後端，Capacitor 用不了，React Native 的版本也要搬到 RN 才能用。
+- 省不了「申請各家帳號」：Garmin、Polar、Suunto、Oura… 都要我們自己申請、自己符合各家條款；它省的是**寫整合的程式**（OAuth、webhook、Backfill、速率限制、各家欄位對照）。
+- 費用：Core 免費，但要付主機；要 Connect App 超過 5 人或健康分數要 Pro（每月 999 美元起），對我們不實際。
+- 授權：MIT 和我們的 AGPL-3.0 相容（MIT 的程式可以放進 AGPL 的專案，保留原本的版權與授權聲明）；**參考或移植它的程式沒有授權問題**。
+- 被綁住的風險：低（MIT、全部原始碼、可以 fork）；真正的綁定是「得有一個存資料的後端」。
+- 可以參考的（這是它對我們最大的價值）：
+  1. **iOS SDK 讀 HealthKit 的做法**（anchored query 只讀變動、背景喚醒 `HKObserverQuery`＋`BGTaskScheduler`、可續傳、活動路線）：寫我們自己的 Capacitor 外掛（12.41）時照著做，必要時移植（保留 MIT 聲明）。
+  2. **各家欄位的對照與統一格式**（活動、睡眠、時間序列；來源與裝置的優先順序；Garmin 自己算的指標標來源）：給「不分來源的核心」（12.37）的 `activities` 與之後的睡眠、HRV 對照。
+  3. **Garmin 的整合**（Push 端點、各種摘要的處理、`activityFiles` 下載 FIT、Backfill 的限制）：如果之後還是要做 Garmin 原生支援，這是很好的參考與檢查清單。
+  4. 它整理的 Garmin 方案比較（Starter 只有 Push）：先確認，影響 12.40 的設計。
+
+**建議**
+- **不用它當我們的資料層**（衝突在原則與架構，不是程式品質）；**只參考它的做法與程式**。
+- 最小的試用（如果想看看，不急）：在使用者自己的電腦 `docker compose up`＋`make seed`（假資料），看統一的格式與 API 長什麼樣；不接真的帳號、不放真的資料。真正有用的「看看 Garmin Connect 寫進 Apple 健康的內容」，等我們自己的 App 試做時直接看（12.41），不必經過它。
+- 接下來可以做的：
+  - 交給「Garmin Starter 條款審閱」session：在 Garmin 的文件確認 Starter 是否只有 Push、有沒有 Ping／Pull 與 Backfill；若只有 Push，「經過但不保存」要改設計或放棄（也是使用者「要不要原生支援 Garmin」的判斷依據之一）。
+  - 寫 App 讀 Apple 健康的外掛時，開發 session 先讀 Open Wearables iOS SDK 的 HealthKit 部分（anchored query、背景喚醒）。
+
+**還不確定**
+- Starter 只有 Push 是它的說法，沒有看到 Garmin 的原文。
+- 使用者數、案例的規模是網站的說法；GitHub 的星數、issue、發行紀錄這個 session 讀不到 API，只看了 clone 下來的 commit 與標籤。
+- Android SDK 與 Flutter SDK 沒有讀原始碼；Health Connect 讀到的細節（分圈、跑步動態）沒查。
+
+**來源**：`https://openwearables.io/`（各頁有 `.md` 版，例 `/pricing.md`、`/integrations/garmin.md`、`/platform/mobile-sdks.md`）、`https://github.com/the-momentum/open-wearables`（`README.md`、`docs/providers/garmin-api-integration.mdx`、`docs/providers/coverage.mdx`、`backend/app/models/`）、`https://github.com/the-momentum/open_wearables_ios_sdk`、`https://github.com/the-momentum/open-wearables-react-native-sdk`。
