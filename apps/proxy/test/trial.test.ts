@@ -9,7 +9,7 @@ import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-nod
 import { serve } from "../src/server";
 
 import { createProxy, isNewTurn, normalizeInviteCode, purgeOld, type ProxyDeps } from "../src/handler";
-import { DEFAULT_POLICY, type Policy } from "../src/policy";
+import { DEFAULT_POLICY, loadPolicy, type Policy } from "../src/policy";
 import { AccountStore } from "../src/store";
 
 const ADMIN = "admin-secret";
@@ -216,17 +216,46 @@ describe("邀請碼", () => {
   });
 });
 
-describe("固定的模型與不思考", () => {
-  it("換成政策的模型、拿掉思考強度、送 thinking disabled、輸出夾到上限", async () => {
+describe("固定的模型與思考強度", () => {
+  it("預設：換成 Haiku、思考強度固定 low（不送 thinking）、輸出夾到上限（規格 12.43）", async () => {
     const proxy = makeProxy();
     const { token } = await account(proxy);
     expect((await send(proxy, token)).status).toBe(200);
-    expect(upstreamBodies[0]).toMatchObject({ model: "claude-haiku-5-5", max_tokens: 16000, thinking: { type: "disabled" } });
-    expect(upstreamBodies[0].output_config).toBeUndefined();
-    // 用量照實際用的模型算
-    expect((await usageOf(proxy, token)).cost_usd).toBe(0.0002);
+    expect(upstreamBodies[0]).toMatchObject({ model: "claude-haiku-5-5", max_tokens: 16000, output_config: { effort: "low" } });
+    expect(upstreamBodies[0].thinking).toBeUndefined();
+    // 請求帶了 thinking 也拿掉；output_config 的其他欄位保留
+    await send(proxy, token, { ...chatBody(), thinking: { type: "disabled" }, output_config: { effort: "max", format: { type: "json_schema", schema: {} } } }, "auto");
+    expect(upstreamBodies[1].thinking).toBeUndefined();
+    expect(upstreamBodies[1].output_config).toEqual({ effort: "low", format: { type: "json_schema", schema: {} } });
+    // 沒有 output_config 的（摘要）也加上
+    const { output_config: _, ...plain } = chatBody();
+    await send(proxy, token, plain, "compress");
+    expect(upstreamBodies[2].output_config).toEqual({ effort: "low" });
+    // 用量照實際用的模型算；用量端點回思考強度
+    const usage = await usageOf(proxy, token);
+    expect(usage.cost_usd).toBe(0.0006);
+    expect(usage).toMatchObject({ model: "claude-haiku-5-5", thinking: true, effort: "low" });
     // 選手的 key 不會用到，上游拿到的是作者的 key
     expect(upstreamHeaders[0]!["x-api-key"]).toBe("sk-operator");
+  });
+
+  it("政策可以改回不思考：拿掉思考強度、送 thinking disabled；用量端點的 effort 是 null", async () => {
+    const proxy = makeProxy({ disableThinking: true, forceEffort: null });
+    const { token } = await account(proxy);
+    expect((await send(proxy, token)).status).toBe(200);
+    expect(upstreamBodies[0]).toMatchObject({ model: "claude-haiku-5-5", thinking: { type: "disabled" } });
+    expect(upstreamBodies[0].output_config).toBeUndefined();
+    expect(await usageOf(proxy, token)).toMatchObject({ thinking: false, effort: null });
+    expect((await admin(proxy, "GET", "/admin/summary")).body.policy).toMatchObject({ thinking: false, effort: null });
+  });
+
+  it("政策的檢查：forceEffort 和 disableThinking 不能同時開、強度要是認得的、只有 Haiku 能關思考", () => {
+    expect(loadPolicy(undefined)).toMatchObject({ forceModel: "claude-haiku-5-5", forceEffort: "low", disableThinking: false });
+    expect(() => loadPolicy(JSON.stringify({ disableThinking: true }))).toThrow(/不能同時開/);
+    expect(loadPolicy(JSON.stringify({ disableThinking: true, forceEffort: null }))).toMatchObject({ disableThinking: true, forceEffort: null });
+    expect(() => loadPolicy(JSON.stringify({ forceEffort: "huge" }))).toThrow(/forceEffort/);
+    expect(loadPolicy(JSON.stringify({ forceEffort: "medium" })).forceEffort).toBe("medium");
+    expect(() => loadPolicy(JSON.stringify({ forceModel: "claude-opus-5-5", disableThinking: true, forceEffort: null }))).toThrow(/不能關掉思考/);
   });
 });
 

@@ -15,6 +15,7 @@ import {
   fetchTrialUsage,
   listTrialDevices,
   modelLabel,
+  trialThinkingLabel,
   redeemInvite,
   removeTrialDevice,
   resetText,
@@ -42,7 +43,7 @@ export function TrialDataFlow() {
 }
 
 /** 免費試用一天幾則、用什麼模型（說明用） */
-export const TRIAL_SUMMARY = `用 ${modelLabel(TRIAL_MODEL)}（不思考），每天有則數的上限，不用申請 API key。`;
+export const TRIAL_SUMMARY = `用 ${modelLabel(TRIAL_MODEL)}（${trialThinkingLabel(null)}），每天有則數的上限，不用申請 API key。`;
 
 /**
  * 貼邀請碼 → 兌換 → 存成這台的設定（憑證只拿得到這一次，所以拿到就存）.
@@ -208,7 +209,7 @@ export function TrialAccount({ onDeleted }: { onDeleted: (next: AppSettings) => 
         <Icon as={CircleCheck} /> 已啟用免費試用
       </p>
       <p className="small">
-        模型：{modelLabel(usage?.model ?? TRIAL_MODEL)}（{usage?.thinking ? "會思考" : "不思考"}，免費試用固定，不能改）
+        模型：{modelLabel(usage?.model ?? TRIAL_MODEL)}（{trialThinkingLabel(usage)}，免費試用固定，不能改）
       </p>
       {usage && <p className="small trial-remaining">{remainingText(usage)}</p>}
       {usage?.paused && (

@@ -1,5 +1,8 @@
 /** 代理的使用政策：可用模型、單次上限、每天的次數、每月預算與計費權重（免費試用的內測，規格 12.39）. */
 
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 /** 每百萬 token 的美元價格 */
 export interface ModelPrice {
   input: number;
@@ -23,8 +26,13 @@ export interface Policy {
   totalMonthlyBudgetUsd: number | null;
   /** 一律改用這個模型（免費試用用便宜的模型，選手不能改）；null 表示照請求的模型（要在白名單內） */
   forceModel: string | null;
-  /** 關掉思考：拿掉 output_config 的思考強度、送 thinking disabled */
+  /** 關掉思考：拿掉 output_config 的思考強度、送 thinking disabled（不能和 forceEffort 同時開） */
   disableThinking: boolean;
+  /**
+   * 固定思考強度：請求的 output_config.effort 一律改成這個、不送 thinking（照模型預設的 adaptive）；null 表示照請求的.
+   * 對話、自動的分析與壓縮都一樣（規格 12.43：免費試用用 Haiku low）
+   */
+  forceEffort: Effort | null;
   /** 每個帳號每天幾則對話（選手送出的一則算一則，工具迴圈不重複算） */
   dailyMessages: number;
   /** 每天幾次自動的分析（跑後摘要、騎車分析），不扣對話的則數 */
@@ -57,11 +65,13 @@ export const DEFAULT_POLICY: Policy = {
     "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   },
   maxOutputTokens: 16000,
-  // 內測（規格 12.39，2026-11-10 的決定）：每人每月 10 美元、合計 60 美元、每天 15 則、自動的分析 2 次、Haiku 不思考
+  // 內測（規格 12.39，2026-11-10 的決定）：每人每月 10 美元、合計 60 美元、每天 15 則、自動的分析 2 次；
+  // 模型 Haiku、思考強度 low（2026-11-11 從不思考改成 low，規格 12.43 的模型對照）
   defaultMonthlyBudgetUsd: 10,
   totalMonthlyBudgetUsd: 60,
   forceModel: "claude-haiku-5-5",
-  disableThinking: true,
+  disableThinking: false,
+  forceEffort: "low",
   dailyMessages: 15,
   dailyAuto: 2,
   dailyCompress: 10,
@@ -101,6 +111,16 @@ export function loadPolicy(json: string | undefined): Policy {
   if (!Object.keys(policy.models).length) throw new Error("PROXY_POLICY：models 不可為空");
   if (policy.forceModel !== null && !(policy.forceModel in policy.models)) {
     throw new Error(`PROXY_POLICY：forceModel ${policy.forceModel} 不在 models 裡（要有價格才能算用量）`);
+  }
+  if (policy.forceEffort !== null && !EFFORTS.includes(policy.forceEffort)) {
+    throw new Error(`PROXY_POLICY：forceEffort 要是 ${EFFORTS.join("、")} 或 null`);
+  }
+  if (policy.forceEffort !== null && policy.disableThinking) {
+    throw new Error("PROXY_POLICY：forceEffort 和 disableThinking 不能同時開（要不思考時把 forceEffort 設成 null）");
+  }
+  if (policy.disableThinking && policy.forceModel !== null && !policy.forceModel.startsWith("claude-haiku")) {
+    // Opus 5.5、Sonnet 5.5 送 thinking disabled 會回 400
+    throw new Error(`PROXY_POLICY：${policy.forceModel} 不能關掉思考（disableThinking 只給 Haiku）`);
   }
   for (const key of ["dailyMessages", "dailyAuto", "dailyCompress", "defaultMonthlyBudgetUsd", "maxOutputTokens"] as const) {
     if (typeof policy[key] !== "number" || !(policy[key] >= 0)) throw new Error(`PROXY_POLICY：${key} 要是不小於 0 的數字`);

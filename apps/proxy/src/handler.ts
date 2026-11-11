@@ -140,7 +140,7 @@ export function isNewTurn(messages: unknown[]): boolean {
   return !(last.content as Json[]).every((block) => block?.type === "tool_result");
 }
 
-/** 套用政策：固定的模型、關掉思考、輸出上限 */
+/** 套用政策：固定的模型、固定的思考強度或關掉思考、輸出上限 */
 function applyPolicy(body: Json, policy: Policy): void {
   if (policy.forceModel !== null) body.model = policy.forceModel;
   if ((body.max_tokens as number) > policy.maxOutputTokens) body.max_tokens = policy.maxOutputTokens;
@@ -152,6 +152,12 @@ function applyPolicy(body: Json, policy: Policy): void {
       else delete body.output_config;
     }
     body.thinking = { type: "disabled" };
+  }
+  if (policy.forceEffort !== null) {
+    // 和直連時核心送的一樣：output_config.effort，不送 thinking（模型預設 adaptive）
+    const config = body.output_config && typeof body.output_config === "object" ? (body.output_config as Json) : {};
+    body.output_config = { ...config, effort: policy.forceEffort };
+    delete body.thinking;
   }
 }
 
@@ -351,6 +357,8 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
       budget_usd: budgetOf(account) / 1_000_000,
       model: policy.forceModel,
       thinking: !policy.disableThinking,
+      // 思考強度（固定時）；null 表示照請求的或不思考（看 thinking）
+      effort: policy.disableThinking ? null : policy.forceEffort,
       today: {
         day: day(),
         messages_used: daily.chat,
@@ -565,6 +573,7 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
         policy: {
           model: policy.forceModel,
           thinking: !policy.disableThinking,
+          effort: policy.disableThinking ? null : policy.forceEffort,
           daily_messages: policy.dailyMessages,
           daily_auto: policy.dailyAuto,
           monthly_budget_usd: policy.defaultMonthlyBudgetUsd,

@@ -71,7 +71,7 @@ export async function run(argv: string[], target: AdminTarget, fetchImpl: typeof
       return [
         `${s.period}：花費 ${usd(s.cost_usd)}／總預算 ${usd(s.total_budget_usd)}${s.paused ? "（已暫停，下個月 1 日恢復）" : ""}，${s.requests} 次請求`,
         `帳號 ${s.accounts} 個（使用中 ${s.active_accounts}），沒用過的邀請碼 ${s.unused_invites} 張`,
-        `政策：${s.policy.model ?? "照請求的模型"}${s.policy.thinking ? "" : "、不思考"}、每天 ${s.policy.daily_messages} 則、自動分析 ${s.policy.daily_auto} 次、每人每月 ${usd(s.policy.monthly_budget_usd)}`,
+        `政策：${s.policy.model ?? "照請求的模型"}${s.policy.thinking ? (s.policy.effort ? `、思考強度 ${s.policy.effort}` : "") : "、不思考"}、每天 ${s.policy.daily_messages} 則、自動分析 ${s.policy.daily_auto} 次、每人每月 ${usd(s.policy.monthly_budget_usd)}`,
       ].join("\n");
     }
     case "invite": {

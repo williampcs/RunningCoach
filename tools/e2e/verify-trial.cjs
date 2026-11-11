@@ -2,7 +2,7 @@
 // A. 手機淺色：設定精靈選「免費試用（邀請碼）」→ 錯的邀請碼看到說明 → 對的啟用 → 資料流向寫「不保存對話的內容」→
 //    同意 → 手動記第一筆（跑後分析算自動的次數，不扣則數）→ 對話：「今天還剩 3 則」→ 一則會跑工具迴圈的訊息只扣一則 →
 //    用完時輸入框換成「今天的 3 則用完了，明天 00:00（台灣時間）恢復。也可以改用自己的 API key。」＋前往設定
-//    送到上游的模型是 Claude Haiku、thinking disabled；請求裡看不到選手的 key
+//    送到上游的模型是 Claude Haiku、思考強度 low（不送 thinking，規格 12.43）；請求裡看不到選手的 key
 // B. 電腦深色：設定的「AI 教練」→ 免費試用 → 貼邀請碼 → 已啟用、模型固定、今天還剩幾則 → 同意後存 → 對話可以聊
 //    → 總預算用完（重開代理，總預算設得很小）→ 對話頁「這個月的免費額度用完了」→ 在另一台使用：連結碼 → 手機輸入 →
 //    同一個帳號的兩台 → 手機移除電腦 → 電腦查不到用量 → 刪除試用帳號（代理那邊的帳號也刪掉）
@@ -203,7 +203,7 @@ async function send(page, text) {
     await send(page, "幫我看一下這週的課表");
     const chatCalls = (await requests()).filter((r) => r.kind === "llm" && JSON.stringify(r.body.messages).includes("幫我看一下這週的課表"));
     check.toolLoopRan = chatCalls.length >= 2;
-    check.haikuNoThinking = chatCalls.every((r) => r.body.model === "claude-haiku-5-5" && r.body.thinking?.type === "disabled" && !r.body.output_config);
+    check.haikuLow = chatCalls.every((r) => r.body.model === "claude-haiku-5-5" && r.body.output_config?.effort === "low" && r.body.thinking === undefined);
     await page.locator(".trial-remaining", { hasText: "今天還剩 2 則" }).waitFor({ timeout: 10000 }).catch(() => undefined);
     check.oneMessageCounted = (await remaining(page)) === "今天還剩 2 則";
     if (!check.oneMessageCounted || !check.toolLoopRan) console.log(`debug: ${await remaining(page)} calls=${chatCalls.length} total=${(await requests()).length} last=${JSON.stringify((await requests()).slice(-3).map((r) => [r.kind, r.body.model, JSON.stringify(r.body.messages ?? "").slice(-120)]))}`);
@@ -236,7 +236,7 @@ async function send(page, text) {
     await page.getByText("已啟用免費試用").waitFor({ timeout: 10000 });
     await page.locator(".trial-account .trial-remaining").waitFor({ timeout: 10000 });
     const panel = await page.locator(".trial-account").innerText();
-    check.settingsModel = panel.includes("Claude Haiku 5.5") && panel.includes("不思考");
+    check.settingsModel = panel.includes("Claude Haiku 5.5") && panel.includes("少量思考") && !panel.includes("不思考");
     check.settingsRemaining = panel.includes("今天還剩 3 則（共 3 則");
     await page.getByLabel("我了解並同意以上的資料流向").check();
     await page.getByLabel("我已閱讀使用須知").check();

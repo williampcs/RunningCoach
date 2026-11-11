@@ -22,9 +22,21 @@ export const TRIAL_MODEL = "claude-haiku-5-5";
 export const modelLabel = (model: string | null | undefined) =>
   model ? model.replace(/^claude-/, "Claude ").replace(/-(\d+)-(\d+)$/, " $1.$2").replace(/(haiku|sonnet|opus)/, (m) => m[0]!.toUpperCase() + m.slice(1)) : "—";
 
+/** 免費試用的思考強度給人看的說法；還沒拿到用量時照代理的預設（low） */
+export function trialThinkingLabel(usage: Pick<TrialUsage, "thinking" | "effort"> | null | undefined): string {
+  if (!usage) return "少量思考";
+  if (!usage.thinking) return "不思考";
+  if (usage.effort === "low") return "少量思考";
+  if (usage.effort === "medium") return "中等思考";
+  if (usage.effort) return "深入思考";
+  return "會思考";
+}
+
 export interface TrialUsage {
   model: string | null;
   thinking: boolean;
+  /** 代理固定的思考強度（2026-11-11 起 low，規格 12.43）；舊的代理沒有這一欄 */
+  effort: string | null;
   today: { messagesUsed: number; messagesLimit: number; autoUsed: number; autoLimit: number; resetsAt: string };
   /** 這個月的額度用完了：beta_budget 是所有試用的人合計、account_budget 是你自己的 */
   paused: "beta_budget" | "account_budget" | null;
@@ -115,6 +127,7 @@ export async function fetchTrialUsage(s: AppSettings, fetchImpl: typeof fetch = 
   return {
     model: body.model ?? null,
     thinking: !!body.thinking,
+    effort: typeof body.effort === "string" ? body.effort : null,
     today: {
       messagesUsed: body.today?.messages_used ?? 0,
       messagesLimit: body.today?.messages_limit ?? 0,

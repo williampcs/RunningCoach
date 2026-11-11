@@ -9,6 +9,7 @@ import { DEFAULT_POLICY } from "../../proxy/src/policy";
 import { AccountStore } from "../../proxy/src/store";
 import { defaultSettings, llmProblem, suggestedModels, type AppSettings } from "../src/settings";
 import {
+  trialThinkingLabel,
   codeKind,
   createLinkCode,
   deleteTrialAccount,
@@ -75,6 +76,12 @@ describe("免費試用", () => {
     const { token } = await redeemInvite(await newCode(), PROXY, proxyFetch);
     const settings = trialSettings(token);
     expect((await fetchTrialUsage(settings, proxyFetch)).today).toEqual({ messagesUsed: 0, messagesLimit: 1, autoUsed: 0, autoLimit: 2, resetsAt: "2026-11-11T00:00:00+08:00" });
+    // 免費試用是 Haiku、思考強度 low（規格 12.43），畫面寫「少量思考」
+    const usage = await fetchTrialUsage(settings, proxyFetch);
+    expect(usage).toMatchObject({ model: "claude-haiku-5-5", thinking: true, effort: "low" });
+    expect(trialThinkingLabel(usage)).toBe("少量思考");
+    expect(trialThinkingLabel(null)).toBe("少量思考");
+    expect(trialThinkingLabel({ thinking: false, effort: null })).toBe("不思考");
 
     const client = new Anthropic({ apiKey: token, baseURL: PROXY, fetch: proxyFetch, maxRetries: 0 });
     const ask = () => client.messages.create({ model: "claude-haiku-5-5", max_tokens: 100, messages: [{ role: "user", content: "嗨" }] });

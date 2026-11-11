@@ -67,6 +67,7 @@ const BASE_POLICY: Policy = {
   ...DEFAULT_POLICY,
   forceModel: null,
   disableThinking: false,
+  forceEffort: null,
   defaultMonthlyBudgetUsd: 3,
   totalMonthlyBudgetUsd: null,
   dailyMessages: 1000,
