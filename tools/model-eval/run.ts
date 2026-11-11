@@ -231,6 +231,7 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
   const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, apiCalls: 0, toolRounds: 0 };
   let costUsd: number | null = 0;
   let reply = "";
+  const replies: string[] = [];
   let finish = "ok";
   let error: string | null = null;
   let errorStatus: number | null = null;
@@ -250,6 +251,7 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
         // 傳 onEvent 讓核心用串流呼叫，和網頁版一樣
         const result = await coach.chat(message, () => undefined);
         reply = result.reply;
+        replies.push(result.reply);
         finish = result.stopped ? "stopped" : "ok";
         const u = result.stats.usage;
         usage.input += u.inputTokens;
@@ -277,6 +279,7 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
       model: model.id,
       repeat: 1,
       reply,
+      replies,
       finish,
       error,
       errorStatus,

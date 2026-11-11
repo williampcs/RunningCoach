@@ -55,7 +55,10 @@ export interface RunRecord {
   model: string;
   /** 第幾次（--repeat，從 1 起） */
   repeat: number;
+  /** 最後一則回覆 */
   reply: string;
+  /** 每一則選手訊息的回覆（多輪的情境有好幾則）；舊的結果沒有這一欄 */
+  replies?: string[];
   /**
    * ok / refused / truncated / stopped / error / send-failed（忙碌或超過速率，重試後還是失敗）/
    * setup-failed（情境的選手資料建不起來，是情境的問題）. 後兩種不算模型沒過、不算進檢查數

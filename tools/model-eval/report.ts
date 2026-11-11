@@ -117,6 +117,13 @@ function json(value: unknown, max = 4000): string {
   return text.length > max ? `${text.slice(0, max)}\n…（共 ${text.length} 字）` : text;
 }
 
+/** 回覆：多輪的情境每一則標第幾輪 */
+function repliesHtml(r: EvalResult): string {
+  const replies = r.replies?.length ? r.replies : [r.reply];
+  if (replies.length === 1) return `<div class="reply">${escapeHtml(replies[0]!)}</div>`;
+  return replies.map((text, i) => `<div class="reply"><span class="tag">第 ${i + 1} 輪的回覆</span>\n${escapeHtml(text)}</div>`).join("");
+}
+
 /** 一次的結果：檢查、回覆、工具呼叫、存了什麼 */
 function runBlock(r: EvalResult): string {
   if (r.finish === "setup-failed") return `<p class="review">情境準備失敗（情境的選手資料建不起來，是情境的問題，不算模型沒過）：${escapeHtml(r.error ?? "")}</p>`;
@@ -150,7 +157,7 @@ function runBlock(r: EvalResult): string {
   return `<div class="meta"><span class="${failed ? "bad" : "good"}">${r.checks.length - failed}/${r.checks.length}</span> · ${usd(r.costUsd)} · ${r.seconds} 秒 · 輸入 ${r.usage.input + r.usage.cacheRead + r.usage.cacheWrite}（快取讀 ${r.usage.cacheRead}）／輸出 ${r.usage.output} · ${r.usage.apiCalls} 次呼叫</div>
 <ul class="checks">${checks}</ul>
 ${r.error ? `<p class="bad">${escapeHtml(r.error)}</p>` : ""}
-<div class="reply">${escapeHtml(r.reply)}</div>
+${repliesHtml(r)}
 <details><summary>工具呼叫（${r.toolCalls.length}）</summary>${tools}</details>
 <details><summary>存了什麼</summary>${savedText.length ? `<ul>${savedText.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : `<p class="muted">沒有寫入</p>`}</details>`;
 }
