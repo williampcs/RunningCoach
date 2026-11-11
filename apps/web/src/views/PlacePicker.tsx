@@ -4,6 +4,7 @@ import { matchTaiwanCities, openMeteoUrlsAt, searchPlaces, TAIWAN_CITIES, type P
 
 import { errorText } from "../app-context";
 import { InfoTip } from "../ui";
+import { isImeKey } from "../ime";
 
 const geocodingUrl = import.meta.env.VITE_WEATHER_BASE_URL ? openMeteoUrlsAt(import.meta.env.VITE_WEATHER_BASE_URL).geocoding : undefined;
 
@@ -88,7 +89,7 @@ export function RacePlacePicker({ value, onChange }: { value: PlaceCandidate | n
             placeholder="例：Osaka、Singapore"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !isImeKey(e.nativeEvent)) {
                 e.preventDefault();
                 void search();
               }

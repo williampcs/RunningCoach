@@ -1,5 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent, type TextareaHTMLAttributes } from "react";
 
+import { isImeKey } from "./ime";
+
 /**
  * 自動長高的輸入框（12.16）：平常 minRows 行高，打字時長高，最多 maxRows 行，超過在框內捲動。
  *
@@ -55,7 +57,7 @@ export const AutoGrowTextarea = forwardRef<HTMLTextAreaElement, AutoGrowTextarea
 
   function keyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     onKeyDown?.(e);
-    if (e.defaultPrevented || e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    if (e.defaultPrevented || e.key !== "Enter" || isImeKey(e.nativeEvent)) return;
     if (enter === "submit" || (enter === "send" && !e.shiftKey)) {
       e.preventDefault();
       e.currentTarget.form?.requestSubmit();

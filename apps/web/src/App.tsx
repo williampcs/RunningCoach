@@ -57,6 +57,7 @@ import { ReportView } from "./views/Report";
 import { SettingsView } from "./views/Settings";
 import { requestPersistentStorage, useNewVersion } from "./update-check";
 import { BUILD, BUILD_DETAIL, STAGE_LABEL } from "./version";
+import { isImeKey } from "./ime";
 
 // 設定在設定好之後很少用，放在標題列的齒輪，底部維持 5 個分頁（規格 12.9）；線條圖示＋兩個字（規格 12.28）
 const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
@@ -335,7 +336,7 @@ export function App() {
   useEffect(() => {
     if (!panel) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.isComposing) closePanel();
+      if (e.key === "Escape" && !isImeKey(e)) closePanel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

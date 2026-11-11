@@ -24,6 +24,7 @@ import { ConversationSummaryCard, MemoriesCard } from "./Memories";
 import { ImportFromAi } from "./ImportFromAi";
 import { InjuriesCard } from "./Injuries";
 import { EffortSplit, TrainingValuesCard } from "./TrainingValues";
+import { isImeKey } from "../ime";
 
 interface Field {
   key: string;
@@ -144,7 +145,7 @@ function FieldInput({ field, form, setField, commit }: { field: Field; form: For
           onBlur={() => commit(field.key)}
           onKeyDown={(e) => {
             // 不換行：Enter 就是打完了（離開欄位時存）
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            if (e.key === "Enter" && !isImeKey(e.nativeEvent)) {
               e.preventDefault();
               e.currentTarget.blur();
             }
@@ -156,7 +157,7 @@ function FieldInput({ field, form, setField, commit }: { field: Field; form: For
           placeholder={field.placeholder}
           onChange={(e) => setField(field.key, e.target.value)}
           onBlur={() => commit(field.key)}
-          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
+          onKeyDown={(e) => e.key === "Enter" && !isImeKey(e.nativeEvent) && e.currentTarget.blur()}
         />
       )}
     </label>
