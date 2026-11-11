@@ -11,6 +11,8 @@ export interface ReportInput {
   results: EvalResult[];
   /** 同一個情境×模型跑幾次（--repeat）；舊的結果沒有這一欄 */
   repeat?: number;
+  /** 情境裡的「今天」（固定在星期二，evalNow）；舊的結果沒有這一欄 */
+  today?: string;
 }
 
 export interface ModelSummary {
@@ -23,6 +25,8 @@ export interface ModelSummary {
   scenariosPassed: number;
   /** 忙碌或超過速率、重試後還是送不出去的次數（不算模型沒過） */
   sendFailed: number;
+  /** 情境的選手資料建不起來的次數（情境的問題，不算模型沒過） */
+  setupFailed: number;
   /** 有錯誤（API 失敗等）的次數 */
   errors: number;
   totalUsd: number | null;
@@ -33,7 +37,7 @@ export interface ModelSummary {
 export function summarize(input: Pick<ReportInput, "models" | "results">): ModelSummary[] {
   return input.models.map((model) => {
     const all = input.results.filter((r) => r.model === model.id);
-    const runs = all.filter((r) => r.finish !== "send-failed");
+    const runs = all.filter(counted);
     const costs = runs.map((r) => r.costUsd);
     const totalUsd = costs.some((c) => c === null) ? null : costs.reduce<number>((s, c) => s + (c ?? 0), 0);
     return {
@@ -42,7 +46,8 @@ export function summarize(input: Pick<ReportInput, "models" | "results">): Model
       checksPassed: runs.reduce((s, r) => s + r.checks.filter((c) => c.pass).length, 0),
       checksTotal: runs.reduce((s, r) => s + r.checks.length, 0),
       scenariosPassed: runs.filter((r) => r.checks.every((c) => c.pass)).length,
-      sendFailed: all.length - runs.length,
+      sendFailed: all.filter((r) => r.finish === "send-failed").length,
+      setupFailed: all.filter((r) => r.finish === "setup-failed").length,
       errors: runs.filter((r) => r.finish === "error").length,
       totalUsd,
       avgUsd: totalUsd === null || !runs.length ? null : totalUsd / runs.length,
@@ -53,6 +58,10 @@ export function summarize(input: Pick<ReportInput, "models" | "results">): Model
 
 const usd = (v: number | null, digits = 4) => (v === null ? "—" : `$${v.toFixed(digits)}`);
 
+/** 送出失敗與情境準備失敗：不是模型的問題，不算進檢查數 */
+export const NOT_COUNTED = new Set(["send-failed", "setup-failed"]);
+const counted = (r: EvalResult) => !NOT_COUNTED.has(r.finish);
+
 /** 一格（情境×模型）的所有次數 */
 function runsOf(input: Pick<ReportInput, "results">, scenario: string, model: string): EvalResult[] {
   return input.results.filter((r) => r.scenario === scenario && r.model === model).sort((a, b) => a.repeat - b.repeat);
@@ -61,9 +70,10 @@ function runsOf(input: Pick<ReportInput, "results">, scenario: string, model: st
 /** 摘要裡的一格：只跑一次時「通過／檢查數」，跑好幾次時「全過的次數／次數」；後面是沒過的檢查（跑好幾次時附次數） */
 export function cellSummary(runs: EvalResult[]): string {
   if (!runs.length) return "—";
-  const sent = runs.filter((r) => r.finish !== "send-failed");
-  const sendFailed = runs.length - sent.length;
-  const failedNote = sendFailed ? `送出失敗 ${sendFailed}` : "";
+  const sent = runs.filter(counted);
+  const sendFailed = runs.filter((r) => r.finish === "send-failed").length;
+  const setupFailed = runs.filter((r) => r.finish === "setup-failed").length;
+  const failedNote = [sendFailed ? `送出失敗 ${sendFailed}` : "", setupFailed ? `情境準備失敗 ${setupFailed}` : ""].filter(Boolean).join("；");
   if (!sent.length) return failedNote;
   const counts = new Map<string, number>();
   for (const r of sent) for (const c of r.checks) if (!c.pass) counts.set(c.id, (counts.get(c.id) ?? 0) + 1);
@@ -81,13 +91,13 @@ export function summaryMarkdown(input: ReportInput): string {
   const lines = [
     `# 模型對照 ${input.createdAt}${input.mock ? "（模擬上游，回覆是假的）" : ""}`,
     "",
-    `情境 ${input.scenarios.length} 個 × 模型 ${input.models.length} 種${repeat > 1 ? ` × 每格 ${repeat} 次` : ""}；功能開關：${input.features.length ? input.features.join("、") : "全關"}`,
+    `情境 ${input.scenarios.length} 個 × 模型 ${input.models.length} 種${repeat > 1 ? ` × 每格 ${repeat} 次` : ""}；功能開關：${input.features.length ? input.features.join("、") : "全關"}${input.today ? `；情境裡的今天：${input.today}` : ""}`,
     "",
-    "| 模型 | 檢查通過 | 全過的次數 | 錯誤 | 送出失敗 | 平均每則 | 平均秒數 | 合計 |",
-    "|---|---|---|---|---|---|---|---|",
+    "| 模型 | 檢查通過 | 全過的次數 | 錯誤 | 送出失敗 | 情境準備失敗 | 平均每則 | 平均秒數 | 合計 |",
+    "|---|---|---|---|---|---|---|---|---|",
     ...summarize(input).map(
       (s) =>
-        `| ${s.model.label} | ${s.checksPassed}/${s.checksTotal} | ${s.scenariosPassed}/${s.runs} | ${s.errors} | ${s.sendFailed} | ${usd(s.avgUsd)} | ${s.avgSeconds.toFixed(1)} | ${usd(s.totalUsd, 3)} |`,
+        `| ${s.model.label} | ${s.checksPassed}/${s.checksTotal} | ${s.scenariosPassed}/${s.runs} | ${s.errors} | ${s.sendFailed} | ${s.setupFailed} | ${usd(s.avgUsd)} | ${s.avgSeconds.toFixed(1)} | ${usd(s.totalUsd, 3)} |`,
     ),
     "",
     repeat > 1 ? "## 每個情境（全過的次數／次數；✗ 後面是沒過的檢查×次數）" : "## 每個情境（通過／檢查數；✗ 後面是沒過的檢查）",
@@ -96,7 +106,7 @@ export function summaryMarkdown(input: ReportInput): string {
     `|---|${input.models.map(() => "---").join("|")}|`,
   ];
   for (const s of input.scenarios) lines.push(`| ${s.id} | ${input.models.map((m) => cellSummary(runsOf(input, s.id, m.id))).join(" | ")} |`);
-  lines.push("", "標「需人工看」的規則比較粗：不過時請看報告裡的回覆。送出失敗（忙碌或超過速率）不算模型沒過。", "");
+  lines.push("", "標「需人工看」的規則比較粗：不過時請看報告裡的回覆。送出失敗（忙碌或超過速率）與情境準備失敗（情境的問題）不算模型沒過、不算進檢查數。", "");
   return lines.join("\n");
 }
 
@@ -109,6 +119,7 @@ function json(value: unknown, max = 4000): string {
 
 /** 一次的結果：檢查、回覆、工具呼叫、存了什麼 */
 function runBlock(r: EvalResult): string {
+  if (r.finish === "setup-failed") return `<p class="review">情境準備失敗（情境的選手資料建不起來，是情境的問題，不算模型沒過）：${escapeHtml(r.error ?? "")}</p>`;
   if (r.finish === "send-failed") return `<p class="review">送出失敗（忙碌或超過速率，重試後還是失敗；不算模型沒過）：${escapeHtml(r.error ?? "")}</p>`;
   const failed = r.checks.filter((c) => !c.pass).length;
   const checks = r.checks
@@ -151,7 +162,7 @@ function cell(scenario: string, model: string, runs: EvalResult[]): string {
   if (runs.length === 1) return `<td class="run">${runBlock(runs[0]!)}${note}</td>`;
   const blocks = runs
     .map((r, i) => {
-      const passed = r.finish === "send-failed" ? "送出失敗" : `${r.checks.filter((c) => c.pass).length}/${r.checks.length}`;
+      const passed = r.finish === "send-failed" ? "送出失敗" : r.finish === "setup-failed" ? "情境準備失敗" : `${r.checks.filter((c) => c.pass).length}/${r.checks.length}`;
       return `<details class="attempt"${i === 0 ? " open" : ""}><summary>第 ${r.repeat} 次：${passed}</summary>${runBlock(r)}</details>`;
     })
     .join("");
@@ -191,7 +202,7 @@ export function reportHtml(input: ReportInput): string {
   const summary = summarize(input)
     .map(
       (s) =>
-        `<tr><th>${escapeHtml(s.model.label)}</th><td>${s.checksPassed}/${s.checksTotal}</td><td>${s.scenariosPassed}/${s.runs}</td><td>${s.errors}</td><td>${s.sendFailed}</td><td>${usd(s.avgUsd)}</td><td>${s.avgSeconds.toFixed(1)}</td><td>${usd(s.totalUsd, 3)}</td></tr>`,
+        `<tr><th>${escapeHtml(s.model.label)}</th><td>${s.checksPassed}/${s.checksTotal}</td><td>${s.scenariosPassed}/${s.runs}</td><td>${s.errors}</td><td>${s.sendFailed}</td><td>${s.setupFailed}</td><td>${usd(s.avgUsd)}</td><td>${s.avgSeconds.toFixed(1)}</td><td>${usd(s.totalUsd, 3)}</td></tr>`,
     )
     .join("");
   const rows = input.scenarios
@@ -247,8 +258,8 @@ details.attempt { border-top: 1px solid var(--line); padding-top: 4px; }
 </head>
 <body>
 <h1>模型對照 ${escapeHtml(input.createdAt)}</h1>
-<p class="muted">${input.mock ? "<b class=\"bad\">模擬上游：回覆是假的，只驗流程。</b> " : ""}情境 ${input.scenarios.length} 個 × 模型 ${input.models.length} 種${(input.repeat ?? 1) > 1 ? ` × 每格 ${input.repeat} 次` : ""} · 功能開關：${input.features.length ? escapeHtml(input.features.join("、")) : "全關"} · 選手資料都是假的 · 自動檢查只是底線，品質請看回覆。</p>
-<div class="wrap"><table class="summary"><tr><th>模型</th><th>檢查通過</th><th>全過的次數</th><th>錯誤</th><th>送出失敗</th><th>平均每則</th><th>平均秒數</th><th>合計</th></tr>${summary}</table></div>
+<p class="muted">${input.mock ? "<b class=\"bad\">模擬上游：回覆是假的，只驗流程。</b> " : ""}情境 ${input.scenarios.length} 個 × 模型 ${input.models.length} 種${(input.repeat ?? 1) > 1 ? ` × 每格 ${input.repeat} 次` : ""} · 功能開關：${input.features.length ? escapeHtml(input.features.join("、")) : "全關"}${input.today ? ` · 情境裡的今天：${input.today}` : ""} · 選手資料都是假的 · 自動檢查只是底線，品質請看回覆。</p>
+<div class="wrap"><table class="summary"><tr><th>模型</th><th>檢查通過</th><th>全過的次數</th><th>錯誤</th><th>送出失敗</th><th>情境準備失敗</th><th>平均每則</th><th>平均秒數</th><th>合計</th></tr>${summary}</table></div>
 <p class="notes-bar"><button id="copy-notes" type="button">複製全部備註</button> <span id="copy-state" class="muted">每一格下面可以寫備註（存在這個瀏覽器），寫完按這裡複製、貼回來。</span></p>
 <textarea id="notes-out" rows="6" hidden readonly></textarea>
 <div class="wrap"><table class="grid"><tr><th class="scenario">情境</th>${input.models.map((m) => `<th>${escapeHtml(m.label)}</th>`).join("")}</tr>${rows}</table></div>

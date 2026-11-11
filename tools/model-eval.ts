@@ -30,13 +30,13 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
-import { AnthropicProvider, parseFeatures } from "../packages/core/src";
+import { AnthropicProvider, localDate, parseFeatures } from "../packages/core/src";
 
 import { runChecks } from "./model-eval/checks";
 import { checkModelConfig, ESTIMATE, estimateAll, MODEL_CONFIGS, pickModels, pickScenarios } from "./model-eval/models";
 import { reportHtml, summarize, summaryMarkdown } from "./model-eval/report";
 import { FatalApiError, runWithRetry } from "./model-eval/retry";
-import { runScenario } from "./model-eval/run";
+import { evalNow, runScenario } from "./model-eval/run";
 import { SCENARIOS } from "./model-eval/scenarios";
 import type { EvalResult, ModelConfig, Scenario } from "./model-eval/types";
 
@@ -133,7 +133,8 @@ async function main(): Promise<void> {
   // SDK 不自己重試（maxRetries 0）：忙碌時只照 runWithRetry 的退避，最多再試 3 次
   const makeProvider = (m: ModelConfig) => new AnthropicProvider({ apiKey, baseURL, disableThinking: m.disableThinking, maxRetries: 0 });
 
-  const now = new Date();
+  // 固定在最近的星期二：情境的日期（明天、這週、過去幾週）不隨跑的那天變
+  const now = evalNow();
   const jobs = scenarios.flatMap((scenario) => models.flatMap((model) => Array.from({ length: repeat }, (_, i) => ({ scenario, model, repeat: i + 1 }))));
   let done = 0;
   let results: EvalResult[];
@@ -145,6 +146,10 @@ async function main(): Promise<void> {
         onRetry: (attempt, waitMs, r) => console.log(`  ${label}：忙碌（${r.errorStatus ?? r.error}），${Math.round(waitMs / 1000)} 秒後再試（第 ${attempt} 次）`),
       });
       done++;
+      if (record.finish === "setup-failed") {
+        console.log(`[${done}/${jobs.length}] ${label}：情境準備失敗（${record.error?.slice(0, 160)}），是情境的問題，不算模型沒過`);
+        return { ...record, checks: [] };
+      }
       if (record.finish === "send-failed") {
         console.log(`[${done}/${jobs.length}] ${label}：送出失敗（${record.error?.slice(0, 120)}），不算模型沒過`);
         return { ...record, checks: [] };
@@ -167,18 +172,19 @@ async function main(): Promise<void> {
     throw e;
   }
 
-  const createdAt = `${stamp(now)}${values.mock ? "-mock" : ""}`;
+  const createdAt = `${stamp(new Date())}${values.mock ? "-mock" : ""}`;
   const dir = join("data", "model-eval", createdAt);
   mkdirSync(dir, { recursive: true });
-  const input = { createdAt, mock: values.mock, features, scenarios, models, results, repeat };
+  const today = localDate(now, "Asia/Taipei");
+  const input = { createdAt, mock: values.mock, features, scenarios, models, results, repeat, today };
   writeFileSync(join(dir, "report.html"), reportHtml(input));
   writeFileSync(join(dir, "summary.md"), summaryMarkdown(input));
-  writeFileSync(join(dir, "results.json"), `${JSON.stringify({ createdAt, mock: values.mock, features, repeat, models, results }, null, 2)}\n`);
+  writeFileSync(join(dir, "results.json"), `${JSON.stringify({ createdAt, mock: values.mock, features, repeat, today, models, results }, null, 2)}\n`);
 
   console.log("");
   for (const s of summarize(input)) {
     console.log(
-      `${s.model.label.padEnd(24)} 檢查 ${s.checksPassed}/${s.checksTotal}、全過 ${s.scenariosPassed}/${s.runs} 次、錯誤 ${s.errors}、送出失敗 ${s.sendFailed}、` +
+      `${s.model.label.padEnd(24)} 檢查 ${s.checksPassed}/${s.checksTotal}、全過 ${s.scenariosPassed}/${s.runs} 次、錯誤 ${s.errors}、送出失敗 ${s.sendFailed}、情境準備失敗 ${s.setupFailed}、` +
         `平均 ${s.avgUsd === null ? "—" : `US$${s.avgUsd.toFixed(4)}`}／則、${s.avgSeconds.toFixed(1)} 秒`,
     );
   }

@@ -12,6 +12,7 @@ import {
   generateActivities,
   generateWellness,
   isoWeekLabel,
+  localDate,
   type Activity,
   type ChatSession,
   type LlmProvider,
@@ -149,10 +150,17 @@ export async function seedAthlete(coach: Coach, athlete: Athlete, today: string)
     await coach.db.insertPastPlan({ weekLabel: isoWeekLabel(weekStart), weekStart, reason: "（情境的過去課表）", content: "（情境的過去課表）" }, drafts);
   }
   if (athlete.plan?.length) {
-    const sessions = athlete.plan.map((s) => ({ date: addDays(today, s.day), kind: s.kind, title: s.title, steps: s.steps, purpose: "情境的課", success: "完成", fallback: "" }));
-    const weekStart = sessions.map((s) => s.date).sort()[0]!;
-    const result = await savePlanFromTool(coach.db, today, { week_start: weekStart, style: "fixed", reason: "情境的課表", sessions, accept_warnings: true, warning_notes: "情境的課表" });
-    if (!result.startsWith("課表已儲存")) throw new Error(`情境的課表存不進去：${result.slice(0, 200)}`);
+    // 課表一週一份：跨過週日的課存成下一週的課表（跑的那天在週末時也建得起來）
+    const byWeek = new Map<string, Record<string, unknown>[]>();
+    for (const s of athlete.plan) {
+      const date = addDays(today, s.day);
+      const week = addDays(date, -weekdayIndex(date));
+      byWeek.set(week, [...(byWeek.get(week) ?? []), { date, kind: s.kind, title: s.title, steps: s.steps, purpose: "情境的課", success: "完成", fallback: "" }]);
+    }
+    for (const [weekStart, sessions] of [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const result = await savePlanFromTool(coach.db, today, { week_start: weekStart, style: "fixed", reason: "情境的課表", sessions, accept_warnings: true, warning_notes: "情境的課表" });
+      if (!result.startsWith("課表已儲存")) throw new Error(`情境的課表存不進去：${result.slice(0, 200)}`);
+    }
   }
   // 傷病放在課表之後：課是之前排好的，之後才痛（存課表時檢查器會擋已經記下的傷）
   for (const injury of athlete.injuries ?? []) {
@@ -206,6 +214,16 @@ async function savedChanges(coach: Coach, driver: SqlDriver, before: SessionRow[
   };
 }
 
+/**
+ * 跑的時候的「現在」：固定在最近的星期二（含今天）早上 8 點（台北），結果不隨跑的那天變：
+ * 情境的「明天」在同一週、課表與過去幾週的日期每次都一樣排.
+ */
+export function evalNow(real: Date = new Date()): Date {
+  const today = localDate(real, "Asia/Taipei");
+  const back = (weekdayIndex(today) - 1 + 7) % 7;
+  return new Date(`${addDays(today, -back)}T08:00:00+08:00`);
+}
+
 /** 跑一個情境；API 的錯誤記在結果裡，不丟出 */
 export async function runScenario(scenario: Scenario, model: ModelConfig, makeProvider: (model: ModelConfig) => LlmProvider, options: { now: Date; features: string[] }): Promise<RunRecord> {
   const recorder = new RecordingProvider(makeProvider(model));
@@ -221,9 +239,11 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
     await coach.init();
     let before: SessionRow[] = [];
     let started = performance.now();
+    let seeded = false;
     try {
       await seedAthlete(coach, scenario.athlete, coach.today());
       before = await sessionRows(driver);
+      seeded = true;
       // 秒數只算對話
       started = performance.now();
       for (const message of scenario.messages) {
@@ -242,7 +262,8 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
       }
       await coach.idle();
     } catch (e) {
-      finish = "error";
+      // 情境準備失敗是情境的問題，不是模型的：另外標，不算模型的錯誤
+      finish = seeded ? "error" : "setup-failed";
       error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       const status = (e as { status?: unknown }).status;
       errorStatus = typeof status === "number" ? status : null;

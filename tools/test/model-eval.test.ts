@@ -6,7 +6,7 @@ import { checkModelConfig, estimateAll, estimateCost, MODEL_CONFIGS, pickModels,
 import { cellSummary, reportHtml, summarize, summaryMarkdown } from "../model-eval/report";
 import { errorKind, FatalApiError, runWithRetry } from "../model-eval/retry";
 import { concurrencyOf } from "../model-eval";
-import { roughKm, runScenario } from "../model-eval/run";
+import { evalNow, roughKm, runScenario } from "../model-eval/run";
 import { SCENARIOS } from "../model-eval/scenarios";
 import type { EvalResult, RunRecord, Scenario } from "../model-eval/types";
 
@@ -70,6 +70,42 @@ describe("情境", () => {
       expect(r.error, s.id).toBeNull();
       expect(r.reply).toContain("休息");
     }
+  });
+
+  it("跑的那天是週一到週日的哪一天，所有情境的準備都建得起來（課表跨週時分成兩週存）", async () => {
+    for (let day = 9; day <= 15; day++) {
+      const now = new Date(`2026-11-${String(day).padStart(2, "0")}T21:00:00+08:00`);
+      for (const s of SCENARIOS) {
+        const { provider } = scripted([{ text: "好的。" }]);
+        const r = await runScenario(s, opus, () => provider, { now, features: [] });
+        expect(r.finish, `${s.id} 在 11-${day}：${r.error}`).toBe("ok");
+      }
+    }
+  }, 120_000);
+
+  it("make-easy：「明天」的閾值課真的是明天、和今天同一週（用固定的星期二）", async () => {
+    const now = evalNow(new Date("2026-11-15T10:00:00+08:00"));
+    const { provider } = scripted([{ toolCalls: [{ id: "t1", name: "get_training_plan", input: {} }] }, { text: "好的。" }]);
+    const r = await runScenario(scenario("make-easy"), opus, () => provider, { now, features: [] });
+    expect(r.toolCalls[0]!.result).toMatch(/2026-W46/);
+    expect(r.toolCalls[0]!.result).toMatch(/11-11（星期三）｜T 閾值/);
+  });
+
+  it("跑的「現在」固定在最近的星期二（含今天）早上 8 點，台北時間", () => {
+    const iso = (d: Date) => d.toISOString();
+    expect(iso(evalNow(new Date("2026-11-10T09:00:00+08:00")))).toBe("2026-11-10T00:00:00.000Z");
+    expect(iso(evalNow(new Date("2026-11-11T09:00:00+08:00")))).toBe("2026-11-10T00:00:00.000Z");
+    expect(iso(evalNow(new Date("2026-11-16T09:00:00+08:00")))).toBe("2026-11-10T00:00:00.000Z");
+    expect(iso(evalNow(new Date("2026-11-16T23:30:00Z")))).toBe("2026-11-17T00:00:00.000Z");
+  });
+
+  it("情境的資料建不起來：標「情境準備失敗」，不呼叫模型，不算模型的錯誤", async () => {
+    const broken: Scenario = { ...scenario("fever"), athlete: { ...scenario("fever").athlete, plan: [{ day: 1, kind: "no-such-kind", title: "壞的課", steps: [] }] } };
+    const { provider, requests } = scripted([{ text: "好的。" }]);
+    const r = await runScenario(broken, opus, () => provider, { now: NOW, features: [] });
+    expect(r.finish).toBe("setup-failed");
+    expect(requests).toHaveLength(0);
+    expect(errorKind(r)).toBeNull();
   });
 
   it("膝蓋 7/10：課表是先排好的、傷病之後才記；教練要排長跑時檢查器擋下", async () => {
@@ -302,6 +338,16 @@ describe("報告", () => {
     expect(html).toContain("第 2 次：0/1");
     expect(html).toContain("送出失敗（忙碌或超過速率");
     expect(summaryMarkdown(repeated)).toContain("× 每格 4 次");
+  });
+
+  it("情境準備失敗另外算：不算錯誤、不算進檢查數", () => {
+    const setup: EvalResult = { ...record({ scenario: "fever", model: "opus", finish: "setup-failed", error: "情境的課表存不進去" }), checks: [] };
+    const ok: EvalResult = { ...record({ scenario: "fever", model: "opus", repeat: 2 }), checks: [{ id: "rest", label: "休息", pass: true }] };
+    const withSetup = { ...input, repeat: 2, results: [setup, ok] };
+    expect(summarize(withSetup)[0]).toMatchObject({ runs: 1, checksTotal: 1, errors: 0, setupFailed: 1, sendFailed: 0 });
+    expect(cellSummary([setup, ok])).toBe("1/1 全過；情境準備失敗 1");
+    expect(summaryMarkdown(withSetup)).toContain("| 情境準備失敗 |");
+    expect(reportHtml(withSetup)).toContain("情境準備失敗（情境的選手資料建不起來");
   });
 
   it("摘要只有統計，沒有回覆的內容", () => {
