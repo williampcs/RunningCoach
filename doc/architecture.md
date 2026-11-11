@@ -315,6 +315,50 @@ sequenceDiagram
 - 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。
 
+### GitHub 的 Secrets 與 Variables（清單）
+
+repo → Settings → Secrets and variables → Actions。這裡只列名稱與用途，值不寫進 repo；workflow 用到的就是全部，不在這裡的都已經不用了，可以刪（2026-11-11 對過 `.github/workflows/`）。
+
+Secrets：
+
+| 名稱 | 給誰 | 用途 | 必填 |
+|---|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | 全部的部署（正式與 staging） | 部署 Pages 與 Workers | 是 |
+| `CLOUDFLARE_ACCOUNT_ID` | 同上 | Cloudflare 的帳號 | 是 |
+| `INTERVALS_CLIENT_SECRET` | 正式的同步服務 | 用 Intervals.icu 登入 | 有 `INTERVALS_CLIENT_ID` 時 |
+| `STAGING_INTERVALS_CLIENT_SECRET` | staging 的同步服務 | 同上 | 有 `STAGING_INTERVALS_CLIENT_ID` 時 |
+| `PROXY_ANTHROPIC_API_KEY` | 正式的代理（staging 沒有自己的時也用它） | 代理轉送用的 Anthropic key | 部署代理時 |
+| `STAGING_PROXY_ANTHROPIC_API_KEY` | staging 的代理 | 同上，分開計用量 | 否 |
+| `PROXY_ADMIN_TOKEN` | 正式的代理 | 管理端點（`tools/proxy-admin.ts`） | 部署代理時 |
+| `STAGING_PROXY_ADMIN_TOKEN` | staging 的代理 | 同上 | 部署 staging 的代理時 |
+
+`GITHUB_TOKEN` 是 GitHub 自動給的，不用設。
+
+Variables：
+
+| 名稱 | 給誰 | 用途 |
+|---|---|---|
+| `WEB_PAGES_PROJECT` | 正式的網頁版 | Pages 專案名稱；沒有就不部署網頁版 |
+| `WEB_URL` | 正式的網頁版、同步服務、代理 | 正式的網址（同步服務與代理只允許它） |
+| `OLD_WEB_URL` | 正式的同步服務、代理 | 搬家期間的舊網址（也允許）；不再需要舊網址時刪掉並重新部署同步服務與代理 |
+| `WEB_FEATURES` | 正式的網頁版 | 正式版開哪些功能開關（逗號分隔）；沒有就全關 |
+| `SYNC_URL` | 正式的網頁版；staging 用來檢查沒有連到正式的 | 正式的同步服務網址 |
+| `SYNC_D1_DATABASE_ID` | 正式的同步服務 | D1 的 id；沒有就不部署 |
+| `INTERVALS_CLIENT_ID` | 正式的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `PROXY_URL` | 正式的網頁版；staging 用來檢查 | 正式的代理網址；沒有就不出現免費試用 |
+| `PROXY_D1_DATABASE_ID` | 正式的代理 | D1 的 id；沒有就只跑測試、不部署 |
+| `PROXY_POLICY` | 正式的代理 | 覆寫政策的 JSON（選填） |
+| `STAGING_PAGES_PROJECT` | staging 的網頁版 | Pages 專案名稱 |
+| `STAGING_WEB_URL` | staging 的網頁版、同步服務、代理 | staging 的網址 |
+| `STAGING_SYNC_URL` | staging 的網頁版 | staging 的同步服務網址（不能和 `SYNC_URL` 相同） |
+| `STAGING_SYNC_D1_DATABASE_ID` | staging 的同步服務 | D1 的 id |
+| `STAGING_INTERVALS_CLIENT_ID` | staging 的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `STAGING_PROXY_URL` | staging 的網頁版 | staging 的代理網址（不能和 `PROXY_URL` 相同） |
+| `STAGING_PROXY_D1_DATABASE_ID` | staging 的代理 | D1 的 id |
+| `STAGING_PROXY_POLICY` | staging 的代理 | 覆寫政策的 JSON（選填） |
+
+staging 沒有 `WEB_FEATURES`（建置時全開）。Discord bot 的部署（`deploy.yml`）只用 `GITHUB_TOKEN`；bot 自己的設定在 VM 上的 `.env`（欄位見 `.env.example`）。
+
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
 
 網頁版的建置另外輸出隱私說明頁 `privacy.html`（Cloudflare Pages 提供在 `/privacy`）：不用 JavaScript 的靜態頁，範本在 `apps/web/privacy/`，建置時填入 staging 的標示與同步服務的網址；測試會檢查網頁版預設會連的外部網址都寫在上面（規格 12.20）。資料流向（存在哪裡、送到哪裡）改了時要一起改這一頁。同樣的方式另外輸出使用須知 `terms.html`（`/terms`，範本在 `apps/web/terms/`，共用 `privacy.css`）；精簡版與版本號在 `packages/core/src/terms.ts`，網頁版與 Discord 共用（規格 12.32）。
