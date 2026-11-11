@@ -311,7 +311,7 @@ sequenceDiagram
 - 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
 - 用 Intervals.icu 登入（規格 12.37，選填）：Variables 的 `INTERVALS_CLIENT_ID`（staging：`STAGING_INTERVALS_CLIENT_ID`）在部署同步服務時寫進 `wrangler.toml` 的 var、建置網頁時是 `VITE_INTERVALS_CLIENT_ID`；Secrets 的 `INTERVALS_CLIENT_SECRET`（staging：`STAGING_INTERVALS_CLIENT_SECRET`）在部署同步服務後用 `wrangler secret put` 從 stdin 寫入，不印出。沒設定時登入的按鈕不出現。
 - 免費試用的代理（規格 12.39）：Variables 的 `PROXY_D1_DATABASE_ID`、`PROXY_URL`（網頁版建置時是 `VITE_PROXY_URL`）、選填的 `PROXY_POLICY`（覆寫政策的 JSON）；Secrets 的 `PROXY_ANTHROPIC_API_KEY`、`PROXY_ADMIN_TOKEN`，部署後用 `wrangler secret put` 從 stdin 寫入，不印出。staging 前面加 `STAGING_`（Anthropic 的 key 沒有 staging 的就用正式的）。`tools/proxy-config.ts` 填 `wrangler.toml`（名稱、D1、允許的來源和同步服務一樣、政策先檢查過）。網頁版要有 `VITE_PROXY_URL` 且功能開關開了 `trial` 才出現免費試用。
-- 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
+- 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間的舊網址 `OLD_WEB_URL` 在 2026-11-11 拿掉），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
 - 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。
 
@@ -340,7 +340,6 @@ Variables：
 |---|---|---|
 | `WEB_PAGES_PROJECT` | 正式的網頁版 | Pages 專案名稱；沒有就不部署網頁版 |
 | `WEB_URL` | 正式的網頁版、同步服務、代理 | 正式的網址（同步服務與代理只允許它） |
-| `OLD_WEB_URL` | 正式的同步服務、代理 | 搬家期間的舊網址（也允許）；不再需要舊網址時刪掉並重新部署同步服務與代理 |
 | `WEB_FEATURES` | 正式的網頁版 | 正式版開哪些功能開關（逗號分隔）；沒有就全關 |
 | `SYNC_URL` | 正式的網頁版；staging 用來檢查沒有連到正式的 | 正式的同步服務網址 |
 | `SYNC_D1_DATABASE_ID` | 正式的同步服務 | D1 的 id；沒有就不部署 |

@@ -7,7 +7,7 @@
 #                    PROXY_ADMIN_TOKEN（管理端點的憑證，自己產生一串夠長的亂數；tools/proxy-admin.ts 用它產生邀請碼）
 #   repo 的 Variables：PROXY_D1_DATABASE_ID（D1 資料庫的 id）
 #                      PROXY_POLICY（選填：覆寫政策的 JSON，例 {"dailyMessages":20}；沒設定時用 apps/proxy/src/policy.ts 的預設）
-#   允許的網頁來源沿用 WEB_URL（＋搬家期間的 OLD_WEB_URL）。
+#   允許的網頁來源沿用 WEB_URL。
 # 還沒設定 PROXY_D1_DATABASE_ID 時只跑測試，不部署。
 # 部署完成後，把 Workers 的網址設成 Variables 的 PROXY_URL，WEB_FEATURES 加上 trial，再手動執行一次「Deploy web app」。
 # secrets 從 stdin 給 wrangler，不印出。staging 的代理另外由 staging.yml 部署。
@@ -55,7 +55,7 @@ jobs:
         env:
           DATABASE_ID: ${{ vars.PROXY_D1_DATABASE_ID }}
           # 只允許正式的網址（staging 有自己的代理）
-          WEB_URLS: ${{ vars.WEB_URL }} ${{ vars.OLD_WEB_URL }}
+          WEB_URLS: ${{ vars.WEB_URL }}
           PROXY_POLICY: ${{ vars.PROXY_POLICY }}
         run: npx tsx tools/proxy-config.ts
       - name: Check secrets
