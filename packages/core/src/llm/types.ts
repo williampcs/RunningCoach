@@ -80,7 +80,14 @@ export interface ChatRequest {
   /** 含思考的總輸出上限 */
   maxTokens: number;
   effort: Effort;
+  /**
+   * 這次呼叫算哪一種用量（免費試用的代理用來算每天的次數，規格 12.39）：chat 是選手送出的一則（工具迴圈不重複算）、
+   * auto 是自動的分析（跑後摘要、騎車分析）、compress 是對話太長時的壓縮。直連供應商時不用
+   */
+  meter?: Meter;
 }
+
+export type Meter = "chat" | "auto" | "compress";
 
 export interface NextOptions {
   toolResults?: ToolResult[];

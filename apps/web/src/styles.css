@@ -1543,8 +1543,37 @@ span.quote {
   border-radius: var(--r-field);
 }
 
-.composer.replying {
+.composer.replying,
+.composer.with-status {
   flex-wrap: wrap;
+}
+
+/* 免費試用（規格 12.39）：輸入框上方一行「今天還剩 N 則」，剩 3 則以下用提醒的顏色 */
+.trial-remaining {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+}
+
+.trial-remaining.low {
+  color: var(--warn-strong);
+}
+
+/* 設定的免費試用：這個帳號的裝置（一台一列，右邊是「移除」） */
+.trial-devices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.trial-devices li {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.trial-link strong {
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .reply-bar {
@@ -1823,6 +1852,16 @@ span.quote {
   .feed-actions {
     flex: none;
     justify-content: flex-end;
+  }
+
+  /* 自評的表單打開時：文字在上、表單在下，不和文字並排 */
+  .feed-body.with-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .feed-body.with-form .checkin {
+    max-width: 480px;
   }
 }
 
@@ -3904,6 +3943,61 @@ button.back-button {
 .wizard-points .icon {
   color: var(--accent);
   flex: none;
+}
+
+/* 電腦（2026-11-10 使用者：「設定精靈的 UI 是手機樣式」）：一頁是畫面正中間的一張卡片，內容多時整頁捲動；
+   按鈕不推到視窗最底下、不滿寬：主要按鈕在右下，次要的在它左邊，文字按鈕在左下。手機不變 */
+@media (min-width: 900px) {
+  .wizard {
+    display: flex;
+    flex-direction: column;
+    padding: var(--sp-8);
+  }
+
+  .wizard-page,
+  .wizard.with-test > .wizard-page {
+    width: 100%;
+    max-width: 560px;
+    min-height: 0;
+    flex: none;
+    margin: auto;
+    padding: var(--sp-8);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-card);
+  }
+
+  .wizard.with-test > .test-banner {
+    max-width: 560px;
+  }
+
+  .wizard-foot {
+    flex-direction: row-reverse;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 0;
+    padding-top: var(--sp-6);
+    border-top: 1px solid var(--border);
+  }
+
+  .wizard-foot > .actions.full {
+    flex: none;
+  }
+
+  .wizard-foot > .actions.full > button {
+    flex: none;
+    min-width: 120px;
+  }
+
+  /* 文字按鈕（略過、之後再抓、在別台用過）靠左 */
+  .wizard-foot > .wizard-more {
+    margin-right: auto;
+  }
+
+  .wizard-foot > .field-error {
+    flex-basis: 100%;
+    text-align: right;
+  }
 }
 
 .key-state {

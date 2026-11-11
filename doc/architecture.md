@@ -29,6 +29,9 @@ flowchart LR
     sync["Workers：同步服務 apps/sync"]
     d1[("D1：加密後的同步資料")]
     sync --> d1
+    proxy["Workers：免費試用的代理 apps/proxy"]
+    d1p[("D1：邀請碼與憑證的雜湊、<br/>每天的次數、每月的用量")]
+    proxy --> d1p
   end
   llm["AI 服務<br/>Anthropic、OpenAI、Gemini 或相容服務"]
   icu["Intervals.icu<br/>跑步與恢復資料（選用：沒有手錶的人手動記）"]
@@ -36,6 +39,8 @@ flowchart LR
   discord["Discord"]
   pages -. 下載網頁 .-> web
   core1 --> llm
+  core1 -- 選了免費試用時 --> proxy
+  proxy -- 作者的 API key --> llm
   core1 --> icu
   core1 --> meteo
   core1 -- 加密後才送出 --> sync
@@ -48,7 +53,7 @@ flowchart LR
 - 網頁版是純前端：從 Cloudflare Pages 下載後，直接在瀏覽器裡跑核心與資料庫，瀏覽器自己去連 AI 服務、Intervals.icu、Open-Meteo。我們沒有一台「存使用者資料的伺服器」。
 - 多裝置同步服務只存加密後的內容，伺服器看不到明文（12.10）。
 - Discord bot 是另一份獨立的資料，和網頁版不同步。
-- `apps/proxy`（訂閱模式的代理，替使用者付 AI 的費用）已經寫好，還沒有上線。
+- 免費試用（邀請碼，規格 12.39，功能開關 `trial`）：選了的人，對話經過 `apps/proxy`（Cloudflare Worker）用作者的 Anthropic key 轉送；代理不存對話的內容，只存邀請碼與憑證的雜湊、帳號代號、每天的次數、每月的用量。沒選的人不經過它。
 - 另外有一套 staging（`staging.zone2mate.com`）：另一個 Pages 專案、另一個 Worker 與 D1，和正式環境的網頁、同步資料完全分開，`v2` 推上去就自動更新（見下面的「部署與 CI」）。
 
 ## Repo 的組成
@@ -60,8 +65,8 @@ flowchart LR
 | `apps/web` | 網頁版：React 介面、瀏覽器的資料庫驅動（sqlite-wasm 跑在 Web Worker） | 6,200 |
 | `apps/discord` | Discord bot：讀 `.env`、把 Discord 的訊息與指令接到核心 | 300 |
 | `apps/sync` | 多裝置同步服務：Cloudflare Worker + D1（本機開發用 Node 版） | 500 |
-| `apps/proxy` | 訂閱模式的代理（未上線） | 750 |
-| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`） | |
+| `apps/proxy` | 免費試用的代理：邀請碼、每天的則數、每人與合計的每月預算、固定的模型；Cloudflare Worker + D1（本機開發用 Node 版） | 1,100 |
+| `tools/` | 模擬上游（`mock-upstream.ts`，本機開發與實測用）、網頁實測腳本（`e2e/`）、各種本機用的小工具（共用的讀 zip 與 FIT 在 `lib/fit.ts`）、模型對照＋高風險問題的測試（`model-eval.ts` 與 `model-eval/`：假的選手資料＋核心的教練，只連 AI，規格 12.43） | |
 | `doc/` | 規格、KI 紀錄、這份架構說明 | |
 | `src/` | v1 的 Python 版，觀察期結束後移除 | |
 
@@ -164,6 +169,8 @@ sequenceDiagram
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
 | 匯入的活動檔（FIT、GPX、TCX、zip，規格 12.40）：只存摘要，檔案本身不存、不上傳 | 資料庫 | 會（跑步 `fw:`、其他運動 `fo:`，整筆的摘要） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
+| 免費試用的憑證（規格 12.39） | localStorage 的設定（`proxy.token`，密碼鎖開著時加密） | 不會：每台用自己的邀請碼 |
+| 免費試用的帳號與用量 | 代理的 D1，以帳號為中心：`accounts`（代號、狀態、預算）、`account_tokens`（每台裝置一個憑證：雜湊、粗略的裝置名稱、加入與最後使用的時間、可以單獨撤銷）、`identities`（怎麼建立或登入：這次只有 invite，subject 存雜湊；之後的 Google／Apple 登入加在同一個帳號上）、`link_codes`（在另一台使用的連結碼的雜湊，10 分鐘、用一次）、`invites`（邀請碼的雜湊、批次名稱、到期日、用過沒）、`daily_usage`（每天的對話／自動分析／壓縮次數，留 90 天）、`usage`（每月的 token 與金額，留 13 個月）、`totals`（所有帳號每月合計，用來擋總預算）；沒有對話的內容、email、名字或 IP | — |
 | 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
 | 測試模式（規格 6.1、9.4） | 另一個資料庫檔（OPFS 的 `/coach-test.db`）；設定與上面那些小狀態也是自己一份（localStorage 的 `running-coach.test.` 開頭，`apps/web/src/storage-scope.ts`），第一次進測試模式時從正常模式複製（密碼鎖的密文照原樣），之後各改各的 | 不會：測試模式不同步 |
 | 「先看看」的範例（規格 12.35 的 B） | 記憶體裡的另一個資料庫（worker 的 `:memory:`），範例的狀態在 sessionStorage | 不會；不碰真的資料庫，離開就清掉 |
@@ -175,6 +182,8 @@ OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-
 用 Intervals.icu 登入（規格 12.37，OAuth）：網頁帶著 client_id、回呼網址（網站的根目錄）與只有讀的權限到 Intervals.icu 同意；回來時 `main.tsx` 在任何請求之前讀走網址上的 code 並清掉（`apps/web/src/intervals-login.ts`）；code 送到同步服務的 `POST /v1/intervals/token`（`apps/sync/src/intervals-token.ts`：帶上 Worker 的 secret `INTERVALS_CLIENT_SECRET` 向 Intervals.icu 換 token，只轉送、不存、不碰 D1），token 存進這台的設定；之後 `IntervalsClient` 用 Bearer 直接讀。沒有設定 client_id 時按鈕不出現。
 
 新的使用者第一次打開時（`onboarding` 開著）先走設定精靈（`apps/web/src/wizard.ts` 判斷誰是新的使用者、記進度；畫面在 `views/Wizard.tsx`，整頁取代平常的分頁）。貼上 AI 的 key 時用核心的 `checkLlmKey`（`llm/check.ts`）打一次最小的請求再存。「先看看」（`apps/web/src/demo.ts`）打開時換成記憶體裡的資料庫、預設的設定（沒有 key、沒有同步）、假的活動來源與不會送出請求的 AI 替身，由核心的 `seedDemo`（`demo.ts`）寫進範例；不走分頁的鎖與密碼鎖。
+
+免費試用（規格 12.39）：設定或精靈貼上邀請碼 → `POST {代理}/v1/redeem`（`apps/web/src/trial.ts`）→ 代理把邀請碼標成用過、建帳號（`identities` 記 invite）、發這台的憑證（`account_tokens`，只回一次）→ 存進這台的設定（`llmMode: "proxy"`）。另一台：已登入的那台 `POST /v1/link-codes` 拿連結碼，另一台 `POST /v1/link` 換到自己的憑證（同一個帳號、同一份額度）；`GET /v1/devices` 列出、`DELETE /v1/devices/:id` 撤銷某一台；刪除帳號時撤銷所有憑證。之後 `AnthropicProvider` 的 baseURL 指向代理、帶 `x-coach-meter`（`chat`／`auto`／`compress`，核心的 `Llm` 依用途給：主對話 chat、跑後與騎車的摘要 auto、壓縮 compress、從其他 AI 帶入 chat）。代理（`apps/proxy/src/handler.ts`）換成政策的模型與思考強度（預設 Haiku、`output_config.effort` 固定 low、不送 `thinking`，和模型對照的 haiku-low 一樣；政策可以改回 thinking disabled；輸出夾到上限），先檢查總預算與這個帳號的每月預算，再看次數：chat 只在最後一則是選手的文字（不是只有 tool_result）時算一則，所以工具迴圈不重複算；加一與比較在同一個 SQL 敘述裡，上游回錯誤時退回。用完時回 403 與 `error.type`（`daily_limit`、`daily_auto_limit`、`account_budget`、`beta_budget`）和恢復的時間；對話頁用 `GET /v1/usage` 顯示「今天還剩 N 則」、用完時換掉輸入框。每天與每月照台灣時間（UTC+8）。管理端點（`/admin/*`，`ADMIN_TOKEN`）由作者在本機用 `tools/proxy-admin.ts` 產生邀請碼、看用量、停用帳號；Worker 每天的 cron 刪掉過了保存期限的紀錄。
 
 使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
 
@@ -293,17 +302,61 @@ sequenceDiagram
 
 | 觸發 | 做什麼 |
 |---|---|
-| 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像。網頁版、同步服務或核心有改時另外部署 **staging**（`staging.yml`）：staging 的同步服務（Worker `running-coach-sync-staging` 與它的 D1）與網頁版（另一個 Pages 專案，正式分支是 `v2`，`staging.zone2mate.com`） |
-| 合併到 `main` | **正式環境**：網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`，`app.zone2mate.com`）；同步服務有改：部署 Worker（`sync.yml`）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`）；依版號打標籤（`tag-release.yml`） |
+| 推到 `v2` | CI（`v2-ci.yml`）：型別檢查、測試、建置、建 Discord 映像。網頁版、同步服務、代理或核心有改時另外部署 **staging**（`staging.yml`）：staging 的同步服務（Worker `running-coach-sync-staging` 與它的 D1）、代理（Worker `running-coach-proxy-staging` 與它的 D1，有設定時）與網頁版（另一個 Pages 專案，正式分支是 `v2`，`staging.zone2mate.com`） |
+| 合併到 `main` | **正式環境**：網頁版或核心有改：部署到 Cloudflare Pages（`web.yml`，`app.zone2mate.com`）；同步服務有改：部署 Worker（`sync.yml`）；代理有改：部署 Worker（`proxy.yml`，沒設定 `PROXY_D1_DATABASE_ID` 時只跑測試）；bot 用到的檔案有改：建映像並更新 VM 上的 bot（`deploy.yml`）；依版號打標籤（`tag-release.yml`） |
 
 流程：開發 session 推 `v2` → staging 自動更新 → 使用者在 staging 實際試 → 說「合併部署」→ 正式環境。Discord bot 沒有 staging（只有使用者自己用）。
 
 兩個環境怎麼分（規格 12.19）：
 - 網址、Pages 專案、D1 的 id 都在 repo 的 Variables（正式：`WEB_PAGES_PROJECT`、`WEB_URL`、`SYNC_URL`、`SYNC_D1_DATABASE_ID`；staging：前面加 `STAGING_`），不寫進 repo。沒設定 staging 的 Variables 時，`staging.yml` 整個跳過、不失敗。
 - 用 Intervals.icu 登入（規格 12.37，選填）：Variables 的 `INTERVALS_CLIENT_ID`（staging：`STAGING_INTERVALS_CLIENT_ID`）在部署同步服務時寫進 `wrangler.toml` 的 var、建置網頁時是 `VITE_INTERVALS_CLIENT_ID`；Secrets 的 `INTERVALS_CLIENT_SECRET`（staging：`STAGING_INTERVALS_CLIENT_SECRET`）在部署同步服務後用 `wrangler secret put` 從 stdin 寫入，不印出。沒設定時登入的按鈕不出現。
-- 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間加上 `OLD_WEB_URL`），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
+- 免費試用的代理（規格 12.39）：Variables 的 `PROXY_D1_DATABASE_ID`、`PROXY_URL`（網頁版建置時是 `VITE_PROXY_URL`）、選填的 `PROXY_POLICY`（覆寫政策的 JSON）；Secrets 的 `PROXY_ANTHROPIC_API_KEY`、`PROXY_ADMIN_TOKEN`，部署後用 `wrangler secret put` 從 stdin 寫入，不印出。staging 前面加 `STAGING_`（Anthropic 的 key 沒有 staging 的就用正式的）。`tools/proxy-config.ts` 填 `wrangler.toml`（名稱、D1、允許的來源和同步服務一樣、政策先檢查過）。網頁版要有 `VITE_PROXY_URL` 且功能開關開了 `trial` 才出現免費試用。
+- 同步服務允許的網頁來源在部署時由 `tools/sync-config.ts` 填進 `wrangler.toml`：正式的是 `WEB_URL`（搬家期間的舊網址 `OLD_WEB_URL` 在 2026-11-11 拿掉），staging 的只有 `STAGING_WEB_URL`；不是 https 或一個都沒有時部署失敗，上一次的設定照舊。
 - 功能開關（規格 12.25，`packages/core/src/features.ts`）：建置時決定哪些功能開著。網頁版讀 `VITE_FEATURES`（逗號分隔或 `all`）；staging 的建置不論設定都全開；正式版由 Variables 的 `WEB_FEATURES` 決定，沒設定時全關。開著的功能放進 `CoachSettings.features`，核心用 `featureOn()` 判斷（例：`multisport` 開著時教練方法是 v5、選手練騎車時加上單車的教練方法與單車的課、工具多了交叉訓練的 `sport` 與 `save_activity_feedback`、教練的角色是耐力運動教練、教練動態會問課表外的運動要不要調整）；設定頁最下面列出開著的。`testmode`（測試模式）只在 staging 與開發用的建置開著，正式版沒有。Discord bot 讀 `.env` 的 `FEATURES`（預設全關）。關著時 App 與教練的行為和沒有那個功能時一樣；資料庫只做向下相容的新增，不擋在開關後面。
 - 建置的差別：staging 建置時有 `VITE_STAGING=1`（標題列與每一頁上方標示 Staging，`_headers` 加 `X-Robots-Tag: noindex`），`VITE_SYNC_URL` 指向 staging 的同步服務。正式版建置時有 `VITE_WEB_URL`（正式的網址）：同一份建置也在舊網址 `running-coach-bgb.pages.dev` 上，從正式網址以外的地方打開時，每一頁上方與設定的最上面顯示搬家的提示（`views/Moved.tsx`）。
+
+### GitHub 的 Secrets 與 Variables（清單）
+
+repo → Settings → Secrets and variables → Actions。這裡只列名稱與用途，值不寫進 repo；workflow 用到的就是全部，不在這裡的都已經不用了，可以刪（2026-11-11 對過 `.github/workflows/`）。
+
+Secrets：
+
+| 名稱 | 給誰 | 用途 | 必填 |
+|---|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | 全部的部署（正式與 staging） | 部署 Pages 與 Workers | 是 |
+| `CLOUDFLARE_ACCOUNT_ID` | 同上 | Cloudflare 的帳號 | 是 |
+| `INTERVALS_CLIENT_SECRET` | 正式的同步服務 | 用 Intervals.icu 登入 | 有 `INTERVALS_CLIENT_ID` 時 |
+| `STAGING_INTERVALS_CLIENT_SECRET` | staging 的同步服務 | 同上 | 有 `STAGING_INTERVALS_CLIENT_ID` 時 |
+| `PROXY_ANTHROPIC_API_KEY` | 正式的代理（staging 沒有自己的時也用它） | 代理轉送用的 Anthropic key | 部署代理時 |
+| `STAGING_PROXY_ANTHROPIC_API_KEY` | staging 的代理 | 同上，分開計用量 | 否 |
+| `PROXY_ADMIN_TOKEN` | 正式的代理 | 管理端點（`tools/proxy-admin.ts`） | 部署代理時 |
+| `STAGING_PROXY_ADMIN_TOKEN` | staging 的代理 | 同上 | 部署 staging 的代理時 |
+
+`GITHUB_TOKEN` 是 GitHub 自動給的，不用設。
+
+Variables：
+
+| 名稱 | 給誰 | 用途 |
+|---|---|---|
+| `WEB_PAGES_PROJECT` | 正式的網頁版 | Pages 專案名稱；沒有就不部署網頁版 |
+| `WEB_URL` | 正式的網頁版、同步服務、代理 | 正式的網址（同步服務與代理只允許它） |
+| `WEB_FEATURES` | 正式的網頁版 | 正式版開哪些功能開關（逗號分隔）；沒有就全關 |
+| `SYNC_URL` | 正式的網頁版；staging 用來檢查沒有連到正式的 | 正式的同步服務網址 |
+| `SYNC_D1_DATABASE_ID` | 正式的同步服務 | D1 的 id；沒有就不部署 |
+| `INTERVALS_CLIENT_ID` | 正式的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `PROXY_URL` | 正式的網頁版；staging 用來檢查 | 正式的代理網址；沒有就不出現免費試用 |
+| `PROXY_D1_DATABASE_ID` | 正式的代理 | D1 的 id；沒有就只跑測試、不部署 |
+| `PROXY_POLICY` | 正式的代理 | 覆寫政策的 JSON（選填） |
+| `STAGING_PAGES_PROJECT` | staging 的網頁版 | Pages 專案名稱 |
+| `STAGING_WEB_URL` | staging 的網頁版、同步服務、代理 | staging 的網址 |
+| `STAGING_SYNC_URL` | staging 的網頁版 | staging 的同步服務網址（不能和 `SYNC_URL` 相同） |
+| `STAGING_SYNC_D1_DATABASE_ID` | staging 的同步服務 | D1 的 id |
+| `STAGING_INTERVALS_CLIENT_ID` | staging 的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `STAGING_PROXY_URL` | staging 的網頁版 | staging 的代理網址（不能和 `PROXY_URL` 相同） |
+| `STAGING_PROXY_D1_DATABASE_ID` | staging 的代理 | D1 的 id |
+| `STAGING_PROXY_POLICY` | staging 的代理 | 覆寫政策的 JSON（選填） |
+
+staging 沒有 `WEB_FEATURES`（建置時全開）。Discord bot 的部署（`deploy.yml`）只用 `GITHUB_TOKEN`；bot 自己的設定在 VM 上的 `.env`（欄位見 `.env.example`）。
 
 版號只有一個來源：repo 根目錄 `package.json` 的 `version`。網頁版建置時讀它（標題列只顯示 Beta，設定頁最下面是完整的版號、commit 與建置日期），Discord bot 建置時由 esbuild 打包進去（`/status` 顯示）。改版號用 `npm run version:bump -- minor|patch`，一次改好各套件的 `package.json` 與 lockfile；每次合併部署發一版，在 `main` 的合併 commit 打 `vX.Y.Z` 標籤（`CLAUDE.md`、規格 12.19）。
 

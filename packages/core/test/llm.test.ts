@@ -142,6 +142,7 @@ describe("Llm.complete", () => {
       messages: [{ role: "user", content: "請摘要" }],
       maxTokens: 2000,
       effort: "low",
+      meter: "auto",
     });
   });
 
@@ -152,5 +153,16 @@ describe("Llm.complete", () => {
     await expect(makeLlm([turn({ finish: "truncated", text: "  " })]).llm.complete("compress", "p", 100)).rejects.toThrow(
       LlmError,
     );
+  });
+});
+
+describe("免費試用的次數（meter，規格 12.39）", () => {
+  it("主對話是 chat、摘要是 auto、壓縮是 compress；呼叫端可以指定", async () => {
+    const { llm, provider } = makeLlm([turn({ text: "好" }), turn({ text: "摘要" }), turn({ text: "壓縮" }), turn({ text: "整理" })]);
+    await llm.runWithTools("系統", [{ role: "user", content: "嗨" }], tools, async () => "");
+    await llm.complete("summary", "p", 100);
+    await llm.complete("compress", "p", 100);
+    await llm.complete("summary", "p", 100, { meter: "chat" });
+    expect(provider.calls.map((c) => c.request.meter)).toEqual(["chat", "auto", "compress", "chat"]);
   });
 });

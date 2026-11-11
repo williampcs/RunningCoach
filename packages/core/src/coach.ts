@@ -773,7 +773,8 @@ export class Coach {
 
   /** 從其他 AI 服務整理來的文字擷取選手資料、賽事與課表的建議值；不寫入任何東西 */
   async extractImport(text: string): Promise<ImportSuggestion> {
-    const reply = await this.runtime.llm.complete("summary", buildExtractionPrompt(text.trim(), this.today()), 4000);
+    // 選手自己按的：免費試用時算一則對話，不佔自動分析的次數（規格 12.39）
+    const reply = await this.runtime.llm.complete("summary", buildExtractionPrompt(text.trim(), this.today()), 4000, { meter: "chat" });
     return parseExtraction(reply.text, this.today());
   }
 

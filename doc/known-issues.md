@@ -1229,3 +1229,13 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
   2. 在自己電腦的 repo 根目錄 `.env` 加一行 `GARMIN_PERSONAL_API_KEY=…`（不要貼到對話）。
   3. `git pull` 後在 repo 根目錄跑 `npx tsx tools/garmin-personal-api.ts --serve`：終端機印出報告（也存到 `data/garmin-personal-api/report-日期.md`），並開好 `http://localhost:8790/`；用 Chrome（可以的話再用 Safari）打開，貼 key、按「開始測試」、按「複製結果」。按 Ctrl+C 結束。
   4. 把報告與網頁的結果貼給協調 session（貼之前自己看一次）。測完可以在 Garmin Connect 把 key 刪掉。
+
+## [KI-049] Safari 上用中文輸入法，按 Enter 確定選字就把訊息送出
+
+- 發現：2026-11-11 使用者在 Safari 用 staging：「中文輸入法第一次 enter 就會把字送出，但第一次應該只會是確定選字而已」。
+- 狀態：已修（協調 session 的小修，2026-11-11，推上 v2）。
+- 原因：判斷選字只看 keydown 的 `isComposing`。Safari 按 Enter 確定選字時，先發 `compositionend`，再發 `isComposing` 為 false 的 keydown（keyCode 229 或 13），被當成一般的 Enter：對話送出、單行的欄位離開或送出表單。Chrome 與 Firefox 沒有這個問題。
+- 修正：`apps/web/src/ime.ts` 的 `isImeKey`：`isComposing`、keyCode 229、或 `compositionend` 之後 100 毫秒內的按鍵，都當成選字。用在所有看 Enter 的地方：`AutoGrowTextarea`（對話、名稱等）、選手頁的欄位、比賽地點的搜尋框、面板的 Esc。
+- 驗證：單元測試 `apps/web/test/ime.test.ts`；E2E `verify-ui-round1`、`verify-memory`、`verify-profile` 照過（一般的 Enter 照樣送出與離開欄位）；在 Chromium 裡照 Safari 的順序發事件（compositionstart → compositionend → keydown Enter，keyCode 13 與 229 各一次）不會送出，之後真的按 Enter 會送出（臨時的腳本，沒有加進 E2E：Playwright 的 Chromium 不會自己產生這個順序）。
+- 沒驗證到：真的 Safari（雲端沒有）。
+- 使用者要做的：在 staging 用 Safari 的中文輸入法打字，按 Enter 選字不送出、再按一次 Enter 才送出；iPhone 的 Safari 也試一次。

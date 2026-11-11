@@ -6,7 +6,7 @@ import { AnthropicProvider } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
 import { createProxy, type ProxyDeps } from "../src/handler";
-import { DEFAULT_POLICY } from "../src/policy";
+import { DEFAULT_POLICY, type Policy } from "../src/policy";
 import { serve } from "../src/server";
 import { AccountStore } from "../src/store";
 
@@ -59,10 +59,27 @@ function jsonUpstream(usage: Record<string, number> = { input_tokens: 1000, outp
   };
 }
 
+/**
+ * 這個檔案測轉發、計費與帳號的基本行為：照請求的模型、不改思考、不限每天的次數與總預算.
+ * 內測的政策（固定的模型、每天的次數、總預算、邀請碼）在 trial.test.ts
+ */
+const BASE_POLICY: Policy = {
+  ...DEFAULT_POLICY,
+  forceModel: null,
+  disableThinking: false,
+  forceEffort: null,
+  defaultMonthlyBudgetUsd: 3,
+  totalMonthlyBudgetUsd: null,
+  dailyMessages: 1000,
+  dailyAuto: 1000,
+  dailyCompress: 1000,
+  timeZoneOffsetMinutes: 0,
+};
+
 function makeProxy(overrides: Partial<ProxyDeps> = {}) {
   return createProxy({
     store,
-    policy: DEFAULT_POLICY,
+    policy: BASE_POLICY,
     upstream: { baseUrl: "https://upstream.test", apiKey: UPSTREAM_KEY },
     adminToken: ADMIN,
     allowedOrigins: ["https://app.example"],
@@ -111,8 +128,8 @@ describe("驗證與帳號狀態", () => {
     const proxy = makeProxy();
     const { id, token } = await createAccount(proxy);
 
-    expect(await errorOf(await proxy(messages(null)))).toMatchObject({ status: 401, message: "缺少訂閱憑證" });
-    expect(await errorOf(await proxy(messages("rc_wrong")))).toMatchObject({ status: 401, message: "訂閱憑證無效" });
+    expect(await errorOf(await proxy(messages(null)))).toMatchObject({ status: 401, message: "缺少試用憑證" });
+    expect(await errorOf(await proxy(messages("rc_wrong")))).toMatchObject({ status: 401, message: expect.stringContaining("試用憑證無效") });
 
     await proxy(
       new Request(`http://proxy/admin/accounts/${id}`, {
@@ -121,15 +138,15 @@ describe("驗證與帳號狀態", () => {
         body: JSON.stringify({ status: "suspended" }),
       }),
     );
-    expect(await errorOf(await proxy(messages(token)))).toMatchObject({ status: 403, message: "訂閱已停用" });
+    expect(await errorOf(await proxy(messages(token)))).toMatchObject({ status: 403, message: "這個試用帳號已停用" });
     expect(upstreamCalls).toHaveLength(0);
   });
 
   it("儲存的是憑證雜湊，不是憑證本身", async () => {
     const { token } = await createAccount(makeProxy());
-    const rows = await driver.all("SELECT * FROM accounts");
+    const rows = await driver.all("SELECT * FROM account_tokens");
     expect(rows).toHaveLength(1);
-    expect(JSON.stringify(rows)).not.toContain(token);
+    expect(JSON.stringify([rows, await driver.all("SELECT * FROM accounts")])).not.toContain(token);
     expect(rows[0]!.token_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
@@ -181,7 +198,7 @@ describe("轉發", () => {
       expect(stored).not.toContain(secret);
       expect(logs.join("\n")).not.toContain(secret);
     }
-    expect(logs).toEqual([expect.stringMatching(/^acct_[0-9a-f]{16} claude-sonnet-5-5 200 in=1000 out=200 cost_microusd=4000$/)]);
+    expect(logs).toEqual([expect.stringMatching(/^acct_[0-9a-f]{16} claude-sonnet-5-5 200 chat in=1000 out=200 cost_microusd=4000$/)]);
   });
 
   it("快取 token 依各自的價格計費", async () => {
@@ -214,7 +231,6 @@ describe("防濫用", () => {
     const reject = async (body: unknown) => (await errorOf(await proxy(messages(token, body)))).message;
 
     expect(await reject({ ...validBody, model: "claude-fable-5-1" })).toContain("不支援的模型：claude-fable-5-1");
-    expect(await reject({ ...validBody, max_tokens: 64000 })).toBe("max_tokens 超過上限 16000");
     expect(await reject({ ...validBody, max_tokens: undefined })).toBe("max_tokens 必須是正整數");
     expect(await reject({ ...validBody, speed: "fast" })).toBe("不支援的欄位：speed");
     expect(await reject({ ...validBody, tools: [{ type: "web_search_20260209", name: "web_search" }] })).toBe(
@@ -226,6 +242,13 @@ describe("防濫用", () => {
     expect(upstreamCalls).toHaveLength(0);
   });
 
+  it("超過上限的輸出改成上限，不拒絕", async () => {
+    const proxy = makeProxy();
+    const { token } = await createAccount(proxy);
+    expect((await proxy(messages(token, { ...validBody, max_tokens: 64000 }))).status).toBe(200);
+    expect(upstreamCalls[0]!.body.max_tokens).toBe(16000);
+  });
+
   it("本月額度用完後拒絕，下個月自動恢復；可個別調整預算", async () => {
     // 每次請求 $0.004，預算 $0.01
     const proxy = makeProxy();
@@ -233,18 +256,20 @@ describe("防濫用", () => {
     for (let i = 0; i < 3; i++) expect((await proxy(messages(token))).status).toBe(200);
     expect(await errorOf(await proxy(messages(token)))).toMatchObject({
       status: 403,
-      message: "本月額度已用完，下個月會自動恢復",
+      type: "account_budget",
+      message: "你這個月的免費額度用完了，下個月 1 日恢復",
     });
     expect(upstreamCalls).toHaveLength(3);
 
     const usage = (await (await proxy(new Request("http://proxy/v1/usage", { headers: { "x-api-key": token } }))).json()) as any;
-    expect(usage).toEqual({
+    expect(usage).toMatchObject({
       period: "2026-10",
       requests: 3,
       input_tokens: 3000,
       output_tokens: 600,
       cost_usd: 0.012,
       budget_usd: 0.01,
+      paused: "account_budget",
     });
 
     await proxy(
@@ -269,7 +294,7 @@ describe("防濫用", () => {
   });
 
   it("每分鐘請求數超過上限時回 429", async () => {
-    const proxy = makeProxy({ policy: { ...DEFAULT_POLICY, requestsPerMinute: 2 } });
+    const proxy = makeProxy({ policy: { ...BASE_POLICY, requestsPerMinute: 2 } });
     const { token } = await createAccount(proxy);
     expect((await proxy(messages(token))).status).toBe(200);
     expect((await proxy(messages(token))).status).toBe(200);
@@ -373,11 +398,13 @@ describe("跨來源與管理端點", () => {
     await proxy(messages(token));
 
     const view = await proxy(new Request(`http://proxy/admin/accounts/${id}`, { headers: { "x-api-key": ADMIN } }));
-    expect(await view.json()).toEqual({
+    expect(await view.json()).toMatchObject({
       id,
       status: "active",
+      invite_id: null,
       monthly_budget_usd: 3,
       usage: { period: "2026-10", requests: 1, cost_usd: 0.004 },
+      today: { messages: 1, auto: 0, compress: 0 },
     });
 
     const rotated = (await (

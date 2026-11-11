@@ -21,6 +21,8 @@ export interface PrivacyBuild {
   onboarding?: boolean;
   /** 這次建置設定了用 Intervals.icu 登入（VITE_INTERVALS_CLIENT_ID 與同步服務，規格 12.37） */
   intervalsLogin?: boolean;
+  /** 這次建置提供免費試用（功能開關 trial 與 VITE_PROXY_URL，規格 12.39）：代理的網址 */
+  trialProxyUrl?: string;
 }
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
@@ -38,7 +40,44 @@ function hostOf(url: string): string | null {
 
 export function renderPrivacyPage(build: PrivacyBuild): string {
   const host = hostOf(build.syncUrl);
+  const trialHost = hostOf(build.trialProxyUrl ?? "");
   const replacements: Record<string, string> = {
+    "<!--TRIAL_SUMMARY-->": trialHost
+      ? "<li><strong>免費試用（邀請碼，選用）</strong>：選了才會用。對話會經過我們的代理轉送到 Anthropic；代理<strong>不保存對話的內容</strong>，只記試用帳號（隨機的代號）、每天用了幾則與每月的用量。</li>"
+      : "",
+    "<!--ACCOUNTS_SUMMARY-->": trialHost ? "除了免費試用的帳號（只有隨機的代號，沒有 email 或名字）之外沒有帳號；" : "目前沒有帳號；",
+    "<!--ACCOUNTS_DONT-->": trialHost
+      ? "除了免費試用的帳號之外沒有帳號；試用帳號不需要 email、名字或手機號碼。之後如果推出需要登入的功能，會先在這一頁說明收集哪些資料、存在哪裡。"
+      : "目前沒有帳號。之後如果推出需要帳號的功能（例如訂閱），會先在這一頁說明收集哪些資料、存在哪裡。",
+    "<!--TRIAL_SENT-->": trialHost
+      ? `<h3>免費試用的代理（選了「免費試用（邀請碼）」才會）</h3>
+        <ul>
+          <li><strong>什麼時候</strong>：輸入邀請碼時（送出邀請碼，換到這台的試用憑證）；之後和教練對話、教練分析一趟跑步、整理較早的對話、「從其他 AI 帶入」，以及查今天還剩幾則時。</li>
+          <li><strong>送什麼</strong>：和上面「你選的 AI 服務」一樣的內容，加上試用憑證（代替 API key）與這次是對話、自動分析還是整理對話（用來算每天的則數）。</li>
+          <li><strong>送到哪裡</strong>：我們放在 Cloudflare Workers 上的代理（<code>${escapeHtml(trialHost)}</code>），由它用作者的 API key 轉送到 <code>api.anthropic.com</code>（Anthropic）。模型固定是 Claude Haiku。</li>
+          <li><strong>代理存什麼</strong>：
+            <ul>
+              <li>邀請碼的雜湊（不是邀請碼本身）、有沒有用過、到期日；</li>
+              <li>試用帳號：隨機的代號、是否停用、建立的時間、怎麼建立的（邀請碼的雜湊）；</li>
+              <li>用著這個帳號的每台裝置：試用憑證的雜湊、粗略的名稱（例「iPhone · Safari」，讓你在裝置清單分得出是哪一台）、加入與最後使用的時間；</li>
+              <li>「在另一台使用」的連結碼：只存雜湊，10 分鐘後失效、用一次；</li>
+              <li>每天用了幾則對話、幾次自動分析與整理對話（只有次數）；</li>
+              <li>每個月的請求數、token 數與金額。</li>
+            </ul>
+          </li>
+          <li><strong>不存什麼</strong>：對話、選手資料、訓練紀錄等任何內容都只在記憶體中轉送，不寫進資料庫或紀錄；不存 email、名字或 IP 位址。代理的紀錄只有帳號代號、模型、狀態碼與 token 數。</li>
+          <li><strong>存多久</strong>：每天的次數 90 天、每月的用量 13 個月，到期自動刪除；所有試用的人這個月合計的金額另外記（用來控管總預算，不分是誰的）。</li>
+          <li><strong>誰看得到</strong>：Zone2Mate 的作者（看用量、停用帳號）；看不到你的對話。</li>
+          <li>試用憑證只存在這台裝置的瀏覽器（密碼鎖開著時加密），不會同步；要在另一台用，在設定按「在另一台使用」拿一個連結碼，在那台輸入（同一個帳號、同一份額度）。</li>
+          <li>Anthropic 看得到轉送的內容，如何保存與使用依它的<a href="https://www.anthropic.com/legal/privacy">條款與隱私政策</a>。</li>
+        </ul>`
+      : "",
+    "<!--TRIAL_CONTROL-->": trialHost
+      ? "<li><strong>移除某一台</strong>：設定 →「AI 教練」的裝置清單按「移除」，那台的登入馬上失效。</li><li><strong>刪除試用帳號</strong>：設定 →「AI 教練」→「刪除試用帳號」，馬上刪掉代理那邊的帳號、所有裝置的登入、每天的次數與每月的用量（這個月合計的金額不分是誰的，不會刪）；也可以寫信請我們刪除。</li>"
+      : "",
+    "<!--TRIAL_CHANGE-->": trialHost
+      ? "<li>2026-11-10：免費試用（邀請碼）：對話經過我們的代理轉送到 Anthropic，不保存內容，只記次數與用量；可以在另一台裝置使用、移除某一台、自己刪除試用帳號。</li>"
+      : "",
     "<!--HEAD-->": build.staging ? '<meta name="robots" content="noindex" />' : "",
     "<!--STAGING-->": build.staging
       ? '<div class="staging-banner"><strong>Staging</strong>：還沒上線的測試版，資料與同步都和正式版分開。</div>'

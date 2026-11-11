@@ -11,6 +11,7 @@ import {
   INJURY_METHOD,
   PLANNING_RULES,
   planningRules,
+  SAFETY_EXTRA,
 } from "../src/coaching-method";
 import { makeCoach, toolTurn, turn } from "./helpers";
 
@@ -24,10 +25,18 @@ describe("教練方法", () => {
     expect(planningRules({ multisport: true })).toContain(CROSS_TRAINING_RULES);
   });
 
+  it("未成年與高溫（v9）：跑步、跑步＋騎車、只練騎車都帶；寫到家長、醫師或教練與熱傷害的徵兆", () => {
+    expect(SAFETY_EXTRA).toMatch(/未滿 18 歲[^\n]*家長[^\n]*醫師或學校的教練/);
+    expect(SAFETY_EXTRA).toMatch(/熱傷害[^\n]*頭暈、噁心、抽筋、不再流汗、意識不清[^\n]*就醫/);
+    expect(COACHING_METHOD).toContain(SAFETY_EXTRA);
+    expect(coachingMethod({ multisport: true, sports: ["run", "ride"] })).toContain(SAFETY_EXTRA);
+    expect(coachingMethod({ multisport: true, sports: ["ride"] })).toContain(SAFETY_EXTRA);
+  });
+
   it("多運動關著時沒有交叉訓練的部分（v4–v6），傷病的處理照樣有（v7）", () => {
     expect(coachingMethod()).toBe(COACHING_METHOD);
     expect(planningRules()).toBe(PLANNING_RULES);
-    expect(COACHING_METHOD).toContain("【教練方法 v8】");
+    expect(COACHING_METHOD).toContain("【教練方法 v9】");
     expect(COACHING_METHOD).toContain(INJURY_METHOD);
     expect(COACHING_METHOD).not.toContain("v4");
     expect(PLANNING_RULES).not.toContain("v4");

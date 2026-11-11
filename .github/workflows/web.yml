@@ -7,6 +7,7 @@
 # 改了 Variables 的 SYNC_URL 或 WEB_URL 之後，要手動執行一次。
 # WEB_URL 是正式的網址（app.zone2mate.com）：從其他網址（舊的 pages.dev）打開時顯示搬家的提示（規格 12.19）。
 # staging 由 staging.yml 在 push 到 v2 時部署到另一個 Pages 專案。
+# 免費試用（規格 12.39）：Variables 的 PROXY_URL（代理的網址）＋WEB_FEATURES 加上 trial 才出現；改了要手動執行一次。
 name: Deploy web app
 
 on:
@@ -69,6 +70,8 @@ jobs:
           VITE_FEATURES: ${{ vars.WEB_FEATURES }}
           # 用 Intervals.icu 登入（規格 12.37）：沒有設定時按鈕不出現；換 token 的是同步服務（要有 SYNC_URL 與它的 secret）
           VITE_INTERVALS_CLIENT_ID: ${{ vars.INTERVALS_CLIENT_ID }}
+          # 免費試用（規格 12.39）：代理的網址；還要 WEB_FEATURES 開 trial 才出現
+          VITE_PROXY_URL: ${{ vars.PROXY_URL }}
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

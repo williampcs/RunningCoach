@@ -8,7 +8,7 @@
 #   沒有設定時登入的按鈕不出現。改了要手動執行一次這裡與「Deploy web app」
 # 還沒設定 SYNC_D1_DATABASE_ID 時只跑測試，不部署。
 # 部署完成後，把 Workers 的網址設成 repo 的 Variables：SYNC_URL，再手動執行一次「Deploy web app」。
-# Variables 的 WEB_URL（網頁版的網址）或 OLD_WEB_URL（搬家期間的舊網址）改了要再手動執行一次這裡。
+# Variables 的 WEB_URL（網頁版的網址）改了要再手動執行一次這裡。
 # staging 的同步服務另外由 staging.yml 部署（規格 12.19）。
 name: Deploy sync service
 
@@ -52,9 +52,9 @@ jobs:
         if: ${{ vars.SYNC_D1_DATABASE_ID != '' }}
         env:
           DATABASE_ID: ${{ vars.SYNC_D1_DATABASE_ID }}
-          # 允許的網頁來源：正式的網址（WEB_URL）；搬家期間加上舊網址（OLD_WEB_URL，規格 12.19）。
+          # 允許的網頁來源：正式的網址（WEB_URL）。搬家期間的舊網址（OLD_WEB_URL）2026-11-11 拿掉了（規格 12.19）。
           # staging 的網址不在裡面（staging 有自己的同步服務）。沒有任何網址或不是 https 時失敗、不部署
-          WEB_URLS: ${{ vars.WEB_URL }} ${{ vars.OLD_WEB_URL }}
+          WEB_URLS: ${{ vars.WEB_URL }}
           INTERVALS_CLIENT_ID: ${{ vars.INTERVALS_CLIENT_ID }}
         run: npx tsx tools/sync-config.ts
       - name: Deploy

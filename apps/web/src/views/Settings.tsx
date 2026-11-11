@@ -19,6 +19,8 @@ import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
+import { InviteForm, TRIAL_SUMMARY, TrialAccount, TrialDataFlow } from "./Trial";
+import { trialAvailable } from "../trial";
 import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard, TestModeReset } from "./TestMode";
 import { forgetTestScope } from "../storage-scope";
@@ -59,15 +61,7 @@ const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
 
 /** 目前選擇下，資料會送到哪裡（收在 ⓘ 裡） */
 export function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
-  if (draft.llmMode === "proxy") {
-    return (
-      <ul>
-        <li>你的對話、選手資料與訓練紀錄會經過 Zone2Mate 的代理伺服器，轉送給 Anthropic 產生回覆。</li>
-        <li>代理只在記憶體中轉發，不儲存內容；會記錄的只有帳號識別、訂閱狀態與 token 用量。</li>
-        <li>Anthropic 如何保存與使用這些資料，依它的 API 條款而定，Zone2Mate 無法替它保證。</li>
-      </ul>
-    );
-  }
+  if (draft.llmMode === "proxy") return <TrialDataFlow />;
   const recipient = PROVIDER_RECIPIENT[draft.provider];
   return (
     <ul>
@@ -402,10 +396,12 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
               <input type="radio" name="mode" checked={draft.llmMode === "byok"} onChange={() => switchLlm("byok", draft.provider)} />
               用自己的 API key
             </label>
-            <label className="check">
-              <input type="radio" name="mode" checked={draft.llmMode === "proxy"} onChange={() => switchLlm("proxy", draft.provider)} />
-              訂閱（經代理）
-            </label>
+            {(trialAvailable() || draft.llmMode === "proxy") && (
+              <label className="check">
+                <input type="radio" name="mode" checked={draft.llmMode === "proxy"} onChange={() => switchLlm("proxy", draft.provider)} />
+                免費試用（邀請碼）
+              </label>
+            )}
           </div>
           {draft.llmMode === "byok" ? (
             <div className="grid">
@@ -430,24 +426,18 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
                 </label>
               )}
             </div>
+          ) : !draft.proxy.url.trim() ? (
+            <p className="small field-error">這個版本沒有提供免費試用，請改用自己的 API key。</p>
+          ) : settings.llmMode === "proxy" && settings.proxy.token.trim() ? (
+            <TrialAccount onDeleted={(next) => setDraft({ ...draft, proxy: next.proxy })} />
           ) : (
-            <div className="grid">
-              <label className="wide">
-                代理網址
-                <input value={draft.proxy.url} placeholder="https://" onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, url: e.target.value } })} />
-              </label>
-              <label className="wide">
-                訂閱憑證
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={draft.proxy.token}
-                  onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, token: e.target.value } })}
-                />
-              </label>
-            </div>
+            <>
+              <p className="small muted">{TRIAL_SUMMARY}</p>
+              <InviteForm base={{ ...draft, consents: settings.consents, terms: settings.terms }} onDone={(next) => setDraft({ ...draft, llmMode: next.llmMode, proxy: next.proxy, models: next.models })} />
+            </>
           )}
-          {/* 很少改的收進「進階」；沒填主對話模型時自動打開 */}
+          {/* 很少改的收進「進階」；沒填主對話模型時自動打開. 免費試用的模型由代理決定，沒有進階 */}
+          {draft.llmMode !== "proxy" && (
           <details className="disclosure advanced" open={showAdvanced} onToggle={(e) => setAdvanced((e.target as HTMLDetailsElement).open)}>
             <summary>
               <Icon as={ChevronRight} size={16} className="icon chev" />
@@ -477,10 +467,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
               {!claudeOnly && <p className="field-note">填該供應商可用的模型 ID；思考強度對應到 low / medium / high。</p>}
             </div>
           </details>
+          )}
           <div className="section">
             <p className="row">
               <span>
-                對話與訓練紀錄會{draft.llmMode === "proxy" ? "經過代理送到 Anthropic" : `直接送到 ${PROVIDER_RECIPIENT[draft.provider]}`}。
+                對話與訓練紀錄會{draft.llmMode === "proxy" ? "經過 Zone2Mate 的代理送到 Anthropic，代理不保存內容" : `直接送到 ${PROVIDER_RECIPIENT[draft.provider]}`}。
               </span>
               <InfoTip label="資料會送到哪裡">
                 <DataFlow draft={draft} locked={locked} />
@@ -688,7 +679,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const providerName = { anthropic: "Claude", openai: "OpenAI", gemini: "Gemini", "openai-compatible": "相容服務" }[settings.provider];
   const rowSub: Record<SettingsSection, string> = {
     // 一眼看得到在用哪個服務與模型（例：Claude · 自己的 key · opus-5-5）
-    ai: [settings.llmMode === "proxy" ? "訂閱" : `${providerName} · 自己的 key`, settings.models.chat.trim().replace(/^claude-/, "")].filter(Boolean).join(" · "),
+    ai: [settings.llmMode === "proxy" ? "免費試用" : `${providerName} · 自己的 key`, settings.models.chat.trim().replace(/^claude-/, "")].filter(Boolean).join(" · "),
     records: recordWith ? RECORD_WITH_LABELS[recordWith].replace(/，.*/, "") : "Intervals.icu",
     weather: settings.weather?.label ?? "還沒設定",
     sync: "電腦、手機之間",

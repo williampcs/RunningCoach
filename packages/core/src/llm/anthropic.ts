@@ -13,6 +13,15 @@ export interface AnthropicProviderOptions {
   baseURL?: string;
   /** 在瀏覽器中直連時必須為 true（key 由使用者自行保管於裝置） */
   browser?: boolean;
+  /** 經免費試用的代理時為 true：每次呼叫帶 x-coach-meter，讓代理算每天的次數（規格 12.39） */
+  meterHeader?: boolean;
+  /**
+   * 關掉思考：不送 output_config 的思考強度、改送 thinking disabled（和免費試用的代理套用的政策一樣，規格 12.39）.
+   * 只有 Claude Haiku 5.5 這類可以關的模型能用（effort high 以下）；Claude Opus 5.5、Sonnet 5.5 送了會回 400
+   */
+  disableThinking?: boolean;
+  /** SDK 自己重試的次數（429、5xx、連線錯誤）；沒給時照 SDK 的預設（2 次）. 模型對照的腳本自己退避重試，設 0 */
+  maxRetries?: number;
 }
 
 function supportsEffort(model: string): boolean {
@@ -23,16 +32,23 @@ export class AnthropicProvider implements LlmProvider {
   private readonly client: Anthropic;
   /** API 拒絕了 strict 的工具（400）之後，這個轉接層之後都不送 strict（規格 12.31 第 2 點）；程式照樣驗證工具的輸入 */
   private strictRejected = false;
+  /** 經免費試用的代理時送 x-coach-meter（規格 12.39） */
+  readonly meterHeader: boolean;
+  readonly disableThinking: boolean;
 
   constructor(options: AnthropicProviderOptions) {
+    this.meterHeader = options.meterHeader ?? false;
+    this.disableThinking = options.disableThinking ?? false;
     this.client = new Anthropic({
       apiKey: options.apiKey,
       baseURL: options.baseURL,
       dangerouslyAllowBrowser: options.browser ?? false,
+      ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
     });
   }
 
   effortFor(model: string, effort: Effort): string | null {
+    if (this.disableThinking) return null;
     return supportsEffort(model) ? effort : null;
   }
 
@@ -59,10 +75,19 @@ export class AnthropicProvider implements LlmProvider {
           // 達最大輪數時保留 tools 但禁止再呼叫：對話中已有工具呼叫紀錄，且移除 tools 會讓快取失效
           ...(tools?.length && opts.disableTools ? { tool_choice: { type: "none" as const } } : {}),
           // 新模型預設開啟思考，思考深度以 effort 控制
-          ...(supportsEffort(request.model) ? { output_config: { effort: request.effort } } : {}),
+          // 關掉思考時改送 thinking disabled（不送思考強度，和代理的做法一樣）
+          ...(provider.disableThinking
+            ? { thinking: { type: "disabled" as const } }
+            : supportsEffort(request.model)
+              ? { output_config: { effort: request.effort } }
+              : {}),
         };
+        // 免費試用的代理用這個標頭算每天的次數（規格 12.39）；直連 Anthropic 時 API 不理會自訂的標頭，但只在經代理時送
+        const headers = request.meter && provider.meterHeader ? { "x-coach-meter": request.meter } : undefined;
         const send = (p: Anthropic.MessageCreateParamsNonStreaming) =>
-          opts.onText ? streamMessage(client, p, opts.onText, opts.onToolStart, opts.signal) : client.messages.create(p, { signal: opts.signal });
+          opts.onText
+            ? streamMessage(client, p, opts.onText, opts.onToolStart, opts.signal, headers)
+            : client.messages.create(p, { signal: opts.signal, headers });
         let response: Anthropic.Message;
         try {
           response = await send(params);
@@ -115,8 +140,9 @@ async function streamMessage(
   onText: (text: string) => void,
   onToolStart?: (name: string) => void,
   signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<Anthropic.Message> {
-  const stream = client.messages.stream(params, { signal });
+  const stream = client.messages.stream(params, { signal, headers });
   let textBlocks = 0;
   for await (const event of stream) {
     if (event.type === "content_block_start" && event.content_block.type === "text") {
