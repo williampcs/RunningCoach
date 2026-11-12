@@ -5084,3 +5084,15 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 私鑰由密碼管理工具端對端加密同步到同一個帳號的其他裝置，所以新手機登入同一個 Apple ID 就有。
 - 「用 Google 登入」不同：那是 Google 替網站證明你是誰（OAuth），Google 知道你登入了哪個網站；passkey 是直接登入那個網站，中間沒有人。Google 帳號本身也可以用 passkey 登入（這是使用者看到的）。
 - 我們要用的 PRF：passkey 另外能替每個網站算出一個固定的秘密，只有裝置算得出來；用它當成解開同步資料的鑰匙，伺服器拿不到。要試做確認的：iPhone、Android、電腦的瀏覽器支不支援；在電腦上用手機的 passkey（掃 QR）時能不能用 PRF。
+
+**PRF 與 Google 登入的取捨**（2026-11-12 使用者：「PRF 是什麼意思？可以說詳細一點嗎？」「如果串 Google 的 SSO 對我們會有好處或代價嗎？像是讓驗證身分這件事外包給 Google 負責跨平台相容跟安全之類的？」；協調 session 的說明）
+- PRF（pseudo-random function，偽隨機函數；WebAuthn 的 `prf` 擴充，底層是 CTAP2 的 hmac-secret）：網站給一個固定的「鹽」，passkey 用藏在裡面的秘密算出 32 bytes；同一把 passkey＋同一個鹽永遠算出同一個值，換網站或換鹽就完全不同；要 Face ID／指紋才會算，算的秘密不離開裝置。
+- 用法：PRF 的值（經 HKDF）當成「鎖鑰匙的鑰匙」，把同步金鑰加密後存在我們的伺服器（我們只有上了鎖的盒子）。新手機：登入 → passkey 算出同一個值 → 解開盒子 → 拿到同步金鑰 → 下載並解密資料。可以有好幾把 passkey 與復原碼，各自鎖同一把同步金鑰；passkey 被刪掉就只能用復原碼。
+- Google 登入的好處：大家熟悉、一鍵；密碼、兩步驟驗證、帳號被盜的偵測、帳號找回都由 Google 負責，我們不存密碼；跨網頁、iOS、Android；公開時一個 Google 帳號一份免費額度（比邀請碼或 passkey 難大量開帳號）；之後的訂閱也掛在這個身分上。實作不大（Worker 驗證 Google 的 ID token）。
+- 代價：
+  - 解不開加密的資料：Google 只證明「你是誰」，資料還是要 passkey 或復原碼，畫面上要講清楚，否則會變成「登入了但資料不見」。
+  - 隱私：Google 會知道你在用 Zone2Mate、每次登入；我們只要 `openid`（不要 email 與名字），只存 ID 的雜湊。
+  - 依賴：Google 停用你的帳號或出問題時登不進來（所以也要有 passkey 或 Apple）。
+  - iOS App：有 Google 登入就要提供同等隱私的選項（Apple 登入，審查準則 4.8）；App 裡的 WebView 不能直接用 Google 的登入頁，要用原生的外掛。
+  - 設定：Google Cloud 的專案、同意畫面（只用基本的範圍時審核輕）、隱私說明與網域的驗證。
+- 協調 session 的建議：分工——Google／Apple 登入管「你是誰」（額度、之後的訂閱、防濫用），passkey（或復原碼）管「解開你的資料」。畫面上可以接在一起：「用 Google 登入 → 用 Face ID 解開資料」。朋友內測期間不需要 Google 登入，公開前與 iOS App 一起做。
