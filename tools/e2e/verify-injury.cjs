@@ -161,6 +161,7 @@ let step = "start";
       await page.locator("#checkin .checkin-summary").waitFor();
       await banner.waitFor({ timeout: 10000 });
       c("checkinNotesBanner", (await banner.innerText()).includes("心悸"));
+      await E2E.go(page, "對話");
       await expandFeed();
       await feedMedical.getByRole("button", { name: "我知道了" }).click();
       c("feedAckDismissesBoth", (await banner.count()) === 0 && (await feedMedical.count()) === 0);
