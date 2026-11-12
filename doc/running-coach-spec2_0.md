@@ -277,6 +277,7 @@
 | 2.0-draft | 2026-10-24 | 說明與設定改成從右邊滑出的面板，關閉後回到打開前的樣子（底下的分頁保持掛載）；使用說明加上「加入主畫面」（12.17） |
 | 2.0-draft | 2026-10-24 | 有新版本時提示更新（`version.json`，點了才重新載入、可以關掉）；要求瀏覽器不要自動清掉資料，設定頁「資料」顯示資料保護的狀態；使用說明補上更新與資料保護（12.18） |
 | 2.0-draft | 2026-11-12 | 12.44：串 Google／Apple 登入時，登入前要準備什麼、登入後拿到什麼、我們存什麼（討論 session 的說明） |
+| 2.0-draft | 2026-11-12 | 12.44：為什麼 SSO 解不開加密的資料（三個選項待使用者決定）；passkey 的 PRF 在各平台的支援度（網路查證） |
 
 ---
 
@@ -5110,3 +5111,21 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 拿不到的：Google／Apple 的密碼；也拿不到解開同步資料的鑰匙（照舊靠 passkey 或復原碼）。
 - 之後要做的：刪除帳號時，Apple 要呼叫 `/auth/revoke` 撤銷（要先兌換過授權碼拿到 refresh token，或刪除時請使用者再登入一次）；App 裡要能刪除帳號（5.1.1(v)）。Google 可以選擇撤銷授權。
 - 來源：Google [Verify the Google ID token on your server side](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token)、[Authenticate with a backend server](https://developers.google.com/identity/sign-in/web/backend-auth)；Apple [TN3194: Handling account deletions and revoking tokens for Sign in with Apple](https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple)、[開發者論壇：Email is not included in id_token](https://developer.apple.com/forums/thread/745928)。
+
+**為什麼 SSO 登入和解開資料是分開的**（2026-11-12 使用者問：「為何串接 sso 跟用來解鎖資料的復原碼會是分開的？……當他通過 sso 登入後應該就已經證明操作者是本人了？那在實物上會有什麼不方便或不該綁在一起的原因嗎？」；討論 session 的說明）
+- SSO 是 Google／Apple 向「我們的伺服器」證明你是誰；那張證明伺服器也看得到，不是秘密，不能當鑰匙。要「登入就解鎖」，只能讓伺服器替使用者保管鑰匙。
+- 伺服器保管的代價：伺服器被入侵就全部外洩（訓練、心率、傷痛、對話）；Google 帳號被盜就直接看到資料；我們技術上看得到；違反產品原則「能不經過我們就不經過」。實例：Apple 的 iCloud 預設由 Apple 保管，「進階資料保護」才是端對端、要自己留復原金鑰。
+- 畫面上可以接成一個動作：只用 passkey（一次 Face ID 同時證明身分與算出鑰匙）；或 Google 登入後接 Face ID；復原碼平常看不到。
+- 待使用者決定：鑰匙要不要交給我們保管？（a）不交，維持端對端，用 passkey 做成像一次登入（討論 session 建議）；（b）交，最簡單但要改原則；（c）兩種都給讓使用者選（像 Apple）。
+
+**passkey 的 PRF 在各平台的支援度**（2026-11-12 網路查證；來源多為第三方整理與開發者論壇，正式結論仍要在 staging 的測試頁用實機確認）
+- iPhone／iPad：iOS 18 以上的 Safari 與 iCloud 鑰匙圈支援；有報告 iOS 18.0–18.3 有 PRF 的錯誤，18.4 以後修好，最低版本建議訂 18.4。
+- Android：Google 密碼管理工具的 passkey 預設支援 PRF（Chrome、Edge、Samsung Internet），是目前最完整的。
+- Mac：Safari 18（macOS 15）以上支援；Mac 上的 Chrome 搭配 Google 密碼管理工具有不支援的報告。
+- Windows：Windows Hello 到 2026 年 2 月的更新（Windows 11 25H2＋KB5077181）才開始支援，瀏覽器要 Chrome／Edge 147 以上或 Firefox 148 以上；舊的 Windows 不行。
+- 1Password 等第三方：大多支援，Windows 上不一定。
+- 電腦用手機的 passkey（掃 QR）：有 Safari 在這個流程拿不到 PRF 的報告，不可靠。實體安全金鑰在 Safari 上拿不到 PRF。
+- 跨陣營換手機：iCloud 鑰匙圈的 passkey 不會到 Android，反過來也一樣；iPhone 換 Android 時要靠復原碼（或在舊裝置還在時先加一把新的 passkey）。可以登記多把 passkey，各自鎖同一把同步金鑰。
+- iOS App（Capacitor）：WKWebView 裡不能直接用 WebAuthn，要用原生外掛（例如 Capgo 的 passkey 外掛），PRF 能不能過要實測。
+- WebAuthn 規格的共同編輯者提醒：passkey 被刪就解不開資料，所以一定要有備援（支持「復原碼保留」）。
+- 來源：[Corbado：Passkeys & WebAuthn PRF for E2E Encryption](https://www.corbado.com/blog/passkeys-prf-webauthn)、[Corbado：WebAuthn L3 Support in Credential Managers](https://www.corbado.com/blog/webauthn-l3-credential-manager-support)、[Chromium：Intent to Ship WebAuthn PRF](https://groups.google.com/a/chromium.org/g/blink-dev/c/iTNOgLwD2bI)、[Apple 論壇：PRF in cross-device flow](https://developer.apple.com/forums/thread/774112)、[Apple 論壇：Passkeys and PRF extension](https://developer.apple.com/forums/thread/733413)、[規格共同編輯者的提醒（整理）](https://lilting.ch/en/articles/passkeys-prf-extension-encryption-risk)、[Capgo passkey 外掛](https://capgo.app/ja/docs/plugins/passkey/getting-started/)。
