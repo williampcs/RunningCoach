@@ -1,7 +1,7 @@
 // 驗證傷病的安全機制（規格 12.33）：
 // - 選手說膝蓋痛 → 教練先問固定的問題 → 回答後記進傷病紀錄（選手 → 身體看得到）
 // - 已經排好的課：會痛的運動的強度課與長課標「先不要做」；再請教練排課時，強度課存不了（寫理由也不行）
-// - 每日自評多一題「左膝蓋今天幾分？」，存了分數
+// - 每日自評多一題「左膝蓋今天幾分？」（在「回報」分頁，看板的「去回報」切過去），存了分數
 // - 就醫提示：對話說胸痛時畫面上方與看板各一則（重新整理還在），按「我知道了」才收起；否定的說法不出現；自評的備註也會
 // - 選手 → 身體：改分數、標成好了之後課表不再標「先不要做」、刪除
 // - 手機淺色與電腦深色的截圖（injury-*），不左右捲動
@@ -109,15 +109,18 @@ let step = "start";
       c("planUnchanged", (await planSession("4×1 km 閾值").innerText()).includes("先不要做"));
 
       step = "自評多一題";
+      // 身體狀況在「回報」分頁（2026-11-12）：看板的「去回報」切過去
       await E2E.go(page, "對話");
       await expandFeed();
-      await page.getByRole("button", { name: "回報身體狀況" }).click();
-      const question = page.locator(".checkin .pain-question", { hasText: "左膝蓋今天幾分？" });
+      await page.locator('.feed-item[data-kind="checkin"]').getByRole("button", { name: "去回報" }).click();
+      const question = page.locator("#checkin .checkin .pain-question", { hasText: "左膝蓋今天幾分？" });
       c("checkinQuestion", await question.waitFor({ timeout: 5000 }).then(() => true, () => false));
       await question.getByRole("button", { name: "左膝蓋的疼痛 2", exact: true }).click();
       await shot("checkin");
-      await page.locator(".checkin").getByRole("button", { name: "儲存" }).click();
-      await page.locator(".checkin").waitFor({ state: "detached" });
+      await page.locator("#checkin .checkin").getByRole("button", { name: "儲存" }).click();
+      await page.locator("#checkin .checkin-summary").waitFor();
+      // 自評時已經記了分數：下面不再問分數
+      c("noPainFormAfterCheckin", (await page.locator("#pain-scores").count()) === 0);
       await E2E.profile(page, "身體");
       // 同一天有好幾個分數時摘要取最高的（運動中 5），自評的 2 在展開後的「最近的分數」
       const scored = page.locator(".card.injuries .injury").first();
@@ -151,11 +154,11 @@ let step = "start";
       c("negationNoBanner", (await banner.count()) === 0);
 
       step = "自評的備註";
-      await expandFeed();
-      await page.getByRole("button", { name: "修改自評" }).first().click();
-      await page.locator(".checkin").getByLabel("備註").fill("早上起床有點心悸");
-      await page.locator(".checkin").getByRole("button", { name: "儲存" }).click();
-      await page.locator(".checkin").waitFor({ state: "detached" });
+      await E2E.go(page, "回報");
+      await page.locator("#checkin").getByRole("button", { name: "修改" }).click();
+      await page.locator("#checkin .checkin").getByLabel("備註").fill("早上起床有點心悸");
+      await page.locator("#checkin .checkin").getByRole("button", { name: "儲存" }).click();
+      await page.locator("#checkin .checkin-summary").waitFor();
       await banner.waitFor({ timeout: 10000 });
       c("checkinNotesBanner", (await banner.innerText()).includes("心悸"));
       await expandFeed();

@@ -19,12 +19,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { injuryName, shortDateLabel, type DailyCheckin, type FeedAction, type FeedItem, type Injury } from "@running-coach/core";
+import { shortDateLabel, type FeedAction, type FeedItem } from "@running-coach/core";
 
-import { errorText, useApp } from "../app-context";
-import { AutoGrowTextarea } from "../AutoGrowTextarea";
-import { Icon, PainPicker, SportIcon } from "../ui";
-import { checkRedFlags, dismissRedFlags, useRedFlagAlert } from "../red-flag-alert";
+import { useApp } from "../app-context";
+import { Icon, SportIcon } from "../ui";
+import { dismissRedFlags, useRedFlagAlert } from "../red-flag-alert";
 import { redFlagFeedItem } from "./RedFlag";
 import { useSync } from "../use-sync";
 import { SyncNotice } from "./PhoneGuide";
@@ -75,99 +74,9 @@ const ICONS: Record<FeedItem["kind"], LucideIcon> = {
   unavailable: CloudOff,
 };
 
-const SCALES = [
-  { key: "energy", label: "精神", low: "很差", high: "很好" },
-  { key: "soreness", label: "痠痛", low: "沒有", high: "很痠" },
-  { key: "sleep", label: "睡眠", low: "很差", high: "很好" },
-] as const;
-
 /**
- * 今天的身體狀況自評：三個 1–5 分加上備註. 有還沒好的傷時，每個傷多問一題「左膝今天幾分？」（0–10，規格 12.33；
- * 不回答就不記）. 備註有紅旗的字詞時出現就醫提示
- */
-function CheckinForm({ onDone }: { onDone: () => void }) {
-  const { coach, touch } = useApp();
-  const today = coach.today();
-  const [values, setValues] = useState({ energy: 3, soreness: 2, sleep: 3, notes: "" });
-  const [injuries, setInjuries] = useState<Injury[]>([]);
-  const [pain, setPain] = useState<Record<number, number>>({});
-  const [error, setError] = useState<string | null>(null);
-  // 讀完今天的自評才顯示欄位：不然讀到的值會蓋掉讀完之前已經打的字（KI-047）
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([coach.db.getCheckin(today), coach.db.getInjuries()]).then(([c, list]: [DailyCheckin | null, Injury[]]) => {
-      if (cancelled) return;
-      if (c) setValues({ energy: c.energy, soreness: c.soreness, sleep: c.sleep, notes: c.notes ?? "" });
-      setInjuries(list);
-      // 今天已經回報過的分數帶出來
-      setPain(Object.fromEntries(list.flatMap((i) => i.scores.filter((x) => x.date === today && x.when === "checkin").map((x) => [i.id, x.score]))));
-      setLoaded(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [coach, today]);
-
-  async function save() {
-    try {
-      await coach.saveCheckin(values);
-      for (const [id, score] of Object.entries(pain)) await coach.db.addInjuryScore(Number(id), { date: today, score, when: "checkin" });
-      checkRedFlags(values.notes);
-      touch();
-      onDone();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
-
-  if (!loaded) return null;
-  return (
-    <div className="checkin">
-      {SCALES.map((s) => (
-        <label key={s.key}>
-          <span>
-            {s.label} <strong>{values[s.key]}</strong>/5 · 1 {s.low}、5 {s.high}
-          </span>
-          <input
-            type="range"
-            min={1}
-            max={5}
-            value={values[s.key]}
-            aria-label={s.label}
-            onChange={(e) => setValues({ ...values, [s.key]: Number(e.target.value) })}
-          />
-        </label>
-      ))}
-      {injuries.map((i) => (
-        <div key={i.id} className="pain-question">
-          <span>
-            {injuryName(i)}今天幾分？{pain[i.id] !== undefined && <strong> {pain[i.id]}/10</strong>}
-          </span>
-          <PainPicker value={pain[i.id] ?? null} label={`${injuryName(i)}的疼痛`} onChange={(n) => setPain({ ...pain, [i.id]: n })} />
-        </div>
-      ))}
-      <label>
-        備註
-        <AutoGrowTextarea value={values.notes} placeholder="例如：右小腿有點緊" onChange={(e) => setValues({ ...values, notes: e.target.value })} />
-      </label>
-      {error && <div className="notice error">{error}</div>}
-      <div className="actions">
-        <button className="primary" onClick={() => void save()}>
-          儲存
-        </button>
-        <button className="text" onClick={onDone}>
-          取消
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * 今天的身體狀況（可以回報或修改自評的）一直留著，那是查看與修改自評的地方；就醫提示要按「我知道了」才收起；
- * 其他的可以按「知道了」略過
+ * 身體狀況的提醒（還沒回報、傷還沒分數、狀況不好的建議）一直留著，按「去回報」到「回報」分頁（2026-11-12 起表單在那裡）；
+ * 就醫提示要按「我知道了」才收起；其他的可以按「知道了」略過
  */
 function dismissible(item: FeedItem): boolean {
   return !item.actions.some((a) => a.type === "checkin" || a.type === "ack");
@@ -191,13 +100,11 @@ function prefersReducedMotion(): boolean {
  * collapseSignal 每次送出訊息時遞增：開始對話後收成一行，讓對話有空間。
  */
 export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
-  const { coach, settings, revision, goTo, openReport, llmProblem, touch } = useApp();
+  const { coach, settings, revision, goTo, openReport, openCheckin, llmProblem, touch } = useApp();
   const sync = useSync();
   const today = coach.today();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [state, setState] = useState(() => loadState(today));
-  // 打開自評表單的那一列（身體狀況、傷病的分數都可以打開）
-  const [checkinOpen, setCheckinOpen] = useState<string | null>(null);
   // 就醫提示（規格 12.33）：和畫面上方的那條同一份，放在看板的最前面
   const redFlag = useRedFlagAlert();
   // 收起時輪播到第幾則；滑鼠移上去或鍵盤聚焦時暫停
@@ -274,7 +181,8 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   function runAction(action: FeedAction, item: FeedItem) {
     switch (action.type) {
       case "checkin":
-        setCheckinOpen(item.id);
+        // 身體狀況與傷的分數在「回報」分頁
+        openCheckin();
         return;
       case "ack":
         dismissRedFlags();
@@ -313,7 +221,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
   const label = (action: FeedAction, item: FeedItem) => {
     switch (action.type) {
       case "checkin":
-        return item.kind === "injury" ? "回報分數" : item.kind === "checkin" && item.tone === "info" ? "回報身體狀況" : "修改自評";
+        return "去回報";
       case "ack":
         return "我知道了";
       case "report":
@@ -380,8 +288,7 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
             <span className="feed-icon">
               <Icon as={ICONS[item.kind]} />
             </span>
-            {/* 自評的表單打開時改成上下排：電腦上不擠在右邊一欄（2026-11-10 使用者回報跑版） */}
-            <div className={`feed-body${item.actions.some((a) => a.type === "checkin") && checkinOpen === item.id ? " with-form" : ""}`}>
+            <div className="feed-body">
               <div className="feed-text">
                 <span className="feed-title">{item.title}</span>
                 {/* Garmin 的標示（KI-048）：標題下方 */}
@@ -416,23 +323,19 @@ export function CoachFeed({ collapseSignal = 0 }: { collapseSignal?: number }) {
                   </a>
                 )}
               </div>
-              {item.actions.some((a) => a.type === "checkin") && checkinOpen === item.id ? (
-                <CheckinForm onDone={() => setCheckinOpen(null)} />
-              ) : (
-                <div className="feed-actions">
-                  {/* 整張看板最多一顆實心按鈕（primaryId）；其他列的第一個動作是外框，其餘是文字按鈕 */}
-                  {item.actions.map((action, i) => (
-                    <button
-                      key={i}
-                      className={i > 0 ? "text" : item.id === primaryId ? "primary" : ""}
-                      disabled={(action.type === "ask" && llmProblem !== null) || (action.type === "sync" && sync.busy)}
-                      onClick={() => runAction(action, item)}
-                    >
-                      {label(action, item)}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="feed-actions">
+                {/* 整張看板最多一顆實心按鈕（primaryId）；其他列的第一個動作是外框，其餘是文字按鈕 */}
+                {item.actions.map((action, i) => (
+                  <button
+                    key={i}
+                    className={i > 0 ? "text" : item.id === primaryId ? "primary" : ""}
+                    disabled={(action.type === "ask" && llmProblem !== null) || (action.type === "sync" && sync.busy)}
+                    onClick={() => runAction(action, item)}
+                  >
+                    {label(action, item)}
+                  </button>
+                ))}
+              </div>
             </div>
             {item.badge && <span className="feed-badge">{item.badge}</span>}
             {dismissible(item) ? (

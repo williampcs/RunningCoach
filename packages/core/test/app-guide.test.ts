@@ -50,6 +50,9 @@ describe("功能說明", () => {
     expect(findGuide("web", "密碼鎖")[0]?.id).toBe("key-lock");
     expect(findGuide("web", "QR code")[0]?.id).toBe("device-sync");
     expect(findGuide("web", "完全無關的字")).toEqual([]);
+    // 每日的身體狀況在「回報」分頁（2026-11-12）：舊的說法也找得到
+    for (const q of ["身體狀況", "回報身體狀況", "修改自評"]) expect(findGuide("web", q).map((s) => s.id)).toContain("report");
+    expect(findGuide("web", "身體狀況").find((s) => s.id === "report")!.body).toContain("最上面是今天的身體狀況");
   });
 
   it("教練用 get_app_help 查，網頁版附上說明頁的連結；系統提示列出主題，跑後回報的同步依網頁版或 Discord 說", async () => {
