@@ -276,6 +276,7 @@
 | 2.0-draft | 2026-10-24 | 介面調整第一輪：教練動態改成「今天的重點」看板（A 版）、展開就全部顯示；對話輸入框一行高、自動長高；長文字欄位改成共用的自動長高輸入框；訊息下方顯示時間（12.16） |
 | 2.0-draft | 2026-10-24 | 說明與設定改成從右邊滑出的面板，關閉後回到打開前的樣子（底下的分頁保持掛載）；使用說明加上「加入主畫面」（12.17） |
 | 2.0-draft | 2026-10-24 | 有新版本時提示更新（`version.json`，點了才重新載入、可以關掉）；要求瀏覽器不要自動清掉資料，設定頁「資料」顯示資料保護的狀態；使用說明補上更新與資料保護（12.18） |
+| 2.0-draft | 2026-11-12 | 12.44：串 Google／Apple 登入時，登入前要準備什麼、登入後拿到什麼、我們存什麼（討論 session 的說明） |
 
 ---
 
@@ -5096,3 +5097,16 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - iOS App：有 Google 登入就要提供同等隱私的選項（Apple 登入，審查準則 4.8）；App 裡的 WebView 不能直接用 Google 的登入頁，要用原生的外掛。
   - 設定：Google Cloud 的專案、同意畫面（只用基本的範圍時審核輕）、隱私說明與網域的驗證。
 - 協調 session 的建議：分工——Google／Apple 登入管「你是誰」（額度、之後的訂閱、防濫用），passkey（或復原碼）管「解開你的資料」。畫面上可以接在一起：「用 Google 登入 → 用 Face ID 解開資料」。朋友內測期間不需要 Google 登入，公開前與 iOS App 一起做。
+
+**串 Google／Apple 登入：登入前要準備什麼、登入後拿到什麼**（2026-11-12 使用者問：「如果串接 google/apple 的 sso 的話，我們的應用（或網頁端）在開始登入前跟結束後會需要提供什麼，或是會拿到什麼嗎？」；討論 session 的說明）
+- 事前（一次性的設定）：
+  - Google：Google Cloud 專案、OAuth 同意畫面（App 名稱、隱私權政策與服務條款的網址、授權網域）；每個平台一個用戶端 ID（網頁一個，之後的 iOS、Android 各一個）；網頁要登記允許的來源網址（正式版與 staging 各自登記）。
+  - Apple：Apple 開發者帳號（年費）；App ID 開啟 Sign in with Apple；網頁要一個 Services ID、驗證網域、登記返回網址；一把私鑰（.p8），用來簽「用戶端密鑰」（JWT，最長 6 個月要換），兌換授權碼與撤銷時要用。
+- 每次登入時我們送出的：用戶端 ID、要的範圍（只要 `openid`）、一次性的 `nonce`（防重放；會出現在拿回來的 token 裡，Worker 要核對）、`state`（防 CSRF）。
+- 登入後拿到的：一個 ID token（Google／Apple 簽名的 JWT）。Worker 驗證簽名（用 Google／Apple 公開的金鑰）、`iss`、`aud`（是不是給我們的）、`exp`、`nonce`。
+  - 裡面最重要的是 `sub`：這個人在這個登入服務的固定代號，當帳號的主鍵（我們只存雜湊）。Google 的 `sub` 每個 Google 帳號一個；Apple 的 `sub` 每個開發者團隊不同。
+  - Google 的網頁登入按鈕通常也會附 email、名字、大頭照：拿到了也不存。
+  - Apple：email 只在要 `email` 範圍時才給，使用者可以選「隱藏我的 email」（給一個 `privaterelay.appleid.com` 的轉寄地址）；名字只在第一次授權時給、而且不在 token 裡。我們都不要。
+- 拿不到的：Google／Apple 的密碼；也拿不到解開同步資料的鑰匙（照舊靠 passkey 或復原碼）。
+- 之後要做的：刪除帳號時，Apple 要呼叫 `/auth/revoke` 撤銷（要先兌換過授權碼拿到 refresh token，或刪除時請使用者再登入一次）；App 裡要能刪除帳號（5.1.1(v)）。Google 可以選擇撤銷授權。
+- 來源：Google [Verify the Google ID token on your server side](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token)、[Authenticate with a backend server](https://developers.google.com/identity/sign-in/web/backend-auth)；Apple [TN3194: Handling account deletions and revoking tokens for Sign in with Apple](https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple)、[開發者論壇：Email is not included in id_token](https://developer.apple.com/forums/thread/745928)。
