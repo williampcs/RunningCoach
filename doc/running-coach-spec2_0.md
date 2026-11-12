@@ -258,6 +258,7 @@
 | 0.8.0 | 2026-11-11 | **發版 v0.8.0**：免費試用（邀請碼，功能開關 `trial`）：不用申請 API key，輸入作者給的邀請碼就能和教練聊（Claude Haiku 5.5、少量思考，每天 15 則；可以在另一台裝置用同一個試用帳號；可以隨時刪除試用帳號），代理不保存對話的內容；設定精靈在電腦上是置中的卡片；教練多了兩條安全規則：未成年（量要保守、讓家長知道、找醫師或學校的教練）與高溫（提醒中暑的徵兆，出現就停下）；Safari 的中文輸入法按 Enter 選字不再把訊息送出；電腦上的自評表單排在文字下面。另有本機的模型對照工具（12.43）。 |
 | 2.0-draft | 2026-11-11 | v0.8.0 已部署（[williampcs/RunningCoach#50](https://github.com/williampcs/RunningCoach/pull/50)；網頁版、同步服務、代理〔第一次部署正式的代理〕、Discord bot、標籤 v0.8.0 都成功）。免費試用在正式版還沒出現：使用者要把正式的代理網址設成 Variables 的 `PROXY_URL`、在 `WEB_FEATURES` 加 `trial`、重新部署網頁版，再用 `tools/proxy-admin.ts` 產生邀請碼 |
 | 2.0-draft | 2026-11-11 | 討論：帳號管理（12.44）：現況的三樣東西、新裝置的手續、登入拿回身分但拿不回加密的資料、passkey 的可能、Google／Apple 登入與正式額度的時間點；待使用者決定 |
+| 2.0-draft | 2026-11-12 | 9.3 加「發邀請碼」的步驟（`tools/proxy-admin.ts`、`.env` 的欄位、朋友的用法）；正式版的 `PROXY_URL` 與 `trial` 已設好、網頁版已重新部署 |
 | 2.0-draft | 2026-10-29 | 小修：賽事列表的備註照打的換行顯示（不接在副標那一行，超過兩行收進「備註」）；修正：清除天氣的城市（或改其他設定）後看板沒有重新整理、身體狀況自評的表單在讀完之前打的字會被蓋掉（KI-047，兩支在午夜前後失敗的 E2E 的原因）；E2E 可以用 `E2E_NOW`／`MOCK_NOW` 模擬時間（9.4、KI-047、`tools/e2e/README.md`） |
 | 2.0-draft | 2026-10-29 | 課表頁最下面「之前的週」（預設收起，一週一列：計畫與實際的距離或時間、每堂課一個小圖示，點開看每堂課、點到紀錄頁那一趟）；教練的系統提示（會變的那一段）加上最近 4 週照課表的摘要，排課的規則加一句用它調整、不責備（12.34、9.4） |
 | 2.0-draft | 2026-10-29 | 課卡上的「改課」：今天與之後的跑步或騎車的課可以自己改短（約 3/4、一半）或換成輕鬆，選原因（沒時間、太累、不舒服；不舒服接到傷病紀錄），可以恢復；記下原本的內容與原因（schema 18，跟著課表同步）；教練的最近 4 週摘要加上自己改的（同一種課或同一天 2 次以上）；「之前的週」標出自己改過（12.34、9.4） |
@@ -772,7 +773,20 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | `npm run dev:mock -w @running-coach/web` | 網頁版，Intervals.icu 指向模擬服務，埠 5173 |
 | `npm run dev -w @running-coach/web` | 網頁版，連真實服務 |
 | `npm run dev -w @running-coach/discord` | Discord bot，讀取 repo 根目錄的 `.env` |
+| `npx tsx tools/proxy-admin.ts summary` | 免費試用的管理（12.39，作者在自己的電腦）：產生邀請碼、看用量、停用帳號；步驟見下面「發邀請碼」 |
 | `npx tsx tools/model-eval.ts` | 模型對照＋高風險問題的測試（12.43）：先印費用估算；`--yes` 用 `.env` 的 `ANTHROPIC_API_KEY` 真的跑（只在本機）；`--mock` 打模擬上游（不用 key） |
+
+**發邀請碼（免費試用，作者在自己的電腦；2026-11-11 使用者：「先幫我把邀請碼的產生方式記起來，我應該暫時還用不到」）**
+1. repo 根目錄的 `.env` 要有（欄位見 `.env.example` 最下面）：
+   - `PROXY_URL`：正式的代理網址（`https://running-coach-proxy.<子網域>.workers.dev`，部署紀錄「Deploy proxy」印的那個，和 GitHub Variables 的 `PROXY_URL` 相同）
+   - `PROXY_ADMIN_TOKEN`：和 GitHub Secrets 的 `PROXY_ADMIN_TOKEN` 同一個（不要貼到對話）
+   - 對 staging 的代理操作時另外填 `STAGING_PROXY_URL`、`STAGING_PROXY_ADMIN_TOKEN`，指令加 `--staging`。
+2. `git pull` 後在 repo 根目錄：
+   - 產生：`npx tsx tools/proxy-admin.ts invite --count 5 --expires 2026-12-31 --label 第一批`（`--budget 10` 可以改這批每人每月的上限，預設 10 美元）。邀請碼（`RC-XXXX-XXXX-XXXX`）**只顯示這一次**，代理只存雜湊：先記下來再給朋友，一人一張、用一次。`--label` 只是自己分批的名字，不要寫朋友的真名。
+   - 看狀況：`summary`（這個月的總花費、總預算 60 美元、帳號數、沒用過的邀請碼）、`invites`（每張的狀態：沒用過／用過／停用／過期，不會再顯示碼）、`accounts`（每個帳號這個月的花費、今天的則數）。
+   - 收回：`revoke inv_xxxx`（停用一張還沒用的）、`suspend acct_xxxx`／`resume acct_xxxx`（暫停／恢復一個帳號）、`delete acct_xxxx`（刪掉帳號）。
+3. 朋友的用法：打開 `app.zone2mate.com` → 設定精靈選「免費試用（邀請碼）」（或設定 →「AI 教練」→「免費試用（邀請碼）」）→ 貼上邀請碼 →「啟用」。其他裝置：在已經啟用的那台按「在另一台使用」拿連結碼（10 分鐘、用一次），在新的那台同一個地方貼上。
+4. 正式版要看得到免費試用，GitHub Variables 要有 `PROXY_URL` 且 `WEB_FEATURES` 含 `trial`（2026-11-11 已設好、已重新部署網頁版）。
 
 以模擬服務測試免費試用（12.39）時：網頁版建置或開發時設 `VITE_PROXY_URL=http://localhost:8787` 與 `VITE_FEATURES=trial`（staging 的建置不用設開關）；產生邀請碼：`.env` 寫 `PROXY_URL=http://localhost:8787`、`PROXY_ADMIN_TOKEN=dev-admin`，執行 `npx tsx tools/proxy-admin.ts invite --count 3`；到設定頁或精靈選「免費試用（邀請碼）」貼上。E2E 的 `verify-trial.cjs` 自己開一個代理（8791 埠）。
 
