@@ -10,7 +10,7 @@
 import { otherActivitiesText } from "./activity-labels";
 import { coachingMethod } from "./coaching-method";
 import { featureOn } from "./features";
-import { daysBetween, localDate, localTime, utcOffsetLabel, weekdayName } from "./dates";
+import { addDays, daysBetween, localDate, localTime, shortDateLabel, utcOffsetLabel, weekdayIndex, weekdayName } from "./dates";
 import { analyzeRecovery, describeCheckin, describeWatch, RECOVERY_RULES } from "./recovery";
 import { hardBlockReason, injuryLine, injuryName } from "./injuries";
 import { MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, type Db } from "./db";
@@ -241,10 +241,13 @@ export class ContextManager {
     const now = this.now();
     const today = localDate(now, timeZone);
     const year = Number(today.slice(0, 4));
+    const monday = addDays(today, -weekdayIndex(today));
 
     const lines = [
       `今天日期：${today}（${weekdayName(today)}）` +
         `｜時區：${timeZone}（${utcOffsetLabel(now, timeZone)}）｜以星期一為一週的第一天`,
+      // 週末排下週的課表時，模型把 week_start 填成這週的星期一（12.15）
+      `這週：${shortDateLabel(monday)}– ${shortDateLabel(addDays(monday, 6))}；下週一：${addDays(monday, 7)}（排下週的課表時 week_start 填這天）`,
       "",
       "以下是選手資料：",
       "",

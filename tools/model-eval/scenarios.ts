@@ -14,6 +14,8 @@ import {
   planSaved,
   replyMatches,
   replyNotMatches,
+  savedNextWeek,
+  thisWeekKept,
   touchedSessions,
 } from "./checks";
 import type { Athlete, Check, Scenario } from "./types";
@@ -57,6 +59,27 @@ export const SCENARIOS: Scenario[] = [
     // 兩輪：教練常先問問題，第二則回答常問的事；看整段對話的結果（第一輪先問不算不過）
     messages: ["幫我排下週的課表", "比賽就是 1 月那場半馬。一週可以跑 4 天：週二、週四、週六、週日，週一休息；最近最長跑過 14 公里，輕鬆跑大約 6 分 20 秒。就照這樣幫我排下週的。"],
     checks: planChecks,
+    expectedCalls: 3,
+  },
+  {
+    id: "weekend-next",
+    group: "一般",
+    title: "星期六排下週的課表（這週的課還沒跑完）",
+    // 2026-11-13 使用者在 staging 回報：週末請教練預排下週，課卻存進這週（規格 12.15）
+    weekday: 5,
+    athlete: {
+      fake: steady4,
+      profile: { ...baseProfile, pref_runs_per_week: "4" },
+      // 這週已經排好的課（今天星期六：今天輕鬆跑、明天長跑）
+      plan: [
+        { day: -4, kind: "easy", title: "輕鬆跑", steps: easySteps(40) },
+        { day: -2, kind: "threshold", title: "3 × 8 分鐘閾值", steps: thresholdSteps },
+        { day: 0, kind: "easy", title: "輕鬆跑", steps: easySteps(40) },
+        { day: 1, kind: "long", title: "長跑", steps: [{ distance_km: 14, target: { pace: "E" } }] },
+      ],
+    },
+    messages: ["幫我排下週的課表"],
+    checks: [planSaved, savedNextWeek, thisWeekKept, noAcceptedWarnings],
     expectedCalls: 3,
   },
   {

@@ -278,7 +278,11 @@ export function parseSessions(value: unknown, weekStart: string, style: PlanStyl
     const date = typeof s.date === "string" && s.date ? s.date : null;
     if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`${where} 的 date 格式要是 YYYY-MM-DD`);
     if (style === "fixed" && !date) throw new Error(`${where} 沒有日期；固定的課表每堂都要有日期（彈性的才可以不填）`);
-    if (date && (date < weekStart || date > weekEnd)) throw new Error(`${where} 的日期 ${date} 不在這週（${weekStart}～${weekEnd}）`);
+    if (date && (date < weekStart || date > weekEnd)) {
+      // 排下週卻填了這週的星期一（12.15）
+      const hint = date > weekEnd ? `；要排 ${date} 那週的話，week_start 填那週的星期一 ${addDays(date, -weekdayIndex(date))}` : "";
+      throw new Error(`${where} 的日期 ${date} 不在 week_start 那週（${weekStart}～${weekEnd}）${hint}`);
+    }
     let sport: Sport | null = null;
     if (options.multisport && kind === "cross") {
       const value = typeof s.sport === "string" ? s.sport.trim().toLowerCase() : "";

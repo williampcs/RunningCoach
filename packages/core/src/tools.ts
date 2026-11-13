@@ -279,7 +279,10 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
       input_schema: {
         type: "object",
         properties: {
-          week_start: { type: "string", description: "這週的星期一 YYYY-MM-DD；不是星期一時以那週的星期一為準" },
+          week_start: {
+            type: "string",
+            description: "這份課表是哪一週：那週的星期一 YYYY-MM-DD（排下週就填下週一，系統提示有日期）；不是星期一時以那週的星期一為準。存進這週會換掉這週原本的課表",
+          },
           style: { type: "string", enum: ["fixed", "flexible"], description: "fixed 照星期排（每堂要有日期）；flexible 一週的菜單（date 可以不填）" },
           reason: {
             type: "string",
@@ -289,7 +292,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
           },
           sessions: {
             type: "array",
-            description: "這週的每一堂課",
+            description: "那週的每一堂課",
             items: sessionSchema({ date: true }),
           },
           outline: { type: "string", description: "往後幾週的週期大綱（文字）；沒有時寫空字串" },

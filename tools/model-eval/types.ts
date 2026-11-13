@@ -108,6 +108,10 @@ export interface SavedChanges {
   memories: string[];
   profile: Record<string, string>;
   races: string[];
+  /** 這次新存的課表是哪一週（以情境的今天算：0 這週、1 下週）；舊的結果沒有這一欄 */
+  newPlanWeeks?: number[];
+  /** 原本啟用、這次被換掉（停用）的課表數；舊的結果沒有這一欄 */
+  replacedPlans?: number;
 }
 
 export interface CheckResult {
@@ -136,6 +140,8 @@ export interface Scenario {
   checks: Check[];
   /** 費用估算：預計幾次模型呼叫（工具迴圈） */
   expectedCalls: number;
+  /** 情境的「今天」換成同一週的星期幾（星期一 = 0）；沒寫時是跑的「現在」（evalNow 固定在星期二） */
+  weekday?: number;
 }
 
 export interface EvalResult extends RunRecord {
