@@ -467,24 +467,32 @@ function Timeline({ t, today, onChange }: { t: PlanTimeline; today: string; onCh
               下週 {d.nextWeek.range} · {weekText(d.nextWeek)}
             </div>
           )}
-          <div className="tl-row">
-            <DateLabel label={d.label} weekday={d.weekday} today={d.date === today} race={d.races.length > 0 && !d.sessions.length} />
-            <div className="tl-items">
-              {d.sessions.map(item)}
-              {d.others.map((a) => (
-                <OtherItem key={a.intervals_id} a={a} />
-              ))}
-              {!d.sessions.length && !d.races.length && !d.others.length && (
-                <div className="plan-rest">
-                  <SportIcon sport="rest" />
-                  休息
-                </div>
-              )}
-              {d.races.map((r) => (
-                <RaceItem key={r.id} race={r} today={today} />
-              ))}
+          {d.undated.length > 0 && (
+            <div className="tl-row">
+              <DateLabel label="下週任一天" />
+              <div className="tl-items">{d.undated.map(item)}</div>
             </div>
-          </div>
+          )}
+          {!d.hideRow && (
+            <div className="tl-row">
+              <DateLabel label={d.label} weekday={d.weekday} today={d.date === today} race={d.races.length > 0 && !d.sessions.length} />
+              <div className="tl-items">
+                {d.sessions.map(item)}
+                {d.others.map((a) => (
+                  <OtherItem key={a.intervals_id} a={a} />
+                ))}
+                {!d.sessions.length && !d.races.length && !d.others.length && (
+                  <div className="plan-rest">
+                    <SportIcon sport="rest" />
+                    休息
+                  </div>
+                )}
+                {d.races.map((r) => (
+                  <RaceItem key={r.id} race={r} today={today} />
+                ))}
+              </div>
+            </div>
+          )}
         </li>
       ))}
       {t.laterRaces.length > 0 && (
