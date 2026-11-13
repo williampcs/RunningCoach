@@ -278,6 +278,7 @@
 | 2.0-draft | 2026-10-24 | 有新版本時提示更新（`version.json`，點了才重新載入、可以關掉）；要求瀏覽器不要自動清掉資料，設定頁「資料」顯示資料保護的狀態；使用說明補上更新與資料保護（12.18） |
 | 2.0-draft | 2026-11-12 | 12.44：串 Google／Apple 登入時，登入前要準備什麼、登入後拿到什麼、我們存什麼（討論 session 的說明） |
 | 2.0-draft | 2026-11-12 | 12.44：為什麼 SSO 解不開加密的資料（三個選項待使用者決定）；passkey 的 PRF 在各平台的支援度（網路查證） |
+| 2.0-draft | 2026-11-13 | 12.44：使用者自己保管鑰匙真的比較安全嗎（外洩與遺失兩種風險的比較） |
 
 ---
 
@@ -5129,3 +5130,11 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - iOS App（Capacitor）：WKWebView 裡不能直接用 WebAuthn，要用原生外掛（例如 Capgo 的 passkey 外掛），PRF 能不能過要實測。
 - WebAuthn 規格的共同編輯者提醒：passkey 被刪就解不開資料，所以一定要有備援（支持「復原碼保留」）。
 - 來源：[Corbado：Passkeys & WebAuthn PRF for E2E Encryption](https://www.corbado.com/blog/passkeys-prf-webauthn)、[Corbado：WebAuthn L3 Support in Credential Managers](https://www.corbado.com/blog/webauthn-l3-credential-manager-support)、[Chromium：Intent to Ship WebAuthn PRF](https://groups.google.com/a/chromium.org/g/blink-dev/c/iTNOgLwD2bI)、[Apple 論壇：PRF in cross-device flow](https://developer.apple.com/forums/thread/774112)、[Apple 論壇：Passkeys and PRF extension](https://developer.apple.com/forums/thread/733413)、[規格共同編輯者的提醒（整理）](https://lilting.ch/en/articles/passkeys-prf-extension-encryption-risk)、[Capgo passkey 外掛](https://capgo.app/ja/docs/plugins/passkey/getting-started/)。
+
+**使用者自己保管鑰匙，真的比放在伺服器安全嗎？**（2026-11-13 使用者問：「當初決定我們能不存就不存，原因是讓用戶盡可能擁有或掌握自己的東西，但……相較起放在 server，讓用戶（或用戶的裝置）自行保管 key 之類的真的會比較安全嗎？當然這樣的話我們需要負擔的責任跟風險會比較小」；討論 session 的說明）
+- 「安全」分兩種風險：被別人看到（外洩），和自己拿不回來（遺失）。自己保管：外洩的風險較低、遺失的風險較高；伺服器保管：反過來。
+- 手機被入侵、被拿走：兩種做法一樣糟（資料本來就在手機上，本機優先）。差別在伺服器那一端。
+- 伺服器保管時多出來的風險：一個地方集中了所有人的鑰匙與資料，一次外洩就是全部的人；小團隊最常見的是設定錯誤、管理金鑰外流（repo 公開、部署用的 token），而不是有人專門攻擊某個使用者的手機。
+- 自己保管時多出來的風險：鑰匙全丟了，雲端那份就解不開（手機還在時本機的資料還在）。用 passkey＋復原碼可以把這個風險降到很低。
+- 誠實的限制：網頁版的程式是我們發布的；如果部署被入侵、改成偷傳鑰匙，端對端也擋不住。它防的是資料庫外洩、內部的人偷看與法律調閱，不防「發布的程式本身被改」。
+- 結論：對外洩，自己保管較安全，而且責任較輕；對遺失，要靠 passkey＋復原碼補。討論 session 的建議仍是（a）不交給我們保管。
