@@ -29,6 +29,7 @@ import { TermsConfirm } from "./views/TermsConfirm";
 import { RedFlagBanner } from "./views/RedFlag";
 import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
+import { useTrialSync } from "./use-trial-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { DEMO, DEMO_DB_FILE } from "./demo";
 import { wizardStart, type WizardStep } from "./wizard";
@@ -459,6 +460,21 @@ export function App() {
     setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), TOAST_MS);
   }, []);
   const [removed, setRemoved] = useState(removedHere);
+  // 免費試用的帳號掛進加密的同步（規格 12.44 第 1 步）：以最新的設定為底改（同步完自動取回時，設定可能剛被別處改過）
+  const applySettings = useCallback(
+    async (change: (current: AppSettings) => AppSettings) => {
+      const next = change(settingsRef.current);
+      if (next === settingsRef.current) return next;
+      await saveSettings(next);
+      settingsRef.current = next;
+      clockOffset = clockOffsetMs(testMode, next.timeZone);
+      coach?.configure(coachConfig(next, testMode));
+      setSettings(next);
+      return next;
+    },
+    [coach, testMode],
+  );
+  const trialSync = useTrialSync(coach?.db ?? null, settings, deviceSync, applySettings, touch, toast);
 
   const activitiesReady = testMode.enabled || intervalsConnected(settings);
 
@@ -542,6 +558,7 @@ export function App() {
         showTab("report");
       },
       deviceSync,
+      trialSync,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
       devicesFocus,
@@ -552,7 +569,7 @@ export function App() {
       openSettings,
       toast,
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
 
   // 從 Intervals.icu 登入回來（規格 12.37）：精靈以外按的，打開設定的「訓練紀錄」，在那裡換 token
   useEffect(() => {

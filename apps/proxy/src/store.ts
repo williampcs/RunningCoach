@@ -1,7 +1,7 @@
 /**
- * 帳號與用量的儲存 — 代理唯一會落地的資料：邀請碼（只存雜湊）、帳號與它的裝置憑證（只存雜湊）、登入方式、
+ * 帳號與用量的儲存 — 代理唯一會落地的資料：邀請碼（只存雜湊）、帳號與它的裝置憑證（只存雜湊）、帳號的復原密鑰（只存雜湊）、登入方式、
  * 每天的次數、每月的 token 與金額.
- * 不儲存請求或回應內容，也不儲存憑證、邀請碼或連結碼的原文（只存雜湊）。不存 email、名字或 IP（規格 12.39、12.36 的資料原則）.
+ * 不儲存請求或回應內容，也不儲存憑證、邀請碼、連結碼或復原密鑰的原文（只存雜湊）。不存 email、名字或 IP（規格 12.39、12.36 的資料原則）.
  *
  * 以「帳號」為中心（2026-11-10 使用者的方向）：邀請碼只是建立帳號的一種方式（identities 的 type invite）；之後的
  * Google／Apple 登入加在同一個帳號上（訪客帳號升級），不用換帳號. 一個帳號可以有多台裝置，每台一個憑證（account_tokens），
@@ -61,7 +61,8 @@ const SCHEMA = `
     status                   TEXT NOT NULL DEFAULT 'active',
     monthly_budget_microusd  INTEGER,
     invite_id                TEXT,
-    created_at               TEXT NOT NULL
+    created_at               TEXT NOT NULL,
+    recovery_hash            TEXT
   );
 
   CREATE TABLE IF NOT EXISTS account_tokens (
@@ -202,6 +203,16 @@ export class AccountStore {
         ALTER TABLE accounts_new RENAME TO accounts
       `);
     }
+    // 帳號的復原密鑰（規格 12.44 第 1 步）：之前建的資料表沒有這一欄
+    const hasRecovery = async () => (await this.driver.all("PRAGMA table_info(accounts)")).some((c) => String(c.name) === "recovery_hash");
+    if (!(await hasRecovery())) {
+      try {
+        await this.driver.run("ALTER TABLE accounts ADD COLUMN recovery_hash TEXT");
+      } catch (e) {
+        // 兩個執行個體同時加：另一個已經加好了就沒事
+        if (!(await hasRecovery())) throw e;
+      }
+    }
   }
 
   // --- 帳號 ---------------------------------------------------------------
@@ -293,6 +304,19 @@ export class AccountStore {
     return row.used_at ? "used" : "expired";
   }
 
+  // --- 帳號的復原密鑰（規格 12.44 第 1 步：放在選手加密的同步裡，新裝置用它拿到自己的憑證） ---
+
+  /** 換一把新的（舊的作廢）；只存雜湊. 回傳帳號是否存在 */
+  async setRecoveryHash(accountId: string, hash: string): Promise<boolean> {
+    return (await this.driver.run("UPDATE accounts SET recovery_hash=? WHERE id=?", [hash, accountId])).changes > 0;
+  }
+
+  /** 沒有帳號或還沒有復原密鑰時是 null */
+  async getRecoveryHash(accountId: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT recovery_hash FROM accounts WHERE id=?", [accountId]))[0];
+    return textOrNull(row?.recovery_hash);
+  }
+
   async getAccount(id: string): Promise<Account | null> {
     return toAccount((await this.driver.all("SELECT * FROM accounts WHERE id=?", [id]))[0]);
   }
@@ -319,7 +343,7 @@ export class AccountStore {
   }
 
   /**
-   * 刪除帳號與它所有的憑證、登入方式、連結碼、每天與每月的用量（選手在設定按「刪除試用帳號」，或作者刪除）.
+   * 刪除帳號與它所有的憑證、復原密鑰（在 accounts 那一列）、登入方式、連結碼、每天與每月的用量（選手在設定按「刪除試用帳號」，或作者刪除）.
    * 邀請碼維持「已用過」、不能再兌換；這個月的總花費（totals，不分是誰的）不跟著減少，總預算照樣算得準。回傳帳號是否存在
    */
   async deleteAccount(id: string): Promise<boolean> {

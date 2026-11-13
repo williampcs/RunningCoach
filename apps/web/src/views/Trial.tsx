@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 
-import { CircleCheck, Link2, Ticket } from "lucide-react";
+import { CircleCheck, Link2, RotateCcw, Ticket } from "lucide-react";
 
 import { errorText, useApp } from "../app-context";
 import { suggestedModels, type AppSettings } from "../settings";
@@ -59,11 +59,11 @@ export function InviteForm({ base, onDone }: { base: AppSettings; onDone?: (next
     setBusy(true);
     setError(null);
     try {
-      const { token } = await redeemInvite(code.trim(), base.proxy.url.trim() || TRIAL_PROXY_URL);
+      const { token, account } = await redeemInvite(code.trim(), base.proxy.url.trim() || TRIAL_PROXY_URL);
       const next: AppSettings = {
         ...base,
         llmMode: "proxy",
-        proxy: { url: base.proxy.url.trim() || TRIAL_PROXY_URL, token },
+        proxy: { url: base.proxy.url.trim() || TRIAL_PROXY_URL, token, account },
         models: suggestedModels("proxy", base.provider),
       };
       await updateSettings(next);
@@ -104,6 +104,32 @@ export function InviteForm({ base, onDone }: { base: AppSettings; onDone?: (next
   );
 }
 
+/**
+ * 同步帶來了另一台的試用帳號（規格 12.44 第 1 步），這台還沒有用：「在這台也用免費試用」.
+ * 用自己的 API key 的、或這台被移除過的不自動取回，在這裡按了才取回
+ */
+export function TrialFromSync() {
+  const { settings, trialSync } = useApp();
+  if (!trialSync.candidate || settings.proxy.token.trim()) return null;
+  return (
+    <div className="stack trial-from-sync">
+      <h3>在這台也用免費試用</h3>
+      <p className="small">你的另一台用著免費試用（同步帶過來的）。這台也可以用同一個試用帳號、同一份每天的則數；改用之後，這台不用自己的 API key。</p>
+      <div className="actions">
+        <button disabled={trialSync.busy} onClick={() => void trialSync.recover()}>
+          <Icon as={Ticket} />
+          {trialSync.busy ? "啟用中…" : "在這台使用"}
+        </button>
+      </div>
+      {trialSync.error && (
+        <p className="small field-error" role="alert">
+          {trialSync.error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 今天還剩幾則；revision 變了就再查一次（對話完成之後） */
 export function useTrialUsage(settings: AppSettings, revision = 0): { usage: TrialUsage | null; error: string | null; refresh: () => void } {
   const [usage, setUsage] = useState<TrialUsage | null>(null);
@@ -141,7 +167,7 @@ export function remainingText(usage: TrialUsage): string {
 
 /** 設定的「AI 教練」：已經啟用免費試用時 */
 export function TrialAccount({ onDeleted }: { onDeleted: (next: AppSettings) => void }) {
-  const { settings, updateSettings, toast } = useApp();
+  const { settings, updateSettings, toast, trialSync } = useApp();
   const { usage, error } = useTrialUsage(settings);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -184,6 +210,8 @@ export function TrialAccount({ onDeleted }: { onDeleted: (next: AppSettings) => 
     run(async () => {
       if (!confirm("刪除這個試用帳號？代理那邊的帳號、所有裝置的登入與用量紀錄都會刪掉；之後要再用免費試用，需要一張新的邀請碼。對話與訓練紀錄留在這台。")) return;
       await deleteTrialAccount(settings);
+      // 同步裡的這個帳號（規格 12.44）一起刪，別台不會再取回
+      await trialSync.forget(settings.proxy.account ?? usage?.account);
       await forgetHere("已刪除試用帳號。");
     });
 
@@ -197,7 +225,11 @@ export function TrialAccount({ onDeleted }: { onDeleted: (next: AppSettings) => 
       const name = device.name ?? "這台裝置";
       if (!confirm(device.current ? "移除這台？這台之後要重新輸入邀請碼或連結碼才能用免費試用。" : `移除「${name}」？那台之後要重新輸入連結碼才能用免費試用。`)) return;
       await removeTrialDevice(settings, device.id);
-      if (device.current) await forgetHere("已移除這台。");
+      if (device.current) {
+        // 自己移除的：之後同步帶來這個帳號也不自動取回（要在這裡自己按）
+        trialSync.decline(settings.proxy.account ?? usage?.account);
+        await forgetHere("已移除這台。");
+      }
       else setDevicesTick((n) => n + 1);
     });
 
@@ -218,6 +250,18 @@ export function TrialAccount({ onDeleted }: { onDeleted: (next: AppSettings) => 
         </p>
       )}
       {error && <p className="small field-error">{error}</p>}
+      {error && trialSync.candidate && (
+        <div className="stack">
+          <p className="small muted">同步裡有你的試用帳號，可以用它在這台重新取回。</p>
+          <div className="actions">
+            <button disabled={trialSync.busy} onClick={() => void trialSync.recover()}>
+              <Icon as={RotateCcw} />
+              重新取回
+            </button>
+          </div>
+          {trialSync.error && <p className="small field-error">{trialSync.error}</p>}
+        </div>
+      )}
 
       <h3>裝置</h3>
       {devices && (

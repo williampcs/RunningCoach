@@ -169,8 +169,9 @@ sequenceDiagram
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
 | 匯入的活動檔（FIT、GPX、TCX、zip，規格 12.40）：只存摘要，檔案本身不存、不上傳 | 資料庫 | 會（跑步 `fw:`、其他運動 `fo:`，整筆的摘要） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
-| 免費試用的憑證（規格 12.39） | localStorage 的設定（`proxy.token`，密碼鎖開著時加密） | 不會：每台用自己的邀請碼 |
-| 免費試用的帳號與用量 | 代理的 D1，以帳號為中心：`accounts`（代號、狀態、預算）、`account_tokens`（每台裝置一個憑證：雜湊、粗略的裝置名稱、加入與最後使用的時間、可以單獨撤銷）、`identities`（怎麼建立或登入：這次只有 invite，subject 存雜湊；之後的 Google／Apple 登入加在同一個帳號上）、`link_codes`（在另一台使用的連結碼的雜湊，10 分鐘、用一次）、`invites`（邀請碼的雜湊、批次名稱、到期日、用過沒）、`daily_usage`（每天的對話／自動分析／壓縮次數，留 90 天）、`usage`（每月的 token 與金額，留 13 個月）、`totals`（所有帳號每月合計，用來擋總預算）；沒有對話的內容、email、名字或 IP | — |
+| 免費試用的憑證（規格 12.39） | localStorage 的設定（`proxy.token`，密碼鎖開著時加密；`proxy.account` 是帳號代號） | 不會：每台一個自己的憑證 |
+| 免費試用帳號的復原密鑰（規格 12.44 第 1 步） | 資料庫的 `trial_accounts`（代理的網址、帳號、用同步金鑰再加密一次的密鑰） | 會（`ta:帳號`）；新的裝置用它向代理換自己的憑證 |
+| 免費試用的帳號與用量 | 代理的 D1，以帳號為中心：`accounts`（代號、狀態、預算）、`account_tokens`（每台裝置一個憑證：雜湊、粗略的裝置名稱、加入與最後使用的時間、可以單獨撤銷）、`identities`（怎麼建立或登入：這次只有 invite，subject 存雜湊；之後的 Google／Apple 登入加在同一個帳號上）、`link_codes`（在另一台使用的連結碼的雜湊，10 分鐘、用一次）、`accounts.recovery_hash`（帳號的復原密鑰的雜湊，規格 12.44）、`invites`（邀請碼的雜湊、批次名稱、到期日、用過沒）、`daily_usage`（每天的對話／自動分析／壓縮次數，留 90 天）、`usage`（每月的 token 與金額，留 13 個月）、`totals`（所有帳號每月合計，用來擋總預算）；沒有對話的內容、email、名字或 IP | — |
 | 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
 | 測試模式（規格 6.1、9.4） | 另一個資料庫檔（OPFS 的 `/coach-test.db`）；設定與上面那些小狀態也是自己一份（localStorage 的 `running-coach.test.` 開頭，`apps/web/src/storage-scope.ts`），第一次進測試模式時從正常模式複製（密碼鎖的密文照原樣），之後各改各的 | 不會：測試模式不同步 |
 | 「先看看」的範例（規格 12.35 的 B） | 記憶體裡的另一個資料庫（worker 的 `:memory:`），範例的狀態在 sessionStorage | 不會；不碰真的資料庫，離開就清掉 |
@@ -183,11 +184,11 @@ OPFS 的資料庫同時只能一個分頁打開（KI-046）。`apps/web/src/tab-
 
 新的使用者第一次打開時（`onboarding` 開著）先走設定精靈（`apps/web/src/wizard.ts` 判斷誰是新的使用者、記進度；畫面在 `views/Wizard.tsx`，整頁取代平常的分頁）。貼上 AI 的 key 時用核心的 `checkLlmKey`（`llm/check.ts`）打一次最小的請求再存。「先看看」（`apps/web/src/demo.ts`）打開時換成記憶體裡的資料庫、預設的設定（沒有 key、沒有同步）、假的活動來源與不會送出請求的 AI 替身，由核心的 `seedDemo`（`demo.ts`）寫進範例；不走分頁的鎖與密碼鎖。
 
-免費試用（規格 12.39）：設定或精靈貼上邀請碼 → `POST {代理}/v1/redeem`（`apps/web/src/trial.ts`）→ 代理把邀請碼標成用過、建帳號（`identities` 記 invite）、發這台的憑證（`account_tokens`，只回一次）→ 存進這台的設定（`llmMode: "proxy"`）。另一台：已登入的那台 `POST /v1/link-codes` 拿連結碼，另一台 `POST /v1/link` 換到自己的憑證（同一個帳號、同一份額度）；`GET /v1/devices` 列出、`DELETE /v1/devices/:id` 撤銷某一台；刪除帳號時撤銷所有憑證。之後 `AnthropicProvider` 的 baseURL 指向代理、帶 `x-coach-meter`（`chat`／`auto`／`compress`，核心的 `Llm` 依用途給：主對話 chat、跑後與騎車的摘要 auto、壓縮 compress、從其他 AI 帶入 chat）。代理（`apps/proxy/src/handler.ts`）換成政策的模型與思考強度（預設 Haiku、`output_config.effort` 固定 low、不送 `thinking`，和模型對照的 haiku-low 一樣；政策可以改回 thinking disabled；輸出夾到上限），先檢查總預算與這個帳號的每月預算，再看次數：chat 只在最後一則是選手的文字（不是只有 tool_result）時算一則，所以工具迴圈不重複算；加一與比較在同一個 SQL 敘述裡，上游回錯誤時退回。用完時回 403 與 `error.type`（`daily_limit`、`daily_auto_limit`、`account_budget`、`beta_budget`）和恢復的時間；對話頁用 `GET /v1/usage` 顯示「今天還剩 N 則」、用完時換掉輸入框。每天與每月照台灣時間（UTC+8）。管理端點（`/admin/*`，`ADMIN_TOKEN`）由作者在本機用 `tools/proxy-admin.ts` 產生邀請碼、看用量、停用帳號；Worker 每天的 cron 刪掉過了保存期限的紀錄。
+免費試用（規格 12.39）：設定或精靈貼上邀請碼 → `POST {代理}/v1/redeem`（`apps/web/src/trial.ts`）→ 代理把邀請碼標成用過、建帳號（`identities` 記 invite）、發這台的憑證（`account_tokens`，只回一次）→ 存進這台的設定（`llmMode: "proxy"`）。另一台：已登入的那台 `POST /v1/link-codes` 拿連結碼，另一台 `POST /v1/link` 換到自己的憑證（同一個帳號、同一份額度）；`GET /v1/devices` 列出、`DELETE /v1/devices/:id` 撤銷某一台；刪除帳號時撤銷所有憑證。開著多裝置同步時（規格 12.44 第 1 步，`apps/web/src/trial-sync.ts`、`use-trial-sync.ts`）：用著試用的裝置 `POST /v1/recovery-secret`（憑證）拿一把帳號的復原密鑰（32 bytes 隨機，代理只存雜湊在 `accounts.recovery_hash`，只回一次；再要一次就換新、舊的作廢），用同步金鑰再加密一次存成同步的 `ta:帳號`；新的裝置同步拿到後 `POST /v1/recover {account, secret}` 換到自己的憑證（和兌換、連結碼共用每個 IP 的頻率限制；錯了一律回「不對」，帳號暫停時拒絕）。這台沒有設定 AI 時自動取回，用自己的 API key 的、或自己按過「移除這台」的要在設定裡按；記錄的代理網址和這個建置的不同時不取回。同步換金鑰（移除某台）後，換金鑰的那台用憑證（或沒有憑證時用換之前的那一把）換一把新的復原密鑰、用新的同步金鑰加密，被移除的那台知道的舊的就不能用；刪除試用帳號時刪掉 `ta:`。代理不知道同步空間，同步服務只看到密文。之後 `AnthropicProvider` 的 baseURL 指向代理、帶 `x-coach-meter`（`chat`／`auto`／`compress`，核心的 `Llm` 依用途給：主對話 chat、跑後與騎車的摘要 auto、壓縮 compress、從其他 AI 帶入 chat）。代理（`apps/proxy/src/handler.ts`）換成政策的模型與思考強度（預設 Haiku、`output_config.effort` 固定 low、不送 `thinking`，和模型對照的 haiku-low 一樣；政策可以改回 thinking disabled；輸出夾到上限），先檢查總預算與這個帳號的每月預算，再看次數：chat 只在最後一則是選手的文字（不是只有 tool_result）時算一則，所以工具迴圈不重複算；加一與比較在同一個 SQL 敘述裡，上游回錯誤時退回。用完時回 403 與 `error.type`（`daily_limit`、`daily_auto_limit`、`account_budget`、`beta_budget`）和恢復的時間；對話頁用 `GET /v1/usage` 顯示「今天還剩 N 則」、用完時換掉輸入框。每天與每月照台灣時間（UTC+8）。管理端點（`/admin/*`，`ADMIN_TOKEN`）由作者在本機用 `tools/proxy-admin.ts` 產生邀請碼、看用量、停用帳號；Worker 每天的 cron 刪掉過了保存期限的紀錄。
 
 使用須知與隱私說明是建置時輸出的靜態頁（`/terms`、`/privacy`，給從外面打開的人）；App 裡的連結攔下來在面板打開，內容是同一份頁面的 `<main>`（`vite.config.ts` 的 `virtual:legal-pages`、`apps/web/privacy/in-app.ts`），不開新分頁。
 
-## 資料庫的 schema（目前是第 19 版）
+## 資料庫的 schema（目前是第 20 版）
 
 所有表都在 `packages/core/src/db.ts`：開頭的 `SCHEMA` 建表，`init()` 裡的 migration 依版本補欄位（舊資料庫打開時自動升級）。日期一律是使用者時區的 `YYYY-MM-DD`，時間是 ISO 字串。
 
@@ -241,6 +242,7 @@ erDiagram
 **多裝置同步的記帳**（不同步本身）
 - `sync_state`：上次同步時每一筆的雜湊、伺服器序號與版本號，用來判斷哪些要送出、拒絕被倒回的舊版本。
 - `sync_pending`：別台傳來、但這台還沒有對應紀錄的（例如那趟跑步還沒從 Intervals.icu 抓到）。
+- `trial_accounts`（schema 20，規格 12.44 第 1 步）：同步的 `ta:` 紀錄在這台的樣子：帳號、代理的網址、加密過的復原密鑰（`box`，要有同步金鑰才解得開）、修改時間。
 - `sync_meta`：同步空間的 id 等設定。換金鑰（規格 12.27）時清掉 `sync_state` 與 `sync_meta`、留著 `sync_pending`，在新的空間重新開始。
 
 ## 多裝置同步的資料
@@ -261,6 +263,7 @@ erDiagram
 | `fw:sync_id`、`fo:雜湊` | 匯入的活動檔（規格 12.40）：跑步整筆（日期、距離、時間、心率、配速、爬升、卡路里、`raw_json` 的摘要、體感與感受、修改時間；跑步 id 是 `f`＋sync_id）、其他運動整筆（日期、類型、時間、距離、平均心率、`raw_json`；體感與分析照舊用 `af:`、`as:`，id 是 `file:雜湊`）。套用時這台已經有同一趟的：跑步標成重複、其他運動留 Intervals.icu 的。舊版不認得，不套用也不刪 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
+| `ta:帳號` | 免費試用的帳號（規格 12.44 第 1 步，schema 20 的 `trial_accounts`）：代理的網址、帳號的復原密鑰（用同步金鑰 HKDF 分出的另一把再加密一次，AAD 綁網址與帳號，`device-sync/trial-account.ts`）、修改時間；舊版不認得，不套用也不刪 |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
 - `spaces`：同步空間與存取憑證的雜湊。

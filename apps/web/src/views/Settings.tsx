@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
@@ -19,7 +19,7 @@ import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
-import { InviteForm, TRIAL_SUMMARY, TrialAccount, TrialDataFlow } from "./Trial";
+import { InviteForm, TRIAL_SUMMARY, TrialAccount, TrialDataFlow, TrialFromSync } from "./Trial";
 import { trialAvailable } from "../trial";
 import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard, TestModeReset } from "./TestMode";
@@ -209,6 +209,14 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const [page, setPage] = useState<SettingsSection | null>(section.id);
   useEffect(() => setPage(section.id), [section]);
   const [draft, setDraft] = useState(settings);
+  // 免費試用的憑證在表單以外變了（同步帶來後自動取回、在這台也用免費試用，規格 12.44）：表單跟著改，存檔時不會用舊的蓋掉
+  const shown = useRef(settings);
+  useEffect(() => {
+    const prev = shown.current;
+    shown.current = settings;
+    if (prev.proxy.token === settings.proxy.token && prev.llmMode === settings.llmMode && prev.proxy.account === settings.proxy.account) return;
+    setDraft((d) => ({ ...d, llmMode: settings.llmMode, proxy: settings.proxy, models: settings.models }));
+  }, [settings]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [workouts, setWorkouts] = useState<number | null>(null);
@@ -425,6 +433,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
                   <input value={draft.baseURL} placeholder="https://example.com/v1" onChange={(e) => setDraft({ ...draft, baseURL: e.target.value })} />
                 </label>
               )}
+              {trialAvailable() && (
+                <div className="wide">
+                  <TrialFromSync />
+                </div>
+              )}
             </div>
           ) : !draft.proxy.url.trim() ? (
             <p className="small field-error">這個版本沒有提供免費試用，請改用自己的 API key。</p>
@@ -433,6 +446,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
           ) : (
             <>
               <p className="small muted">{TRIAL_SUMMARY}</p>
+              <TrialFromSync />
               <InviteForm base={{ ...draft, consents: settings.consents, terms: settings.terms }} onDone={(next) => setDraft({ ...draft, llmMode: next.llmMode, proxy: next.proxy, models: next.models })} />
             </>
           )}

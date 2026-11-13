@@ -5,6 +5,8 @@
  * 並以代理發給的憑證取代 API key。請求與回應內容只在記憶體中經過，不寫入儲存、不寫入日誌。
  *
  * 帳號從邀請碼兌換來（POST /v1/redeem）：作者用管理端點產生邀請碼給朋友，一碼用一次，憑證只回傳一次.
+ * 帳號的復原密鑰（規格 12.44 第 1 步）：裝置產生後放進選手加密的同步；新裝置用它換自己的憑證（POST /v1/recover）.
+ * 代理只存雜湊，不知道同步空間；同步服務只看到密文.
  */
 import { meterSseStream, usageFromJson } from "./metering";
 import { costMicroUsd, usdToMicro, type Policy, type TokenUsage } from "./policy";
@@ -93,6 +95,10 @@ export function normalizeInviteCode(input: string): string | null {
   // 前面的 RC 是固定的字首（12 個字的碼本身也可能以 RC 開頭，所以只在多兩個字時拿掉）
   return normalize(compact.length === CODE_LENGTH + 2 && compact.startsWith("RC") ? compact.slice(2) : compact, CODE_LENGTH);
 }
+
+// 帳號的復原密鑰：32 bytes（256 bits）隨機，只在產生時回傳一次
+const RECOVERY_SECRET = /^rcs_[0-9a-f]{64}$/;
+const ACCOUNT_ID = /^acct_[\w-]{1,64}$/;
 
 /** 連結碼：XXXX-XXXX */
 export function normalizeLinkCode(input: string): string | null {
@@ -349,6 +355,8 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     const paused =
       totalBudget !== null && total.costMicroUsd >= totalBudget ? "beta_budget" : used.costMicroUsd >= budgetOf(account) ? "account_budget" : null;
     return Response.json({
+      // 這台用的帳號（同步裡的復原密鑰記在哪個帳號下，規格 12.44）
+      account_id: account.id,
       period: currentPeriod,
       requests: used.requests,
       input_tokens: used.input + used.cacheRead + used.cacheWrite,
@@ -452,6 +460,65 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     if (account.status !== "active") return errorResponse(403, "permission_error", "這個試用帳號已停用");
     const token = await issueToken(account.id, deviceNameOf(input.device_name));
     log(`link ok: ${account.id}`);
+    return Response.json(
+      { account_id: account.id, token, model: policy.forceModel, daily_messages: policy.dailyMessages, daily_auto: policy.dailyAuto },
+      { status: 201 },
+    );
+  }
+
+  /**
+   * 帳號的復原密鑰（規格 12.44 第 1 步）：產生一把新的（舊的作廢），只在這裡回傳一次，之後只存雜湊.
+   * 身分：這台的憑證；或沒有憑證的裝置（例如自己的 API key、在同步裡換了金鑰的那台）用目前的那一把
+   * （{account, secret}，和取回共用每個 IP 的頻率限制）
+   */
+  async function handleRecoverySecret(request: Request): Promise<Response> {
+    let accountId: string;
+    if (presentedToken(request)) {
+      const account = await authenticate(request);
+      if (account instanceof Response) return account;
+      accountId = account.id;
+    } else {
+      const checked = await checkRecovery(request);
+      if (checked instanceof Response) return checked;
+      accountId = checked.account.id;
+    }
+    const secret = `rcs_${randomHex(32)}`;
+    await store.setRecoveryHash(accountId, await sha256Hex(secret));
+    log(`recovery secret set: ${accountId}`);
+    return Response.json({ account_id: accountId, secret }, { status: 201 });
+  }
+
+  /**
+   * 檢查 {account, secret}：錯了一律回「不對」（不透露帳號存不存在、有沒有復原密鑰）；對了但帳號暫停時拒絕.
+   * 每個 IP 每分鐘的次數和兌換、連結碼共用
+   */
+  async function checkRecovery(request: Request): Promise<{ account: Account; input: Json } | Response> {
+    if (overLimit(`redeem:${clientIp(request)}`, policy.redeemsPerMinute)) {
+      return errorResponse(429, "rate_limit_error", "試太多次了，請一分鐘後再試", undefined, { "retry-after": "60" });
+    }
+    const input = (await request.json().catch(() => ({}))) as Json;
+    const wrong = () => {
+      log("recover rejected");
+      return errorResponse(400, "invalid_recovery", "取回免費試用的資料不對（可能已經換新或帳號已刪除），請在已經用著免費試用的那台再同步一次，或用連結碼");
+    };
+    if (typeof input.account !== "string" || !ACCOUNT_ID.test(input.account) || typeof input.secret !== "string" || !RECOVERY_SECRET.test(input.secret)) {
+      return wrong();
+    }
+    const [stored, presented] = [await store.getRecoveryHash(input.account), await sha256Hex(input.secret)];
+    if (!stored || stored !== presented) return wrong();
+    const account = await store.getAccount(input.account);
+    if (!account) return wrong();
+    if (account.status !== "active") return errorResponse(403, "permission_error", "這個試用帳號已停用");
+    return { account, input };
+  }
+
+  /** 新的裝置用同步裡的復原密鑰拿到自己的憑證（同一個帳號、同一份額度；每台一個，可以單獨移除） */
+  async function handleRecover(request: Request): Promise<Response> {
+    const checked = await checkRecovery(request);
+    if (checked instanceof Response) return checked;
+    const { account, input } = checked;
+    const token = await issueToken(account.id, deviceNameOf(input.device_name));
+    log(`recover ok: ${account.id}`);
     return Response.json(
       { account_id: account.id, token, model: policy.forceModel, daily_messages: policy.dailyMessages, daily_auto: policy.dailyAuto },
       { status: 201 },
@@ -679,6 +746,8 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     if (path === "/v1/account" && request.method === "DELETE") return handleDeleteAccount(request);
     if (path === "/v1/link-codes" && request.method === "POST") return handleCreateLinkCode(request);
     if (path === "/v1/link" && request.method === "POST") return handleLink(request);
+    if (path === "/v1/recovery-secret" && request.method === "POST") return handleRecoverySecret(request);
+    if (path === "/v1/recover" && request.method === "POST") return handleRecover(request);
     if (path === "/v1/devices" && request.method === "GET") return handleDevices(request);
     const device = /^\/v1\/devices\/([\w-]+)$/.exec(path);
     if (device && request.method === "DELETE") return handleRevokeDevice(request, device[1]!);

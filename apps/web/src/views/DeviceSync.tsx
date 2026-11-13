@@ -606,7 +606,7 @@ function rekeyError(e: unknown, what: string): string {
 
 /** 設定頁的多裝置同步（規格 12.10） */
 export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
-  const { settings, updateSettings, deviceSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
+  const { settings, updateSettings, deviceSync, trialSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
     "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
   >("idle");
@@ -744,11 +744,18 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
     setMode("idle");
     setMessage(null);
     try {
+      // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
+      const rotateTrial = await trialSync.beforeRekey();
       // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
       const root = await deviceSync.engine!.rekey(remove ? [remove.id] : [], deviceSync.devices?.devices.map((d) => d.id));
+      await rotateTrial(root);
       setCode(await recoveryCode(root));
       setSaved(false);
       setMode("newCode");
+      // 移除的那台在免費試用裡有自己的憑證：同步的移除管不到，提醒到試用的裝置清單也移除
+      if (remove && settings.llmMode === "proxy" && settings.proxy.token.trim()) {
+        setMessage({ kind: "warn", text: "那台如果也用免費試用，請到「AI 教練」的裝置清單也移除它。" });
+      }
       void deviceSync.run();
     } catch (e) {
       setMode("idle");
