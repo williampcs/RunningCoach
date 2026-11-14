@@ -4057,3 +4057,60 @@ a.button {
   height: 8px;
   accent-color: var(--accent);
 }
+
+/* passkey 的測試頁（規格 12.44）：只在 staging 與開發用的建置 */
+.passkey-column {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.passkey-test h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.passkey-facts,
+.passkey-gets,
+.passkey-notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.passkey-fact {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.passkey-fact > span:last-child {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.passkey-gets > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  overflow-wrap: anywhere;
+}
+
+.passkey-gets > li > .icon {
+  flex: none;
+  color: var(--done);
+}
+
+.passkey-notes {
+  padding-left: var(--sp-4);
+  list-style: disc;
+}
+
+.passkey-report {
+  width: 100%;
+}

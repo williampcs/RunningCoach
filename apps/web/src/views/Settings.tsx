@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, KeyRound, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
 import { formatStatus, RECORD_WITH_LABELS, recordWithOf, TERMS_VERSION, type Effort, type Purpose, type RecordWith } from "@running-coach/core";
 
 import { errorText, useApp, type SettingsSection } from "../app-context";
-import { featureEnabled } from "../environment";
+import { featureEnabled, PASSKEY_TEST_ON } from "../environment";
+import { PASSKEY_TEST_HASH } from "../passkey-test";
 import { Markdown } from "../Markdown";
 import { Disclosure, Icon, InfoTip, ListRow, stripEmoji } from "../ui";
 import { useSync } from "../use-sync";
@@ -740,6 +741,18 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
               />
             </li>
           ))}
+          {PASSKEY_TEST_ON && (
+            // passkey 的測試頁（規格 12.44）：只在 staging 與開發；打開時整頁換成測試頁（main.tsx）
+            <li>
+              <ListRow
+                icon={<Icon as={KeyRound} />}
+                title="passkey 測試"
+                sub="只在 staging，看拿不拿得到 PRF"
+                chevron
+                onClick={() => (location.hash = PASSKEY_TEST_HASH)}
+              />
+            </li>
+          )}
         </ul>
       </section>
 
