@@ -1,0 +1,139 @@
+# 安全掃描的「片」（規格 12.45 第 2 點、9.4 工作單）
+#
+# - 順序就是每週深掃輪替的順序（proxy、sync 先）。
+# - paths 是 repo 根目錄起算的 glob：`**` 任何深度，`*` 一層裡的任意字元。
+# - exclude（最上面那個）套用到每一片：v1 的 Python、測試、產生的檔案、文件。
+#   片自己也可以有 exclude（例如網頁那片排除已經算在「同步與帳號」的檔案）。
+# - focus 是這片要特別在意的地方，代理會讀；一行一點。
+#
+# 格式只用到 YAML 的一小部分（scripts/lib.mjs 的 parseSlicesYaml 讀它）：
+# 清單、key: value、一行的字串。不要用多行字串、錨點或 { } [ ] 的寫法。
+
+exclude:
+  - "src/**"
+  - "scripts/**"
+  - "doc/**"
+  - "**/test/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.md"
+  - "**/dist/**"
+  - "**/node_modules/**"
+  - "package-lock.json"
+
+slices:
+  - id: proxy
+    name: 免費試用的代理（apps/proxy）
+    paths:
+      - "apps/proxy/src/**"
+      - "apps/proxy/wrangler.toml"
+      - "tools/proxy-admin.ts"
+      - "tools/proxy-config.ts"
+    focus:
+      - 代理拿著 Anthropic 的 key：有沒有辦法不經邀請碼或試用憑證就用到它（被盜刷是最直接的金錢風險）
+      - 邀請碼、試用帳號、裝置憑證、復原密鑰：產生的隨機性、比對（時間常數）、雜湊、作廢
+      - 每日額度與頻率限制：能不能繞過（換 IP、並行請求、重放）
+      - 轉送給模型的請求：使用者能不能改模型、max_tokens、工具，讓一次花很多錢
+      - 錯誤訊息與 log 有沒有洩漏 key、憑證或別人的資料
+      - CORS 與允許的來源
+  - id: sync
+    name: 同步服務（apps/sync）
+    paths:
+      - "apps/sync/src/**"
+      - "apps/sync/wrangler.toml"
+      - "tools/sync-config.ts"
+    focus:
+      - 配對、裝置金鑰、請求簽章：驗證有沒有漏掉的路徑、重放、時間窗
+      - 一個裝置或帳號能不能讀、寫、刪別人的資料（IDOR）
+      - 總量上限與頻率限制：能不能把 D1 或 Worker 的額度用光
+      - 移除裝置、換金鑰之後，舊裝置是不是真的拿不到新的資料
+      - CORS 與允許的來源
+  - id: sync-client
+    name: 同步的用戶端、加密與帳號（核心與網頁）
+    paths:
+      - "packages/core/src/device-sync/**"
+      - "apps/web/src/device-sync.ts"
+      - "apps/web/src/device-identity.ts"
+      - "apps/web/src/use-sync.ts"
+      - "apps/web/src/trial.ts"
+      - "apps/web/src/trial-sync.ts"
+      - "apps/web/src/use-trial-sync.ts"
+      - "apps/web/src/passkey-test.ts"
+      - "apps/web/src/views/DeviceSync.tsx"
+      - "apps/web/src/views/Trial.tsx"
+      - "apps/web/src/views/PasskeyTest.tsx"
+    focus:
+      - 加密：演算法與參數、nonce 或 IV 會不會重複、金鑰從哪裡來、復原碼的強度
+      - 解密後的資料直接套用：惡意或壞掉的紀錄能不能蓋掉或刪掉本機的資料
+      - 試用帳號的復原密鑰、裝置憑證存在哪裡、會不會跟同步跑到不該去的地方
+      - 配對碼與復原碼：猜測、重放、顯示或複製時的外洩
+  - id: web
+    name: 網頁版（apps/web）
+    paths:
+      - "apps/web/src/**"
+      - "apps/web/index.html"
+      - "apps/web/vite.config.ts"
+      - "apps/web/public/**"
+    exclude:
+      - "apps/web/src/device-sync.ts"
+      - "apps/web/src/device-identity.ts"
+      - "apps/web/src/use-sync.ts"
+      - "apps/web/src/trial.ts"
+      - "apps/web/src/trial-sync.ts"
+      - "apps/web/src/use-trial-sync.ts"
+      - "apps/web/src/passkey-test.ts"
+      - "apps/web/src/views/DeviceSync.tsx"
+      - "apps/web/src/views/Trial.tsx"
+      - "apps/web/src/views/PasskeyTest.tsx"
+      - "**/*.css"
+      - "**/*.png"
+    focus:
+      - 使用者的 API key：存在哪裡、密碼鎖（key-lock）的做法、會不會出現在 log、錯誤訊息或匯出的檔案
+      - CSP 與 index.html：能不能載入外面的程式
+      - Markdown 與模型的回覆：XSS（dangerouslySetInnerHTML、連結的 javascript: 網址）
+      - 對外的連線：Intervals.icu、天氣、模型的服務，網址是不是使用者或模型可以控制的
+      - 匯入的檔案（FIT、JSON）：解析大的或惡意的檔案會不會卡死或寫壞資料
+  - id: coach
+    name: 核心的教練與工具（packages/core）
+    paths:
+      - "packages/core/src/**"
+    exclude:
+      - "packages/core/src/device-sync/**"
+      # 寫死的說明文字與示範、測試用的資料：沒有要審的邏輯
+      - "packages/core/src/app-guide/**"
+      - "packages/core/src/demo.ts"
+      - "packages/core/src/fake-activities.ts"
+      - "packages/core/src/test-plans.ts"
+    focus:
+      - prompt injection：網頁搜尋、活動名稱、筆記、匯入的資料進到模型之後，能不能讓教練呼叫寫入類的工具做使用者沒要的事
+      - 寫入類的工具（改計畫、記憶、傷病）：參數驗證、範圍、能不能一次寫爆資料庫
+      - 對外的連線（模型、Intervals.icu、天氣）：key 放哪裡、錯誤訊息有沒有帶出 key
+      - 解析外來的資料（FIT、JSON、模型的工具參數）：型別與大小的檢查
+  - id: discord
+    name: Discord bot（apps/discord）
+    paths:
+      - "apps/discord/src/**"
+      - "apps/discord/Dockerfile"
+      - "apps/discord/Dockerfile.dockerignore"
+      - "apps/discord/package.json"
+    focus:
+      - 誰能用這個 bot：指令有沒有檢查是不是使用者本人，別人能不能在伺服器或私訊裡讓它讀或改資料
+      - token 與 key 從哪裡來、會不會出現在 log 或回覆裡
+      - 容器：用什麼身分跑、映像裡有沒有多放了秘密或不需要的東西
+  - id: deploy
+    name: GitHub Actions 與部署
+    paths:
+      - ".github/workflows/**"
+      - "apps/proxy/wrangler.toml"
+      - "apps/sync/wrangler.toml"
+      - "apps/discord/Dockerfile"
+      - "tools/proxy-config.ts"
+      - "tools/sync-config.ts"
+      - "tools/version-bump.ts"
+      - "package.json"
+    focus:
+      - repo 是公開的：外人的 PR（fork）能不能跑到 self-hosted runner、拿到 secrets 或 GITHUB_TOKEN 的寫入權
+      - pull_request_target、workflow_run、issue_comment 這類觸發的用法；把 PR 標題、分支名稱等不可信的字串直接放進 run 的指令（指令注入）
+      - workflow 會不會把 secrets 印到 log；permissions 是不是最小
+      - 第三方 action 有沒有釘到 commit 的 SHA
+      - 部署的目標（Cloudflare 的專案、D1、GHCR 映像）能不能被 staging 的流程改到正式環境

@@ -296,6 +296,7 @@
 | 2.0-draft | 2026-11-16 | GitHub 的 AI Scan 三個開關先不開、secret scanning 的位置（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | 加 `SECURITY.md`：請用 GitHub 的私下回報、不要開公開的 Issue，範圍與之後的處理（中英文；合併部署到 `main` 後 GitHub 的 Security policy 才會顯示「Enabled」）；CodeQL 第一次掃出 17 個警示，待分類（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
+| 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 
 ---
 
@@ -853,7 +854,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：自己跑 osv-scanner、gitleaks、semgrep（先用 GitHub 內建的）；代理自動修或開 PR；import graph 的切片；每季全掃（發版前的審查代替）；VM 的 OS、Docker、Cloudflare 的設定。
   - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
   - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
-  - 狀態：開發中（開發 session「安全：每日掃描的代理（試行四週）」，2026-11-16 使用者確認計畫：「照做」）。
+  - 狀態：已推上 v2（2026-11-16，開發 session「安全：每日掃描的代理（試行四週）」），待使用者做步驟 0、2（`tools/security-scan/README.md`）。實作與和工作單不同的地方見 12.45 第 9 點。
 
 - **正規表示式改成不會被很長的特殊輸入拖慢**（CodeQL 第一次掃描的 10 個「Polynomial regular expression used on uncontrolled data」，12.45 第 8 點；排在「每天用代理掃 bug 與漏洞」的開發 session 之後，同一時間只有一個開發 session 推 `v2`）
   - 對應章節：12.45 第 8 點。
@@ -1577,7 +1578,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 每日的身體狀況回報放進「回報」分頁 | 11-12 | 2026-11-13 已推上 v2、使用者在 staging 試過，等合併部署。2026-11-12 已推上 v2（開發 session「每日回報放進回報分頁」，見 9.4 的工作單），待使用者在 staging 試。2026-11-12 決定：表單搬到「回報」，看板只留提醒；順序：身體狀況 → 傷的分數 → 跑完的那一趟；工作單寫好（9.4）。原本：使用者：「我覺得每日回報應該也算在『回報』裡？」現況：身體狀況的自評（三個 1–5 分＋備註、傷的分數）在對話頁上方的教練動態裡；「回報」分頁只有跑後回報（與沒有手錶的「記一趟跑步」）。協調 session：同意，「回報」＝要告訴教練的事；建議表單搬到「回報」最上面（今天的身體狀況 → 傷的分數 → 跑完的那一趟），教練動態只留一行提醒（「今天還沒回報身體狀況」→ 點了到「回報」）與就醫提示；待使用者確認 | 這一列 |
 | 排下週的課表卻存進這週 | 11-13 | 2026-11-14 已推上 v2（檢查器與說明；畫面的「下週任一天」），使用者在 staging 看過：「看起來 ok」，等合併部署。之前：2026-11-13 已推上 v2（開發 session「排下週的課表」），待使用者在 staging 星期五到星期日試。原本：使用者在 staging 回報（週末請教練預排下週，課出現在「這週」）；協調 session 查到可能是 `week_start` 的說明寫「這週的星期一」、一週的菜單沒有日期抓不到；工作單寫好（9.4），排在帳號第 1 步之後 | 9.4 |
 | 傳圖片給教練（多模態） | 11-14 | 使用者：「之前有考慮到多模態模型之類的問題嗎？比方說用戶丟個圖片想請教練分析之類的？先記一下就好，我也還沒想到有什麼 use case 會用到」。現況：沒做過；對話只有文字，網頁的 Markdown 不顯示圖片（安全，KI-027）。Claude、多數 OpenAI 相容的模型都能看圖。協調 session 想到的可能用途（待使用者想）：其他 App 或手錶畫面的截圖（課表、比賽成績、心率圖）讀進來、跑鞋磨損、受傷部位的照片（醫療風險，要很小心，不做診斷）、跑步姿勢的照片或影片截圖、比賽的路線圖與高度圖。要考慮：費用（一張圖約一千多個 token）、免費試用要不要允許、圖片不能進同步以外的地方（資料原則）、隱私（照片的定位資訊要先拿掉）、Discord 也能收圖。先記下，沒排 | 這一列 |
-| 每天用代理掃 bug 與漏洞（Claude Platform 的 Managed Agents 排程） | 11-16 | 討論中：使用者帶來和另一個（不知道專案狀況的）agent 擬的設計；協調 session 對照現況：repo 是公開的（發現不能開成 Issue、狀態不能放 repo 的分支）、沒有 PR 流程（只有發版的 v2 → main）、規模小（一份 lockfile）→ 建議先開 GitHub 內建的免費功能、做一次基準審查，再做「每天審 v2 的新改動＋每週深掃一片＋發版前審整段」；2026-11-16 使用者請協調 session 決定並寫計畫；工作單「試行四週」寫好（9.4），使用者確認「照做」，步驟 1 開發中 | 12.45、9.4 |
+| 每天用代理掃 bug 與漏洞（Claude Platform 的 Managed Agents 排程） | 11-16 | 討論中：使用者帶來和另一個（不知道專案狀況的）agent 擬的設計；協調 session 對照現況：repo 是公開的（發現不能開成 Issue、狀態不能放 repo 的分支）、沒有 PR 流程（只有發版的 v2 → main）、規模小（一份 lockfile）→ 建議先開 GitHub 內建的免費功能、做一次基準審查，再做「每天審 v2 的新改動＋每週深掃一片＋發版前審整段」；2026-11-16 使用者請協調 session 決定並寫計畫；工作單「試行四週」寫好（9.4），使用者確認「照做」；步驟 1 已推上 v2（`tools/security-scan/`），待使用者做步驟 0、2 | 12.45、9.4 |
 | App 版（iOS 先、Android 第二） | 11-10 | 討論中：Capacitor 包網頁＋自己寫或評估讀健康資料的外掛；使用者去申請 Apple 開發者帳號 | 12.41 |
 | Garmin 資料可能不能經 Intervals.icu 取得 | 11-09 | 調查完（12.40）：Intervals.icu 說 Garmin 的活動經 API 很可能變空殼、日期未定；Garmin 10-21 重開開發者計畫（個人 API key、免費的 Starter、收費的 Enterprise）。建議先觀察、偵測空殼時提示、App 以讀健康資料為主、Garmin 個人 API 做小的可行性測試；Garmin 標示開發中 | KI-048、12.40 |
 | App 版用使用者自己的 Garmin 個人 API key | 11-09 | 技術可行（原生 App 沒有 CORS）；條款灰色，等 Starter 核准後問 Garmin，有書面答覆才做 | 12.40 |
@@ -5442,3 +5443,25 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - 「Clear text storage of sensitive information」6 個，都在 `apps/web/src/settings.ts`：存的是加密後的憑證或已清空憑證的設定的 4 個是誤報；沒開密碼鎖時以明文存在瀏覽器的 2 個是設計如此（KI-027：資料只在使用者的裝置，密碼鎖是選用的），標「Won't fix」。
   - 「Polynomial regular expression used on uncontrolled data」10 個，都在 `packages/core`，只在使用者自己的瀏覽器或作者的 bot 裡執行，伺服器沒有用到；最壞是自己的分頁卡一下 → 低風險，改起來簡單 → 工作單（9.4），修好合併部署後自動關閉，先不要標。
   - 「Clear-text logging of sensitive information」1 個，v1 的本機測試腳本 `scripts/test_intervals.py`：印的是遮罩過的 key（前後各 4 碼），誤報；v1 之後會移除。
+
+**9. 實作（步驟 1，2026-11-16，開發 session）**
+- 檔案都在 `tools/security-scan/`，用法與使用者要做的步驟寫在那裡的 `README.md`：
+  - `agents/security-daily.md`（Sonnet 5.5，effort medium）、`agents/security-deep.md`（Opus 5.5，effort high）：系統提示用繁體中文；工具不用核准（`always_allow`），網頁搜尋與抓網頁關掉。
+  - `environments/security-scan.yaml`：雲端、網路 limited，只開 `github.com`、`api.github.com`、`discord.com`，允許套件庫。
+  - `memory_stores/security-scan-state.yaml`：`state.json`、`findings.json`、`config.json`（repo 與 Discord 頻道的 id，使用者放）。
+  - `vaults/security-scan.yaml`：只建立空的保險箱；`GITHUB_TOKEN`（只送 `api.github.com`）與 `DISCORD_BOT_TOKEN`（只送 `discord.com`）由使用者在本機加成環境變數憑證，放在標頭，沙盒裡只有佔位字串。
+  - `deployments/security-daily.md`（每天 04:23，budget 1 美元）、`deployments/security-deep.md`（每週六 05:23，budget 5 美元），Asia/Taipei；`vault_ids` 只能寫 id，使用者第一次 apply 後填（README 2-5）。
+  - `slices.yaml`：7 片（proxy、sync、sync-client、web、coach、discord、deploy），排除 v1、測試、文件、產生的檔案；核心那片另外排除寫死的說明文字與示範資料。
+  - `scripts/lib.mjs`、`scripts/scan.mjs`：只用 Node 內建的模組（沙盒預設 Node 22，不用裝套件）。測試在 `tools/test/security-scan.test.ts`（已在 `npm test` 的範圍，vitest 的設定不用改）。
+- 和工作單不同或工作單沒寫的地方：
+  - **GitHub 的 token 不用寫進任何檔案，也不用另寫建立腳本**：`ant apply` 不會從環境變數帶值，但 repo 是公開的，`github_repository` 不給 token 也能 clone（官方文件：公開的 repo 不給 token 可以 clone，`git push` 會失敗），所以排程的檔案不放 token，代理也推不了任何東西；PAT 改放 vault 的環境變數憑證，只給 GitHub 的 API 用（讀警示、上傳 SARIF）。
+  - 每月 50 美元的上限設在 Console 的**工作區**（另建 `security-scan` 工作區、在裡面建 key）：Console 的花費上限是以工作區為單位；代理、排程等資源也都在這個工作區，和其他用途分開。
+  - Discord 頻道的 id 放在 memory store 的 `config.json`，不進 repo（vault 的環境變數憑證只代換標頭與內容，不代換網址的路徑）。
+  - 一個發現就是 SARIF 的一條 rule，rule 的 id 就是 fingerprint：使用者在 Security 分頁標「誤報」「不修」時，`sync-alerts` 直接用 rule id 對回 `findings.json`。SARIF 只放 open 的發現，類別固定 `security-scan-agent/`。
+  - merge 時檢查代理給的程式片段真的在目前的檔案裡，行號用找到的位置（代理給錯的行號或只抄半行時，後面就找不到它搬去哪裡）。
+  - `upload --if-changed`：每日的代理每次收尾都呼叫，和上次一樣就不傳；深掃中途被 budget 停下、沒上傳的發現，隔天的每日掃描會補傳。
+  - 深掃一次讀不完一片時記成 partial（含讀過的檔案），下次接著讀那片。
+  - 警示的判斷（Dependabot 碰不碰得到、CodeQL 是真是假、secret scanning）寫在通知的附註，不另存一個檔案；警示本身已經在 Security 分頁。secret scanning 的清單用 `hide_secret`，腳本也不留秘密本身。
+- 驗證：`npm test`（新增 47 個測試：片的定義與每個路徑都對得到檔案、fingerprint 不受行號與縮排影響、去重與狀態的轉換、使用者標註的同步、SARIF 的格式與 gzip＋base64、輪替與 partial、通知的文字與長度、腳本的指令）、`npm run typecheck`；用模擬的 fetch 跑過 `alerts`、`sync-alerts`、`upload`、`notify` 的請求（網址、標頭、內容的欄位）。
+- 沒驗證到的：`ant apply` 的檔案格式（這個 session 沒有 Anthropic 的 key，照官方文件寫；由使用者的 `ant apply --dry-run` 確認）；真的 GitHub 與 Discord 的 API；代理實際跑起來的品質與費用（步驟 2 的試跑）。
+- 待使用者確認的一件事：公開 repo 的 code scanning 警示是不是只有維護者看得到（README 2-6 用無痕視窗檢查；看得到就先暫停，再討論改放哪裡）。上傳到 `refs/heads/v2` 的警示在 Security 分頁要篩選 `branch:v2` 才看得到。

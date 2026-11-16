@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://platform.claude.com/schemas/ant/beta/memory_store.json
+# 安全掃描的狀態與發現（規格 12.45、9.4）。repo 是公開的，所以這些放這裡，不放 repo。
+# ant apply 只建立空的 store；config.json 由使用者照 README 放進去。
+name: security-scan-state
+description: >-
+  安全掃描的狀態。state.json：v2 上次審到的 commit、每片上次深掃的日期與內容雜湊、看過的 GitHub 警示、最近幾次 run 的摘要。
+  findings.json：每個發現（fingerprint、片、標題、CWE、嚴重度、檔案、狀態、第一次看到的日期）。
+  config.json：repo 與 Discord 頻道的 id（使用者放的，不要改）。
+  這三個檔案只用 tools/security-scan/scripts/scan.mjs 讀寫，不要手改，也不要寫任何秘密進來。
