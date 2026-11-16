@@ -294,6 +294,7 @@
 | 2.0-draft | 2026-11-16 | 討論：用 Claude Platform 的代理（Managed Agents 排程）每天掃 bug 與漏洞；協調 session 對照專案的現況與建議（12.45）；想法的索引加一列 |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞：協調 session 依使用者的授權做決定，工作單「試行四週」寫好待使用者確認（12.45 第 7 點、9.4） |
 | 2.0-draft | 2026-11-16 | GitHub 的 AI Scan 三個開關先不開、secret scanning 的位置（12.45 第 8 點） |
+| 2.0-draft | 2026-11-16 | 加 `SECURITY.md`：請用 GitHub 的私下回報、不要開公開的 Issue，範圍與之後的處理（中英文；合併部署到 `main` 後 GitHub 的 Security policy 才會顯示「Enabled」）；CodeQL 第一次掃出 17 個警示，待分類（12.45 第 8 點） |
 
 ---
 
@@ -5427,3 +5428,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - Scan for AI applications（預覽）：找間接的 prompt injection，和這個專案有關（教練會讀網頁搜尋與外部服務的資料，6.x），但只掃 PR（我們只有發版的 PR），也用 AI credits。先由每週深掃的第 5 片（教練與工具）負責；檢討時若想試，在 Billing 設 Code Security AI credits 的硬上限再開。
 - secret scanning 與 push protection：公開 repo 免費；新版的 Settings 把它放在「Advanced Security」頁的 Secret Protection（底下有 Push protection），而且使用者帳號層級的 push protection 預設就開著（推到公開 repo 時擋下金鑰）。
 - 2026-11-16 使用者開好的設定（截圖）：Private vulnerability reporting、Dependency graph、Dependabot alerts、CodeQL 的 default setup（已掃過一次）、Secret Protection、Copilot Autofix 開著；Dependabot security updates、grouped、version updates、AI Scan 三個、Agentic autofix 關著（照決定）。協調 session 請使用者再開 **Push protection**（repo 層級，原本關著）與 **Malware alerts**（相依套件被發現是惡意套件時通知，只通知、不開 PR）。Dependabot auto-triage 的 1 條規則是 GitHub 預設的（自動略過影響很小的開發用套件），保留。注意：CodeQL 也會檢查發版的 PR（`v2` → `main`），有 high 以上的警示時那個 check 會失敗，合併部署會停在「等 CI 全部成功」，這是預期的關卡。
+- 2026-11-16 Security 分頁的 Overview：Security policy 是 Disabled（沒有 `SECURITY.md`）→ 協調 session 加了 `SECURITY.md`（只是文件；GitHub 讀預設分支的，所以合併部署後才生效）。CodeQL 第一次掃 `main` 出了 17 個警示：協調 session 讀不到 Security 分頁（工具沒有這個權限），請使用者把清單（標題、嚴重度、檔案）在聊天裡給協調 session 分類；內容只在聊天裡，不寫進 repo。真的要修的寫成工作單（只寫要改什麼），誤報與不修的由使用者在 Security 分頁標註並寫原因（之後每日的代理也會讀這些標註）。
