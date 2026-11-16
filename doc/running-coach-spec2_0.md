@@ -295,6 +295,7 @@
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞：協調 session 依使用者的授權做決定，工作單「試行四週」寫好待使用者確認（12.45 第 7 點、9.4） |
 | 2.0-draft | 2026-11-16 | GitHub 的 AI Scan 三個開關先不開、secret scanning 的位置（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | 加 `SECURITY.md`：請用 GitHub 的私下回報、不要開公開的 Issue，範圍與之後的處理（中英文；合併部署到 `main` 後 GitHub 的 Security policy 才會顯示「Enabled」）；CodeQL 第一次掃出 17 個警示，待分類（12.45 第 8 點） |
+| 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
 
 ---
 
@@ -853,6 +854,14 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
   - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
   - 狀態：開發中（開發 session「安全：每日掃描的代理（試行四週）」，2026-11-16 使用者確認計畫：「照做」）。
+
+- **正規表示式改成不會被很長的特殊輸入拖慢**（CodeQL 第一次掃描的 10 個「Polynomial regular expression used on uncontrolled data」，12.45 第 8 點；排在「每天用代理掃 bug 與漏洞」的開發 session 之後，同一時間只有一個開發 session 推 `v2`）
+  - 對應章節：12.45 第 8 點。
+  - 要做什麼：Security 分頁 Code scanning 裡這條規則的 10 個警示（`packages/core` 的 weather、reply-sections、llm/openai-compatible、intervals、llm/check、history、fake-activities、device-sync/engine、activity-files/gpx）逐一改寫，讓執行時間和輸入長度成線性：去掉網址結尾斜線的 `/\/+$/` 改成共用的小函式（迴圈去掉結尾的 `/`）；其他的拿掉重疊的量詞（例如相鄰的 `\s*`、`(.+?)[ \t]*#*[ \t]*$` 這類）或先限制長度再比對。行為不變。
+  - 不做什麼：不改其他邏輯；不處理同一次掃描的其他警示（API key 的存放是設計如此，KI-027；v1 的測試腳本是誤報，由使用者在 Security 分頁標註）。
+  - 驗收：`npm test`、`npm run typecheck`；每個改過的地方加測試：原本的行為（含現有測試）不變，並加一個很長的特殊輸入（例如幾萬個 `/` 或空白）在很短的時間內跑完。合併部署到 `main`、CodeQL 重新掃過後，這 10 個警示自動關閉（使用者確認）。
+  - 注意：這些都在使用者自己的瀏覽器或作者的 bot 裡執行，處理的是使用者自己輸入的網址與文字、AI 的回覆、外部服務的錯誤訊息；伺服器（同步服務、代理）沒有用到這些檔案。最壞的情況是使用者自己的分頁卡一下，風險低，但改起來簡單，而且留著會讓之後的警示清單有雜訊。版號：patch，跟下一次合併部署一起。
+  - 狀態：待開發（2026-11-16）。
 
 - **帳號管理第 2 步：passkey（PRF）的測試頁**（12.44 的順序第 2 步；2026-11-14 使用者：「那先幫我做 passkey 吧」；目的：在使用者自己的 iPhone、Android、電腦上確認拿不拿得到 PRF，再決定第 3 步「用 passkey 取回」怎麼做）
   - 要做什麼：
@@ -5429,3 +5438,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - secret scanning 與 push protection：公開 repo 免費；新版的 Settings 把它放在「Advanced Security」頁的 Secret Protection（底下有 Push protection），而且使用者帳號層級的 push protection 預設就開著（推到公開 repo 時擋下金鑰）。
 - 2026-11-16 使用者開好的設定（截圖）：Private vulnerability reporting、Dependency graph、Dependabot alerts、CodeQL 的 default setup（已掃過一次）、Secret Protection、Copilot Autofix 開著；Dependabot security updates、grouped、version updates、AI Scan 三個、Agentic autofix 關著（照決定）。協調 session 請使用者再開 **Push protection**（repo 層級，原本關著）與 **Malware alerts**（相依套件被發現是惡意套件時通知，只通知、不開 PR）。Dependabot auto-triage 的 1 條規則是 GitHub 預設的（自動略過影響很小的開發用套件），保留。注意：CodeQL 也會檢查發版的 PR（`v2` → `main`），有 high 以上的警示時那個 check 會失敗，合併部署會停在「等 CI 全部成功」，這是預期的關卡。
 - 2026-11-16 Security 分頁的 Overview：Security policy 是 Disabled（沒有 `SECURITY.md`）→ 協調 session 加了 `SECURITY.md`（只是文件；GitHub 讀預設分支的，所以合併部署後才生效）。CodeQL 第一次掃 `main` 出了 17 個警示：協調 session 讀不到 Security 分頁（工具沒有這個權限），請使用者把清單（標題、嚴重度、檔案）在聊天裡給協調 session 分類；內容只在聊天裡，不寫進 repo。真的要修的寫成工作單（只寫要改什麼），誤報與不修的由使用者在 Security 分頁標註並寫原因（之後每日的代理也會讀這些標註）。
+- 2026-11-16 17 個警示的分類（使用者貼了清單的截圖）：
+  - 「Clear text storage of sensitive information」6 個，都在 `apps/web/src/settings.ts`：存的是加密後的憑證或已清空憑證的設定的 4 個是誤報；沒開密碼鎖時以明文存在瀏覽器的 2 個是設計如此（KI-027：資料只在使用者的裝置，密碼鎖是選用的），標「Won't fix」。
+  - 「Polynomial regular expression used on uncontrolled data」10 個，都在 `packages/core`，只在使用者自己的瀏覽器或作者的 bot 裡執行，伺服器沒有用到；最壞是自己的分頁卡一下 → 低風險，改起來簡單 → 工作單（9.4），修好合併部署後自動關閉，先不要標。
+  - 「Clear-text logging of sensitive information」1 個，v1 的本機測試腳本 `scripts/test_intervals.py`：印的是遮罩過的 key（前後各 4 碼），誤報；v1 之後會移除。
