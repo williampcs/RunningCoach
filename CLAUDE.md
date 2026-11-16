@@ -62,6 +62,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 
 每次合併部署就是發一版（規格 12.19）。版號只有一個來源：repo 根目錄 `package.json` 的 `version`，網頁版（標題列的 Beta、設定頁最下面的完整版號）與 Discord bot（`/status`）都讀它。
 
+0. 安全審查（發版前，規格 12.45）：對 `v上一版..origin/v2` 的程式改動（不含文件與測試）做一次獨立的安全審查：交給另一個 agent，只給它 diff 與相關的程式，不給你的結論。再看一下 Security 分頁有沒有還開著的 critical／high 警示（看不到就請使用者看）。發現的問題**只在聊天裡回報，修好之前不寫進 repo、不開 Issue**；有 critical／high 的先修再發版，其他的由使用者決定。
 1. 發版（在 `v2` 上，建 PR 之前）：
    - 決定版號：看上一個標籤之後的改動（`git log v上一版..origin/v2 --oneline` 與版本異動表）。
      - 有新功能（使用者看得到的新東西：新的畫面、設定、指令、教練會做的新事）→ 加**中間那碼**：`npm run version:bump -- minor`（0.1.0 → 0.2.0）。

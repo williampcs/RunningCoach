@@ -296,6 +296,7 @@
 | 2.0-draft | 2026-11-16 | GitHub 的 AI Scan 三個開關先不開、secret scanning 的位置（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | 加 `SECURITY.md`：請用 GitHub 的私下回報、不要開公開的 Issue，範圍與之後的處理（中英文；合併部署到 `main` 後 GitHub 的 Security policy 才會顯示「Enabled」）；CodeQL 第一次掃出 17 個警示，待分類（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
+| 2.0-draft | 2026-11-16 | `CLAUDE.md` 的合併部署加第 0 步：發版前對整段程式改動做獨立的安全審查，發現只在聊天裡回報（12.45 工作單的步驟 3） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 
 ---
@@ -854,7 +855,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：自己跑 osv-scanner、gitleaks、semgrep（先用 GitHub 內建的）；代理自動修或開 PR；import graph 的切片；每季全掃（發版前的審查代替）；VM 的 OS、Docker、Cloudflare 的設定。
   - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
   - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
-  - 狀態：已推上 v2（2026-11-16，開發 session「安全：每日掃描的代理（試行四週）」），待使用者做步驟 0、2（`tools/security-scan/README.md`）。實作與和工作單不同的地方見 12.45 第 9 點。
+  - 狀態：已推上 v2（2026-11-16，開發 session「安全：每日掃描的代理（試行四週）」），待使用者做步驟 0、2（`tools/security-scan/README.md`）。實作與和工作單不同的地方見 12.45 第 9 點。 協調 session 檢查過（設定、系統提示、腳本只連 GitHub 與 Discord、不印 token、budget 的單位是美分、CI 過）；步驟 3 做完（CLAUDE.md 的合併部署加第 0 步「安全審查」）。步驟 0 的 0-1 使用者已做（12.45 第 8 點）。
 
 - **正規表示式改成不會被很長的特殊輸入拖慢**（CodeQL 第一次掃描的 10 個「Polynomial regular expression used on uncontrolled data」，12.45 第 8 點；排在「每天用代理掃 bug 與漏洞」的開發 session 之後，同一時間只有一個開發 session 推 `v2`）
   - 對應章節：12.45 第 8 點。
