@@ -291,6 +291,7 @@
 | 2.0-draft | 2026-11-14 | 想法的索引加「傳圖片給教練（多模態）」 |
 | 2.0-draft | 2026-11-14 | 帳號管理第 2 步：passkey（PRF）的測試頁（只在 staging 與開發；設定最下面「passkey 測試」或 `#passkey-test`；建立、算兩次比對指紋、複製結果，不含 credential id 與 PRF 的值）（9.4、12.44） |
 | 2.0-draft | 2026-11-16 | passkey 測試頁的實機結果：Mac Edge＋Proton Pass 可以拿到 PRF、兩次一樣（12.44） |
+| 2.0-draft | 2026-11-16 | 討論：用 Claude Platform 的代理（Managed Agents 排程）每天掃 bug 與漏洞；協調 session 對照專案的現況與建議（12.45）；想法的索引加一列 |
 
 ---
 
@@ -1535,6 +1536,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 每日的身體狀況回報放進「回報」分頁 | 11-12 | 2026-11-13 已推上 v2、使用者在 staging 試過，等合併部署。2026-11-12 已推上 v2（開發 session「每日回報放進回報分頁」，見 9.4 的工作單），待使用者在 staging 試。2026-11-12 決定：表單搬到「回報」，看板只留提醒；順序：身體狀況 → 傷的分數 → 跑完的那一趟；工作單寫好（9.4）。原本：使用者：「我覺得每日回報應該也算在『回報』裡？」現況：身體狀況的自評（三個 1–5 分＋備註、傷的分數）在對話頁上方的教練動態裡；「回報」分頁只有跑後回報（與沒有手錶的「記一趟跑步」）。協調 session：同意，「回報」＝要告訴教練的事；建議表單搬到「回報」最上面（今天的身體狀況 → 傷的分數 → 跑完的那一趟），教練動態只留一行提醒（「今天還沒回報身體狀況」→ 點了到「回報」）與就醫提示；待使用者確認 | 這一列 |
 | 排下週的課表卻存進這週 | 11-13 | 2026-11-14 已推上 v2（檢查器與說明；畫面的「下週任一天」），使用者在 staging 看過：「看起來 ok」，等合併部署。之前：2026-11-13 已推上 v2（開發 session「排下週的課表」），待使用者在 staging 星期五到星期日試。原本：使用者在 staging 回報（週末請教練預排下週，課出現在「這週」）；協調 session 查到可能是 `week_start` 的說明寫「這週的星期一」、一週的菜單沒有日期抓不到；工作單寫好（9.4），排在帳號第 1 步之後 | 9.4 |
 | 傳圖片給教練（多模態） | 11-14 | 使用者：「之前有考慮到多模態模型之類的問題嗎？比方說用戶丟個圖片想請教練分析之類的？先記一下就好，我也還沒想到有什麼 use case 會用到」。現況：沒做過；對話只有文字，網頁的 Markdown 不顯示圖片（安全，KI-027）。Claude、多數 OpenAI 相容的模型都能看圖。協調 session 想到的可能用途（待使用者想）：其他 App 或手錶畫面的截圖（課表、比賽成績、心率圖）讀進來、跑鞋磨損、受傷部位的照片（醫療風險，要很小心，不做診斷）、跑步姿勢的照片或影片截圖、比賽的路線圖與高度圖。要考慮：費用（一張圖約一千多個 token）、免費試用要不要允許、圖片不能進同步以外的地方（資料原則）、隱私（照片的定位資訊要先拿掉）、Discord 也能收圖。先記下，沒排 | 這一列 |
+| 每天用代理掃 bug 與漏洞（Claude Platform 的 Managed Agents 排程） | 11-16 | 討論中：使用者帶來和另一個（不知道專案狀況的）agent 擬的設計；協調 session 對照現況：repo 是公開的（發現不能開成 Issue、狀態不能放 repo 的分支）、沒有 PR 流程（只有發版的 v2 → main）、規模小（一份 lockfile）→ 建議先開 GitHub 內建的免費功能、做一次基準審查，再做「每天審 v2 的新改動＋每週深掃一片＋發版前審整段」；待使用者決定 12.45 第 6 點 | 12.45 |
 | App 版（iOS 先、Android 第二） | 11-10 | 討論中：Capacitor 包網頁＋自己寫或評估讀健康資料的外掛；使用者去申請 Apple 開發者帳號 | 12.41 |
 | Garmin 資料可能不能經 Intervals.icu 取得 | 11-09 | 調查完（12.40）：Intervals.icu 說 Garmin 的活動經 API 很可能變空殼、日期未定；Garmin 10-21 重開開發者計畫（個人 API key、免費的 Starter、收費的 Enterprise）。建議先觀察、偵測空殼時提示、App 以讀健康資料為主、Garmin 個人 API 做小的可行性測試；Garmin 標示開發中 | KI-048、12.40 |
 | App 版用使用者自己的 Garmin 個人 API key | 11-09 | 技術可行（原生 App 沒有 CORS）；條款灰色，等 Starter 核准後問 Garmin，有書面答覆才做 | 12.40 |
@@ -5330,3 +5332,51 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 
 **passkey 測試頁的實機結果**（使用者貼回的「複製結果」，只記結果）
 - 2026-11-16 macOS · Edge 155，passkey 存在 Proton Pass 的瀏覽器擴充：能力 prf、hybridTransport 都有；建立成功、PRF 啟用；算兩次都拿到 PRF、指紋相同。→ 第三方密碼管理工具（Proton Pass）在 Mac 的 Edge 可行。
+
+### 12.45 每天用代理掃 bug 與漏洞（2026-11-16，討論中）
+
+**使用者的問題**（2026-11-16）：「我想用 Claude Platform 的代理功能改進專案的安全性」，附上和另一個不知道專案狀況的 agent 擬的設計（每天用 Managed Agents 的排程掃 repo；要盡快發現問題，但不要每天全掃、重複做一樣的事；增量、便宜的工具先跑、輪替深掃、狀態存在外面並去重、能在 PR 擋的就在 PR 擋）。那份設計的原則可以沿用，但有三個前提和這個專案不同。
+
+**1. 和專案不同的前提**
+- **repo 是公開的**（那份寫的是私人 repo）：
+  - 發現的問題**不能開成 GitHub Issue**，也**不能寫進規格或 KI**（等於公開還沒修的洞）。修好之後才在 KI 記「修了什麼」。
+  - 狀態**不能放 repo 的 `security-state` 分支**（任何人都看得到）→ 放 Managed Agents 的 memory store。
+  - 好處：公開 repo 的 GitHub 安全功能免費：Dependabot alerts、secret scanning 與 push protection、CodeQL（JS／TS）、private vulnerability reporting。那份設計第 1 層的 osv-scanner、gitleaks、semgrep 大半可以由它們代替，而且「每天跑、去重、標成誤報或不修並寫原因」GitHub 都管好了。
+  - 程式公開，別人也能用 AI 找洞，所以值得做。
+- **沒有 PR 流程**：開發 session 直接推 `v2`，唯一的 PR 是發版的 `v2` → `main`。「在 PR 擋」改成兩個關卡：每天審 `v2` 的新改動（上線 staging 之後、正式版之前），與**發版前審 `v上一版..v2` 整段**（以前同步的安全審查就是這樣做的，KI-038、KI-045）。
+- **規模小**：一個人、一份 `package-lock.json`、TypeScript 程式約 3.8 萬行（不含測試）。那份的切片評分公式、三種模型分工、自己做 fingerprint 都可以先簡化。
+
+**2. 要掃的範圍（風險高的片）**：依現有的 app 切，大約 7 片：
+1. `apps/proxy`（免費試用的代理：拿著 Anthropic 的 key、邀請碼、每日額度；被盜刷是最直接的金錢風險）
+2. `apps/sync`（同步服務：配對、裝置金鑰、請求簽章、總量上限）
+3. 核心的同步用戶端與加密、帳號（試用帳號、passkey，12.44）
+4. `apps/web`（API key 的保存與密碼鎖、CSP、Markdown、對外的連線）
+5. 核心的教練與工具（網頁搜尋後的 prompt injection、寫入類工具，6.x）
+6. `apps/discord`
+7. `.github/workflows` 與部署（Cloudflare 與 Anthropic 的 secrets、VM 上的 self-hosted runner：公開 repo 要確保外人的 PR 碰不到它）
+
+不掃：v1 的 Python（`src/`，已不部署，觀察期後移除）、產生的檔案、測試。
+
+**3. 協調 session 的建議（分三階段）**
+- **第一階段（免費，使用者在 GitHub 的 Settings 做）**：開 Dependabot alerts、secret scanning＋push protection、CodeQL 的 default setup、private vulnerability reporting。Dependabot 的 security updates（自動開修補 PR）先不開：它的 PR 指向 `main`，會繞過 `v2` → staging 的流程；要修的照常寫工作單、在 `v2` 修。
+- **第二階段（一次性的基準審查）**：開一個開發 session 照第 2 點的 7 片做一次完整的安全審查，建立「目前已知、已接受」的基準；結果不進 repo（見上）。之後的每日掃描才分得出「新的」問題。
+- **第三階段（Managed Agents 的排程）**：
+  - 每天一次：讀 GitHub 的 Dependabot、CodeQL、secret scanning 的新警示（工具負責「有沒有」）＋審 `v2` 從上次審到的 commit 到現在的 diff 與被改函式的上下游（模型負責「嚴不嚴重、碰不碰得到」）。沒有新 commit、也沒有新警示就直接結束。
+  - 每週一次：輪到的那一片深掃（7 片約 7 週一輪）；那片沒變、也沒新警示就換下一片。
+  - 發版前：協調 session 手動觸發一次，審整段 `v上一版..v2`（加進合併部署的步驟）。
+  - gate 放在 session 的第一步（那份的選項 a）：`v2` 幾乎每天都有 commit，放在 GitHub Actions 先擋省不了多少，反而多一個元件、多一把 key 放在 GitHub。
+  - 模型：每日審查用 Sonnet；每週深掃與確認高風險的發現用 Opus；整理工具的輸出可以用 Haiku。
+- **發現的問題放哪**：上傳 SARIF 到 code scanning（Security 分頁只有維護者看得到，GitHub 處理去重、關閉、標誤報）；每天有新發現才寄一封摘要。注意：同一類別的 SARIF 每次上傳會取代上一次，所以代理每次要把還沒修的全部再傳一次（清單在 memory store）。嚴重的另開私人的 security advisory 草稿。
+- **權限**：fine-grained PAT 只給這個 repo：contents 讀、code scanning alerts 寫（上傳 SARIF 用）、Dependabot alerts 與 secret scanning alerts 讀；不給推送、不給 Issue。存在 vault。代理不直接改程式、不開修補 PR（推 `v2` 會部署 staging，也違反「同一時間只有一個開發 session 推 `v2`」）；發現交給協調 session 寫工作單。
+- **其他**：環境的網路只開 GitHub 與漏洞資料庫，不開網頁搜尋（代理讀的內容越少，被注入的機會越少）；排程跑的時候沒有人在場，工具的權限設成不用核准，否則會卡住；每次 run 設 budget 上限；用另一把 Anthropic 的 key 並設每月花費上限（同 12.43 的做法）；transcript 會保留，裡面不放 secrets（repo 公開，程式本身不是秘密）。
+- **另一個做法**（不用 Claude Platform）：用 Claude Code 雲端 session 的排程任務每天跑一次安全審查。差別在計費（訂閱 vs. API 用量）與能不能用 memory store、budget、run 紀錄；使用者指定要用 Claude Platform，先照 Managed Agents 規劃。
+
+**4. 粗估費用**（未實測）：每日審查（Sonnet）一次約 0.3–1 美元，每週深掃（Opus）一片約 2–5 美元 → 一個月約 20–40 美元。budget 上限可以先設每日 1 美元、每週 5 美元，跑兩週看實際的再調。
+
+**5. 那份設計裡先不做的**：自己的 osv-scanner、gitleaks、semgrep（GitHub 內建的先用，不夠再加）；trivy 掃 bot 的映像（`node:22-slim` 的系統套件，之後可以加在每週）；依 import graph 切片；切片的評分公式（7 片照順序輪即可）；每季全掃（以發版前的整段審查代替）。VM 的 OS、Docker、Cloudflare 的設定不在這套範圍。
+
+**6. 待使用者決定**
+- 先開第一階段的 GitHub 功能嗎？
+- 第二階段的基準審查要不要做、什麼時候（建議在帳號管理告一段落前做，因為那塊在改加密與身分）。
+- 發現的問題怎麼通知：Security 分頁＋email 摘要，或其他。
+- 每月的花費上限。
