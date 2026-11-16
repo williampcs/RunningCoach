@@ -290,6 +290,7 @@
 | 2.0-draft | 2026-11-14 | 工作單：帳號管理第 2 步「passkey（PRF）的測試頁」（只在 staging，只在瀏覽器裡，不連伺服器）（9.4、12.44） |
 | 2.0-draft | 2026-11-14 | 想法的索引加「傳圖片給教練（多模態）」 |
 | 2.0-draft | 2026-11-14 | 帳號管理第 2 步：passkey（PRF）的測試頁（只在 staging 與開發；設定最下面「passkey 測試」或 `#passkey-test`；建立、算兩次比對指紋、複製結果，不含 credential id 與 PRF 的值）（9.4、12.44） |
+| 2.0-draft | 2026-11-16 | passkey 測試頁的實機結果：Mac Edge＋Proton Pass 可以拿到 PRF、兩次一樣（12.44） |
 
 ---
 
@@ -5326,3 +5327,6 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 驗證：`npm test`（`apps/web/test/passkey-test.test.ts`：系統與瀏覽器的判讀、指紋、base64url、建立與取得的選項、錯誤訊息遮掉長字串、結果的整理、「複製結果」不含 id 與長字串）；`npm run typecheck`；E2E `verify-passkey-test.cjs`（Chromium 的虛擬驗證器，`hasPrf` true／false 各一次；正式版沒有入口；截圖 `passkey-mobile-light.png`、`passkey-desktop-dark.png` 看過；設計準則能自動查的項目）。
 - 沒驗證到的：真的 iPhone、Android、Mac、Windows 與掃 QR（虛擬驗證器只模擬 Chromium 的流程），要使用者在 staging 測。
 - 沒做（照工作單）：用 passkey 鎖或解開同步金鑰（第 3 步）、伺服器端驗證 passkey、正式版出現這一頁。
+
+**passkey 測試頁的實機結果**（使用者貼回的「複製結果」，只記結果）
+- 2026-11-16 macOS · Edge 155，passkey 存在 Proton Pass 的瀏覽器擴充：能力 prf、hybridTransport 都有；建立成功、PRF 啟用；算兩次都拿到 PRF、指紋相同。→ 第三方密碼管理工具（Proton Pass）在 Mac 的 Edge 可行。
