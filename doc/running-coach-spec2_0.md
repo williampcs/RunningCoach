@@ -292,6 +292,7 @@
 | 2.0-draft | 2026-11-14 | 帳號管理第 2 步：passkey（PRF）的測試頁（只在 staging 與開發；設定最下面「passkey 測試」或 `#passkey-test`；建立、算兩次比對指紋、複製結果，不含 credential id 與 PRF 的值）（9.4、12.44） |
 | 2.0-draft | 2026-11-16 | passkey 測試頁的實機結果：Mac Edge＋Proton Pass 可以拿到 PRF、兩次一樣（12.44） |
 | 2.0-draft | 2026-11-16 | 討論：用 Claude Platform 的代理（Managed Agents 排程）每天掃 bug 與漏洞；協調 session 對照專案的現況與建議（12.45）；想法的索引加一列 |
+| 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞：協調 session 依使用者的授權做決定，工作單「試行四週」寫好待使用者確認（12.45 第 7 點、9.4） |
 
 ---
 
@@ -821,6 +822,35 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 這一節是目前的清單；下面「2026-10-15 盤點」保留當時的內容，其中還沒做的已併進這裡。協作方式（協調 session 與開發 session、工作單的格式）見 repo 根目錄的 `CLAUDE.md`。
 
 *已決定、待開發*（工作單）
+
+- **每天用代理掃 bug 與漏洞：試行四週**（12.45；2026-11-16 使用者：「你決定後寫一版計劃，我看過沒問題的話就照做，實際 run 一段時間再看成本或各種問題」）
+  - 對應章節：12.45（現況、選項、決定）、KI-037／KI-045（以前的安全審查）、CLAUDE.md 的「合併部署」。
+  - 整體：GitHub 內建的免費功能負責「有沒有」（相依套件的 CVE、外洩的金鑰、常見的程式碼問題）；兩個 Managed Agents 的排程負責「嚴不嚴重、碰不碰得到」與工具看不到的邏輯問題；發版前由協調 session 另外審整段。發現的問題只放在 GitHub 的 Security 分頁（維護者才看得到）與私人的 Discord 頻道，**不進 repo、不開 Issue**。
+  - 步驟 0（使用者，約 20 分鐘；開發 session 在 README 寫好逐步說明）：
+    1. GitHub 的 Settings → Code security：開 Dependabot alerts、secret scanning 與 push protection、CodeQL 的 default setup、private vulnerability reporting。**Dependabot security updates 不開**（它的修補 PR 指向 `main`，會繞過 `v2` → staging）。Settings → Actions：外人（fork）的 PR 跑 workflow 前要核准（VM 上有 self-hosted runner）。
+    2. Anthropic Console：這個用途專用的 key，設每月花費上限 50 美元。
+    3. GitHub：fine-grained PAT，只給這個 repo：Metadata 讀、Contents 讀、Code scanning alerts 讀寫（上傳結果用）、Dependabot alerts 讀、Secret scanning alerts 讀；不給推送、不給 Issue；期限 90 天。
+    4. Discord：另建一個「通知用」的 bot（不用教練的 bot 的 token），邀進自己的伺服器，開一個只有自己看得到的頻道，記下頻道的 id。
+  - 步驟 1（開發 session）：在 `tools/security-scan/` 寫好下面的東西，推上 `v2`：
+    1. 片的定義 `slices.yaml`：12.45 第 2 點的 7 片（路徑、這片在意什麼），順序就是輪替的順序（proxy、sync 先）。排除 `src/`（v1）、測試、產生的檔案、文件。
+    2. 兩個代理（照 `ant apply` 的檔案格式；系統提示用繁體中文寫給代理看、輸出用繁體中文）：
+       - `security-daily`（Sonnet 5.5，effort medium）：讀狀態 → `v2` 從上次審到的 commit 到現在的改動（只看程式與設定，文件與純測試的改動跳過）＋ GitHub 的新警示 → 沒有新東西就更新狀態後結束，不通知 → 有的話審 diff 與被改函式的上下游一層、判斷 Dependabot 警示碰不碰得到（建議升到哪一版、有沒有破壞性的改動）、CodeQL 與 secret scanning 的警示是真是假（只寫判斷，不自動關閉）→ 去重 → 上傳 → 有新發現才通知 → 更新狀態。
+       - `security-deep`（Opus 5.5，effort high）：照順序挑下一片；那片從上次深掃後沒有改動、也沒有相關的新警示就跳到下一片 → 讀完那片的每個檔案 → 每個懷疑的點再讀一次程式（必要時在沙盒寫幾行小實驗）確認才算發現 → 去重 → 上傳 → 通知（**每次都發一行摘要**：哪一片、新發現幾個，當作「還活著」的訊號）→ 更新狀態。
+       - 兩個都：不改程式、不推送、不開 PR 或 Issue；網頁搜尋與抓網頁關掉；嚴重度用 critical／high／medium／low，每個發現要有：檔案與行、類型（CWE）、怎麼觸發、影響、建議的修法、有多確定。
+    3. 環境：雲端、網路 limited，只開 `github.com`、`api.github.com`、`discord.com`，允許套件庫（要跑小實驗時 `npm ci --ignore-scripts`）。
+    4. memory store `security-scan-state`：`state.json`（`v2` 上次審到的 commit、每片上次深掃的日期與那片的內容雜湊、最近幾次 run 的摘要）、`findings.json`（每個發現的 fingerprint、片、標題、類型、嚴重度、檔案、狀態、第一次看到的日期）。
+    5. 確定性的小腳本（Node，不靠模型算）與測試（放進 `npm test`）：fingerprint ＝ 檔案路徑＋類型＋正規化後的程式片段的雜湊（不含行號）；從 `findings.json` 產生 SARIF；上傳（gzip＋base64 → code scanning 的 SARIF API，ref 是 `refs/heads/v2`）；發 Discord 訊息。SARIF 的同一類別每次上傳會取代上一次，所以**每次都上傳全部還沒關閉的發現**；使用者在 Security 分頁標「誤報」「不修」時，代理下次讀到就把那筆改成同樣的狀態，不再回報。
+    6. 兩個排程（Asia/Taipei，避開整點）：daily 每天 04:23，budget 每次 1 美元；deep 每週六 05:23，budget 每次 5 美元。工具的權限不用核准（排程跑時沒有人在場，要核准就會卡住）。
+    7. 秘密不進檔案：PAT 與 Discord bot 的 token 由使用者在本機用環境變數提供，或在 Console 填；Discord 的 token 放 vault 的環境變數憑證（放在標頭，代理的沙盒看不到真的值）。開發 session 確認 `ant apply` 怎麼處理 GitHub resource 的 token，不行就寫一個本機用的建立腳本。
+    8. `README.md`：步驟 0 與步驟 2 的逐步說明、怎麼手動觸發、怎麼看費用、怎麼暫停。
+  - 步驟 2（使用者在本機）：`ant apply --dry-run` 看計畫 → `ant apply` → 填 vault 與 PAT → **手動觸發 `security-deep` 兩次**（proxy、sync）當基準審查兼試跑，把費用與結果的大概（幾個發現、看起來對不對，不要貼漏洞細節）告訴協調 session；確認 Security 分頁看得到、Discord 收得到、budget 有作用 → 沒問題再手動觸發剩下 5 片完成基準（可以分幾天）→ 打開兩個排程。
+  - 步驟 3（協調 session）：CLAUDE.md 的合併部署加一步：建 PR 之前，對 `v上一版..v2` 的程式改動做一次獨立的安全審查（另一個 agent 只看程式，不看結論；用 Claude Code 的 session，不花 API 的錢）；發現的問題只在聊天裡回報，修好前不寫進 repo。
+  - 發現問題之後：使用者在 Security 分頁看 → 要修的告訴協調 session → 寫工作單（工作單只寫「要改什麼」，不寫怎麼攻擊）→ 開發 session 在 `v2` 修 → 修好後 KI 記一行。
+  - 試行四週後的檢討（約 2026-12-21，協調 session 提醒）：每月實際的費用（Console 看這把 key）、每次 run 的平均費用與有沒有撞到 budget、發現幾個、幾個是真的（被標誤報的比例）、有沒有 run 失敗或卡住、通知會不會太吵 → 決定頻率、模型、片的大小要不要調，要不要加 trivy 掃 bot 的映像。
+  - 不做：自己跑 osv-scanner、gitleaks、semgrep（先用 GitHub 內建的）；代理自動修或開 PR；import graph 的切片；每季全掃（發版前的審查代替）；VM 的 OS、Docker、Cloudflare 的設定。
+  - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
+  - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
+  - 狀態：計畫寫好，待使用者確認（2026-11-16）。
 
 - **帳號管理第 2 步：passkey（PRF）的測試頁**（12.44 的順序第 2 步；2026-11-14 使用者：「那先幫我做 passkey 吧」；目的：在使用者自己的 iPhone、Android、電腦上確認拿不拿得到 PRF，再決定第 3 步「用 passkey 取回」怎麼做）
   - 要做什麼：
@@ -1536,7 +1566,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 | 每日的身體狀況回報放進「回報」分頁 | 11-12 | 2026-11-13 已推上 v2、使用者在 staging 試過，等合併部署。2026-11-12 已推上 v2（開發 session「每日回報放進回報分頁」，見 9.4 的工作單），待使用者在 staging 試。2026-11-12 決定：表單搬到「回報」，看板只留提醒；順序：身體狀況 → 傷的分數 → 跑完的那一趟；工作單寫好（9.4）。原本：使用者：「我覺得每日回報應該也算在『回報』裡？」現況：身體狀況的自評（三個 1–5 分＋備註、傷的分數）在對話頁上方的教練動態裡；「回報」分頁只有跑後回報（與沒有手錶的「記一趟跑步」）。協調 session：同意，「回報」＝要告訴教練的事；建議表單搬到「回報」最上面（今天的身體狀況 → 傷的分數 → 跑完的那一趟），教練動態只留一行提醒（「今天還沒回報身體狀況」→ 點了到「回報」）與就醫提示；待使用者確認 | 這一列 |
 | 排下週的課表卻存進這週 | 11-13 | 2026-11-14 已推上 v2（檢查器與說明；畫面的「下週任一天」），使用者在 staging 看過：「看起來 ok」，等合併部署。之前：2026-11-13 已推上 v2（開發 session「排下週的課表」），待使用者在 staging 星期五到星期日試。原本：使用者在 staging 回報（週末請教練預排下週，課出現在「這週」）；協調 session 查到可能是 `week_start` 的說明寫「這週的星期一」、一週的菜單沒有日期抓不到；工作單寫好（9.4），排在帳號第 1 步之後 | 9.4 |
 | 傳圖片給教練（多模態） | 11-14 | 使用者：「之前有考慮到多模態模型之類的問題嗎？比方說用戶丟個圖片想請教練分析之類的？先記一下就好，我也還沒想到有什麼 use case 會用到」。現況：沒做過；對話只有文字，網頁的 Markdown 不顯示圖片（安全，KI-027）。Claude、多數 OpenAI 相容的模型都能看圖。協調 session 想到的可能用途（待使用者想）：其他 App 或手錶畫面的截圖（課表、比賽成績、心率圖）讀進來、跑鞋磨損、受傷部位的照片（醫療風險，要很小心，不做診斷）、跑步姿勢的照片或影片截圖、比賽的路線圖與高度圖。要考慮：費用（一張圖約一千多個 token）、免費試用要不要允許、圖片不能進同步以外的地方（資料原則）、隱私（照片的定位資訊要先拿掉）、Discord 也能收圖。先記下，沒排 | 這一列 |
-| 每天用代理掃 bug 與漏洞（Claude Platform 的 Managed Agents 排程） | 11-16 | 討論中：使用者帶來和另一個（不知道專案狀況的）agent 擬的設計；協調 session 對照現況：repo 是公開的（發現不能開成 Issue、狀態不能放 repo 的分支）、沒有 PR 流程（只有發版的 v2 → main）、規模小（一份 lockfile）→ 建議先開 GitHub 內建的免費功能、做一次基準審查，再做「每天審 v2 的新改動＋每週深掃一片＋發版前審整段」；待使用者決定 12.45 第 6 點 | 12.45 |
+| 每天用代理掃 bug 與漏洞（Claude Platform 的 Managed Agents 排程） | 11-16 | 討論中：使用者帶來和另一個（不知道專案狀況的）agent 擬的設計；協調 session 對照現況：repo 是公開的（發現不能開成 Issue、狀態不能放 repo 的分支）、沒有 PR 流程（只有發版的 v2 → main）、規模小（一份 lockfile）→ 建議先開 GitHub 內建的免費功能、做一次基準審查，再做「每天審 v2 的新改動＋每週深掃一片＋發版前審整段」；2026-11-16 使用者請協調 session 決定並寫計畫；工作單「試行四週」寫好（9.4），待使用者確認 | 12.45、9.4 |
 | App 版（iOS 先、Android 第二） | 11-10 | 討論中：Capacitor 包網頁＋自己寫或評估讀健康資料的外掛；使用者去申請 Apple 開發者帳號 | 12.41 |
 | Garmin 資料可能不能經 Intervals.icu 取得 | 11-09 | 調查完（12.40）：Intervals.icu 說 Garmin 的活動經 API 很可能變空殼、日期未定；Garmin 10-21 重開開發者計畫（個人 API key、免費的 Starter、收費的 Enterprise）。建議先觀察、偵測空殼時提示、App 以讀健康資料為主、Garmin 個人 API 做小的可行性測試；Garmin 標示開發中 | KI-048、12.40 |
 | App 版用使用者自己的 Garmin 個人 API key | 11-09 | 技術可行（原生 App 沒有 CORS）；條款灰色，等 Starter 核准後問 Garmin，有書面答覆才做 | 12.40 |
@@ -5380,3 +5410,11 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 第二階段的基準審查要不要做、什麼時候（建議在帳號管理告一段落前做，因為那塊在改加密與身分）。
 - 發現的問題怎麼通知：Security 分頁＋email 摘要，或其他。
 - 每月的花費上限。
+
+**7. 決定**（2026-11-16 使用者：「你決定後寫一版計劃，我看過沒問題的話就照做，實際 run 一段時間再看成本或各種問題」；協調 session 決定，待使用者確認計畫）
+- 第 6 點的四件事：GitHub 內建的功能要開（Dependabot 的自動修補 PR 不開）；基準審查要做，用每週深掃的代理手動觸發 7 次完成（同時試跑、量費用），proxy 與 sync 先；通知用 Security 分頁＋另建的 Discord 通知 bot 發到私人頻道（Discord 的 webhook 網址把秘密放在路徑裡，vault 不能代換，所以用 bot 的 token 放標頭）；每次 run 的 budget 每日 1 美元、每週 5 美元，專用的 key 每月上限 50 美元。
+- 兩個代理分開（每日 Sonnet、每週 Opus），不用一個主代理派子代理：簡單、費用好分。
+- 發版前的整段審查由協調 session 在合併部署時做（Claude Code 的 session，不花 API 的錢），不另建第三個代理。
+- 去重與狀態：Security 分頁的「誤報」「不修」就是使用者標註的地方，代理照著改自己的紀錄；fingerprint 與 SARIF 用腳本算，不靠模型。
+- 試行四週（約到 2026-12-21）後依實際的費用與誤報的比例檢討。
+- 工作單見 9.4「每天用代理掃 bug 與漏洞：試行四週」。
