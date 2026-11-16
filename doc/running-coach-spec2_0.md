@@ -293,6 +293,7 @@
 | 2.0-draft | 2026-11-16 | passkey 測試頁的實機結果：Mac Edge＋Proton Pass 可以拿到 PRF、兩次一樣（12.44） |
 | 2.0-draft | 2026-11-16 | 討論：用 Claude Platform 的代理（Managed Agents 排程）每天掃 bug 與漏洞；協調 session 對照專案的現況與建議（12.45）；想法的索引加一列 |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞：協調 session 依使用者的授權做決定，工作單「試行四週」寫好待使用者確認（12.45 第 7 點、9.4） |
+| 2.0-draft | 2026-11-16 | GitHub 的 AI Scan 三個開關先不開、secret scanning 的位置（12.45 第 8 點） |
 
 ---
 
@@ -5418,3 +5419,10 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 去重與狀態：Security 分頁的「誤報」「不修」就是使用者標註的地方，代理照著改自己的紀錄；fingerprint 與 SARIF 用腳本算，不靠模型。
 - 試行四週（約到 2026-12-21）後依實際的費用與誤報的比例檢討。
 - 工作單見 9.4「每天用代理掃 bug 與漏洞：試行四週」。
+
+**8. GitHub 的 AI Scan**（2026-11-16 使用者在 Settings 看到「AI Scan」三個開關，問要不要開；也找不到 secret scanning 的開關）
+- 三個都**先不開**，四週的檢討時再看：
+  - AI Scan for repositories（預覽）：只掃預設分支（`main`，已上線的版本），和每週深掃的代理重疊；用 Code Security 的 AI credits 計費（1 credit 0.01 美元，個人帳號的公開 repo 記在使用者的帳上），每次掃描上限 15 萬 credits，沒有公布掃一次要多少，費用沒辦法估。同時開也會讓試行的「費用與誤報」分不清是哪一個。
+  - AI Scan for pull requests：只補 CodeQL 不支援的語言；我們是 TypeScript（與 v1 的 Python），CodeQL 都支援，幫助不大。
+  - Scan for AI applications（預覽）：找間接的 prompt injection，和這個專案有關（教練會讀網頁搜尋與外部服務的資料，6.x），但只掃 PR（我們只有發版的 PR），也用 AI credits。先由每週深掃的第 5 片（教練與工具）負責；檢討時若想試，在 Billing 設 Code Security AI credits 的硬上限再開。
+- secret scanning 與 push protection：公開 repo 免費；新版的 Settings 把它放在「Advanced Security」頁的 Secret Protection（底下有 Push protection），而且使用者帳號層級的 push protection 預設就開著（推到公開 repo 時擋下金鑰）。
