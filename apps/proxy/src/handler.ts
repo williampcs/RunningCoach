@@ -8,8 +8,8 @@
  * 帳號的復原密鑰（規格 12.44 第 1 步）：裝置產生後放進選手加密的同步；新裝置用它換自己的憑證（POST /v1/recover）.
  * 代理只存雜湊，不知道同步空間；同步服務只看到密文.
  */
-import { meterSseStream, usageFromJson } from "./metering";
-import { costMicroUsd, usdToMicro, type Policy, type TokenUsage } from "./policy";
+import { emptyUsage, meterSseStream, usageFromJson, type MeterResult } from "./metering";
+import { costMicroUsd, usdToMicro, type ModelPrice, type Policy, type TokenUsage } from "./policy";
 import type { Account, AccountStore, DailyKind, Invite } from "./store";
 
 export interface ProxyDeps {
@@ -145,6 +145,23 @@ export function isNewTurn(messages: unknown[]): boolean {
   if (!Array.isArray(last.content)) return true;
   return !(last.content as Json[]).every((block) => block?.type === "tool_result");
 }
+
+/**
+ * 預扣的用量與花費：輸出照套用政策後的 max_tokens；輸入照轉發的請求有幾個位元組估（一個 token 至少一個位元組，所以不會少估），
+ * 而且照輸入、快取寫入、快取讀取裡最貴的價格算
+ */
+export function reservation(price: ModelPrice, requestBytes: number, maxTokens: number): { usage: TokenUsage; cost: number } {
+  const inputPrice = Math.max(price.input, price.cacheWrite ?? price.input * 1.25, price.cacheRead ?? price.input * 0.1);
+  const usage: TokenUsage = { input: requestBytes, output: maxTokens, cacheRead: 0, cacheWrite: 0 };
+  return { usage, cost: costMicroUsd({ input: inputPrice, output: price.output, cacheRead: 0, cacheWrite: 0 }, usage) };
+}
+
+const scale = (usage: TokenUsage, factor: number): TokenUsage => ({
+  input: usage.input * factor,
+  output: usage.output * factor,
+  cacheRead: usage.cacheRead * factor,
+  cacheWrite: usage.cacheWrite * factor,
+});
 
 /** 套用政策：固定的模型、固定的思考強度或關掉思考、輸出上限 */
 function applyPolicy(body: Json, policy: Policy): void {
@@ -293,6 +310,32 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     }
     const release = () => (counts ? store.releaseDaily(account.id, today, kind) : Promise.resolve());
 
+    // 計費：先預扣、後結算（規格 12.39）. 送出前先記下這次最多可能的花費，拿到上游最後的用量再改成實際的
+    const currentPeriod = period();
+    const price = policy.models[model]!;
+    const forwarded = JSON.stringify(body);
+    const reserved = reservation(price, new TextEncoder().encode(forwarded).length, body.max_tokens as number);
+    let reservedOk: Awaited<ReturnType<AccountStore["reserveUsage"]>>;
+    try {
+      reservedOk = await store.reserveUsage(account.id, currentPeriod, reserved.usage, reserved.cost, budgetOf(account), totalBudget);
+    } catch (e) {
+      await release();
+      throw e;
+    }
+    if (reservedOk !== "ok") {
+      await release();
+      return reservedOk === "beta_budget"
+        ? errorResponse(403, "beta_budget", "這個月的免費額度用完了，下個月 1 日恢復", { resets_at: nextPeriodStart() })
+        : errorResponse(403, "account_budget", "你這個月的免費額度用完了，下個月 1 日恢復", { resets_at: nextPeriodStart() });
+    }
+    const keep = (promise: Promise<void>): Promise<void> => {
+      const write = promise.catch((e) => log(`usage write failed for ${account.id}: ${e instanceof Error ? e.message : String(e)}`));
+      deps.waitUntil?.(write);
+      return write;
+    };
+    /** 上游回錯誤、沒有產生回覆：退回預扣 */
+    const refund = () => keep(store.adjustUsage(account.id, currentPeriod, scale(reserved.usage, -1), -reserved.cost, -1));
+
     let upstream: Response;
     try {
       upstream = await fetchImpl(upstreamUrl, {
@@ -302,10 +345,10 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
           "x-api-key": deps.upstream.apiKey,
           "anthropic-version": request.headers.get("anthropic-version") ?? "2023-06-01",
         },
-        body: JSON.stringify(body),
+        body: forwarded,
       });
     } catch (e) {
-      await release();
+      await Promise.all([release(), refund()]);
       throw e;
     }
 
@@ -315,34 +358,46 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
       if (value) headers.set(name, value);
     }
 
-    const currentPeriod = period();
-    const record = (usage: TokenUsage): Promise<void> => {
-      const cost = costMicroUsd(policy.models[model]!, usage);
+    /**
+     * 結算：拿到最後的用量就改成實際的（多退少補）；沒拿到的（下游中斷、上游出錯、串流提早結束）維持預扣的輸出，
+     * 已知的輸入照實際的. Worker 在這之前被取消的，就停在預扣的數字
+     */
+    const settle = ({ usage, final, inputKnown }: MeterResult): Promise<void> => {
+      const actual: TokenUsage = final ? usage : inputKnown ? { ...usage, output: reserved.usage.output } : reserved.usage;
+      const cost = final || inputKnown ? costMicroUsd(price, actual) : reserved.cost;
       log(
-        `${account.id} ${model} ${upstream.status} ${kind}${counts ? "" : "+"} in=${usage.input + usage.cacheRead + usage.cacheWrite}` +
-          ` out=${usage.output} cost_microusd=${cost}`,
+        `${account.id} ${model} ${upstream.status} ${kind}${counts ? "" : "+"} in=${actual.input + actual.cacheRead + actual.cacheWrite}` +
+          ` out=${actual.output} cost_microusd=${cost}${final ? "" : " (estimated)"}`,
       );
-      const write = store
-        .addUsage(account.id, currentPeriod, usage, cost)
-        .catch((e) => log(`usage write failed for ${account.id}: ${e instanceof Error ? e.message : String(e)}`));
-      deps.waitUntil?.(write);
-      return write;
+      const delta: TokenUsage = {
+        input: actual.input - reserved.usage.input,
+        output: actual.output - reserved.usage.output,
+        cacheRead: actual.cacheRead - reserved.usage.cacheRead,
+        cacheWrite: actual.cacheWrite - reserved.usage.cacheWrite,
+      };
+      return keep(store.adjustUsage(account.id, currentPeriod, delta, cost - reserved.cost));
     };
 
     if (!upstream.ok || !upstream.body) {
       log(`${account.id} ${model} ${upstream.status}`);
       // 沒有產生回覆：不扣這一次
-      await release();
+      await Promise.all([release(), refund()]);
       return new Response(upstream.body, { status: upstream.status, headers });
     }
     if (upstream.headers.get("content-type")?.includes("text/event-stream")) {
       return new Response(
-        meterSseStream(upstream.body, (usage) => void record(usage)),
+        meterSseStream(upstream.body, (result) => void settle(result)),
         { status: upstream.status, headers },
       );
     }
-    const text = await upstream.text();
-    await record(usageFromJson(text));
+    let text: string;
+    try {
+      text = await upstream.text();
+    } catch (e) {
+      await settle({ usage: emptyUsage(), final: false, inputKnown: false });
+      throw e;
+    }
+    await settle(usageFromJson(text));
     return new Response(text, { status: upstream.status, headers });
   }
 

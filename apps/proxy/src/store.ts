@@ -459,6 +459,65 @@ export class AccountStore {
     );
   }
 
+  /**
+   * 預扣（規格 12.39 的「計費：先預扣、後結算」）：這個月的花費還沒到上限時，把這次最多可能的用量與花費加進帳號與總計，回傳 "ok".
+   * 比較與相加在同一個敘述裡，同時很多請求也不會一起越過上限. 到了上限回傳是哪一個（beta_budget 是總預算）.
+   * totalBudget 是 null 時總計不設上限
+   */
+  async reserveUsage(
+    accountId: string,
+    period: string,
+    usage: TokenUsage,
+    cost: number,
+    accountBudget: number,
+    totalBudget: number | null,
+  ): Promise<"ok" | "account_budget" | "beta_budget"> {
+    await this.driver.run("INSERT INTO totals (period) VALUES (?) ON CONFLICT(period) DO NOTHING", [period]);
+    const total = await this.driver.run(
+      `UPDATE totals SET requests = requests + 1, cost_microusd = cost_microusd + ?
+       WHERE period=? AND (? IS NULL OR cost_microusd < ?)`,
+      [cost, period, totalBudget, totalBudget],
+    );
+    if (total.changes === 0) return "beta_budget";
+
+    await this.driver.run("INSERT INTO usage (account_id, period) VALUES (?, ?) ON CONFLICT(account_id, period) DO NOTHING", [accountId, period]);
+    const own = await this.driver.run(
+      `UPDATE usage SET
+         requests           = requests + 1,
+         input_tokens       = input_tokens + ?,
+         output_tokens      = output_tokens + ?,
+         cache_read_tokens  = cache_read_tokens + ?,
+         cache_write_tokens = cache_write_tokens + ?,
+         cost_microusd      = cost_microusd + ?
+       WHERE account_id=? AND period=? AND cost_microusd < ?`,
+      [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, cost, accountId, period, accountBudget],
+    );
+    if (own.changes === 0) {
+      await this.driver.run("UPDATE totals SET requests = requests - 1, cost_microusd = cost_microusd - ? WHERE period=?", [cost, period]);
+      return "account_budget";
+    }
+    return "ok";
+  }
+
+  /**
+   * 結算或退回預扣：把差額（可以是負的）加到帳號與總計上；requests 是次數的差（退回時 -1）.
+   * 單一敘述做加減，不先讀再寫，並行的請求不會互相覆蓋. 帳號在請求進行中被刪掉的，只調整總計
+   */
+  async adjustUsage(accountId: string, period: string, delta: TokenUsage, cost: number, requests = 0): Promise<void> {
+    await this.driver.run(
+      `UPDATE usage SET
+         requests           = requests + ?,
+         input_tokens       = input_tokens + ?,
+         output_tokens      = output_tokens + ?,
+         cache_read_tokens  = cache_read_tokens + ?,
+         cache_write_tokens = cache_write_tokens + ?,
+         cost_microusd      = cost_microusd + ?
+       WHERE account_id=? AND period=?`,
+      [requests, delta.input, delta.output, delta.cacheRead, delta.cacheWrite, cost, accountId, period],
+    );
+    await this.driver.run("UPDATE totals SET requests = requests + ?, cost_microusd = cost_microusd + ? WHERE period=?", [requests, cost, period]);
+  }
+
   /** 刪掉過期的紀錄：day 早於 oldestDay 的每天次數、period 早於 oldestPeriod 的每月用量與合計 */
   async purge(oldestDay: string, oldestPeriod: string, now = new Date()): Promise<{ daily: number; monthly: number }> {
     const daily = (await this.driver.run("DELETE FROM daily_usage WHERE day < ?", [oldestDay])).changes;

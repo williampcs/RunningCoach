@@ -21,36 +21,51 @@ function merge(usage: TokenUsage, wire: WireUsage | undefined | null): void {
   if (typeof wire.cache_creation_input_tokens === "number") usage.cacheWrite = wire.cache_creation_input_tokens;
 }
 
+/**
+ * 從回應讀到的用量.
+ * final：拿到了上游最後的用量（非串流的 usage、串流的 message_delta）；inputKnown：至少知道輸入的用量（串流的 message_start）.
+ * 沒有 final 時，輸出 token 只是到那時為止的數字，計費照預扣的算（handler.ts）
+ */
+export interface MeterResult {
+  usage: TokenUsage;
+  final: boolean;
+  inputKnown: boolean;
+}
+
 /** 非串流回應 */
-export function usageFromJson(text: string): TokenUsage {
+export function usageFromJson(text: string): MeterResult {
   const usage = emptyUsage();
+  let wire: WireUsage | undefined;
   try {
-    merge(usage, (JSON.parse(text) as { usage?: WireUsage }).usage);
+    wire = (JSON.parse(text) as { usage?: WireUsage }).usage;
+    merge(usage, wire);
   } catch {
     // 上游回了非 JSON 的內容：沒有可計的用量
   }
-  return usage;
+  const final = typeof wire?.output_tokens === "number";
+  return { usage, final, inputKnown: final || typeof wire?.input_tokens === "number" };
 }
 
 /**
  * 串流回應：位元組原樣往下游送，同時掃描 message_start / message_delta 事件中的 usage。
- * 串流結束、出錯或下游中斷時呼叫一次 onDone。
- * 下游提早中斷時，輸出 token 只算到最後一個已送達的 message_delta，可能少計。
+ * 串流結束、出錯或下游中斷時呼叫一次 onDone；沒有讀到 message_delta 的用量就結束的，final 是 false.
  */
 export function meterSseStream(
   body: ReadableStream<Uint8Array>,
-  onDone: (usage: TokenUsage) => void,
+  onDone: (result: MeterResult) => void,
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const usage = emptyUsage();
   let buffer = "";
   let finished = false;
+  let final = false;
+  let inputKnown = false;
 
   const finish = () => {
     if (finished) return;
     finished = true;
-    onDone(usage);
+    onDone({ usage, final, inputKnown });
   };
 
   const scan = (chunk: Uint8Array) => {
@@ -63,9 +78,12 @@ export function meterSseStream(
       // 只解析帶有 usage 的事件，其餘（文字增量等）直接略過
       if (!line.includes('"usage"')) continue;
       try {
-        const event = JSON.parse(line.slice(5)) as { usage?: WireUsage; message?: { usage?: WireUsage } };
+        const event = JSON.parse(line.slice(5)) as { type?: string; usage?: WireUsage; message?: { usage?: WireUsage } };
         merge(usage, event.message?.usage);
         merge(usage, event.usage);
+        if (typeof event.message?.usage?.input_tokens === "number" || typeof event.usage?.input_tokens === "number") inputKnown = true;
+        // message_delta 帶的是最後的累計用量
+        if (event.type === "message_delta" && typeof event.usage?.output_tokens === "number") final = true;
       } catch {
         // 不完整或非 JSON 的 data 行
       }

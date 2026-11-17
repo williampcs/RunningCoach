@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AnthropicProvider } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
-import { createProxy, type ProxyDeps } from "../src/handler";
+import { createProxy, reservation, type ProxyDeps } from "../src/handler";
 import { DEFAULT_POLICY, type Policy } from "../src/policy";
 import { serve } from "../src/server";
 import { AccountStore } from "../src/store";
@@ -118,6 +118,9 @@ function messages(token: string | null, body: unknown = validBody, headers: Reco
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
+
+/** 等背景的寫入做完 */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 async function errorOf(response: Response) {
   return { status: response.status, ...((await response.json()) as { error: { type: string; message: string } }).error };
@@ -341,15 +344,172 @@ describe("串流", () => {
     expect(await store.getUsage(id, "2026-10")).toMatchObject({ requests: 1, input: 800, cacheRead: 200, output: 120 });
   });
 
-  it("下游提早中斷時仍記錄已知的用量", async () => {
+  it("下游在最後的用量之前中斷：輸入照實際的，輸出照預扣的上限計，log 標明是估的", async () => {
     const proxy = makeProxy({ fetch: sseUpstream(events) });
     const { id, token } = await createAccount(proxy);
     const response = await proxy(messages(token, { ...validBody, stream: true }));
     const reader = response.body!.getReader();
     await reader.read();
     await reader.cancel();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(await store.getUsage(id, "2026-10")).toMatchObject({ requests: 1, input: 800, cacheRead: 200, output: 1 });
+    await settled();
+    // sonnet：800×2 + 200×0.2 + 16000×10 = 161,640
+    expect(await store.getUsage(id, "2026-10")).toEqual({ requests: 1, input: 800, cacheRead: 200, cacheWrite: 0, output: 16000, costMicroUsd: 161_640 });
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 1, costMicroUsd: 161_640 });
+    expect(logs.at(-1)).toMatch(/ in=1000 out=16000 cost_microusd=161640 \(estimated\)$/);
+  });
+});
+
+describe("計費：先預扣、後結算", () => {
+  const start = `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":800,"output_tokens":1}}}\n\n`;
+  const delta = `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"今天"}}\n\n`;
+  const end = `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":120}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n`;
+  const encode = (text: string) => new TextEncoder().encode(text);
+
+  /** 上游：先送 chunks；then 決定之後怎麼結束（close、error 或一直不結束） */
+  function streamUpstream(chunks: string[], then: "close" | "error" | "hang", contentType = "text/event-stream") {
+    return (async (url: string | URL | Request, init?: RequestInit) => {
+      upstreamCalls.push({ url: String(url), headers: {}, body: JSON.parse(String(init?.body)) });
+      const queue = [...chunks];
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          // 一次送一段：送完之前出錯的話，已送的那幾段下游都讀得到
+          pull(controller) {
+            const chunk = queue.shift();
+            if (chunk !== undefined) return controller.enqueue(encode(chunk));
+            if (then === "close") controller.close();
+            if (then === "error") controller.error(new Error("upstream reset"));
+            if (then === "hang") return new Promise<void>(() => undefined);
+          },
+        }),
+        { headers: { "content-type": contentType } },
+      );
+    }) as unknown as typeof fetch;
+  }
+
+  /** 這次請求預扣的用量與花費（照實際轉發出去的內容算） */
+  const reservedFor = (call: UpstreamCall) =>
+    reservation(BASE_POLICY.models[call.body.model]!, encode(JSON.stringify(call.body)).length, call.body.max_tokens);
+
+  it("預扣：輸出照套用政策後的 max_tokens，輸入照請求的位元組數、用最貴的輸入價", () => {
+    // sonnet：輸入最貴的是快取寫入 2×1.25 = 2.5
+    expect(reservation(BASE_POLICY.models["claude-sonnet-5-5"]!, 1000, 16000)).toEqual({
+      usage: { input: 1000, output: 16000, cacheRead: 0, cacheWrite: 0 },
+      cost: 1000 * 2.5 + 16000 * 10,
+    });
+  });
+
+  it("正常的串流：結算成實際的花費，總計也一樣", async () => {
+    const proxy = makeProxy({ fetch: streamUpstream([start, delta, end], "close") });
+    const { id, token } = await createAccount(proxy);
+    await (await proxy(messages(token, { ...validBody, stream: true }))).text();
+    await settled();
+    // 800×2 + 120×10 = 2,800
+    expect(await store.getUsage(id, "2026-10")).toEqual({ requests: 1, input: 800, output: 120, cacheRead: 0, cacheWrite: 0, costMicroUsd: 2800 });
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 1, costMicroUsd: 2800 });
+    expect(logs.at(-1)).toMatch(/ in=800 out=120 cost_microusd=2800$/);
+  });
+
+  it("上游中途出錯：維持預扣的輸出，已知的輸入照實際的", async () => {
+    const proxy = makeProxy({ fetch: streamUpstream([start, delta], "error") });
+    const { id, token } = await createAccount(proxy);
+    const response = await proxy(messages(token, { ...validBody, stream: true }));
+    await expect(response.text()).rejects.toThrow();
+    await settled();
+    expect(await store.getUsage(id, "2026-10")).toMatchObject({ requests: 1, input: 800, output: 16000, costMicroUsd: 800 * 2 + 16000 * 10 });
+  });
+
+  it("上游提早結束（沒有最後的用量）：維持預扣的輸出", async () => {
+    const proxy = makeProxy({ fetch: streamUpstream([start, delta], "close") });
+    const { id, token } = await createAccount(proxy);
+    await (await proxy(messages(token, { ...validBody, stream: true }))).text();
+    await settled();
+    expect(await store.getUsage(id, "2026-10")).toMatchObject({ requests: 1, input: 800, output: 16000, costMicroUsd: 800 * 2 + 16000 * 10 });
+    expect(logs.at(-1)).toMatch(/\(estimated\)$/);
+  });
+
+  it("連輸入都還不知道就斷了：整個維持預扣", async () => {
+    const proxy = makeProxy({ fetch: streamUpstream([], "error") });
+    const { id, token } = await createAccount(proxy);
+    await expect((await proxy(messages(token, { ...validBody, stream: true }))).text()).rejects.toThrow();
+    await settled();
+    const reserved = reservedFor(upstreamCalls[0]!);
+    expect(await store.getUsage(id, "2026-10")).toEqual({ requests: 1, ...reserved.usage, costMicroUsd: reserved.cost });
+  });
+
+  it("非串流：讀回應時出錯就維持預扣；請求進行中（還沒結算）就已經記上預扣的花費", async () => {
+    const failing = makeProxy({ fetch: streamUpstream(['{"id":"msg_1",'], "error", "application/json") });
+    const a = await createAccount(failing);
+    expect((await failing(messages(a.token))).status).toBe(502);
+    const reserved = reservedFor(upstreamCalls[0]!);
+    expect(await store.getUsage(a.id, "2026-10")).toEqual({ requests: 1, ...reserved.usage, costMicroUsd: reserved.cost });
+
+    // 上游一直不回（Worker 在這時被取消也一樣停在這裡）
+    const hanging = makeProxy({ fetch: streamUpstream([], "hang", "application/json") });
+    const b = await createAccount(hanging);
+    void hanging(messages(b.token));
+    await settled();
+    expect(await store.getUsage(b.id, "2026-10")).toMatchObject({ requests: 1, costMicroUsd: reservedFor(upstreamCalls[1]!).cost });
+  });
+
+  it("同一個帳號同時送很多個：預扣在進行中就看得到，超過額度的新請求擋下、不呼叫上游", async () => {
+    // 一次的預扣約 $0.16，預算 $0.2：第一個進行中時已經用掉 $0.16，第二個還能送；之後的都擋下
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    const gated = (async (url: string | URL | Request, init?: RequestInit) => {
+      upstreamCalls.push({ url: String(url), headers: {}, body: JSON.parse(String(init?.body)) });
+      await gate;
+      return jsonUpstream()(url, init);
+    }) as unknown as typeof fetch;
+    const proxy = makeProxy({ fetch: gated });
+    const { id, token } = await createAccount(proxy, { monthly_budget_usd: 0.2 });
+    const pending = [1, 2, 3, 4, 5].map(() => proxy(messages(token)));
+    await settled();
+    // 前兩個：0 < 0.2、0.16 < 0.2 → 預扣成功；第三個起 0.32 ≥ 0.2
+    expect(upstreamCalls).toHaveLength(2);
+    expect((await store.getUsage(id, "2026-10")).costMicroUsd).toBe(2 * reservedFor(upstreamCalls[0]!).cost);
+    finish();
+    const results = await Promise.all(pending);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 403, 403, 403]);
+    for (const r of results.filter((r) => r.status === 403)) expect((await errorOf(r)).type).toBe("account_budget");
+    // 結算後是兩次實際的花費（各 $0.004），擋下的不算
+    expect(await store.getUsage(id, "2026-10")).toMatchObject({ requests: 2, input: 2000, output: 400, costMicroUsd: 8000 });
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 2, costMicroUsd: 8000 });
+  });
+
+  it("總預算也在進行中就看得到", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    const gated = (async (url: string | URL | Request, init?: RequestInit) => {
+      upstreamCalls.push({ url: String(url), headers: {}, body: JSON.parse(String(init?.body)) });
+      await gate;
+      return jsonUpstream()(url, init);
+    }) as unknown as typeof fetch;
+    const proxy = makeProxy({ fetch: gated, policy: { ...BASE_POLICY, totalMonthlyBudgetUsd: 0.1 } });
+    const a = await createAccount(proxy);
+    const b = await createAccount(proxy);
+    const first = proxy(messages(a.token));
+    await settled();
+    const blocked = await proxy(messages(b.token));
+    expect(await errorOf(blocked)).toMatchObject({ status: 403, type: "beta_budget" });
+    expect(upstreamCalls).toHaveLength(1);
+    // 擋下的那個帳號沒有記到任何花費
+    expect((await store.getUsage(b.id, "2026-10")).costMicroUsd).toBe(0);
+    finish();
+    expect((await first).status).toBe(200);
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 1, costMicroUsd: 4000 });
+  });
+
+  it("上游回錯誤或連不上：退回預扣，不扣這一次", async () => {
+    const proxy = makeProxy({ fetch: jsonUpstream({}, 529) as typeof fetch });
+    const { id, token } = await createAccount(proxy);
+    await proxy(messages(token));
+    expect(await store.getUsage(id, "2026-10")).toEqual({ requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costMicroUsd: 0 });
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 0, costMicroUsd: 0 });
+
+    const offline = makeProxy({ fetch: (async () => Promise.reject(new Error("connect failed"))) as unknown as typeof fetch });
+    expect((await offline(messages(token))).status).toBe(502);
+    expect((await store.getUsage(id, "2026-10")).costMicroUsd).toBe(0);
+    expect(await store.getTotal("2026-10")).toEqual({ requests: 0, costMicroUsd: 0 });
   });
 });
 
