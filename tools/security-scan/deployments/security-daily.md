@@ -7,7 +7,7 @@ name: security-daily
 agent: ../agents/security-daily.md
 environment_id: ../environments/security-scan.yaml
 vault_ids:
-  - YOUR_VAULT_ID
+  - vlt_011Ch7ivpu9qVtVKi4Ukpqvm
 resources:
   - path: ../memory_stores/security-scan-state.yaml
     access: read_write

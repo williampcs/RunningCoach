@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "origin": {
+    "base_url": "https://api.anthropic.com",
+    "organization_id": "9042700c-f5dd-4d95-9e37-b3a06cacbb70",
+    "workspace_id": "wrkspc_01HK8KcW5ZQD6iQBFdfdZP4G"
+  },
+  "resources": {
+    "./agents/security-daily.md": {
+      "kind": "agent",
+      "id": "agent_013yd1SyNg1wLRQhrHFuPZGM",
+      "version": "2",
+      "hash": "697676045ed6a124f47a6441cb8f32ad",
+      "remote_hash": "77645f7141e1f938cbeb5c04b4139163",
+      "stamp": "2"
+    },
+    "./agents/security-deep.md": {
+      "kind": "agent",
+      "id": "agent_01YNuFcH5STnHxUZLmLCvsTi",
+      "version": "2",
+      "hash": "b1f276af527a7c022fdda2141d9f3da8",
+      "remote_hash": "364799049de5fad51d4c93cca23761eb",
+      "stamp": "2"
+    },
+    "./deployments/security-daily.md": {
+      "kind": "deployment",
+      "id": "depl_01Gwe7vBiUVtgHJx2EQRAnw2",
+      "hash": "7a6b87e372d95d8f46094cd5d7f94a44",
+      "remote_hash": "7a6b87e372d95d8f46094cd5d7f94a44",
+      "stamp": "2026-11-17T03:34:13.427138Z"
+    },
+    "./deployments/security-deep.md": {
+      "kind": "deployment",
+      "id": "depl_018nweeuYaPB94yVKh8DPGpX",
+      "hash": "0a2f51334033d4215f036637cd843a32",
+      "remote_hash": "0a2f51334033d4215f036637cd843a32",
+      "stamp": "2026-11-17T03:34:13.928768Z"
+    },
+    "./environments/security-scan.yaml": {
+      "kind": "environment",
+      "id": "env_01BqfXkjeRtvspKG4hcrhk7p",
+      "hash": "45ad3ab1abc4a1eadabf2941e3124cf1",
+      "remote_hash": "d64afd39d2441501602b7a0c426c9d9c",
+      "stamp": "2026-11-17T02:37:43.683783Z"
+    },
+    "./memory_stores/security-scan-state.yaml": {
+      "kind": "memory_store",
+      "id": "memstore_01Nd6Zwn3TxpyJqenbuvzBUG",
+      "hash": "4ecb825b2b50da02dd9478915e4af541",
+      "remote_hash": "4ecb825b2b50da02dd9478915e4af541",
+      "stamp": "2026-11-17T02:37:44.107344Z"
+    },
+    "./vaults/security-scan.yaml": {
+      "kind": "vault",
+      "id": "vlt_011Ch7ivpu9qVtVKi4Ukpqvm",
+      "hash": "cfae1383758ed12c71279ee3608fd47e",
+      "remote_hash": "cfae1383758ed12c71279ee3608fd47e",
+      "stamp": "2026-11-17T02:37:44.453512Z"
+    }
+  }
+}
