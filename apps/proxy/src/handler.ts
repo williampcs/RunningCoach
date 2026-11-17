@@ -8,6 +8,8 @@
  * 帳號的復原密鑰（規格 12.44 第 1 步）：裝置產生後放進選手加密的同步；新裝置用它換自己的憑證（POST /v1/recover）.
  * 代理只存雜湊，不知道同步空間；同步服務只看到密文.
  */
+import { MemoryRateLimiter, hashSource, sourceIp, type RateLimiter } from "@running-coach/core/rate-limit";
+
 import { emptyUsage, meterSseStream, usageFromJson, type MeterResult } from "./metering";
 import { costMicroUsd, usdToMicro, type ModelPrice, type Policy, type TokenUsage } from "./policy";
 import type { Account, AccountStore, DailyKind, Invite } from "./store";
@@ -26,6 +28,10 @@ export interface ProxyDeps {
   waitUntil?: (promise: Promise<unknown>) => void;
   /** 只會收到帳號、模型、狀態碼與 token 數，不含任何請求或回應內容 */
   log?: (line: string) => void;
+  /**
+   * 每分鐘次數的計數. Workers 用 D1 的（所有執行個體共用，SqlRateLimiter）；沒有給時用這個執行個體記憶體裡的（本機、測試）
+   */
+  rateLimiter?: RateLimiter;
 }
 
 // 允許轉發的請求欄位。其餘欄位（加價的 speed、service_tier、container 等）一律拒絕
@@ -112,6 +118,61 @@ function presentedToken(request: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
+/** 教練會送的內容區塊：文字、工具呼叫與結果、模型回的思考（原封不動送回）. 圖片、文件等其他的一律拒絕 */
+const MESSAGE_BLOCKS = new Set(["text", "tool_use", "tool_result", "thinking", "redacted_thinking"]);
+
+const isObject = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** 只能是文字的地方（system、工具結果的內容）：字串或文字區塊的陣列 */
+function textOnly(value: unknown, where: string): string | null {
+  if (typeof value === "string") return null;
+  if (!Array.isArray(value)) return `${where} 必須是字串或陣列`;
+  for (const block of value) {
+    if (!isObject(block) || block.type !== "text") return `${where} 只接受文字區塊`;
+  }
+  return null;
+}
+
+/** 檢查 system 與 messages 的內容區塊類型（只看類型，不讀內容） */
+function validateContent(body: Json): string | null {
+  if (body.system !== undefined) {
+    const problem = textOnly(body.system, "system");
+    if (problem) return problem;
+  }
+  for (const message of body.messages as unknown[]) {
+    if (!isObject(message) || (message.role !== "user" && message.role !== "assistant")) return "messages 的每一則要有 role（user 或 assistant）";
+    if (typeof message.content === "string") continue;
+    if (!Array.isArray(message.content)) return "messages 的 content 必須是字串或陣列";
+    for (const block of message.content as unknown[]) {
+      if (!isObject(block) || typeof block.type !== "string" || !MESSAGE_BLOCKS.has(block.type)) {
+        return `不支援的內容類型：${isObject(block) ? String(block.type) : typeof block}`;
+      }
+      if (block.type === "tool_result" && block.content !== undefined) {
+        const problem = textOnly(block.content, "tool_result 的 content");
+        if (problem) return problem;
+      }
+    }
+  }
+  return null;
+}
+
+/** 快取一律用預設的 5 分鐘：拿掉 cache_control 的其他設定（例如 ttl），計費和預扣照 5 分鐘的價格 */
+function normalizeCacheControl(body: Json): void {
+  const fix = (holder: unknown) => {
+    if (isObject(holder) && holder.cache_control !== undefined) holder.cache_control = { type: "ephemeral" };
+  };
+  fix(body);
+  if (Array.isArray(body.system)) body.system.forEach(fix);
+  if (Array.isArray(body.tools)) body.tools.forEach(fix);
+  for (const message of body.messages as unknown[]) {
+    if (!isObject(message) || !Array.isArray(message.content)) continue;
+    for (const block of message.content as unknown[]) {
+      fix(block);
+      if (isObject(block) && Array.isArray(block.content)) block.content.forEach(fix);
+    }
+  }
+}
+
 /** 回傳拒絕原因；通過時回傳 null */
 function validateBody(body: Json, policy: Policy): string | null {
   for (const key of Object.keys(body)) {
@@ -125,6 +186,8 @@ function validateBody(body: Json, policy: Policy): string | null {
     return "max_tokens 必須是正整數";
   }
   if (!Array.isArray(body.messages)) return "messages 必須是陣列";
+  const content = validateContent(body);
+  if (content) return content;
   if (body.tools !== undefined) {
     if (!Array.isArray(body.tools)) return "tools 必須是陣列";
     for (const tool of body.tools as Json[]) {
@@ -163,8 +226,9 @@ const scale = (usage: TokenUsage, factor: number): TokenUsage => ({
   cacheWrite: usage.cacheWrite * factor,
 });
 
-/** 套用政策：固定的模型、固定的思考強度或關掉思考、輸出上限 */
+/** 套用政策：固定的模型、固定的思考強度或關掉思考、輸出上限、快取的時間 */
 function applyPolicy(body: Json, policy: Policy): void {
+  normalizeCacheControl(body);
   if (policy.forceModel !== null) body.model = policy.forceModel;
   if ((body.max_tokens as number) > policy.maxOutputTokens) body.max_tokens = policy.maxOutputTokens;
   if (policy.disableThinking) {
@@ -191,20 +255,11 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
   const log = deps.log ?? (() => undefined);
   const upstreamUrl = `${deps.upstream.baseUrl.replace(/\/+$/, "")}/v1/messages`;
 
-  // 每分鐘次數：以執行個體的記憶體計數，屬盡力而為；多個體部署時應改用平台的限流機制
-  const windows = new Map<string, { minute: number; count: number }>();
-  function overLimit(key: string, limit: number): boolean {
-    const minute = Math.floor(now().getTime() / 60_000);
-    const window = windows.get(key);
-    if (!window || window.minute !== minute) {
-      // 換分鐘時清掉舊的，不讓表一直長大
-      if (windows.size > 10_000) windows.clear();
-      windows.set(key, { minute, count: 1 });
-      return 1 > limit;
-    }
-    window.count += 1;
-    return window.count > limit;
-  }
+  // 每分鐘次數：Workers 上每個請求可能在不同的執行個體，計數要放在共用的地方（worker.ts 給 D1 的）
+  const limiter = deps.rateLimiter ?? new MemoryRateLimiter(() => now().getTime());
+  const overLimit = async (key: string, limit: number) => !(await limiter.take(`proxy:${key}`, { limit, windowMs: 60_000 }));
+  /** 兌換邀請碼、連結碼與取回共用每個來源 IP 的次數；IP 只以雜湊計數，不寫進儲存的其他地方或日誌 */
+  const overRedeemLimit = async (request: Request) => overLimit(`redeem:${await hashSource(sourceIp(request))}`, policy.redeemsPerMinute);
 
   function corsHeaders(request: Request): Record<string, string> {
     const origin = request.headers.get("origin");
@@ -239,7 +294,12 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
 
   const budgetOf = (account: Account) => account.monthlyBudgetMicroUsd ?? usdToMicro(policy.defaultMonthlyBudgetUsd);
   const totalBudget = policy.totalMonthlyBudgetUsd === null ? null : usdToMicro(policy.totalMonthlyBudgetUsd);
-  const dailyLimit: Record<DailyKind, number> = { chat: policy.dailyMessages, auto: policy.dailyAuto, compress: policy.dailyCompress };
+  const dailyLimit: Record<DailyKind, number> = {
+    chat: policy.dailyMessages,
+    auto: policy.dailyAuto,
+    compress: policy.dailyCompress,
+    tool: policy.dailyToolTurns ?? policy.dailyMessages * 10,
+  };
 
   /** 帳號加上這次用的是哪一台的憑證 */
   type Authed = Account & { tokenId: string };
@@ -271,7 +331,7 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
   async function handleMessages(request: Request): Promise<Response> {
     const account = await authenticate(request);
     if (account instanceof Response) return account;
-    if (overLimit(`acct:${account.id}`, policy.requestsPerMinute)) {
+    if (await overLimit(`acct:${account.id}`, policy.requestsPerMinute)) {
       return errorResponse(429, "rate_limit_error", "請求太頻繁，請稍後再試", undefined, { "retry-after": "30" });
     }
 
@@ -296,19 +356,19 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     const budget = await budgetProblem(account);
     if (budget) return budget;
 
-    // 每天的次數（規格 12.39）：客戶端用 x-coach-meter 說這次是哪一種，沒有帶的照對話算
+    // 每天的次數（規格 12.39）：客戶端用 x-coach-meter 說這次是哪一種，沒有帶的照對話算；
+    // 對話裡不是新的一則的（工具迴圈的接續）另外算，上限比較寬
     const meter = request.headers.get("x-coach-meter");
-    const kind: DailyKind = meter === "auto" || meter === "compress" ? meter : "chat";
-    const counts = kind !== "chat" || isNewTurn(body.messages as unknown[]);
+    const kind: DailyKind = meter === "auto" || meter === "compress" ? meter : isNewTurn(body.messages as unknown[]) ? "chat" : "tool";
     const today = day();
-    if (counts && !(await store.reserveDaily(account.id, today, kind, dailyLimit[kind]))) {
+    if (!(await store.reserveDaily(account.id, today, kind, dailyLimit[kind]))) {
       const resets_at = nextDayStart();
-      if (kind === "chat") {
+      if (kind === "chat" || kind === "tool") {
         return errorResponse(403, "daily_limit", `今天的 ${policy.dailyMessages} 則用完了，明天 00:00 恢復`, { resets_at, limit: policy.dailyMessages });
       }
       return errorResponse(403, "daily_auto_limit", "今天自動分析的次數用完了，明天 00:00 恢復", { resets_at, limit: dailyLimit[kind] });
     }
-    const release = () => (counts ? store.releaseDaily(account.id, today, kind) : Promise.resolve());
+    const release = () => store.releaseDaily(account.id, today, kind);
 
     // 計費：先預扣、後結算（規格 12.39）. 送出前先記下這次最多可能的花費，拿到上游最後的用量再改成實際的
     const currentPeriod = period();
@@ -362,12 +422,14 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
      * 結算：拿到最後的用量就改成實際的（多退少補）；沒拿到的（下游中斷、上游出錯、串流提早結束）維持預扣的輸出，
      * 已知的輸入照實際的. Worker 在這之前被取消的，就停在預扣的數字
      */
-    const settle = ({ usage, final, inputKnown }: MeterResult): Promise<void> => {
-      const actual: TokenUsage = final ? usage : inputKnown ? { ...usage, output: reserved.usage.output } : reserved.usage;
-      const cost = final || inputKnown ? costMicroUsd(price, actual) : reserved.cost;
+    const settle = ({ usage, final, inputKnown, upstreamError }: MeterResult): Promise<void> => {
+      // 上游以 error 事件結束（例如過載）：上游停在那裡，照讀到的最後數字算，不照最多的輸出
+      const known = final || upstreamError === true;
+      const actual: TokenUsage = known ? usage : inputKnown ? { ...usage, output: reserved.usage.output } : reserved.usage;
+      const cost = known || inputKnown ? costMicroUsd(price, actual) : reserved.cost;
       log(
-        `${account.id} ${model} ${upstream.status} ${kind}${counts ? "" : "+"} in=${actual.input + actual.cacheRead + actual.cacheWrite}` +
-          ` out=${actual.output} cost_microusd=${cost}${final ? "" : " (estimated)"}`,
+        `${account.id} ${model} ${upstream.status} ${kind} in=${actual.input + actual.cacheRead + actual.cacheWrite}` +
+          ` out=${actual.output} cost_microusd=${cost}${final ? "" : upstreamError ? " (upstream error)" : " (estimated)"}`,
       );
       const delta: TokenUsage = {
         input: actual.input - reserved.usage.input,
@@ -442,16 +504,13 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     return token;
   }
 
-  const clientIp = (request: Request) =>
-    request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-
   /** 裝置名稱：網頁版給的粗略名稱，只留短短一行 */
   const deviceNameOf = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim().replace(/\s+/g, " ").slice(0, 40) : null);
 
   /** 兌換邀請碼：不用登入；成功時建立帳號，憑證只在這裡回傳一次 */
   async function handleRedeem(request: Request): Promise<Response> {
-    // IP 只在記憶體裡算每分鐘的次數，不寫進儲存或日誌；兌換邀請碼與用連結碼共用
-    if (overLimit(`redeem:${clientIp(request)}`, policy.redeemsPerMinute)) {
+    // 每個來源 IP 每分鐘的次數；兌換邀請碼、連結碼與取回共用
+    if (await overRedeemLimit(request)) {
       return errorResponse(429, "rate_limit_error", "試太多次了，請一分鐘後再試", undefined, { "retry-after": "60" });
     }
     const input = (await request.json().catch(() => ({}))) as Json;
@@ -494,7 +553,7 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
 
   /** 另一台輸入連結碼：拿到自己的憑證（同一個帳號、同一份額度） */
   async function handleLink(request: Request): Promise<Response> {
-    if (overLimit(`redeem:${clientIp(request)}`, policy.redeemsPerMinute)) {
+    if (await overRedeemLimit(request)) {
       return errorResponse(429, "rate_limit_error", "試太多次了，請一分鐘後再試", undefined, { "retry-after": "60" });
     }
     const input = (await request.json().catch(() => ({}))) as Json;
@@ -548,7 +607,7 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
    * 每個 IP 每分鐘的次數和兌換、連結碼共用
    */
   async function checkRecovery(request: Request): Promise<{ account: Account; input: Json } | Response> {
-    if (overLimit(`redeem:${clientIp(request)}`, policy.redeemsPerMinute)) {
+    if (await overRedeemLimit(request)) {
       return errorResponse(429, "rate_limit_error", "試太多次了，請一分鐘後再試", undefined, { "retry-after": "60" });
     }
     const input = (await request.json().catch(() => ({}))) as Json;
@@ -631,7 +690,7 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
       created_at: account.createdAt,
       monthly_budget_usd: budgetOf(account) / 1_000_000,
       usage: { period: currentPeriod, requests: used.requests, cost_usd: used.costMicroUsd / 1_000_000 },
-      today: { messages: daily.chat, auto: daily.auto, compress: daily.compress },
+      today: { messages: daily.chat, auto: daily.auto, compress: daily.compress, tool_turns: daily.tool },
     };
   }
 

@@ -389,7 +389,7 @@ describe("不記內容、刪除帳號、保存期限", () => {
     }
     expect(logs.filter((l) => l.includes("claude-haiku-5-5"))).toEqual([
       expect.stringMatching(/^acct_[0-9a-f]{16} claude-haiku-5-5 200 chat in=1000 out=200 cost_microusd=200$/),
-      expect.stringMatching(/^acct_[0-9a-f]{16} claude-haiku-5-5 200 chat\+ in=1000 out=200 cost_microusd=200$/),
+      expect.stringMatching(/^acct_[0-9a-f]{16} claude-haiku-5-5 200 tool in=1000 out=200 cost_microusd=200$/),
     ]);
   });
 

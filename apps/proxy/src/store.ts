@@ -38,8 +38,8 @@ export interface PeriodUsage extends TokenUsage {
   costMicroUsd: number;
 }
 
-/** 每天的次數：chat 是選手送出的則數，auto 是自動的分析，compress 是對話壓縮 */
-export type DailyKind = "chat" | "auto" | "compress";
+/** 每天的次數：chat 是選手送出的則數，auto 是自動的分析，compress 是對話壓縮，tool 是工具迴圈的接續 */
+export type DailyKind = "chat" | "auto" | "compress" | "tool";
 export type DailyUsage = Record<DailyKind, number>;
 
 export interface Invite {
@@ -123,6 +123,7 @@ const SCHEMA = `
     chat        INTEGER NOT NULL DEFAULT 0,
     auto        INTEGER NOT NULL DEFAULT 0,
     compress    INTEGER NOT NULL DEFAULT 0,
+    tool        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (account_id, day)
   );
 
@@ -134,7 +135,7 @@ const SCHEMA = `
 `;
 
 // 欄位名稱不能用參數帶，只接受這三個
-const DAILY_COLUMN: Record<DailyKind, string> = { chat: "chat", auto: "auto", compress: "compress" };
+const DAILY_COLUMN: Record<DailyKind, string> = { chat: "chat", auto: "auto", compress: "compress", tool: "tool" };
 
 const num = (value: unknown) => Number(value ?? 0);
 const textOrNull = (value: unknown) => (value === null || value === undefined ? null : String(value));
@@ -211,6 +212,15 @@ export class AccountStore {
       } catch (e) {
         // 兩個執行個體同時加：另一個已經加好了就沒事
         if (!(await hasRecovery())) throw e;
+      }
+    }
+    // 工具迴圈的接續另外算：之前建的資料表沒有這一欄
+    const hasTool = async () => (await this.driver.all("PRAGMA table_info(daily_usage)")).some((c) => String(c.name) === "tool");
+    if (!(await hasTool())) {
+      try {
+        await this.driver.run("ALTER TABLE daily_usage ADD COLUMN tool INTEGER NOT NULL DEFAULT 0");
+      } catch (e) {
+        if (!(await hasTool())) throw e;
       }
     }
   }
@@ -404,7 +414,7 @@ export class AccountStore {
 
   async getDaily(accountId: string, day: string): Promise<DailyUsage> {
     const row = (await this.driver.all("SELECT * FROM daily_usage WHERE account_id=? AND day=?", [accountId, day]))[0];
-    return { chat: num(row?.chat), auto: num(row?.auto), compress: num(row?.compress) };
+    return { chat: num(row?.chat), auto: num(row?.auto), compress: num(row?.compress), tool: num(row?.tool) };
   }
 
   /** 還沒到上限時加一並回傳 true；到了上限回傳 false. 加一與比較在同一個敘述裡，並行的請求不會一起超過 */

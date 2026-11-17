@@ -1,7 +1,8 @@
 /** Cloudflare Workers 進入點 — 加密後的紀錄存在 D1. 不記錄任何請求（wrangler 設定也關閉觀測日誌）. */
 import type { Row, SqlValue } from "@running-coach/core";
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 
-import { createSyncHandler } from "./handler";
+import { createSyncHandler, maintain } from "./handler";
 import { handleIntervalsToken, isIntervalsTokenPath } from "./intervals-token";
 import { SyncStore, type SyncSqlDriver } from "./store";
 
@@ -44,9 +45,32 @@ function d1Driver(db: D1Database): SyncSqlDriver {
 }
 
 // 每個執行個體只建立一次資料表
-let ready: Promise<SyncStore> | undefined;
+let ready: Promise<{ store: SyncStore; limiter: SqlRateLimiter }> | undefined;
+
+function storeOf(env: Env) {
+  ready ??= (async () => {
+    const driver = d1Driver(env.DB);
+    const store = new SyncStore(driver);
+    await store.init();
+    // 頻率限制的計數也在同一個 D1：所有執行個體共用
+    const limiter = new SqlRateLimiter(driver);
+    await limiter.init();
+    return { store, limiter };
+  })();
+  return ready;
+}
 
 export default {
+  /** 每小時（wrangler.toml 的 crons）：清掉沒在用的空空間、過期的配對碼與計數；接近上限時留下警告 */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      (async () => {
+        const { store, limiter } = await storeOf(env);
+        await maintain(store, { purgeRates: () => limiter.purge(), log: (line) => (line.startsWith("WARNING") ? console.warn(line) : console.log(line)) });
+      })(),
+    );
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     // 換 token 只轉送，不碰 D1：在初始化同步的資料表之前處理
     if (isIntervalsTokenPath(new URL(request.url).pathname)) {
@@ -56,14 +80,13 @@ export default {
         allowedOrigins: originsOf(env),
       });
     }
-    ready ??= (async () => {
-      const store = new SyncStore(d1Driver(env.DB));
-      await store.init();
-      return store;
-    })();
+    const { store, limiter } = await storeOf(env);
     const handle = createSyncHandler({
-      store: await ready,
+      store,
       allowedOrigins: originsOf(env),
+      rateLimiter: limiter,
+      // 只有數量與被限制的種類，沒有 IP 或內容
+      log: (line) => console.warn(line),
     });
     return handle(request);
   },

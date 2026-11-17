@@ -3,21 +3,28 @@ import { createServer } from "node:http";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
-import { createSyncHandler } from "./handler";
+import { createSyncHandler, maintain } from "./handler";
 import { handleIntervalsToken, isIntervalsTokenPath } from "./intervals-token";
 import { SyncStore } from "./store";
 
 const dbPath = process.env.SYNC_DB_PATH?.trim() || "./data/sync.db";
 if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
-const store = new SyncStore(openNodeSqlite(dbPath));
+const driver = openNodeSqlite(dbPath);
+const store = new SyncStore(driver);
 await store.init();
+const limiter = new SqlRateLimiter(driver);
+await limiter.init();
+// 和 Workers 的排程一樣，每小時整理一次
+const tidy = () => void maintain(store, { purgeRates: () => limiter.purge(), log: (line) => console.log(line) }).catch((e) => console.error(String(e)));
+setInterval(tidy, 3_600_000).unref();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:5173,http://localhost:4173")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const syncHandle = createSyncHandler({ store, allowedOrigins });
+const syncHandle = createSyncHandler({ store, allowedOrigins, rateLimiter: limiter, log: (line) => console.warn(line) });
 // 用 Intervals.icu 登入（規格 12.37）：INTERVALS_CLIENT_ID、INTERVALS_CLIENT_SECRET 有設定時才能用
 const handle = (request: Request) =>
   isIntervalsTokenPath(new URL(request.url).pathname)

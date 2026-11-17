@@ -133,7 +133,8 @@ export class SyncApi {
     // 錯誤訊息用這裡寫好的，不顯示伺服器傳來的文字（伺服器不受信任）
     if (!response.ok) {
       const { error: _ignored, ...detail } = json;
-      throw new SyncApiError(response.status, ERROR_TEXT[response.status] ?? `同步服務發生錯誤（${response.status}）`, detail);
+      const message = detail.state === "rate_limited" ? "同步太頻繁了，請稍後再試" : ERROR_TEXT[response.status];
+      throw new SyncApiError(response.status, message ?? `同步服務發生錯誤（${response.status}）`, detail);
     }
     return json as T;
   }
@@ -383,8 +384,9 @@ export class SyncEngine {
 
     const newRoot = newRootKey();
     const newKeys = await deriveKeys(newRoot);
-    // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）
-    await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1`, undefined, newKeys.token);
+    // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）. 帶上舊空間並用這台的金鑰簽：
+    // 伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制
+    await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}`, undefined, { device: identity, token: newKeys.token });
     const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
     await this.api.request(
       "POST",

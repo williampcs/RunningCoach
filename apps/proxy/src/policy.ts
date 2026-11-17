@@ -39,12 +39,17 @@ export interface Policy {
   dailyAuto: number;
   /** 每天幾次對話壓縮（跟著對話自動發生，畫面上不顯示）；防止被拿來繞過對話的則數 */
   dailyCompress: number;
+  /**
+   * 每天幾次工具迴圈的接續（最後一則只有工具結果、不算新的一則的請求）；null 表示 dailyMessages × 10.
+   * 一則對話通常只有幾輪工具迴圈，這個數字只擋不正常的用法
+   */
+  dailyToolTurns: number | null;
   /** 每天從這個時區的午夜算起（分鐘，台灣 +480）；每月的週期也照這個時區 */
   timeZoneOffsetMinutes: number;
   /** 每天的次數留幾天、每月的用量留幾個月，到期自動刪除 */
   dailyRetentionDays: number;
   monthlyRetentionMonths: number;
-  /** 每個來源 IP 每分鐘最多兌換幾次邀請碼或連結碼（盡力而為） */
+  /** 每個來源 IP 每分鐘最多兌換幾次邀請碼、連結碼或取回（所有執行個體共用的計數） */
   redeemsPerMinute: number;
   /** 連結碼（在另一台裝置使用）幾分鐘內有效 */
   linkCodeMinutes: number;
@@ -75,6 +80,7 @@ export const DEFAULT_POLICY: Policy = {
   dailyMessages: 15,
   dailyAuto: 2,
   dailyCompress: 10,
+  dailyToolTurns: null,
   timeZoneOffsetMinutes: 480,
   dailyRetentionDays: 90,
   monthlyRetentionMonths: 13,
@@ -124,6 +130,9 @@ export function loadPolicy(json: string | undefined): Policy {
   }
   for (const key of ["dailyMessages", "dailyAuto", "dailyCompress", "defaultMonthlyBudgetUsd", "maxOutputTokens"] as const) {
     if (typeof policy[key] !== "number" || !(policy[key] >= 0)) throw new Error(`PROXY_POLICY：${key} 要是不小於 0 的數字`);
+  }
+  if (policy.dailyToolTurns !== null && (typeof policy.dailyToolTurns !== "number" || !(policy.dailyToolTurns >= 0))) {
+    throw new Error("PROXY_POLICY：dailyToolTurns 要是不小於 0 的數字或 null");
   }
   return policy;
 }

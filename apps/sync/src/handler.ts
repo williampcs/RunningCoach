@@ -5,9 +5,11 @@
  * - 裝置（規格 12.27）：空間有登記的裝置之後（裝置模式），每個請求要用那台自己的金鑰簽章，
  *   舊的憑證只能用來登記新裝置. 移除某台＝換金鑰：留下的裝置搬到新的空間，舊空間只回答「搬到哪裡」與「已被移除」.
  *   沒有登記過裝置的空間照舊（舊版的用戶端）
- * 不記錄 IP、標頭或內容；回應不快取.
+ * 依來源 IP 限制建立空間、配對碼與送出的頻率（IP 只以雜湊計數，時間窗過了就刪）；不記錄 IP、標頭或內容；回應不快取.
  */
 import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
+
+import { hashSource, sourceIp, takeAll, type RateLimiter, type RateRule } from "@running-coach/core/rate-limit";
 
 import type { DeviceRow, SyncStore } from "./store";
 
@@ -21,7 +23,38 @@ export interface SyncDeps {
   limits?: Partial<ServiceLimits>;
   /** 冷卻期：加入多久之後才能移除別台、換金鑰、刪除雲端的資料（規格 12.27，24 小時）；測試時可以縮短 */
   cooldownMs?: number;
+  /** 依來源的頻率限制；沒有給時不限制（本機的模擬服務） */
+  rateLimiter?: RateLimiter;
+  rateLimits?: Partial<SyncRateLimits>;
+  /** 只會收到數量（服務已滿、被限制的是哪一種），沒有 IP 或內容 */
+  log?: (line: string) => void;
 }
+
+/** 每個來源 IP 的頻率限制（規格 12.10）：每一種可以有好幾個時間窗 */
+export interface SyncRateLimits {
+  /** 建立同步空間（開始同步、換金鑰） */
+  createSpace: Record<string, RateRule>;
+  /** 建立配對碼 */
+  createPair: Record<string, RateRule>;
+  /** 送出紀錄的次數 */
+  push: Record<string, RateRule>;
+  /** 送出紀錄的位元組 */
+  pushBytes: Record<string, RateRule>;
+}
+
+const MINUTE = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+export const DEFAULT_RATE_LIMITS: SyncRateLimits = {
+  createSpace: { hour: { limit: 10, windowMs: HOUR }, day: { limit: 30, windowMs: DAY } },
+  createPair: { tenMinutes: { limit: 10, windowMs: 10 * MINUTE }, day: { limit: 50, windowMs: DAY } },
+  push: { minute: { limit: 120, windowMs: MINUTE } },
+  pushBytes: { hour: { limit: 150_000_000, windowMs: HOUR }, day: { limit: 400_000_000, windowMs: DAY } },
+};
+
+/** 沒有紀錄也沒有登記裝置的空間，建立多久之後清掉 */
+export const EMPTY_SPACE_TTL_MS = DAY;
 
 export interface ServiceLimits {
   spaces: number;
@@ -29,7 +62,7 @@ export interface ServiceLimits {
   pairSlots: number;
 }
 
-const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 2_000_000_000, pairSlots: 200 };
+export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 2_000_000_000, pairSlots: 200 };
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -104,6 +137,18 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const cooldownMs = deps.cooldownMs ?? COOLDOWN_MS;
   const store = deps.store;
   const nowMs = () => store.now().getTime();
+  const rateLimits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
+  const log = deps.log ?? (() => undefined);
+
+  /** 這個來源這次還在限制內嗎；超過時回 429（state: rate_limited） */
+  async function limitSource(request: Request, kind: keyof SyncRateLimits, weight = 1): Promise<void> {
+    if (!deps.rateLimiter) return;
+    const source = await hashSource(sourceIp(request));
+    if (!(await takeAll(deps.rateLimiter, `sync:${kind}:${source}`, rateLimits[kind], weight))) {
+      log(`rate limited: ${kind}`);
+      throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited" });
+    }
+  }
 
   function corsHeaders(request: Request): Record<string, string> {
     const origin = request.headers.get("origin");
@@ -198,6 +243,21 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   async function deviceList(space: string, self: DeviceRow) {
     const devices = (await store.devices(space)).filter((d) => d.removedAt === null);
     return { devices: devices.map(publicDevice), self: self.id, cooldownUntil: cooldownUntil(self), serverTime: nowMs() };
+  }
+
+  /**
+   * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求），
+   * 而且舊空間還沒有別的換到一半的新空間 → 新的空間不受整個服務的空間數限制（換金鑰是一換一）. 條件不符時照一般的建立
+   */
+  async function rekeyCreation(request: Request, url: URL, from: string, space: string, text: string): Promise<boolean> {
+    if (!SPACE.test(from) || from === space) throw new HttpError(400, "舊的同步空間 id 格式不對");
+    const deviceId = request.headers.get("x-device");
+    if (deviceId === null || !DEVICE_ID.test(deviceId)) return false;
+    const device = await store.device(from, deviceId);
+    if (!device || device.removedAt !== null || (await store.movedTo(from)) !== null) return false;
+    await checkSignature(request, url, text, deviceId, device.signPub);
+    if (nowMs() < cooldownUntil(device)) return false;
+    return (await store.pendingRekeys(from)) === 0;
   }
 
   /**
@@ -325,8 +385,18 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
           return { created: false };
         }
         if (url.searchParams.get("create") !== "1") throw new HttpError(404, "同步空間不存在");
-        if ((await store.totals()).spaces >= limits.spaces) throw new HttpError(503, "同步服務已滿");
-        const created = await store.createSpace(space, hash);
+        const from = url.searchParams.get("from");
+        const rekeying = from !== null && (await rekeyCreation(request, url, from, space, text));
+        await limitSource(request, "createSpace");
+        let created = await store.createSpace(space, hash, rekeying ? null : limits.spaces, rekeying ? from : null);
+        if (!created && (await store.spaceToken(space)) === null) {
+          // 服務已滿：先清掉沒在用的空空間再試一次
+          if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces);
+          if (!created && (await store.spaceToken(space)) === null) {
+            log(`sync service full: spaces >= ${limits.spaces}`);
+            throw new HttpError(503, "同步服務已滿");
+          }
+        }
         if (!created && (await store.spaceToken(space)) !== hash) throw new HttpError(403, "憑證不符");
         if (created && url.searchParams.get("devices") === "1") await store.setSpaceMode(space, { devicesAt: nowMs(), legacyUntil: nowMs() });
         return { created };
@@ -374,70 +444,93 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const body = parseJson(text);
         const items = Array.isArray(body.items) ? body.items : null;
         if (!items || items.length > MAX_PUSH) throw new HttpError(400, `items 要是陣列，最多 ${MAX_PUSH} 筆`);
-        const usage = await store.spaceUsage(space);
         const incoming = items.reduce((sum: number, item) => sum + String((item as Record<string, unknown>)?.blob ?? "").length, 0);
-        if (usage.records + items.length > MAX_RECORDS || usage.bytes + incoming > MAX_BYTES) throw new HttpError(413, "同步空間已滿");
-        if ((await store.totals()).bytes + incoming > limits.bytes) throw new HttpError(503, "同步服務已滿");
-        const applied: { id: string; seq: number }[] = [];
-        const conflicts: string[] = [];
-        for (const raw of items) {
-          const item = raw as Record<string, unknown>;
-          const id = item.id;
-          const base = item.base;
-          const blob = item.blob;
-          if (typeof id !== "string" || !RECORD_ID.test(id)) throw new HttpError(400, "紀錄 id 格式不對");
-          if (typeof base !== "number" || !Number.isInteger(base) || base < 0) throw new HttpError(400, "base 要是非負整數");
-          if (typeof blob !== "string" || blob.length > MAX_BLOB || !BASE64URL.test(blob)) throw new HttpError(400, "blob 格式不對或太大");
-          const seq = await store.put(space, id, base, blob);
-          if (seq === null) conflicts.push(id);
-          else applied.push({ id, seq });
+        await limitSource(request, "push");
+        if (incoming > 0) await limitSource(request, "pushBytes", incoming);
+        const usage = await store.spaceUsage(space);
+        if (usage.records + items.length > MAX_RECORDS) throw new HttpError(413, "同步空間已滿");
+        // 先保留這次最多會用到的位元組（這個空間與整個服務都放得下才保留），寫完再還回去
+        if (!(await store.reserveBytes(space, incoming, MAX_BYTES, limits.bytes))) {
+          if ((await store.spaceUsage(space)).bytes + incoming > MAX_BYTES) throw new HttpError(413, "同步空間已滿");
+          log(`sync service full: bytes`);
+          throw new HttpError(503, "同步服務已滿");
         }
-        return { applied, conflicts };
+        try {
+          return await applyPush(space, items);
+        } finally {
+          await store.releaseBytes(space, incoming);
+        }
       }
       throw new HttpError(405, "不支援的方法");
     }
 
     // /v1/pair[/:slot[/hello|/nonce|/box]]
     if (parts[1] === "pair") {
-      if (parts.length === 2 && method === "POST") {
-        const body = parseJson(await readText(request));
-        if (!isKey(body.pub)) throw new HttpError(400, "pub 格式不對");
-        if (!isKey(body.commitment, 100)) throw new HttpError(400, "commitment 格式不對");
-        if ((await store.activeSlots()) >= limits.pairSlots) throw new HttpError(503, "暫時無法建立配對碼，請稍後再試");
-        for (let attempt = 0; attempt < 5; attempt++) {
-          const slot = [...random(8)].map((b) => SLOT_ALPHABET[b % 32]).join("");
-          if (await store.createSlot(slot, body.pub, body.commitment, PAIR_TTL_MS)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
-        }
-        throw new HttpError(503, "暫時無法建立配對碼");
-      }
-      const slot = parts[2]?.toUpperCase();
-      if (!slot || !SLOT.test(slot)) throw new HttpError(400, "配對碼格式不對");
-      if (parts.length === 3 && method === "GET") {
-        const found = await store.getSlot(slot);
-        if (!found) throw new HttpError(404, "配對碼不存在或已過期");
-        return { ...found };
-      }
-      if (parts.length === 3 && method === "DELETE") {
-        await store.deleteSlot(slot);
-        return { deleted: true };
-      }
-      if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "nonce" || parts[3] === "box")) {
-        const body = parseJson(await readText(request));
-        const value = parts[3] === "hello" ? body.pub : parts[3] === "nonce" ? body.nonce : body.box;
-        if (!isKey(value, 4000)) throw new HttpError(400, "格式不對");
-        const ok =
-          parts[3] === "hello"
-            ? await store.setSlotHello(slot, value)
-            : parts[3] === "nonce"
-              ? await store.setSlotNonce(slot, value)
-              : await store.setSlotBox(slot, value);
-        if (!ok) throw new HttpError(409, "配對碼已被使用、順序不對或已過期");
-        return { ok: true };
-      }
-      throw new HttpError(405, "不支援的方法");
+      return pairRoute(request, parts, method);
     }
 
     throw new HttpError(404, "找不到");
+  }
+
+  async function applyPush(space: string, items: unknown[]) {
+    const applied: { id: string; seq: number }[] = [];
+    const conflicts: string[] = [];
+    for (const raw of items) {
+      const item = raw as Record<string, unknown>;
+      const id = item.id;
+      const base = item.base;
+      const blob = item.blob;
+      if (typeof id !== "string" || !RECORD_ID.test(id)) throw new HttpError(400, "紀錄 id 格式不對");
+      if (typeof base !== "number" || !Number.isInteger(base) || base < 0) throw new HttpError(400, "base 要是非負整數");
+      if (typeof blob !== "string" || blob.length > MAX_BLOB || !BASE64URL.test(blob)) throw new HttpError(400, "blob 格式不對或太大");
+      const seq = await store.put(space, id, base, blob);
+      if (seq === null) conflicts.push(id);
+      else applied.push({ id, seq });
+    }
+    return { applied, conflicts };
+  }
+
+  async function pairRoute(request: Request, parts: string[], method: string): Promise<Record<string, unknown>> {
+    if (parts.length === 2 && method === "POST") {
+      const body = parseJson(await readText(request));
+      if (!isKey(body.pub)) throw new HttpError(400, "pub 格式不對");
+      if (!isKey(body.commitment, 100)) throw new HttpError(400, "commitment 格式不對");
+      await limitSource(request, "createPair");
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const slot = [...random(8)].map((b) => SLOT_ALPHABET[b % 32]).join("");
+        if (await store.createSlot(slot, body.pub, body.commitment, PAIR_TTL_MS, limits.pairSlots)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
+        if ((await store.activeSlots()) >= limits.pairSlots) {
+          log(`sync service full: pair slots >= ${limits.pairSlots}`);
+          throw new HttpError(503, "暫時無法建立配對碼，請稍後再試");
+        }
+      }
+      throw new HttpError(503, "暫時無法建立配對碼");
+    }
+    const slot = parts[2]?.toUpperCase();
+    if (!slot || !SLOT.test(slot)) throw new HttpError(400, "配對碼格式不對");
+    if (parts.length === 3 && method === "GET") {
+      const found = await store.getSlot(slot);
+      if (!found) throw new HttpError(404, "配對碼不存在或已過期");
+      return { ...found };
+    }
+    if (parts.length === 3 && method === "DELETE") {
+      await store.deleteSlot(slot);
+      return { deleted: true };
+    }
+    if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "nonce" || parts[3] === "box")) {
+      const body = parseJson(await readText(request));
+      const value = parts[3] === "hello" ? body.pub : parts[3] === "nonce" ? body.nonce : body.box;
+      if (!isKey(value, 4000)) throw new HttpError(400, "格式不對");
+      const ok =
+        parts[3] === "hello"
+          ? await store.setSlotHello(slot, value)
+          : parts[3] === "nonce"
+            ? await store.setSlotNonce(slot, value)
+            : await store.setSlotBox(slot, value);
+      if (!ok) throw new HttpError(409, "配對碼已被使用、順序不對或已過期");
+      return { ok: true };
+    }
+    throw new HttpError(405, "不支援的方法");
   }
 
   return async (request) => {
@@ -454,4 +547,27 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       return new Response(JSON.stringify({ ...extra, error: message }), { status, headers });
     }
   };
+}
+
+/**
+ * 定期的整理（Workers 的排程，每小時）：清掉沒在用的空空間、過期的配對碼、簽章的亂數與頻率限制的計數；
+ * 用量接近上限（80%）時在 log 留下警告. 只記數量
+ */
+export async function maintain(
+  store: SyncStore,
+  options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
+): Promise<{ spaces: number; slots: number; nonces: number; rates: number }> {
+  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  const log = options.log ?? (() => undefined);
+  const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
+  const { slots, nonces } = await store.purgeExpired();
+  const rates = (await options.purgeRates?.()) ?? 0;
+  const totals = await store.totals();
+  const activeSlots = await store.activeSlots();
+  const near = (used: number, max: number) => used >= max * 0.8;
+  if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
+  if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
+  if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
+  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates}; spaces=${totals.spaces} bytes=${totals.bytes}`);
+  return { spaces, slots, nonces, rates };
 }

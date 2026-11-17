@@ -10,6 +10,10 @@ workers_dev = true
 [observability]
 enabled = false
 
+# 每小時整理一次：清掉沒在用的空空間、過期的配對碼與頻率限制的計數；接近上限時留下警告（handler.ts 的 maintain）
+[triggers]
+crons = ["17 * * * *"]
+
 [vars]
 ALLOWED_ORIGINS = ""
 # 用 Intervals.icu 登入（規格 12.37）：部署時由 Variables 填入；client_secret 是 Worker 的 secret（wrangler secret put），不寫在這裡

@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./device": "./src/device-sync/device.ts"
+    "./device": "./src/device-sync/device.ts",
+    "./rate-limit": "./src/rate-limit.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json"

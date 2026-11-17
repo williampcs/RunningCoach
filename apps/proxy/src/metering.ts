@@ -30,6 +30,8 @@ export interface MeterResult {
   usage: TokenUsage;
   final: boolean;
   inputKnown: boolean;
+  /** 串流讀到上游的 error 事件（上游停在那裡）：輸出照讀到的最後數字算 */
+  upstreamError?: boolean;
 }
 
 /** 非串流回應 */
@@ -61,11 +63,12 @@ export function meterSseStream(
   let finished = false;
   let final = false;
   let inputKnown = false;
+  let upstreamError = false;
 
   const finish = () => {
     if (finished) return;
     finished = true;
-    onDone({ usage, final, inputKnown });
+    onDone({ usage, final, inputKnown, upstreamError });
   };
 
   const scan = (chunk: Uint8Array) => {
@@ -74,7 +77,9 @@ export function meterSseStream(
     while ((newline = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, newline).trimEnd();
       buffer = buffer.slice(newline + 1);
+      if (/^event:\s*error$/.test(line)) upstreamError = true;
       if (!line.startsWith("data:")) continue;
+      if (/^data:\s*\{\s*"type"\s*:\s*"error"/.test(line)) upstreamError = true;
       // 只解析帶有 usage 的事件，其餘（文字增量等）直接略過
       if (!line.includes('"usage"')) continue;
       try {
