@@ -4,6 +4,7 @@
  */
 import { deviceOffsetMinutes, localText, type ParseOptions } from "./fit";
 import type { ParsedActivity, ParsedLap } from "./types";
+import { appearsAfter } from "../text-match";
 
 export class XmlActivityError extends Error {}
 
@@ -26,11 +27,11 @@ const attr = (el: string, name: string): string | null => {
 };
 
 /** 運動的寫法（GPX 的 type、TCX 的 Sport）→ 活動類型 */
-function typeOfText(text: string | null): string {
+export function typeOfText(text: string | null): string {
   const t = (text ?? "").toLowerCase();
   if (/trail/.test(t) && /run/.test(t)) return "TrailRun";
   if (/run|^9$|^1$/.test(t)) return "Run";
-  if (/virtual.*(ride|cycl)/.test(t)) return "VirtualRide";
+  if (appearsAfter(t, "virtual", /ride|cycl/)) return "VirtualRide";
   if (/bik|cycl|ride|^2$/.test(t)) return "Ride";
   if (/swim/.test(t)) return "Swim";
   if (/walk/.test(t)) return "Walk";

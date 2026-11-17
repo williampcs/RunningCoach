@@ -298,6 +298,7 @@
 | 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
 | 2.0-draft | 2026-11-16 | `CLAUDE.md` 的合併部署加第 0 步：發版前對整段程式改動做獨立的安全審查，發現只在聊天裡回報（12.45 工作單的步驟 3） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
+| 2.0-draft | 2026-11-17 | `packages/core` 的正規表示式改成線性時間（CodeQL 的 10 個效能警示與同類寫法；共用的 `text-match.ts`，行為不變，加對照與長輸入的測試）（12.45 第 8 點、9.4） |
 
 ---
 
@@ -863,7 +864,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做什麼：不改其他邏輯；不處理同一次掃描的其他警示（API key 的存放是設計如此，KI-027；v1 的測試腳本是誤報，由使用者在 Security 分頁標註）。
   - 驗收：`npm test`、`npm run typecheck`；每個改過的地方加測試：原本的行為（含現有測試）不變，並加一個很長的特殊輸入（例如幾萬個 `/` 或空白）在很短的時間內跑完。合併部署到 `main`、CodeQL 重新掃過後，這 10 個警示自動關閉（使用者確認）。
   - 注意：這些都在使用者自己的瀏覽器或作者的 bot 裡執行，處理的是使用者自己輸入的網址與文字、AI 的回覆、外部服務的錯誤訊息；伺服器（同步服務、代理）沒有用到這些檔案。最壞的情況是使用者自己的分頁卡一下，風險低，但改起來簡單，而且留著會讓之後的警示清單有雜訊。版號：patch，跟下一次合併部署一起。
-  - 狀態：開發中（開發 session「修正：正規表示式不被長輸入拖慢（CodeQL 10 個）」，2026-11-17；使用者：「那10個警告還在」）。
+  - 狀態：已推上 v2（2026-11-17，開發 session「修正：正規表示式不被長輸入拖慢（CodeQL 10 個）」；使用者：「那10個警告還在」）。實作見 12.45 第 8 點；合併部署、CodeQL 重掃 `main` 後由使用者確認警示關閉。
 
 - **帳號管理第 2 步：passkey（PRF）的測試頁**（12.44 的順序第 2 步；2026-11-14 使用者：「那先幫我做 passkey 吧」；目的：在使用者自己的 iPhone、Android、電腦上確認拿不拿得到 PRF，再決定第 3 步「用 passkey 取回」怎麼做）
   - 要做什麼：
@@ -5443,6 +5444,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 2026-11-16 17 個警示的分類（使用者貼了清單的截圖）：
   - 「Clear text storage of sensitive information」6 個，都在 `apps/web/src/settings.ts`：存的是加密後的憑證或已清空憑證的設定的 4 個是誤報；沒開密碼鎖時以明文存在瀏覽器的 2 個是設計如此（KI-027：資料只在使用者的裝置，密碼鎖是選用的），標「Won't fix」。
   - 「Polynomial regular expression used on uncontrolled data」10 個，都在 `packages/core`，只在使用者自己的瀏覽器或作者的 bot 裡執行，伺服器沒有用到；最壞是自己的分頁卡一下 → 低風險，改起來簡單 → 工作單（9.4），修好合併部署後自動關閉，先不要標。
+    - 實作（2026-11-17，已推上 v2）：這 10 處與 `packages/core` 裡同類的寫法改成執行時間和輸入長度成線性：去掉網址結尾斜線改用共用的 `trimTrailingSlashes`（`text-match.ts`，也用在 `device-sync/trial-account.ts`）；「同一行裡 A 之後有 B」改用 `appearsAfter`（llm/check、gpx）；回覆的小標改成 `headingTitle` 逐字處理；摘要的標籤、配速、縣市英文名稱的正規化拿掉重疊的量詞。行為不變：`test/text-match.test.ts` 用改寫前的正規表示式對大量隨機輸入比對結果，另加很長的特殊輸入在 0.5 秒內跑完。`apps/` 裡同樣的去斜線寫法（web 的 trial.ts、sync、proxy）不在這次的警示裡，沒改。合併部署、CodeQL 重新掃 `main` 後警示才會關閉。
   - 「Clear-text logging of sensitive information」1 個，v1 的本機測試腳本 `scripts/test_intervals.py`：印的是遮罩過的 key（前後各 4 碼），誤報；v1 之後會移除。
 
 **9. 實作（步驟 1，2026-11-16，開發 session）**

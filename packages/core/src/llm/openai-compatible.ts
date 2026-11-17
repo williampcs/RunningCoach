@@ -4,6 +4,7 @@
  * 直接以 fetch 呼叫，不依賴任何 SDK。Claude 不走這裡，見 anthropic.ts。
  */
 import type { ChatRequest, ChatSession, Effort, LlmProvider, ToolDef, ToolResult, Turn } from "./types";
+import { trimTrailingSlashes } from "../text-match";
 
 export interface OpenAICompatibleOptions {
   apiKey: string;
@@ -109,7 +110,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
           body.stream_options = { include_usage: true };
         }
 
-        const response = await fetchImpl(`${options.baseURL.replace(/\/+$/, "")}/chat/completions`, {
+        const response = await fetchImpl(`${trimTrailingSlashes(options.baseURL)}/chat/completions`, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${options.apiKey}` },
           body: JSON.stringify(body),

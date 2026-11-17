@@ -25,6 +25,7 @@ import {
   type RekeyStatement,
 } from "./device";
 import { applyEntity, hashOf, isAttached, isKnown, modifiedOf, snapshot, type EntityData, type Snapshot, type Sql } from "./entities";
+import { trimTrailingSlashes } from "../text-match";
 
 const DELETED = "deleted";
 const PUSH_BATCH = 100;
@@ -92,7 +93,7 @@ export class SyncApi {
     baseUrl: string,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
   ) {
-    this.base = baseUrl.replace(/\/+$/, "");
+    this.base = trimTrailingSlashes(baseUrl);
   }
 
   async request<T>(method: string, path: string, body?: unknown, auth?: SyncAuth): Promise<T> {

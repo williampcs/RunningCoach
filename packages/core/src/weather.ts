@@ -7,6 +7,7 @@
  */
 import { detailsOf } from "./activities";
 import { addDays, daysBetween } from "./dates";
+import { trimTrailingSlashes } from "./text-match";
 
 export const WEATHER_CREDIT = { label: "Weather data by Open-Meteo.com", href: "https://open-meteo.com/" } as const;
 
@@ -93,7 +94,7 @@ export const OPEN_METEO_URLS: OpenMeteoUrls = {
 
 /** 測試或本機模擬：三個服務都在同一個網址底下（{base}/v1/forecast…） */
 export function openMeteoUrlsAt(base: string): OpenMeteoUrls {
-  const b = base.replace(/\/+$/, "");
+  const b = trimTrailingSlashes(base);
   return { forecast: `${b}/v1/forecast`, airQuality: `${b}/v1/air-quality`, geocoding: `${b}/v1/search` };
 }
 
@@ -286,9 +287,21 @@ export const TAIWAN_CITIES: (PlaceCandidate & { en: string })[] = [
   ["連江縣", "Lienchiang (Matsu)", 26.2, 119.9],
 ].map(([label, en, lat, lon]) => ({ label: label as string, en: en as string, lat: lat as number, lon: lon as number }));
 
+/** 去掉結尾的「 city」「 county」（前面至少一個空白；等同 `.replace(/\s+(city|county)$/, "")`，線性時間） */
+export function stripEnglishSuffix(s: string): string {
+  for (const word of ["city", "county"]) {
+    if (!s.endsWith(word)) continue;
+    const head = s.slice(0, s.length - word.length);
+    const trimmed = head.trimEnd();
+    if (trimmed.length < head.length) return trimmed;
+  }
+  return s;
+}
+
 /** 輸入的名稱對得到台灣的縣市時直接用（例：台北、臺北市、taipei），不必送出去搜尋 */
 export function matchTaiwanCities(name: string): PlaceCandidate[] {
-  const key = (s: string) => s.trim().toLowerCase().replace(/臺/g, "台").replace(/[市縣]$/, "").replace(/\s+(city|county)$/, "");
+  const baseKey = (s: string) => s.trim().toLowerCase().replace(/臺/g, "台").replace(/[市縣]$/, "");
+  const key = (s: string) => stripEnglishSuffix(baseKey(s));
   const q = key(name);
   if (q.length < 2) return [];
   return TAIWAN_CITIES.filter((c) => key(c.label) === q || key(c.en) === q || key(c.en).startsWith(q) || c.label.startsWith(q)).map(({ label, lat, lon }) => ({ label, lat, lon }));

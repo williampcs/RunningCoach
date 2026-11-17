@@ -13,7 +13,29 @@ export interface ReplySections {
   sections: ReplySection[];
 }
 
-const HEADING = /^ {0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$/;
+const HEADING_START = /^ {0,3}##(?=[ \t])/;
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+const isBlank = (c: string | undefined) => c === " " || c === "\t";
+
+/**
+ * `## 標題 ##` 的標題；不是小標時回傳 null。等同 `/^ {0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$/` 的第一組再 trim，
+ * 但不用重疊的量詞，執行時間和長度成線性（規格 12.45 第 8 點）
+ */
+export function headingTitle(line: string): string | null {
+  const start = HEADING_START.exec(line);
+  if (!start) return null;
+  const rest = line.slice(start[0].length);
+  if (rest.length < 2 || LINE_BREAK.test(rest)) return null;
+  // 前面的空白（至少一個，留一個字給標題）
+  let from = 0;
+  while (from < rest.length - 1 && isBlank(rest[from])) from++;
+  // 後面的「空白、#、空白」，標題至少一個字
+  let to = rest.length;
+  while (to > from + 1 && isBlank(rest[to - 1])) to--;
+  while (to > from + 1 && rest[to - 1] === "#") to--;
+  while (to > from + 1 && isBlank(rest[to - 1])) to--;
+  return rest.slice(from, to).trim();
+}
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /** 依 `## ` 小標切段；程式碼區塊裡的不算；`#`、`###` 等其他層級不切 */
@@ -28,9 +50,9 @@ export function splitReplySections(markdown: string): ReplySections {
     } else if (open) {
       fence = open;
     } else {
-      const heading = HEADING.exec(line);
-      if (heading) {
-        sections.push({ title: heading[1]!.trim(), lines: [] });
+      const title = headingTitle(line);
+      if (title !== null) {
+        sections.push({ title, lines: [] });
         continue;
       }
     }

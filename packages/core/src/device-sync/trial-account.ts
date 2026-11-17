@@ -9,6 +9,7 @@
  * 附加資料（AAD）綁定代理的網址與帳號：把紀錄搬到別的帳號或網址下解不開.
  */
 import { fromBase64url, toBase64url, type Key } from "./crypto";
+import { trimTrailingSlashes } from "../text-match";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -30,7 +31,7 @@ async function boxKey(root: Uint8Array): Promise<Key> {
 const aad = (url: string, account: string) => encoder.encode(`${FORMAT}\n${url}\n${account}`);
 
 /** 代理的網址：去掉結尾的斜線，比對時一致 */
-export const normalizeProxyUrl = (url: string) => url.trim().replace(/\/+$/, "");
+export const normalizeProxyUrl = (url: string) => trimTrailingSlashes(url.trim());
 
 /** 把復原密鑰加密成紀錄裡的 box（每次換新的 IV） */
 export async function sealTrialSecret(root: Uint8Array, url: string, account: string, secret: string): Promise<string> {
