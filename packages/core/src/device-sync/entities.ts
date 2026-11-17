@@ -8,7 +8,8 @@
  * 名稱：選手資料用欄位名、自評用日期、賽事、課表、記住的事與傷病紀錄用 sync_id（同步時補上的隨機 id）、
  * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id，
  * 手動新增的跑步用它的 sync_id（整筆一起送，體感也在裡面）. 匯入的檔案（規格 12.40）：跑步 fw:<sync_id>、其他運動 fo:<雜湊>，
- * 整筆的摘要一起送（不含每秒的資料）.
+ * 整筆的摘要一起送（不含每秒的資料）. 免費試用的帳號（規格 12.44 第 1 步）：ta:<帳號>，內容是代理的網址與用同步金鑰再加密一次的
+ * 復原密鑰（device-sync/trial-account.ts）；舊版不認得，不套用也不刪.
  */
 import { dropCoveredFileOthers, markFileRunDuplicate } from "../activity-files/store";
 import type { SqlDriver, SqlValue } from "../types";
@@ -20,7 +21,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -186,6 +187,10 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   }
   for (const r of await sql.all(`SELECT intervals_id, ${FILE_OTHER_COLS.join(", ")} FROM other_activities WHERE intervals_id LIKE 'file:%'`)) {
     data.set(`fo:${String(r.intervals_id).slice(5)}`, pick(r, FILE_OTHER_COLS));
+  }
+  // 免費試用的帳號（schema 20）
+  for (const r of await sql.all("SELECT account, proxy_url, box, updated_at FROM trial_accounts")) {
+    data.set(`ta:${r.account}`, { url: r.proxy_url ?? null, box: r.box ?? null, updated_at: r.updated_at ?? null });
   }
   for (const r of await sql.all("SELECT a, b FROM workout_distinct")) {
     const [ka, kb] = [keyById.get(Number(r.a)), keyById.get(Number(r.b))];
@@ -398,6 +403,16 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       await dropCoveredFileOthers(sql, [`file:${id}`], date ? { from: date, to: date } : null);
       return "applied";
     }
+    case "ta":
+      if (!data) await sql.run("DELETE FROM trial_accounts WHERE account=?", [id]);
+      else if (typeof data.url === "string" && typeof data.box === "string") {
+        await sql.run(
+          "INSERT INTO trial_accounts (account, proxy_url, box, updated_at) VALUES (?, ?, ?, ?)" +
+            " ON CONFLICT(account) DO UPDATE SET proxy_url=excluded.proxy_url, box=excluded.box, updated_at=excluded.updated_at",
+          [id, data.url, data.box, typeof data.updated_at === "string" ? data.updated_at : ""],
+        );
+      }
+      return "applied";
     case "wd": {
       const [ka, kb] = id.split("|");
       const [a, b] = [await workoutId(sql, ka ?? ""), await workoutId(sql, kb ?? "")];

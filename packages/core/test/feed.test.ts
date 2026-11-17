@@ -56,7 +56,8 @@ describe("buildFeed", () => {
 
     const ok = await makeCoach([]);
     await ok.coach.saveCheckin({ energy: 4, soreness: 1, sleep: 4, notes: null });
-    expect((await ok.coach.feed())[0]).toMatchObject({ id: `checkin-done-${TODAY}`, tone: "ok" });
+    // 狀況正常：看板不再放「已記錄」（結果在「回報」分頁）
+    expect((await ok.coach.feed()).some((i) => i.kind === "checkin" || i.kind === "recovery")).toBe(false);
   });
 
   it("reminds about a recent run without a report and a pending report", async () => {

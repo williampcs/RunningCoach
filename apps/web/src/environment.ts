@@ -7,6 +7,9 @@ import { parseFeatures, type Feature } from "@running-coach/core";
  */
 export const IS_STAGING = import.meta.env.VITE_STAGING === "1";
 
+/** passkey 的測試頁（規格 12.44）：只在 staging 與開發用的建置（vite 的 dev），正式版沒有，也不能用功能開關打開 */
+export const PASSKEY_TEST_ON = IS_STAGING || import.meta.env.DEV;
+
 /** 開著的功能（規格 12.25）：staging 一律全開；正式版只開 VITE_FEATURES 列出來的（預設全關） */
 export const FEATURES_ON: Feature[] = parseFeatures(import.meta.env.VITE_FEATURES, { staging: IS_STAGING });
 

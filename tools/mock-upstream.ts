@@ -285,11 +285,14 @@ function baseActivities(): Record<string, unknown>[] {
  * 範例課表（這週或下週）：週二輕鬆跑加 20 秒的加速跑與肌力、週四 T、週日長跑；有檢查器的提醒時也存（附上理由）.
  * multisport：工具有交叉訓練的 sport 時（多運動的開關開著），週六加一堂 Z2 的騎車，今天加一堂肌力（回報做完了用）
  */
-function samplePlan(text: string, multisport = false) {
+function samplePlan(text: string, multisport = false, systemText = "") {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   // 「下週」排在下週，課都在今天以後；否則排這週，今天以前的課會配對到已經跑的紀錄
   const start = /下週/.test(text) ? 7 : 0;
-  const day = (offset: number) => daysAgo(weekday - start - offset);
+  // 下週一照系統提示的（模型對照的「今天」是固定的，和這台的日期不同，規格 12.15）
+  const nextMonday = start ? systemText.match(/下週一：(\d{4}-\d{2}-\d{2})/)?.[1] : undefined;
+  const day = (offset: number) =>
+    nextMonday ? new Date(Date.parse(nextMonday) + offset * 86_400_000).toISOString().slice(0, 10) : daysAgo(weekday - start - offset);
   return {
     week_start: day(0),
     style: "fixed",
@@ -603,7 +606,7 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
   if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i)));
   // 量不到心率的選手（沒有手錶，規格 12.36）：今天一堂輕鬆跑（手動記的那趟對得上），完成的標準用說話測試
   if (/排.*課表|幫我排/.test(lastText) && systemText.includes("心率：量不到")) return [toolUse("save_training_plan", noHrPlan())];
-  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools)))];
+  if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools), systemText))];
   // 教練動態「請教練調整接下來的課」（課表外的運動，規格 12.24）：重排這週（A → A'）
   if (/調整這週接下來的課/.test(lastText)) {
     return [toolUse("save_training_plan", { ...samplePlan("", hasMultisport(body.tools)), reason: "（模擬）依課表外的騎車調整" })];

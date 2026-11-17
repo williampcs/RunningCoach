@@ -128,6 +128,36 @@ describe("情境", () => {
     expect(runChecks(scenario("knee-7"), r).every((c) => c.pass)).toBe(true);
   });
 
+  it("weekend-next：今天換成星期六；菜單存進這週被擋、存進下週才過，這週的課表還在（規格 12.15）", async () => {
+    const menu = ["easy", "strength", "easy", "long"].map((kind) => ({
+      date: "",
+      kind,
+      title: kind,
+      steps: kind === "strength" ? [{ duration_min: 20 }] : [{ duration_min: 40, target: { hr: "easy" } }],
+      purpose: "",
+      success: "",
+      fallback: "",
+    }));
+    const save = (week_start: string) => ({ toolCalls: [{ id: `t-${week_start}`, name: "save_training_plan", input: { week_start, style: "flexible", reason: "下週", outline: "", sessions: menu } }] });
+    // 先填這週的星期一被擋，照提醒改填下週一
+    const { provider, requests } = scripted([save("2026-11-09"), save("2026-11-16"), { text: "排好了。" }]);
+    const r = await runScenario(scenario("weekend-next"), opus, () => provider, { now: NOW, features: [] });
+    expect(requests[0]!.system).toContain("今天日期：2026-11-14（星期六）");
+    expect(requests[0]!.system).toContain("下週一：2026-11-16");
+    expect(r.toolCalls[0]!.result).toMatch(/^尚未儲存/);
+    expect(r.toolCalls[0]!.result).toContain("week_start 填 2026-11-16（下週一）");
+    expect(r.toolCalls[1]!.result).toMatch(/^課表已儲存（2026-W47）/);
+    expect(r.saved).toMatchObject({ newPlanWeeks: [1], replacedPlans: 0 });
+    expect(runChecks(scenario("weekend-next"), r).every((c) => c.pass)).toBe(true);
+
+    // 用 accept_warnings 硬存進這週：換掉這週的課表，檢查不過
+    const forced = scripted([{ toolCalls: [{ id: "t1", name: "save_training_plan", input: { ...save("2026-11-09").toolCalls[0]!.input, accept_warnings: true, warning_notes: "硬存" } }] }, { text: "好" }]);
+    const bad = await runScenario(scenario("weekend-next"), opus, () => forced.provider, { now: NOW, features: [] });
+    expect(bad.saved).toMatchObject({ newPlanWeeks: [0], replacedPlans: 1 });
+    const failed = runChecks(scenario("weekend-next"), bad).filter((c) => !c.pass).map((c) => c.id);
+    expect(failed).toEqual(["next-week", "this-week-kept", "no-accept"]);
+  });
+
   it("用核心的教練：系統提示、工具與模型照設定送；記下工具呼叫與結果、存了的課", async () => {
     const plan = {
       week_start: "2026-11-16",

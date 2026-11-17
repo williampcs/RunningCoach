@@ -25,6 +25,7 @@ import { SyncNotice } from "./PhoneGuide";
 import { kmText, RunCardView, SummaryView } from "./RunCard";
 import { ImportFiles } from "./ImportFiles";
 import { ManualRunForm } from "./ManualRun";
+import { CheckinSection } from "./Checkin";
 import { useSync } from "../use-sync";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -81,8 +82,22 @@ const PENDING = "pending";
 const targetKey = (t: ReportTarget) =>
   t.kind === "saved" ? `saved:${t.workoutId}` : t.kind === "new" ? `new:${t.intervalsId}` : t.kind === "other" ? `other:${t.intervalsId}` : PENDING;
 
-/** preselect：從教練動態進來時要預先選好的紀錄（跑步是 workout id，騎車等是 intervals_id） */
-export function ReportView({ preselect, onPreselectUsed }: { preselect: number | string | null; onPreselectUsed: () => void }) {
+/**
+ * 「回報」分頁：要告訴教練的事. 由上到下：今天的身體狀況（與傷的分數）→ 跑完的那一趟（2026-11-12）.
+ * preselect：從教練動態進來時要預先選好的紀錄（跑步是 workout id，騎車等是 intervals_id）；
+ * focusCheckin：從看板的「去回報」（身體狀況）進來時捲到身體狀況
+ */
+export function ReportView({
+  preselect,
+  onPreselectUsed,
+  focusCheckin = false,
+  onFocusUsed = () => undefined,
+}: {
+  preselect: number | string | null;
+  onPreselectUsed: () => void;
+  focusCheckin?: boolean;
+  onFocusUsed?: () => void;
+}) {
   const { coach, revision, touch, goTo, activitiesReady, toast } = useApp();
   const today = coach.today();
   const [effort, setEffort] = useState(5);
@@ -103,6 +118,9 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   const [manualOpen, setManualOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
+  // 跑完的那一趟：從看板的「回報這一趟」進來時捲到這裡，上面的身體狀況不擋住
+  const runRef = useRef<HTMLElement>(null);
+  const [scrollToRun, setScrollToRun] = useState(0);
 
   const savedId = manual ? manual.workout.id : report?.status === "saved" ? report.workoutId : null;
   useEffect(() => {
@@ -136,6 +154,7 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     const keys = choices.candidates.map((c) => targetKey(c.target));
     if (preselect !== null) {
       onPreselectUsed();
+      setScrollToRun((n) => n + 1);
       const key = typeof preselect === "number" ? `saved:${preselect}` : `other:${preselect}`;
       if (keys.includes(key)) {
         setSelected(key);
@@ -144,6 +163,13 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
     }
     setSelected((current) => (current && (current === PENDING || keys.includes(current)) ? current : (keys[0] ?? PENDING)));
   }, [choices, preselect, onPreselectUsed]);
+
+  useEffect(() => {
+    if (!scrollToRun) return;
+    // 身體狀況那段讀完後才有高度：等一下再捲
+    const timer = setTimeout(() => runRef.current?.scrollIntoView({ block: "start" }), 150);
+    return () => clearTimeout(timer);
+  }, [scrollToRun]);
 
   // 結果在表單下方：存檔後捲到結果
   useEffect(() => {
@@ -206,6 +232,8 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
   // 沒有連接 Intervals.icu（沒有手錶、只用手機）：回報就是手動記一趟（規格 12.36）
   if (!hasIntervals) {
     return (
+      <>
+      <CheckinSection focus={focusCheckin} onFocusUsed={onFocusUsed} />
       <section className="card report">
         <h2 className="title">記一趟跑步</h2>
         <ManualRunForm
@@ -226,14 +254,15 @@ export function ReportView({ preselect, onPreselectUsed }: { preselect: number |
           </div>
         )}
       </section>
+      </>
     );
   }
 
   return (
     <>
-
+      <CheckinSection focus={focusCheckin} onFocusUsed={onFocusUsed} />
       {/* 標題就是問題；選一趟、點體感、一句話、存起來（規格 12.28） */}
-      <section className="card report">
+      <section className="card report" id="report-run" ref={runRef}>
         <div className="card-head">
           <h2 className="title">哪一趟？</h2>
           {hasIntervals && (

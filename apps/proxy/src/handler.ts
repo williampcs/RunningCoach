@@ -5,9 +5,11 @@
  * 並以代理發給的憑證取代 API key。請求與回應內容只在記憶體中經過，不寫入儲存、不寫入日誌。
  *
  * 帳號從邀請碼兌換來（POST /v1/redeem）：作者用管理端點產生邀請碼給朋友，一碼用一次，憑證只回傳一次.
+ * 帳號的復原密鑰（規格 12.44 第 1 步）：裝置產生後放進選手加密的同步；新裝置用它換自己的憑證（POST /v1/recover）.
+ * 代理只存雜湊，不知道同步空間；同步服務只看到密文.
  */
-import { meterSseStream, usageFromJson } from "./metering";
-import { costMicroUsd, usdToMicro, type Policy, type TokenUsage } from "./policy";
+import { emptyUsage, meterSseStream, usageFromJson, type MeterResult } from "./metering";
+import { costMicroUsd, usdToMicro, type ModelPrice, type Policy, type TokenUsage } from "./policy";
 import type { Account, AccountStore, DailyKind, Invite } from "./store";
 
 export interface ProxyDeps {
@@ -94,6 +96,10 @@ export function normalizeInviteCode(input: string): string | null {
   return normalize(compact.length === CODE_LENGTH + 2 && compact.startsWith("RC") ? compact.slice(2) : compact, CODE_LENGTH);
 }
 
+// 帳號的復原密鑰：32 bytes（256 bits）隨機，只在產生時回傳一次
+const RECOVERY_SECRET = /^rcs_[0-9a-f]{64}$/;
+const ACCOUNT_ID = /^acct_[\w-]{1,64}$/;
+
 /** 連結碼：XXXX-XXXX */
 export function normalizeLinkCode(input: string): string | null {
   return normalize(input, LINK_CODE_LENGTH);
@@ -139,6 +145,23 @@ export function isNewTurn(messages: unknown[]): boolean {
   if (!Array.isArray(last.content)) return true;
   return !(last.content as Json[]).every((block) => block?.type === "tool_result");
 }
+
+/**
+ * 預扣的用量與花費：輸出照套用政策後的 max_tokens；輸入照轉發的請求有幾個位元組估（一個 token 至少一個位元組，所以不會少估），
+ * 而且照輸入、快取寫入、快取讀取裡最貴的價格算
+ */
+export function reservation(price: ModelPrice, requestBytes: number, maxTokens: number): { usage: TokenUsage; cost: number } {
+  const inputPrice = Math.max(price.input, price.cacheWrite ?? price.input * 1.25, price.cacheRead ?? price.input * 0.1);
+  const usage: TokenUsage = { input: requestBytes, output: maxTokens, cacheRead: 0, cacheWrite: 0 };
+  return { usage, cost: costMicroUsd({ input: inputPrice, output: price.output, cacheRead: 0, cacheWrite: 0 }, usage) };
+}
+
+const scale = (usage: TokenUsage, factor: number): TokenUsage => ({
+  input: usage.input * factor,
+  output: usage.output * factor,
+  cacheRead: usage.cacheRead * factor,
+  cacheWrite: usage.cacheWrite * factor,
+});
 
 /** 套用政策：固定的模型、固定的思考強度或關掉思考、輸出上限 */
 function applyPolicy(body: Json, policy: Policy): void {
@@ -287,6 +310,32 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     }
     const release = () => (counts ? store.releaseDaily(account.id, today, kind) : Promise.resolve());
 
+    // 計費：先預扣、後結算（規格 12.39）. 送出前先記下這次最多可能的花費，拿到上游最後的用量再改成實際的
+    const currentPeriod = period();
+    const price = policy.models[model]!;
+    const forwarded = JSON.stringify(body);
+    const reserved = reservation(price, new TextEncoder().encode(forwarded).length, body.max_tokens as number);
+    let reservedOk: Awaited<ReturnType<AccountStore["reserveUsage"]>>;
+    try {
+      reservedOk = await store.reserveUsage(account.id, currentPeriod, reserved.usage, reserved.cost, budgetOf(account), totalBudget);
+    } catch (e) {
+      await release();
+      throw e;
+    }
+    if (reservedOk !== "ok") {
+      await release();
+      return reservedOk === "beta_budget"
+        ? errorResponse(403, "beta_budget", "這個月的免費額度用完了，下個月 1 日恢復", { resets_at: nextPeriodStart() })
+        : errorResponse(403, "account_budget", "你這個月的免費額度用完了，下個月 1 日恢復", { resets_at: nextPeriodStart() });
+    }
+    const keep = (promise: Promise<void>): Promise<void> => {
+      const write = promise.catch((e) => log(`usage write failed for ${account.id}: ${e instanceof Error ? e.message : String(e)}`));
+      deps.waitUntil?.(write);
+      return write;
+    };
+    /** 上游回錯誤、沒有產生回覆：退回預扣 */
+    const refund = () => keep(store.adjustUsage(account.id, currentPeriod, scale(reserved.usage, -1), -reserved.cost, -1));
+
     let upstream: Response;
     try {
       upstream = await fetchImpl(upstreamUrl, {
@@ -296,10 +345,10 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
           "x-api-key": deps.upstream.apiKey,
           "anthropic-version": request.headers.get("anthropic-version") ?? "2023-06-01",
         },
-        body: JSON.stringify(body),
+        body: forwarded,
       });
     } catch (e) {
-      await release();
+      await Promise.all([release(), refund()]);
       throw e;
     }
 
@@ -309,34 +358,46 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
       if (value) headers.set(name, value);
     }
 
-    const currentPeriod = period();
-    const record = (usage: TokenUsage): Promise<void> => {
-      const cost = costMicroUsd(policy.models[model]!, usage);
+    /**
+     * 結算：拿到最後的用量就改成實際的（多退少補）；沒拿到的（下游中斷、上游出錯、串流提早結束）維持預扣的輸出，
+     * 已知的輸入照實際的. Worker 在這之前被取消的，就停在預扣的數字
+     */
+    const settle = ({ usage, final, inputKnown }: MeterResult): Promise<void> => {
+      const actual: TokenUsage = final ? usage : inputKnown ? { ...usage, output: reserved.usage.output } : reserved.usage;
+      const cost = final || inputKnown ? costMicroUsd(price, actual) : reserved.cost;
       log(
-        `${account.id} ${model} ${upstream.status} ${kind}${counts ? "" : "+"} in=${usage.input + usage.cacheRead + usage.cacheWrite}` +
-          ` out=${usage.output} cost_microusd=${cost}`,
+        `${account.id} ${model} ${upstream.status} ${kind}${counts ? "" : "+"} in=${actual.input + actual.cacheRead + actual.cacheWrite}` +
+          ` out=${actual.output} cost_microusd=${cost}${final ? "" : " (estimated)"}`,
       );
-      const write = store
-        .addUsage(account.id, currentPeriod, usage, cost)
-        .catch((e) => log(`usage write failed for ${account.id}: ${e instanceof Error ? e.message : String(e)}`));
-      deps.waitUntil?.(write);
-      return write;
+      const delta: TokenUsage = {
+        input: actual.input - reserved.usage.input,
+        output: actual.output - reserved.usage.output,
+        cacheRead: actual.cacheRead - reserved.usage.cacheRead,
+        cacheWrite: actual.cacheWrite - reserved.usage.cacheWrite,
+      };
+      return keep(store.adjustUsage(account.id, currentPeriod, delta, cost - reserved.cost));
     };
 
     if (!upstream.ok || !upstream.body) {
       log(`${account.id} ${model} ${upstream.status}`);
       // 沒有產生回覆：不扣這一次
-      await release();
+      await Promise.all([release(), refund()]);
       return new Response(upstream.body, { status: upstream.status, headers });
     }
     if (upstream.headers.get("content-type")?.includes("text/event-stream")) {
       return new Response(
-        meterSseStream(upstream.body, (usage) => void record(usage)),
+        meterSseStream(upstream.body, (result) => void settle(result)),
         { status: upstream.status, headers },
       );
     }
-    const text = await upstream.text();
-    await record(usageFromJson(text));
+    let text: string;
+    try {
+      text = await upstream.text();
+    } catch (e) {
+      await settle({ usage: emptyUsage(), final: false, inputKnown: false });
+      throw e;
+    }
+    await settle(usageFromJson(text));
     return new Response(text, { status: upstream.status, headers });
   }
 
@@ -349,6 +410,8 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     const paused =
       totalBudget !== null && total.costMicroUsd >= totalBudget ? "beta_budget" : used.costMicroUsd >= budgetOf(account) ? "account_budget" : null;
     return Response.json({
+      // 這台用的帳號（同步裡的復原密鑰記在哪個帳號下，規格 12.44）
+      account_id: account.id,
       period: currentPeriod,
       requests: used.requests,
       input_tokens: used.input + used.cacheRead + used.cacheWrite,
@@ -452,6 +515,65 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     if (account.status !== "active") return errorResponse(403, "permission_error", "這個試用帳號已停用");
     const token = await issueToken(account.id, deviceNameOf(input.device_name));
     log(`link ok: ${account.id}`);
+    return Response.json(
+      { account_id: account.id, token, model: policy.forceModel, daily_messages: policy.dailyMessages, daily_auto: policy.dailyAuto },
+      { status: 201 },
+    );
+  }
+
+  /**
+   * 帳號的復原密鑰（規格 12.44 第 1 步）：產生一把新的（舊的作廢），只在這裡回傳一次，之後只存雜湊.
+   * 身分：這台的憑證；或沒有憑證的裝置（例如自己的 API key、在同步裡換了金鑰的那台）用目前的那一把
+   * （{account, secret}，和取回共用每個 IP 的頻率限制）
+   */
+  async function handleRecoverySecret(request: Request): Promise<Response> {
+    let accountId: string;
+    if (presentedToken(request)) {
+      const account = await authenticate(request);
+      if (account instanceof Response) return account;
+      accountId = account.id;
+    } else {
+      const checked = await checkRecovery(request);
+      if (checked instanceof Response) return checked;
+      accountId = checked.account.id;
+    }
+    const secret = `rcs_${randomHex(32)}`;
+    await store.setRecoveryHash(accountId, await sha256Hex(secret));
+    log(`recovery secret set: ${accountId}`);
+    return Response.json({ account_id: accountId, secret }, { status: 201 });
+  }
+
+  /**
+   * 檢查 {account, secret}：錯了一律回「不對」（不透露帳號存不存在、有沒有復原密鑰）；對了但帳號暫停時拒絕.
+   * 每個 IP 每分鐘的次數和兌換、連結碼共用
+   */
+  async function checkRecovery(request: Request): Promise<{ account: Account; input: Json } | Response> {
+    if (overLimit(`redeem:${clientIp(request)}`, policy.redeemsPerMinute)) {
+      return errorResponse(429, "rate_limit_error", "試太多次了，請一分鐘後再試", undefined, { "retry-after": "60" });
+    }
+    const input = (await request.json().catch(() => ({}))) as Json;
+    const wrong = () => {
+      log("recover rejected");
+      return errorResponse(400, "invalid_recovery", "取回免費試用的資料不對（可能已經換新或帳號已刪除），請在已經用著免費試用的那台再同步一次，或用連結碼");
+    };
+    if (typeof input.account !== "string" || !ACCOUNT_ID.test(input.account) || typeof input.secret !== "string" || !RECOVERY_SECRET.test(input.secret)) {
+      return wrong();
+    }
+    const [stored, presented] = [await store.getRecoveryHash(input.account), await sha256Hex(input.secret)];
+    if (!stored || stored !== presented) return wrong();
+    const account = await store.getAccount(input.account);
+    if (!account) return wrong();
+    if (account.status !== "active") return errorResponse(403, "permission_error", "這個試用帳號已停用");
+    return { account, input };
+  }
+
+  /** 新的裝置用同步裡的復原密鑰拿到自己的憑證（同一個帳號、同一份額度；每台一個，可以單獨移除） */
+  async function handleRecover(request: Request): Promise<Response> {
+    const checked = await checkRecovery(request);
+    if (checked instanceof Response) return checked;
+    const { account, input } = checked;
+    const token = await issueToken(account.id, deviceNameOf(input.device_name));
+    log(`recover ok: ${account.id}`);
     return Response.json(
       { account_id: account.id, token, model: policy.forceModel, daily_messages: policy.dailyMessages, daily_auto: policy.dailyAuto },
       { status: 201 },
@@ -679,6 +801,8 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     if (path === "/v1/account" && request.method === "DELETE") return handleDeleteAccount(request);
     if (path === "/v1/link-codes" && request.method === "POST") return handleCreateLinkCode(request);
     if (path === "/v1/link" && request.method === "POST") return handleLink(request);
+    if (path === "/v1/recovery-secret" && request.method === "POST") return handleRecoverySecret(request);
+    if (path === "/v1/recover" && request.method === "POST") return handleRecover(request);
     if (path === "/v1/devices" && request.method === "GET") return handleDevices(request);
     const device = /^\/v1\/devices\/([\w-]+)$/.exec(path);
     if (device && request.method === "DELETE") return handleRevokeDevice(request, device[1]!);

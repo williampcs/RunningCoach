@@ -29,6 +29,7 @@ import { TermsConfirm } from "./views/TermsConfirm";
 import { RedFlagBanner } from "./views/RedFlag";
 import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
+import { useTrialSync } from "./use-trial-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { DEMO, DEMO_DB_FILE } from "./demo";
 import { wizardStart, type WizardStep } from "./wizard";
@@ -344,6 +345,8 @@ export function App() {
   const [revision, setRevision] = useState(0);
   const [outbox, setOutbox] = useState<string | null>(null);
   const [reportPreselect, setReportPreselect] = useState<number | string | null>(null);
+  // 看板的「去回報」（身體狀況、傷的分數）：「回報」分頁捲到身體狀況
+  const [checkinFocus, setCheckinFocus] = useState(false);
   // 課表頁「之前的週」點了某一趟：紀錄頁打開那一趟（規格 12.34）
   const [historyFocus, setHistoryFocus] = useState<HistoryFocus | null>(null);
   // 用手機掃了另一台顯示的 QR code：網址的 #pair= 後面是配對碼（不會送到伺服器）
@@ -457,6 +460,21 @@ export function App() {
     setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), TOAST_MS);
   }, []);
   const [removed, setRemoved] = useState(removedHere);
+  // 免費試用的帳號掛進加密的同步（規格 12.44 第 1 步）：以最新的設定為底改（同步完自動取回時，設定可能剛被別處改過）
+  const applySettings = useCallback(
+    async (change: (current: AppSettings) => AppSettings) => {
+      const next = change(settingsRef.current);
+      if (next === settingsRef.current) return next;
+      await saveSettings(next);
+      settingsRef.current = next;
+      clockOffset = clockOffsetMs(testMode, next.timeZone);
+      coach?.configure(coachConfig(next, testMode));
+      setSettings(next);
+      return next;
+    },
+    [coach, testMode],
+  );
+  const trialSync = useTrialSync(coach?.db ?? null, settings, deviceSync, applySettings, touch, toast);
 
   const activitiesReady = testMode.enabled || intervalsConnected(settings);
 
@@ -535,7 +553,12 @@ export function App() {
         setReportPreselect(target ?? null);
         showTab("report");
       },
+      openCheckin() {
+        setCheckinFocus(true);
+        showTab("report");
+      },
       deviceSync,
+      trialSync,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
       devicesFocus,
@@ -546,7 +569,7 @@ export function App() {
       openSettings,
       toast,
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
 
   // 從 Intervals.icu 登入回來（規格 12.37）：精靈以外按的，打開設定的「訓練紀錄」，在那裡換 token
   useEffect(() => {
@@ -703,7 +726,12 @@ export function App() {
         )}
         <main className={tab === "chat" ? "page chat-page" : "page"} inert={!!panel}>
           {tab === "chat" && <ChatView outbox={outbox} onOutboxSent={() => setOutbox(null)} />}
-          {tab === "report" && <ReportView preselect={reportPreselect} onPreselectUsed={() => setReportPreselect(null)} />}
+          {tab === "report" && <ReportView
+              preselect={reportPreselect}
+              onPreselectUsed={() => setReportPreselect(null)}
+              focusCheckin={checkinFocus}
+              onFocusUsed={() => setCheckinFocus(false)}
+            />}
           {tab === "history" && <HistoryView focus={historyFocus} onFocusUsed={() => setHistoryFocus(null)} />}
           {tab === "plan" && <PlanView />}
           {tab === "profile" && <ProfileView />}

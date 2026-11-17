@@ -208,7 +208,7 @@ describe("舊版的資料庫照開（這一版沒有 schema 變更）", () => {
     expect(after.workouts).toEqual(before.workouts!.map((w) => ({ ...(w as object), sync_id: null, updated_at: null })));
     for (const t of Object.keys(before).filter((t) => t !== "workouts")) expect(after[t]).toEqual(before[t]);
     const [row] = await driver.all("PRAGMA user_version");
-    expect(row?.user_version).toBe(19);
+    expect(row?.user_version).toBe(20);
     expect((await upgraded.getActivities(14)).map((a) => [a.sport, a.perceived_effort])).toEqual([
       ["ride", 5],
       ["run", 4],

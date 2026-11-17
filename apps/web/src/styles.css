@@ -1853,16 +1853,6 @@ span.quote {
     flex: none;
     justify-content: flex-end;
   }
-
-  /* 自評的表單打開時：文字在上、表單在下，不和文字並排 */
-  .feed-body.with-form {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .feed-body.with-form .checkin {
-    max-width: 480px;
-  }
 }
 
 .feed-more {
@@ -3650,6 +3640,11 @@ button.back-button {
   margin-top: var(--sp-3);
 }
 
+/* 「回報」分頁的今天的身體狀況：回報過了是一行結果 */
+.checkin-summary {
+  margin: 0;
+}
+
 .checkin .pain-question {
   display: flex;
   flex-direction: column;
@@ -4061,4 +4056,61 @@ a.button {
   width: 100%;
   height: 8px;
   accent-color: var(--accent);
+}
+
+/* passkey 的測試頁（規格 12.44）：只在 staging 與開發用的建置 */
+.passkey-column {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.passkey-test h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.passkey-facts,
+.passkey-gets,
+.passkey-notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.passkey-fact {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.passkey-fact > span:last-child {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.passkey-gets > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  overflow-wrap: anywhere;
+}
+
+.passkey-gets > li > .icon {
+  flex: none;
+  color: var(--done);
+}
+
+.passkey-notes {
+  padding-left: var(--sp-4);
+  list-style: disc;
+}
+
+.passkey-report {
+  width: 100%;
 }

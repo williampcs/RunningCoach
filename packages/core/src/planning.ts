@@ -1,7 +1,7 @@
 /**
  * 課表的存檔、檢查與調整：教練的工具與網頁版共用（規格 12.8 的第三步 3a）.
  */
-import { addDays, isoWeekLabel, weekdayIndex, weekdayName } from "./dates";
+import { addDays, isoWeekLabel, shortDateLabel, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
 import {
   activeSelfChange,
@@ -174,6 +174,33 @@ function blockedText(what: string, blocking: PlanWarning[], others: PlanWarning[
   );
 }
 
+/** 一份菜單裡要佔一天的課：休息不算，肌力常和跑步同一天也不算 */
+const DAY_FILLING = (s: SessionDraft) => s.kind !== "rest" && s.kind !== "strength";
+
+/**
+ * 存進這週、但這週剩下的天數放不下時的提醒（12.15：週末排下週的課表卻存進這週，原本這週的課會被換掉）：
+ * 彈性的菜單有沒寫日期的課，而且今天是星期五以後，或要佔一天的課比剩下的天數多。
+ * 固定的課表每堂有日期，排在今天以前的另外提醒（past_date），不在這週的解析時就擋下.
+ * 只排剩下的日子（寫上日期）或 accept_warnings 照舊可以存（例：星期四重排週五到週日）
+ */
+export function thisWeekRoomWarning(sessions: SessionDraft[], today: string, weekStart: string, style: PlanStyle): PlanWarning | null {
+  if (style !== "flexible" || weekStart !== mondayOf(today)) return null;
+  const weekday = weekdayIndex(today);
+  const left = 7 - weekday;
+  const upcoming = sessions.filter((s) => DAY_FILLING(s) && (!s.date || s.date >= today));
+  const undated = upcoming.filter((s) => !s.date);
+  const days = undated.length + new Set(upcoming.flatMap((s) => (s.date ? [s.date] : []))).size;
+  if (!undated.length || (weekday < 4 && days <= left)) return null;
+  const nextMonday = addDays(weekStart, 7);
+  return {
+    rule: "this_week_room",
+    message:
+      `這份菜單存進這週（${shortDateLabel(weekStart)}– ${shortDateLabel(addDays(weekStart, 6))}），今天${weekdayName(today)}，這週只剩 ${left} 天，放不下一週的菜單；` +
+      `存了會換掉這週原本的課表。要排下週的話 week_start 填 ${nextMonday}（下週一）；` +
+      "真的要改這週剩下的日子，只排剩下的日子（每堂寫上日期），或設 accept_warnings 並寫理由。",
+  };
+}
+
 /** save_training_plan：檢查後儲存；有問題且教練沒有寫理由時不存，把問題回給教練 */
 export async function savePlanFromTool(db: Db, today: string, input: Record<string, unknown>, options: PlanOptions = {}): Promise<string> {
   const style: PlanStyle = input.style === "flexible" ? "flexible" : "fixed";
@@ -192,6 +219,8 @@ export async function savePlanFromTool(db: Db, today: string, input: Record<stri
       message: `${past.map((s) => s.date!.slice(5)).join("、")} 的課排在今天以前；已經跑過的紀錄會自動配對，只排剩下的日子就好。`,
     });
   }
+  const room = thisWeekRoomWarning(sessions, today, weekStart, style);
+  if (room) warnings.push(room);
   const notesInput = typeof input.warning_notes === "string" ? input.warning_notes.trim() : "";
   const blocking = warnings.filter((w) => w.blocking);
   if (blocking.length) return blockedText("尚未儲存", blocking, warnings.filter((w) => !w.blocking));

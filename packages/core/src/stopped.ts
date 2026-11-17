@@ -17,7 +17,7 @@ const WRITES: Record<string, { done: string; undo: string }> = {
   save_workout: { done: "存了跑後的回報與分析", undo: "到「紀錄」看那一趟" },
   save_pending_subjective: { done: "暫存了跑後的感受", undo: "同步後到「紀錄」看那一趟" },
   save_activity_feedback: { done: "存了運動的回報", undo: "到「紀錄」看那一趟" },
-  save_daily_checkin: { done: "記了今天的身體狀況", undo: "到看板的「今天身體如何？」修改" },
+  save_daily_checkin: { done: "記了今天的身體狀況", undo: "到「回報」的「今天的身體狀況」按「修改」" },
   remember: { done: "記下了要記住的事", undo: "到「記住的事」刪除" },
   forget: { done: "刪掉了記住的事", undo: "到「記住的事」再新增" },
   record_injury: { done: "記下了傷病", undo: "到「選手」→「身體」修改" },

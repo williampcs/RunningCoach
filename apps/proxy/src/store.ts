@@ -1,7 +1,7 @@
 /**
- * 帳號與用量的儲存 — 代理唯一會落地的資料：邀請碼（只存雜湊）、帳號與它的裝置憑證（只存雜湊）、登入方式、
+ * 帳號與用量的儲存 — 代理唯一會落地的資料：邀請碼（只存雜湊）、帳號與它的裝置憑證（只存雜湊）、帳號的復原密鑰（只存雜湊）、登入方式、
  * 每天的次數、每月的 token 與金額.
- * 不儲存請求或回應內容，也不儲存憑證、邀請碼或連結碼的原文（只存雜湊）。不存 email、名字或 IP（規格 12.39、12.36 的資料原則）.
+ * 不儲存請求或回應內容，也不儲存憑證、邀請碼、連結碼或復原密鑰的原文（只存雜湊）。不存 email、名字或 IP（規格 12.39、12.36 的資料原則）.
  *
  * 以「帳號」為中心（2026-11-10 使用者的方向）：邀請碼只是建立帳號的一種方式（identities 的 type invite）；之後的
  * Google／Apple 登入加在同一個帳號上（訪客帳號升級），不用換帳號. 一個帳號可以有多台裝置，每台一個憑證（account_tokens），
@@ -61,7 +61,8 @@ const SCHEMA = `
     status                   TEXT NOT NULL DEFAULT 'active',
     monthly_budget_microusd  INTEGER,
     invite_id                TEXT,
-    created_at               TEXT NOT NULL
+    created_at               TEXT NOT NULL,
+    recovery_hash            TEXT
   );
 
   CREATE TABLE IF NOT EXISTS account_tokens (
@@ -202,6 +203,16 @@ export class AccountStore {
         ALTER TABLE accounts_new RENAME TO accounts
       `);
     }
+    // 帳號的復原密鑰（規格 12.44 第 1 步）：之前建的資料表沒有這一欄
+    const hasRecovery = async () => (await this.driver.all("PRAGMA table_info(accounts)")).some((c) => String(c.name) === "recovery_hash");
+    if (!(await hasRecovery())) {
+      try {
+        await this.driver.run("ALTER TABLE accounts ADD COLUMN recovery_hash TEXT");
+      } catch (e) {
+        // 兩個執行個體同時加：另一個已經加好了就沒事
+        if (!(await hasRecovery())) throw e;
+      }
+    }
   }
 
   // --- 帳號 ---------------------------------------------------------------
@@ -293,6 +304,19 @@ export class AccountStore {
     return row.used_at ? "used" : "expired";
   }
 
+  // --- 帳號的復原密鑰（規格 12.44 第 1 步：放在選手加密的同步裡，新裝置用它拿到自己的憑證） ---
+
+  /** 換一把新的（舊的作廢）；只存雜湊. 回傳帳號是否存在 */
+  async setRecoveryHash(accountId: string, hash: string): Promise<boolean> {
+    return (await this.driver.run("UPDATE accounts SET recovery_hash=? WHERE id=?", [hash, accountId])).changes > 0;
+  }
+
+  /** 沒有帳號或還沒有復原密鑰時是 null */
+  async getRecoveryHash(accountId: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT recovery_hash FROM accounts WHERE id=?", [accountId]))[0];
+    return textOrNull(row?.recovery_hash);
+  }
+
   async getAccount(id: string): Promise<Account | null> {
     return toAccount((await this.driver.all("SELECT * FROM accounts WHERE id=?", [id]))[0]);
   }
@@ -319,7 +343,7 @@ export class AccountStore {
   }
 
   /**
-   * 刪除帳號與它所有的憑證、登入方式、連結碼、每天與每月的用量（選手在設定按「刪除試用帳號」，或作者刪除）.
+   * 刪除帳號與它所有的憑證、復原密鑰（在 accounts 那一列）、登入方式、連結碼、每天與每月的用量（選手在設定按「刪除試用帳號」，或作者刪除）.
    * 邀請碼維持「已用過」、不能再兌換；這個月的總花費（totals，不分是誰的）不跟著減少，總預算照樣算得準。回傳帳號是否存在
    */
   async deleteAccount(id: string): Promise<boolean> {
@@ -433,6 +457,65 @@ export class AccountStore {
        ON CONFLICT(period) DO UPDATE SET requests = requests + 1, cost_microusd = cost_microusd + excluded.cost_microusd`,
       [period, cost],
     );
+  }
+
+  /**
+   * 預扣（規格 12.39 的「計費：先預扣、後結算」）：這個月的花費還沒到上限時，把這次最多可能的用量與花費加進帳號與總計，回傳 "ok".
+   * 比較與相加在同一個敘述裡，同時很多請求也不會一起越過上限. 到了上限回傳是哪一個（beta_budget 是總預算）.
+   * totalBudget 是 null 時總計不設上限
+   */
+  async reserveUsage(
+    accountId: string,
+    period: string,
+    usage: TokenUsage,
+    cost: number,
+    accountBudget: number,
+    totalBudget: number | null,
+  ): Promise<"ok" | "account_budget" | "beta_budget"> {
+    await this.driver.run("INSERT INTO totals (period) VALUES (?) ON CONFLICT(period) DO NOTHING", [period]);
+    const total = await this.driver.run(
+      `UPDATE totals SET requests = requests + 1, cost_microusd = cost_microusd + ?
+       WHERE period=? AND (? IS NULL OR cost_microusd < ?)`,
+      [cost, period, totalBudget, totalBudget],
+    );
+    if (total.changes === 0) return "beta_budget";
+
+    await this.driver.run("INSERT INTO usage (account_id, period) VALUES (?, ?) ON CONFLICT(account_id, period) DO NOTHING", [accountId, period]);
+    const own = await this.driver.run(
+      `UPDATE usage SET
+         requests           = requests + 1,
+         input_tokens       = input_tokens + ?,
+         output_tokens      = output_tokens + ?,
+         cache_read_tokens  = cache_read_tokens + ?,
+         cache_write_tokens = cache_write_tokens + ?,
+         cost_microusd      = cost_microusd + ?
+       WHERE account_id=? AND period=? AND cost_microusd < ?`,
+      [usage.input, usage.output, usage.cacheRead, usage.cacheWrite, cost, accountId, period, accountBudget],
+    );
+    if (own.changes === 0) {
+      await this.driver.run("UPDATE totals SET requests = requests - 1, cost_microusd = cost_microusd - ? WHERE period=?", [cost, period]);
+      return "account_budget";
+    }
+    return "ok";
+  }
+
+  /**
+   * 結算或退回預扣：把差額（可以是負的）加到帳號與總計上；requests 是次數的差（退回時 -1）.
+   * 單一敘述做加減，不先讀再寫，並行的請求不會互相覆蓋. 帳號在請求進行中被刪掉的，只調整總計
+   */
+  async adjustUsage(accountId: string, period: string, delta: TokenUsage, cost: number, requests = 0): Promise<void> {
+    await this.driver.run(
+      `UPDATE usage SET
+         requests           = requests + ?,
+         input_tokens       = input_tokens + ?,
+         output_tokens      = output_tokens + ?,
+         cache_read_tokens  = cache_read_tokens + ?,
+         cache_write_tokens = cache_write_tokens + ?,
+         cost_microusd      = cost_microusd + ?
+       WHERE account_id=? AND period=?`,
+      [requests, delta.input, delta.output, delta.cacheRead, delta.cacheWrite, cost, accountId, period],
+    );
+    await this.driver.run("UPDATE totals SET requests = requests + ?, cost_microusd = cost_microusd + ? WHERE period=?", [requests, cost, period]);
   }
 
   /** 刪掉過期的紀錄：day 早於 oldestDay 的每天次數、period 早於 oldestPeriod 的每月用量與合計 */

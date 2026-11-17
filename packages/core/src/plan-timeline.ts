@@ -36,6 +36,10 @@ export interface TimelineDay {
   others: OtherActivity[];
   /** 下一份課表從這天開始：前面加一條分隔（下週的範圍與總量） */
   nextWeek: TimelineWeek | null;
+  /** 下一份課表是彈性的菜單時，它沒有日期的課：列在分隔的下面（「下週任一天」），不放到這週的最上面 */
+  undated: TimelineSession[];
+  /** 這天本身不用列出來（彈性的菜單裡空的日子）：只留分隔與「下週任一天」 */
+  hideRow: boolean;
 }
 
 export interface PlanTimeline {
@@ -46,7 +50,7 @@ export interface PlanTimeline {
   earlier: TimelineSession[];
   /** 這週今天以前、課表外的其他運動（多運動） */
   earlierOthers: OtherActivity[];
-  /** 彈性的課表（菜單）沒有日期的課 */
+  /** 彈性的課表（菜單）沒有日期的課；下一份課表的在它分隔的那天（TimelineDay.undated） */
   undated: TimelineSession[];
   days: TimelineDay[];
   /** 放大的那一堂：今天的課，今天沒課時是下一堂 */
@@ -93,8 +97,15 @@ export function planTimeline(
   const others = options.others ? plans.flatMap((p) => p.extraOthers) : [];
   const weekOfPlan = (p: ActivePlan) => ({ range: weekRange(p.plan.week_start!), km: p.totalKm, runs: p.runCount, rides: p.rideCount, rideMinutes: p.rideMinutes });
 
+  // 下一份課表有自己的分隔時，它沒有日期的課放在分隔的下面（2026-11-13 使用者回報：下週的菜單出現在「這週任一天」）
+  const nextStart = next?.plan.week_start ?? null;
+  const dividerAt = nextStart && nextStart > first && nextStart <= end ? nextStart : null;
+  const allUndated = sessions.filter((s) => s.date === null);
+  const nextUndated = dividerAt ? allUndated.filter((s) => s.weekStart === dividerAt) : [];
+
   const days: TimelineDay[] = [];
   for (let date = first; date <= end; date = addDays(date, 1)) {
+    const divider = date === dividerAt;
     const day: TimelineDay = {
       date,
       label: dayLabel(date, today),
@@ -102,20 +113,26 @@ export function planTimeline(
       sessions: sessions.filter((s) => s.date === date),
       races: upcoming.filter((r) => r.date === date),
       others: others.filter((a) => a.date === date),
-      nextWeek: next?.plan.week_start === date && date !== first ? weekOfPlan(next) : null,
+      nextWeek: divider ? weekOfPlan(next!) : null,
+      undated: divider ? nextUndated : [],
+      hideRow: false,
     };
-    // 彈性的課表沒有日期：空的日子不是休息日，不列出來
-    if (!day.sessions.length && !day.races.length && !day.others.length && flexibleWeeks.has(weekOf(date)) && !day.nextWeek) continue;
+    // 彈性的課表沒有日期：空的日子不是休息日，不列出來（下一份課表的第一天留著分隔，只是不列那天）
+    const empty = !day.sessions.length && !day.races.length && !day.others.length;
+    if (empty && flexibleWeeks.has(weekOf(date))) {
+      if (!day.nextWeek) continue;
+      day.hideRow = true;
+    }
     days.push(day);
   }
 
   const earlier = sessions.filter((s) => s.date !== null && s.date < first);
-  const undated = sessions.filter((s) => s.date === null);
+  const undated = allUndated.filter((s) => !nextUndated.includes(s));
   const todays = days[0]?.date === today ? days[0].sessions.filter((s) => !isRest(s)) : [];
   const focus =
     todays[0] ??
     sessions.find((s) => s.date !== null && s.date > today && !isRest(s) && s.status === "planned") ??
-    undated.find((s) => s.status === "planned" && !s.result?.workoutId) ??
+    allUndated.find((s) => s.status === "planned" && !s.result?.workoutId) ??
     null;
 
   const later = upcoming.filter((r) => r.date > end);

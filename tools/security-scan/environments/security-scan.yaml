@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://platform.claude.com/schemas/ant/beta/environment.json
+# 安全掃描兩個代理共用的沙盒（規格 12.45、9.4）。
+# 網路 limited：只開 GitHub（clone、git fetch、警示與 SARIF 的 API）與 Resend 的 API（寄通知信）；
+# 允許套件庫，是為了必要時在沙盒裡 `npm ci --ignore-scripts` 跑幾行小實驗。
+name: security-scan
+description: 安全掃描代理的沙盒：只連 GitHub 與 Resend 的 API（寄信），允許套件庫。
+config:
+  type: cloud
+  networking:
+    type: limited
+    allow_package_managers: true
+    allow_mcp_servers: false
+    allowed_hosts:
+      - github.com
+      - api.github.com
+      - api.resend.com

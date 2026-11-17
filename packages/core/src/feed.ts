@@ -22,6 +22,7 @@ import { raceHours, raceWeatherSummary, raceWindowText } from "./race-weather";
 import { unavailableCountText, unavailableForFeed } from "./unavailable";
 
 export type FeedAction =
+  /** 到「回報」分頁的今天的身體狀況（自評的表單、傷的分數；2026-11-12 起表單不在看板） */
   | { type: "checkin" }
   /** 前往跑後回報；有 workoutId 時預先選好那一筆（騎車等其他運動是 intervalsId，多運動） */
   | { type: "report"; workoutId?: number; intervalsId?: string }
@@ -267,7 +268,7 @@ export async function buildFeed(
   // 手錶的恢復資料（睡眠、HRV）看不出來源：有經 Garmin Connect 同步的紀錄時當成來自 Garmin（KI-048）
   const watchSource = recovery.watchFlags.length && usesGarminConnect([...workouts, ...others]) ? { source: dataSourceLine([GARMIN])! } : {};
 
-  // 身體狀況：先問感受；手錶的數據只當參考
+  // 身體狀況：先問感受；手錶的數據只當參考. 看板只放提醒，表單在「回報」分頁
   if (!recovery.checkin) {
     items.push({
       ...watchSource,
@@ -311,16 +312,8 @@ export async function buildFeed(
           { type: "checkin" },
         ],
       });
-    } else {
-      items.push({
-        id: `checkin-done-${today}`,
-        kind: "checkin",
-        tone: "ok",
-        title: "今天的身體狀況已記錄",
-        detail: describeCheckin(recovery.checkin),
-        actions: [{ type: "checkin" }],
-      });
     }
+    // 狀況正常時不放「已記錄」：今天的結果在「回報」分頁看得到（2026-11-12）
   }
 
   // 兩筆看起來是同一趟，但沒有時間可以確定（例如其中一筆是手動新增的）：問選手要不要合併

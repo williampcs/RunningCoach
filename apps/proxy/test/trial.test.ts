@@ -583,3 +583,141 @@ describe("帳號與多台裝置", () => {
     for (const table of ["account_tokens", "identities", "link_codes"]) expect(await driver.all(`SELECT * FROM ${table}`)).toHaveLength(0);
   });
 });
+
+describe("帳號的復原密鑰（規格 12.44 第 1 步）", () => {
+  async function newSecret(proxy: Proxy, auth: { token?: string; account?: string; secret?: string }, ip = "198.51.100.9") {
+    const response = await proxy(
+      new Request("http://proxy/v1/recovery-secret", {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip, ...(auth.token ? { "x-api-key": auth.token } : {}) },
+        body: auth.token ? undefined : JSON.stringify({ account: auth.account, secret: auth.secret }),
+      }),
+    );
+    return { status: response.status, body: (await response.json()) as any };
+  }
+  async function recover(proxy: Proxy, account: string, secret: string, ip = "198.51.100.10") {
+    const response = await proxy(
+      new Request("http://proxy/v1/recover", {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip },
+        body: JSON.stringify({ account, secret, device_name: "Android · Chrome" }),
+      }),
+    );
+    return { status: response.status, body: (await response.json()) as any };
+  }
+  const devicesOf = async (proxy: Proxy, token: string) =>
+    ((await (await proxy(new Request("http://proxy/v1/devices", { headers: { "x-api-key": token } }))).json()) as any).devices as any[];
+
+  it("已登入的裝置產生復原密鑰：只回一次、只存雜湊、不寫進日誌；新的裝置用它拿到自己的憑證，同一份額度", async () => {
+    const proxy = makeProxy({ dailyMessages: 2 });
+    const { token, account_id } = await account(proxy);
+    const created = await newSecret(proxy, { token });
+    expect(created.status).toBe(201);
+    expect(created.body.account_id).toBe(account_id);
+    const secret = created.body.secret as string;
+    expect(secret).toMatch(/^rcs_[0-9a-f]{64}$/);
+    expect(JSON.stringify(await driver.all("SELECT * FROM accounts"))).not.toContain(secret.slice(4));
+    expect(logs.join("\n")).not.toContain(secret.slice(4));
+
+    const recovered = await recover(proxy, account_id, secret);
+    expect(recovered).toMatchObject({ status: 201, body: { account_id } });
+    const newToken = recovered.body.token as string;
+    expect(newToken).not.toBe(token);
+    expect(logs.join("\n")).not.toContain(newToken.slice(3));
+    // 每台一個憑證、同一份額度；新的那台可以單獨移除
+    expect((await send(proxy, token)).status).toBe(200);
+    expect((await send(proxy, newToken)).status).toBe(200);
+    expect(await errorOf(await send(proxy, newToken))).toMatchObject({ type: "daily_limit" });
+    const list = await devicesOf(proxy, token);
+    expect(list.map((d) => d.name)).toEqual([null, "Android · Chrome"]);
+    // 用量端點回這台的帳號
+    expect((await usageOf(proxy, newToken)).account_id).toBe(account_id);
+    // 同一把可以再用（另一台新裝置）
+    expect((await recover(proxy, account_id, secret)).status).toBe(201);
+  });
+
+  it("錯了一律回「不對」，不透露帳號存不存在；沒有產生過的帳號不能取回", async () => {
+    const proxy = makeProxy();
+    const { token, account_id } = await account(proxy);
+    const other = await account(proxy);
+    const secret = (await newSecret(proxy, { token })).body.secret as string;
+    const wrongSecret = `rcs_${"0".repeat(64)}`;
+    const cases = [
+      await recover(proxy, account_id, wrongSecret),
+      await recover(proxy, "acct_doesnotexist", secret),
+      await recover(proxy, other.account_id, secret),
+      await recover(proxy, account_id, "rcs_short"),
+      await recover(proxy, "not an id", secret),
+    ];
+    for (const c of cases) expect(c).toMatchObject({ status: 400, body: { error: { type: "invalid_recovery" } } });
+    expect(new Set(cases.map((c) => c.body.error.message)).size).toBe(1);
+  });
+
+  it("換一把新的之後舊的不能用（同步換金鑰之後，被移除的裝置不能再取回）；沒有憑證的裝置可以用目前的那一把換", async () => {
+    const proxy = makeProxy();
+    const { token, account_id } = await account(proxy);
+    const first = (await newSecret(proxy, { token })).body.secret as string;
+    const second = (await newSecret(proxy, { token })).body.secret as string;
+    expect(second).not.toBe(first);
+    expect((await recover(proxy, account_id, first)).status).toBe(400);
+    expect((await recover(proxy, account_id, second)).status).toBe(201);
+    // 用自己的 API key 的那台換金鑰：用目前的那一把換新的，換完舊的作廢
+    const third = await newSecret(proxy, { account: account_id, secret: second });
+    expect(third).toMatchObject({ status: 201, body: { account_id } });
+    expect((await recover(proxy, account_id, second)).status).toBe(400);
+    expect((await newSecret(proxy, { account: account_id, secret: second })).status).toBe(400);
+    expect((await recover(proxy, account_id, third.body.secret)).status).toBe(201);
+    // 憑證不對的不能換
+    expect((await newSecret(proxy, { token: "rc_wrong" })).status).toBe(401);
+  });
+
+  it("帳號被暫停時不能取回；恢復後可以", async () => {
+    const proxy = makeProxy();
+    const { token, account_id } = await account(proxy);
+    const secret = (await newSecret(proxy, { token })).body.secret as string;
+    await admin(proxy, "PATCH", `/admin/accounts/${account_id}`, { status: "suspended" });
+    expect(await recover(proxy, account_id, secret)).toMatchObject({ status: 403, body: { error: { type: "permission_error" } } });
+    expect((await newSecret(proxy, { account: account_id, secret })).status).toBe(403);
+    await admin(proxy, "PATCH", `/admin/accounts/${account_id}`, { status: "active" });
+    expect((await recover(proxy, account_id, secret)).status).toBe(201);
+  });
+
+  it("刪除帳號時復原密鑰一起刪，不能再取回", async () => {
+    const proxy = makeProxy();
+    const { token, account_id } = await account(proxy);
+    const secret = (await newSecret(proxy, { token })).body.secret as string;
+    await proxy(new Request("http://proxy/v1/account", { method: "DELETE", headers: { "x-api-key": token } }));
+    expect((await recover(proxy, account_id, secret)).status).toBe(400);
+    expect(await driver.all("SELECT * FROM accounts WHERE recovery_hash IS NOT NULL")).toHaveLength(0);
+  });
+
+  it("和兌換、連結碼共用每個 IP 每分鐘的次數", async () => {
+    const proxy = makeProxy({ redeemsPerMinute: 3 });
+    const { token, account_id } = await account(proxy);
+    const secret = (await newSecret(proxy, { token })).body.secret as string;
+    const ip = "192.0.2.50";
+    await redeem(proxy, "RC-ZZZZ-ZZZZ-ZZZZ", ip);
+    await recover(proxy, account_id, `rcs_${"1".repeat(64)}`, ip);
+    expect((await recover(proxy, account_id, secret, ip)).status).toBe(201);
+    expect((await recover(proxy, account_id, secret, ip)).status).toBe(429);
+    expect((await redeem(proxy, "RC-ZZZZ-ZZZZ-ZZZZ", ip)).status).toBe(429);
+    // 別的 IP 不受影響
+    expect((await recover(proxy, account_id, secret, "192.0.2.51")).status).toBe(201);
+  });
+
+  it("之前建的資料庫（accounts 沒有 recovery_hash）打開時加上這一欄", async () => {
+    const old = openNodeSqlite(":memory:");
+    try {
+      await old.exec("CREATE TABLE accounts (id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', monthly_budget_microusd INTEGER, invite_id TEXT, created_at TEXT NOT NULL)");
+      await old.run("INSERT INTO accounts (id, created_at) VALUES ('acct_old', '2026-11-01T00:00:00Z')");
+      const migrated = new AccountStore(old);
+      await migrated.init();
+      await migrated.init();
+      expect(await migrated.getRecoveryHash("acct_old")).toBeNull();
+      expect(await migrated.setRecoveryHash("acct_old", "h")).toBe(true);
+      expect(await migrated.getRecoveryHash("acct_old")).toBe("h");
+    } finally {
+      old.close();
+    }
+  });
+});

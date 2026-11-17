@@ -33,7 +33,8 @@ export interface AppSettings {
   baseURL: string;
   models: Record<Purpose, string>;
   chatEffort: Effort;
-  proxy: { url: string; token: string };
+  /** account：這台的憑證屬於哪個試用帳號（同步裡的復原密鑰記在它下面，規格 12.44）；不是秘密，舊的設定沒有 */
+  proxy: { url: string; token: string; account?: string | null };
   /**
    * Intervals.icu：API key（Basic），或用 Intervals.icu 登入拿到的 token（Bearer，規格 12.37）與那個帳號.
    * token 和 API key 一樣只存在這台（密碼鎖開著時加密），不同步

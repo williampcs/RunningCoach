@@ -12,6 +12,7 @@ import type {
   UnavailableOrigin,
   WellnessDay,
 } from "./types";
+import { trimTrailingSlashes } from "./text-match";
 
 /** 預設的 API 網址（隱私說明頁列出網頁版會連的網址，測試會對照） */
 export const INTERVALS_BASE_URL = "https://intervals.icu/api/v1";
@@ -245,7 +246,7 @@ export class IntervalsClient implements ActivitySource {
 
   private async getJson(path: string, timeoutMs = 15_000): Promise<unknown> {
     const athleteId = this.options.athleteId || "0";
-    const base = (this.options.baseUrl ?? INTERVALS_BASE_URL).replace(/\/+$/, "");
+    const base = trimTrailingSlashes(this.options.baseUrl ?? INTERVALS_BASE_URL);
     const response = await this.fetchImpl(`${base}/athlete/${encodeURIComponent(athleteId)}${path}`, {
       headers: { authorization: this.authHeader(), accept: "application/json" },
       signal: AbortSignal.timeout(timeoutMs),

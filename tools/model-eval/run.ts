@@ -191,8 +191,27 @@ export function createEvalCoach(provider: LlmProvider, model: ModelConfig, optio
   return { coach, driver };
 }
 
-async function savedChanges(coach: Coach, driver: SqlDriver, before: SessionRow[], calls: ToolCallRecord[]): Promise<SavedChanges> {
+interface PlanRow {
+  id: number;
+  week_start: string | null;
+  is_active: number;
+}
+
+async function planRows(driver: SqlDriver): Promise<PlanRow[]> {
+  return (await driver.all("SELECT id, week_start, is_active FROM training_plans ORDER BY id")) as unknown as PlanRow[];
+}
+
+async function savedChanges(coach: Coach, driver: SqlDriver, before: SessionRow[], plansBefore: PlanRow[], calls: ToolCallRecord[]): Promise<SavedChanges> {
   const beforeById = new Map(before.map((r) => [Number(r.id), r]));
+  const today = coach.today();
+  const monday = addDays(today, -weekdayIndex(today));
+  const plansAfter = await planRows(driver);
+  const plansBeforeIds = new Set(plansBefore.map((p) => Number(p.id)));
+  const newPlanWeeks = plansAfter
+    .filter((p) => !plansBeforeIds.has(Number(p.id)) && p.week_start)
+    .map((p) => Math.round((Date.parse(p.week_start!) - Date.parse(monday)) / (7 * 86_400_000)));
+  const activeAfter = new Set(plansAfter.filter((p) => Number(p.is_active) === 1).map((p) => Number(p.id)));
+  const replacedPlans = plansBefore.filter((p) => Number(p.is_active) === 1 && !activeAfter.has(Number(p.id))).length;
   const after = await sessionRows(driver);
   const newSessions = after.filter((r) => !beforeById.has(Number(r.id))).map(snapshot);
   const editedSessions = after
@@ -211,6 +230,8 @@ async function savedChanges(coach: Coach, driver: SqlDriver, before: SessionRow[
     memories: (await coach.db.getMemories()).map((m) => m.content),
     profile: await coach.db.getProfile(),
     races: (await coach.db.getAllRaces()).map((r) => `${r.name}（${r.date}，${r.distance_km} km）`),
+    newPlanWeeks,
+    replacedPlans,
   };
 }
 
@@ -224,10 +245,17 @@ export function evalNow(real: Date = new Date()): Date {
   return new Date(`${addDays(today, -back)}T08:00:00+08:00`);
 }
 
+/** 情境的「現在」：有 weekday 時移到同一週的那一天（同一個時刻） */
+export function scenarioNow(scenario: Pick<Scenario, "weekday">, now: Date): Date {
+  if (scenario.weekday === undefined) return now;
+  const shift = scenario.weekday - weekdayIndex(localDate(now, "Asia/Taipei"));
+  return new Date(now.getTime() + shift * 86_400_000);
+}
+
 /** 跑一個情境；API 的錯誤記在結果裡，不丟出 */
 export async function runScenario(scenario: Scenario, model: ModelConfig, makeProvider: (model: ModelConfig) => LlmProvider, options: { now: Date; features: string[] }): Promise<RunRecord> {
   const recorder = new RecordingProvider(makeProvider(model));
-  const { coach, driver } = createEvalCoach(recorder, model, options);
+  const { coach, driver } = createEvalCoach(recorder, model, { ...options, now: scenarioNow(scenario, options.now) });
   const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, apiCalls: 0, toolRounds: 0 };
   let costUsd: number | null = 0;
   let reply = "";
@@ -239,11 +267,13 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
   try {
     await coach.init();
     let before: SessionRow[] = [];
+    let plansBefore: PlanRow[] = [];
     let started = performance.now();
     let seeded = false;
     try {
       await seedAthlete(coach, scenario.athlete, coach.today());
       before = await sessionRows(driver);
+      plansBefore = await planRows(driver);
       seeded = true;
       // 秒數只算對話
       started = performance.now();
@@ -273,7 +303,7 @@ export async function runScenario(scenario: Scenario, model: ModelConfig, makePr
     seconds = Math.round((performance.now() - started) / 100) / 10;
     if (/^這個問題我沒辦法回覆/.test(reply)) finish = "refused";
     else if (/^這次沒有產生回覆/.test(reply)) finish = "truncated";
-    const saved = await savedChanges(coach, driver, before, recorder.calls);
+    const saved = await savedChanges(coach, driver, before, plansBefore, recorder.calls);
     return {
       scenario: scenario.id,
       model: model.id,

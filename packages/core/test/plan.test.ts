@@ -13,7 +13,7 @@ import {
   type CheckContext,
   type SessionDraft,
 } from "../src/plan";
-import { coachNoteOf, planTextForTool, savePlanFromTool } from "../src/planning";
+import { coachNoteOf, planTextForTool, savePlanFromTool, thisWeekRoomWarning } from "../src/planning";
 import { makeCoach, toolTurn, turn } from "./helpers";
 
 const WEEK = "2026-10-12"; // 星期一
@@ -95,7 +95,7 @@ describe("解析課表", () => {
   it("目標要寫代號；固定的課表每堂要有這週的日期", () => {
     expect(() => parseSessions([{ ...easy("2026-10-13"), steps: [{ distance_km: 5, target: { pace: "4:30" } }] }], WEEK, "fixed")).toThrow(/要寫代號|只能是/);
     expect(() => parseSessions([{ ...easy("2026-10-13"), date: null }], WEEK, "fixed")).toThrow(/每堂都要有日期/);
-    expect(() => parseSessions([easy("2026-10-20")], WEEK, "fixed")).toThrow(/不在這週/);
+    expect(() => parseSessions([easy("2026-10-20")], WEEK, "fixed")).toThrow(/不在 week_start 那週（2026-10-12～2026-10-18）；要排 2026-10-20 那週的話，week_start 填那週的星期一 2026-10-19/);
     expect(() => parseSessions([{ ...easy("2026-10-13"), kind: "jog" }], WEEK, "fixed")).toThrow(/kind 只能是/);
     expect(() => parseSessions([{ ...easy("2026-10-13"), steps: [{ target: { hr: "easy" } }] }], WEEK, "fixed")).toThrow(/distance_km 或 duration_min/);
     // 彈性的菜單可以沒有日期
@@ -309,11 +309,12 @@ describe("教練存課表與調整", () => {
 
   it("彈性的菜單：不寫日期", async () => {
     const { coach, provider } = await makeCoach([
-      toolTurn("save_training_plan", { style: "flexible", reason: "生活不固定", sessions: goodWeek().map((s) => ({ ...s, date: undefined })) }),
+      // 今天是星期六：一週的菜單排在下週（存進這週會被擋，見下面「週末排下週的課表」）
+      toolTurn("save_training_plan", { week_start: "2026-10-12", style: "flexible", reason: "生活不固定", sessions: goodWeek().map((s) => ({ ...s, date: undefined })) }),
       turn({ text: "好" }),
     ]);
     await withRace(coach);
-    await coach.chat("我這週時間不固定");
+    await coach.chat("我下週時間不固定");
     expect(provider.calls[1]!.toolResults![0]!.content).toContain("這週任一天｜T 閾值");
     expect((await coach.db.getActiveTrainingPlan())!.style).toBe("flexible");
   });
@@ -398,5 +399,63 @@ describe("先排好的下週課表", () => {
     await save("2026-10-26", [easy("2026-10-27")]);
     const active = await driver.all("SELECT week_start FROM training_plans WHERE is_active=1 ORDER BY week_start");
     expect(active.map((r) => r.week_start)).toEqual(["2026-10-19", "2026-10-26"]);
+  });
+});
+
+describe("週末排下週的課表卻存進這週（12.15）", () => {
+  const undated = (s: SessionDraft): SessionDraft => ({ ...s, date: null });
+  const strength: SessionDraft = { date: null, kind: "strength", title: "徒手肌力", steps: [{ duration_min: 20 }], purpose: "減少受傷", success: "動作確實", fallback: null };
+  const menu = [undated(easy("")), strength, undated(easy("")), undated(long(""))];
+
+  it("星期六把一週的菜單存進這週：不存，提醒下週一的日期；這週原本的課表不動", async () => {
+    const now = new Date("2026-11-14T04:00:00Z"); // 台北 2026-11-14（星期六）
+    const { coach, driver } = await makeCoach([], { now: () => now });
+    const save = (input: Record<string, unknown>) => savePlanFromTool(coach.db, coach.today(), { reason: "測試", outline: "", ...input });
+    expect(await save({ week_start: "2026-11-09", style: "fixed", sessions: [easy("2026-11-14"), long("2026-11-15")] })).toContain("課表已儲存");
+
+    const refused = await save({ week_start: "2026-11-09", style: "flexible", sessions: menu });
+    expect(refused).toMatch(/^尚未儲存/);
+    expect(refused).toContain("這週只剩 2 天");
+    expect(refused).toContain("week_start 填 2026-11-16（下週一）");
+    expect((await coach.activePlan())!.sessions.map((s) => s.date)).toEqual(["2026-11-14", "2026-11-15"]);
+
+    // 照提醒填下週一：存成下週的課表，這週的照舊
+    expect(await save({ week_start: "2026-11-16", style: "flexible", sessions: menu })).toContain("課表已儲存（2026-W47）");
+    expect((await coach.activePlan())!.sessions.map((s) => s.date)).toEqual(["2026-11-14", "2026-11-15"]);
+    expect((await coach.nextPlan())!.plan.week_start).toBe("2026-11-16");
+    const active = await driver.all("SELECT week_start FROM training_plans WHERE is_active=1 ORDER BY week_start");
+    expect(active.map((r) => r.week_start)).toEqual(["2026-11-09", "2026-11-16"]);
+  });
+
+  it("固定的課表把下週的日期配上這週的星期一：解析時擋下，說要填哪個星期一", async () => {
+    const now = new Date("2026-11-14T04:00:00Z");
+    const { coach } = await makeCoach([], { now: () => now });
+    await expect(
+      savePlanFromTool(coach.db, coach.today(), { week_start: "2026-11-09", style: "fixed", reason: "測試", outline: "", sessions: [easy("2026-11-17"), long("2026-11-22")] }),
+    ).rejects.toThrow(/week_start 填那週的星期一 2026-11-16/);
+  });
+
+  it("只排這週剩下的日子、或星期四以前的菜單照舊可以存", () => {
+    const friday = "2026-11-13";
+    // 星期五以後的菜單（沒寫日期）要提醒
+    expect(thisWeekRoomWarning(menu, friday, "2026-11-09", "flexible")?.rule).toBe("this_week_room");
+    // 寫上剩下的日期：可以（星期四說這週太累，重排週五到週日也一樣）
+    const dated = [easy("2026-11-13"), { ...strength, date: "2026-11-13" }, long("2026-11-15")];
+    expect(thisWeekRoomWarning(dated, friday, "2026-11-09", "flexible")).toBeNull();
+    expect(thisWeekRoomWarning(dated, friday, "2026-11-09", "fixed")).toBeNull();
+    // 星期四的四堂（肌力不佔一天）放得下；五堂跑步放不下
+    expect(thisWeekRoomWarning(menu, "2026-11-12", "2026-11-09", "flexible")).toBeNull();
+    expect(thisWeekRoomWarning([...menu, undated(easy("")), undated(easy(""))], "2026-11-12", "2026-11-09", "flexible")?.message).toContain("這週只剩 4 天");
+    // 存的是下週：不提醒
+    expect(thisWeekRoomWarning(menu, friday, "2026-11-16", "flexible")).toBeNull();
+  });
+
+  it("真的要存成這週的菜單時，accept_warnings 寫理由可以存", async () => {
+    const now = new Date("2026-11-13T04:00:00Z"); // 星期五
+    const { coach } = await makeCoach([], { now: () => now });
+    const saved = await savePlanFromTool(coach.db, coach.today(), {
+      week_start: "2026-11-09", style: "flexible", reason: "測試", outline: "", sessions: menu, accept_warnings: true, warning_notes: "選手想把這週剩下的照菜單跑",
+    });
+    expect(saved).toContain("課表已儲存（2026-W46）");
   });
 });

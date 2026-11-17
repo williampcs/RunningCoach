@@ -54,7 +54,8 @@ function isDataLine(line: string): boolean {
 }
 
 /** 「AI評估：」「**教練評估**：」這類標籤 */
-const LABEL = /^\s*(?:[*_#>]|\p{Extended_Pictographic}|\s)*(?:AI\s*評估|教練評估|評估|分析)\s*[*_]*\s*[:：]\s*[*_]*\s*/u;
+// 量詞不重疊，執行時間和長度成線性（規格 12.45 第 8 點）；`\s*[*_]*\s*` 寫成等價的 `\s*(?:[*_]+\s*)?`
+export const SUMMARY_LABEL = /^(?:[*_#>]|\p{Extended_Pictographic}|\s)*(?:AI\s*評估|教練評估|評估|分析)\s*(?:[*_]+\s*)?[:：]\s*(?:[*_]+\s*)?/u;
 const LABEL_ONLY = /^(?:[*_#>\s:：]|\p{Extended_Pictographic})*(?:AI\s*評估|教練評估|評估|分析)(?:[*_\s:：])*$/u;
 const isListItem = (line: string) => /^\s*(?:[-*+]|\d+[.)])\s/.test(line);
 
@@ -78,7 +79,7 @@ export function splitSummary(summary: string | null | undefined): { headline: st
   if (i >= lines.length) return { headline: null, details: null };
   const rest = (from: number) => lines.slice(from).join("\n").trim() || null;
   if (isListItem(lines[i]!)) return { headline: null, details: rest(i) };
-  const headline = lines[i]!.replace(LABEL, "").trim();
+  const headline = lines[i]!.replace(SUMMARY_LABEL, "").trim();
   return { headline: headline || null, details: rest(i + 1) };
 }
 

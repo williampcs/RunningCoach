@@ -81,7 +81,7 @@ export function formatPace(secPerKm: number): string {
 
 /** 「5:45」或「5:45/km」→ 345 秒；無法解讀時回傳 null */
 export function parsePace(text: string): number | null {
-  const m = /^\s*(\d{1,2}):([0-5]\d)\s*(\/km)?\s*$/.exec(text);
+  const m = /^(\d{1,2}):([0-5]\d)(?:\s*\/km)?$/.exec(text.trim());
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 

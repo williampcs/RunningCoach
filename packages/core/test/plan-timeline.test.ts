@@ -95,6 +95,26 @@ describe("課表頁的時間軸（12.22）", () => {
     expect(tl.focus?.title).toBe("輕鬆跑");
   });
 
+  it("下週是彈性的菜單：沒有日期的課放在下週的分隔下面，不放到這週的最上面；下週空的日子不標休息（2026-11-13）", () => {
+    const next = plan("2026-11-02", [session(null, "easy", "下週的輕鬆跑"), session(null, "long", "下週的長跑")], "flexible");
+    const tl = planTimeline(week(), next, [], TODAY)!;
+    expect(tl.undated).toEqual([]);
+    const divider = tl.days.find((d) => d.nextWeek)!;
+    expect(divider.date).toBe("2026-11-02");
+    expect(divider.undated.map((s) => s.title)).toEqual(["下週的輕鬆跑", "下週的長跑"]);
+    expect(divider.hideRow).toBe(true);
+    expect(tl.days.filter((d) => d.date > "2026-11-02")).toEqual([]);
+  });
+
+  it("這週與下週都是菜單：各放各的", () => {
+    const flex = plan("2026-10-26", [session(null, "easy", "這週的輕鬆跑")], "flexible");
+    const next = plan("2026-11-02", [session(null, "long", "下週的長跑")], "flexible");
+    const tl = planTimeline(flex, next, [], TODAY)!;
+    expect(tl.undated.map((s) => s.title)).toEqual(["這週的輕鬆跑"]);
+    expect(tl.days.find((d) => d.nextWeek)!.undated.map((s) => s.title)).toEqual(["下週的長跑"]);
+    expect(tl.focus?.title).toBe("這週的輕鬆跑");
+  });
+
   it("先排好、還沒開始的課表：不是「這週」，從它的星期一開始", () => {
     const tl = planTimeline(week(), null, [], "2026-10-24")!;
     expect(tl.thisWeek).toBe(false);

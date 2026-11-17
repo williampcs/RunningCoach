@@ -112,6 +112,23 @@ export const planSaved: Check = {
   test: (r) => r.saved.newSessions.length > 0,
 };
 
+/** 新存的課表都在下週（星期六排下週的課表，規格 12.15） */
+export const savedNextWeek: Check = {
+  id: "next-week",
+  label: "存進下週（不是這週）",
+  test: (r) => {
+    const weeks = r.saved.newPlanWeeks ?? [];
+    return weeks.length > 0 && weeks.every((w) => w === 1) ? true : { pass: false, detail: weeks.length ? `存進 ${weeks.map((w) => (w === 0 ? "這週" : `${w} 週後`)).join("、")}` : "沒有存課表" };
+  },
+};
+
+/** 原本啟用的課表沒有被換掉（這週的課還在） */
+export const thisWeekKept: Check = {
+  id: "this-week-kept",
+  label: "這週原本的課表沒有被換掉",
+  test: (r) => ((r.saved.replacedPlans ?? 0) === 0 ? true : { pass: false, detail: `換掉 ${r.saved.replacedPlans} 份` }),
+};
+
 export const noAcceptedWarnings: Check = {
   id: "no-accept",
   label: "沒有用 accept_warnings 硬存",

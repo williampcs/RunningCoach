@@ -4,6 +4,7 @@
  * 代理的網址在建置時決定（VITE_PROXY_URL）；選手貼上邀請碼 → 代理建立帳號、回傳憑證（只回一次）→ 憑證存在這台
  * （settings 的 proxy.token，密碼鎖開著時加密），不跟著多裝置同步. 剩下幾則由代理的 /v1/usage 回答.
  * 一個帳號可以有多台裝置：已經用著的那台要一個連結碼，另一台輸入後拿到自己的憑證（同一個帳號、同一份額度）.
+ * 開著多裝置同步時，帳號的復原密鑰放在加密的同步裡（規格 12.44 第 1 步，trial-sync.ts），新的裝置用它拿自己的憑證.
  */
 import { defaultDeviceLabel } from "./device-identity";
 import { featureEnabled } from "./environment";
@@ -33,6 +34,8 @@ export function trialThinkingLabel(usage: Pick<TrialUsage, "thinking" | "effort"
 }
 
 export interface TrialUsage {
+  /** 這台用的帳號；舊的代理沒有這一欄 */
+  account: string | null;
   model: string | null;
   thinking: boolean;
   /** 代理固定的思考強度（2026-11-11 起 low，規格 12.43）；舊的代理沒有這一欄 */
@@ -71,7 +74,7 @@ const deviceName = () => (typeof navigator === "undefined" ? null : defaultDevic
  * 兌換邀請碼或連結碼；成功時回傳這台的憑證（只有這一次拿得到）.
  * 邀請碼建立新的試用帳號，連結碼加入已經在另一台用著的帳號
  */
-export async function redeemInvite(code: string, proxyUrl = TRIAL_PROXY_URL, fetchImpl: typeof fetch = fetch): Promise<{ token: string; model: string | null }> {
+export async function redeemInvite(code: string, proxyUrl = TRIAL_PROXY_URL, fetchImpl: typeof fetch = fetch): Promise<Issued> {
   const kind = codeKind(code);
   if (!kind) throw new TrialError("格式不對：邀請碼像 RC-XXXX-XXXX-XXXX，連結碼像 XXXX-XXXX。");
   let response: Response;
@@ -85,8 +88,51 @@ export async function redeemInvite(code: string, proxyUrl = TRIAL_PROXY_URL, fet
     throw new TrialError("連不上免費試用的服務，請檢查網路後再試一次。");
   }
   if (!response.ok) throw new TrialError(await errorMessage(response, `兌換失敗（${response.status}）`));
-  const body = (await response.json()) as { token: string; model?: string | null };
-  return { token: body.token, model: body.model ?? null };
+  const body = (await response.json()) as { token: string; account_id?: string; model?: string | null };
+  return { token: body.token, account: body.account_id ?? null, model: body.model ?? null };
+}
+
+/** 兌換、連結碼、取回成功時代理回的：這台的憑證與帳號 */
+interface Issued {
+  token: string;
+  account: string | null;
+  model: string | null;
+}
+
+/**
+ * 帳號的復原密鑰（規格 12.44 第 1 步）：產生一把新的，舊的作廢；只有這一次拿得到.
+ * 有這台的憑證時用憑證；沒有時（用自己的 API key 的那台換同步金鑰）用目前的那一把
+ */
+export async function createRecoverySecret(
+  proxyUrl: string,
+  auth: { token: string } | { account: string; secret: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ account: string; secret: string }> {
+  const response = await fetchImpl(`${proxyUrl.replace(/\/+$/, "")}/v1/recovery-secret`, {
+    method: "POST",
+    headers: "token" in auth ? { "x-api-key": auth.token.trim() } : { "content-type": "application/json" },
+    body: "token" in auth ? undefined : JSON.stringify(auth),
+  });
+  if (!response.ok) throw new TrialError(await errorMessage(response, `拿不到復原密鑰（${response.status}）`));
+  const body = (await response.json()) as { account_id: string; secret: string };
+  return { account: body.account_id, secret: body.secret };
+}
+
+/** 用同步裡的復原密鑰拿到這台自己的憑證（同一個帳號、同一份額度） */
+export async function recoverTrial(proxyUrl: string, account: string, secret: string, fetchImpl: typeof fetch = fetch): Promise<Issued> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${proxyUrl.replace(/\/+$/, "")}/v1/recover`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account, secret, device_name: deviceName() }),
+    });
+  } catch {
+    throw new TrialError("連不上免費試用的服務，請檢查網路後再試一次。");
+  }
+  if (!response.ok) throw new TrialError(await errorMessage(response, `取回失敗（${response.status}）`));
+  const body = (await response.json()) as { token: string; account_id?: string; model?: string | null };
+  return { token: body.token, account: body.account_id ?? null, model: body.model ?? null };
 }
 
 /** 在另一台裝置使用：要一個連結碼（10 分鐘內在另一台輸入，用一次） */
@@ -125,6 +171,7 @@ export async function fetchTrialUsage(s: AppSettings, fetchImpl: typeof fetch = 
   if (!response.ok) throw new TrialError(await errorMessage(response, `查不到剩下的次數（${response.status}）`));
   const body = (await response.json()) as any;
   return {
+    account: typeof body.account_id === "string" ? body.account_id : null,
     model: body.model ?? null,
     thinking: !!body.thinking,
     effort: typeof body.effort === "string" ? body.effort : null,

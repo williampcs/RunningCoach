@@ -6,6 +6,7 @@ import type { BrowserDb } from "./db/driver";
 import type { DeviceSyncState } from "./device-sync";
 import type { AppSettings } from "./settings";
 import type { TestMode } from "./test-mode";
+import type { TrialSyncState } from "./use-trial-sync";
 
 export interface AppState {
   coach: Coach;
@@ -31,8 +32,12 @@ export interface AppState {
   openHistory(target: HistoryFocus): void;
   /** 前往跑後回報並預先選好：跑步是 workout id，騎車等其他運動是 intervals_id（多運動） */
   openReport(target?: number | string): void;
+  /** 前往「回報」分頁並捲到今天的身體狀況（看板的提醒，2026-11-12） */
+  openCheckin(): void;
   /** 多裝置同步（規格 12.10） */
   deviceSync: DeviceSyncState;
+  /** 免費試用的帳號掛進加密的同步（規格 12.44 第 1 步） */
+  trialSync: TrialSyncState;
   /** 從配對連結（#pair=配對碼）打開時的配對碼；設定頁的同步區塊用完後清掉 */
   pairFromLink: string | null;
   clearPairFromLink(): void;

@@ -3,6 +3,7 @@
  * 把錯誤換成一般人看得懂的話. 只送「ping」，不送選手的任何資料.
  */
 import { LlmError, type LlmProvider } from "./types";
+import { appearsAfter } from "../text-match";
 
 export type KeyProblem =
   /** key 打錯、被撤銷 */
@@ -40,7 +41,7 @@ export function classifyKeyError(e: unknown): KeyProblem {
   if (/credit balance|insufficient_quota|billing|quota|payment|余额|額度/.test(text) || status === 402) return "credit";
   if (status === 401 || /invalid x-api-key|invalid api key|incorrect api key|api key not valid|authentication/.test(text)) return "key";
   if (status === 403) return /model|permission/.test(text) ? "model" : "key";
-  if (status === 404 || /model.*(not found|does not exist)|not_found_error/.test(text)) return "model";
+  if (status === 404 || appearsAfter(text, "model", /not found|does not exist/) || text.includes("not_found_error")) return "model";
   if (status === 429 || /rate limit|too many requests|resource_exhausted/.test(text)) return "rate";
   if (status === null && /fetch|network|connection|timeout|timed out|enotfound|econnrefused|cors/.test(text)) return "network";
   return "other";

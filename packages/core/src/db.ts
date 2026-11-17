@@ -45,8 +45,17 @@ import type {
  * 17：injuries（傷病紀錄：部位、側別、狀態、會痛的運動、紅旗、疼痛的分數，規格 12.33）
  * 18：planned_sessions.self_change（選手自己改短、換成輕鬆：原本的內容、改成什麼、原因，規格 12.34 第 3 點 B）
  * 19：workouts.sync_id、updated_at（手動新增的跑步：跨裝置不變的 id 與修改時間，規格 12.36「沒有手錶也能用」）
+ * 20：trial_accounts（免費試用的帳號掛進加密的同步：代理的網址、帳號、加密過的復原密鑰，規格 12.44 第 1 步）
  */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
+
+/** 同步裡的免費試用帳號（規格 12.44 第 1 步）；box 要用同步金鑰解開（device-sync/trial-account.ts） */
+export interface TrialAccountRecord {
+  account: string;
+  proxy_url: string;
+  box: string;
+  updated_at: string;
+}
 
 /** 記住的事最多幾條、每條最多幾個字：每次對話都會帶入 */
 export const MEMORY_MAX_ITEMS = 30;
@@ -288,6 +297,13 @@ const SCHEMA = `
     notes       TEXT,
     scores      TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
+  -- 免費試用的帳號（規格 12.44 第 1 步）：box 是用同步金鑰加密的復原密鑰（同步的 ta: 紀錄），只有同一組同步金鑰的裝置解得開
+  CREATE TABLE IF NOT EXISTS trial_accounts (
+    account     TEXT PRIMARY KEY,
+    proxy_url   TEXT NOT NULL,
+    box         TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS pending_subjective (
@@ -628,6 +644,26 @@ export class Db {
 
   async deleteProfileKey(key: string): Promise<void> {
     await this.run("DELETE FROM athlete_profile WHERE key=?", [key]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // trial_accounts（免費試用的帳號掛進加密的同步，規格 12.44 第 1 步）
+  // ---------------------------------------------------------------------------
+
+  listTrialAccounts(): Promise<TrialAccountRecord[]> {
+    return this.all<TrialAccountRecord>("SELECT account, proxy_url, box, updated_at FROM trial_accounts ORDER BY updated_at DESC, account");
+  }
+
+  async saveTrialAccount(record: Omit<TrialAccountRecord, "updated_at">): Promise<void> {
+    await this.run(
+      "INSERT INTO trial_accounts (account, proxy_url, box, updated_at) VALUES (?, ?, ?, ?)" +
+        " ON CONFLICT(account) DO UPDATE SET proxy_url=excluded.proxy_url, box=excluded.box, updated_at=excluded.updated_at",
+      [record.account, record.proxy_url, record.box, this.stamp()],
+    );
+  }
+
+  async deleteTrialAccount(account: string): Promise<void> {
+    await this.run("DELETE FROM trial_accounts WHERE account=?", [account]);
   }
 
   // ---------------------------------------------------------------------------

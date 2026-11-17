@@ -1,11 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, CloudSun, Database, FlaskConical, Gauge, KeyRound, Lock, RotateCcw, Smartphone, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
 import { formatStatus, RECORD_WITH_LABELS, recordWithOf, TERMS_VERSION, type Effort, type Purpose, type RecordWith } from "@running-coach/core";
 
 import { errorText, useApp, type SettingsSection } from "../app-context";
-import { featureEnabled } from "../environment";
+import { featureEnabled, PASSKEY_TEST_ON } from "../environment";
+import { PASSKEY_TEST_HASH } from "../passkey-test";
 import { Markdown } from "../Markdown";
 import { Disclosure, Icon, InfoTip, ListRow, stripEmoji } from "../ui";
 import { useSync } from "../use-sync";
@@ -19,7 +20,7 @@ import { storageProtection, type StorageProtection } from "../update-check";
 import { BUILD_DETAIL, FEATURES_LABEL } from "../version";
 import { PhoneGuide, SyncNotice, syncNoticeShown } from "./PhoneGuide";
 import { PrivacyLink } from "./PrivacyLink";
-import { InviteForm, TRIAL_SUMMARY, TrialAccount, TrialDataFlow } from "./Trial";
+import { InviteForm, TRIAL_SUMMARY, TrialAccount, TrialDataFlow, TrialFromSync } from "./Trial";
 import { trialAvailable } from "../trial";
 import { TermsLink, TermsShort } from "./TermsLink";
 import { TestModeCard, TestModeReset } from "./TestMode";
@@ -209,6 +210,14 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   const [page, setPage] = useState<SettingsSection | null>(section.id);
   useEffect(() => setPage(section.id), [section]);
   const [draft, setDraft] = useState(settings);
+  // 免費試用的憑證在表單以外變了（同步帶來後自動取回、在這台也用免費試用，規格 12.44）：表單跟著改，存檔時不會用舊的蓋掉
+  const shown = useRef(settings);
+  useEffect(() => {
+    const prev = shown.current;
+    shown.current = settings;
+    if (prev.proxy.token === settings.proxy.token && prev.llmMode === settings.llmMode && prev.proxy.account === settings.proxy.account) return;
+    setDraft((d) => ({ ...d, llmMode: settings.llmMode, proxy: settings.proxy, models: settings.models }));
+  }, [settings]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [workouts, setWorkouts] = useState<number | null>(null);
@@ -425,6 +434,11 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
                   <input value={draft.baseURL} placeholder="https://example.com/v1" onChange={(e) => setDraft({ ...draft, baseURL: e.target.value })} />
                 </label>
               )}
+              {trialAvailable() && (
+                <div className="wide">
+                  <TrialFromSync />
+                </div>
+              )}
             </div>
           ) : !draft.proxy.url.trim() ? (
             <p className="small field-error">這個版本沒有提供免費試用，請改用自己的 API key。</p>
@@ -433,6 +447,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
           ) : (
             <>
               <p className="small muted">{TRIAL_SUMMARY}</p>
+              <TrialFromSync />
               <InviteForm base={{ ...draft, consents: settings.consents, terms: settings.terms }} onDone={(next) => setDraft({ ...draft, llmMode: next.llmMode, proxy: next.proxy, models: next.models })} />
             </>
           )}
@@ -726,6 +741,18 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
               />
             </li>
           ))}
+          {PASSKEY_TEST_ON && (
+            // passkey 的測試頁（規格 12.44）：只在 staging 與開發；打開時整頁換成測試頁（main.tsx）
+            <li>
+              <ListRow
+                icon={<Icon as={KeyRound} />}
+                title="passkey 測試"
+                sub="只在 staging，看拿不拿得到 PRF"
+                chevron
+                onClick={() => (location.hash = PASSKEY_TEST_HASH)}
+              />
+            </li>
+          )}
         </ul>
       </section>
 
