@@ -870,7 +870,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：自己跑 osv-scanner、gitleaks、semgrep（先用 GitHub 內建的）；代理自動修或開 PR；import graph 的切片；每季全掃（發版前的審查代替）；VM 的 OS、Docker、Cloudflare 的設定。
   - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
   - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
-  - 狀態：已推上 v2（2026-11-16，開發 session「安全：每日掃描的代理（試行四週）」），待使用者做步驟 0、2（`tools/security-scan/README.md`）。實作與和工作單不同的地方見 12.45 第 9 點。 協調 session 檢查過（設定、系統提示、腳本只連 GitHub 與 Discord、不印 token、budget 的單位是美分、CI 過）；步驟 3 做完（CLAUDE.md 的合併部署加第 0 步「安全審查」）。步驟 0 的 0-1 使用者已做（12.45 第 8 點）；0-2（Console 的工作區、每月上限、專用的 key）2026-11-16 做好；0-3（GitHub 的 token）2026-11-17 做好；0-4 改成 Resend（工作單「安全掃描的通知改用 Email」），等那張做完再做，接著步驟 2。
+  - 狀態：已推上 v2（2026-11-16，開發 session「安全：每日掃描的代理（試行四週）」），待使用者做步驟 0、2（`tools/security-scan/README.md`）。實作與和工作單不同的地方見 12.45 第 9 點。 協調 session 檢查過（設定、系統提示、腳本只連 GitHub 與 Discord、不印 token、budget 的單位是美分、CI 過）；步驟 3 做完（CLAUDE.md 的合併部署加第 0 步「安全審查」）。步驟 0 的 0-1 使用者已做（12.45 第 8 點）；0-2（Console 的工作區、每月上限、專用的 key）2026-11-16 做好；0-3（GitHub 的 token）2026-11-17 做好；0-4 改成 Resend（工作單「安全掃描的通知改用 Email」，已推上 v2）：2026-11-17 `notify.zone2mate.com` 用 Resend 的 Cloudflare 自動設定加好 DNS、已 Verified；協調 session 建議 TLS 改 Enforced、不開追蹤（開信與點擊），接著建 Sending access 的 key，然後步驟 2。
 
 - **正規表示式改成不會被很長的特殊輸入拖慢**（CodeQL 第一次掃描的 10 個「Polynomial regular expression used on uncontrolled data」，12.45 第 8 點；排在「每天用代理掃 bug 與漏洞」的開發 session 之後，同一時間只有一個開發 session 推 `v2`）
   - 對應章節：12.45 第 8 點。
