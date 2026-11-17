@@ -839,7 +839,8 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 - **Discord bot 的部署改成 VM 自己拉映像**（12.45 第 10 點；GitHub 建議公開 repo 不要用 self-hosted runner；2026-11-17 已先把 fork PR 的 workflow 改成一律要使用者核准）
   - 對應章節：KI-025（bot 的部署）、`.github/workflows/deploy.yml`、`doc/architecture.md` 的部署。
   - 要做什麼：`deploy.yml` 只在 GitHub 代管的 runner 上建置並推 GHCR 的映像，不再有跑在 VM 上的 job；VM 上用排程（systemd timer 或 cron，例如每 5 分鐘）檢查 GHCR 的映像有沒有更新，有就拉下來、重啟 bot，只認 `main` 對應的標籤或 digest；保留現在的資料夾、`.env`、資料的位置不變。寫清楚使用者在 VM 上要做的步驟（裝 timer、拿掉 runner），以及失敗時怎麼看 log、怎麼回到上一版。
-  - 不做什麼：不改 bot 的程式；不改網頁版、同步服務、代理的部署。
+  - 一起做：bot 加一個設定（例如 `DISCORD_ALLOWED_USER_IDS`），一般訊息與斜線指令都只回應這些帳號，部署說明寫明頻道要設成私人（多一層保護；2026-11-17 使用者確認那個頻道只有自己和 bot 看得到）。
+  - 不做什麼：除了上面那個設定，不改 bot 的程式；不改網頁版、同步服務、代理的部署。
   - 驗收：`npm test`、`npm run typecheck`；workflow 的語法檢查；使用者在 VM 上照步驟做完後，合併部署一次確認 bot 自動更新（`/status` 的版號），再拿掉 self-hosted runner。
   - 注意：VM 的主機名稱、使用者、路徑不寫進 repo（用佔位字）；在使用者完成切換前，舊的 runner 照常運作，兩種方式不要同時重啟 bot。
   - 狀態：待開發（2026-11-17；排在同步服務的修正之後）。
