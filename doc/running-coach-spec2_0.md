@@ -300,6 +300,7 @@
 | 2.0-draft | 2026-11-17 | 安全掃描的通知改用 Email（Resend，寄件人用子網域），工作單寫好（12.45 第 10 點、9.4） |
 | 2.0-draft | 2026-11-17 | 安全掃描的排程不掛 GitHub repo 資源（Claude Platform 一定要它附 token），改成代理每次自己 clone 公開的 `v2`；協調 session 的小修（12.45 第 10 點） |
 | 2.0-draft | 2026-11-17 | 安全掃描：排程建好（暫停中）、第一次手動深掃 proxy 跑完（約 1.06 美元）（12.45 第 10 點） |
+| 2.0-draft | 2026-11-17 | 安全掃描的基準審查完成（7 片約 9.5 美元）、排程打開、試行四週開始；工作單：Discord bot 的部署改成 VM 自己拉映像（12.45 第 10 點、9.4） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 | 2.0-draft | 2026-11-17 | `packages/core` 的正規表示式改成線性時間（CodeQL 的 10 個效能警示與同類寫法；共用的 `text-match.ts`，行為不變，加對照與長輸入的測試）（12.45 第 8 點、9.4） |
 | 2.0-draft | 2026-11-17 | 安全掃描的通知從 Discord 改成 Email：`scan.mjs notify` 用 Resend 的 API 寄純文字信（寄件人 `security-scan@notify.zone2mate.com`，收件人在 memory store 的 `config.json` 的 `email_to`），沙盒改開 `api.resend.com`、拿掉 Discord；兩個代理的提示、測試（模擬的 fetch）、README 的 0-4、2-3、2-4 跟著改（12.45 第 10 點、9.4） |
@@ -834,6 +835,14 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 
 *已決定、待開發*（工作單）
 
+- **Discord bot 的部署改成 VM 自己拉映像**（12.45 第 10 點；GitHub 建議公開 repo 不要用 self-hosted runner；2026-11-17 已先把 fork PR 的 workflow 改成一律要使用者核准）
+  - 對應章節：KI-025（bot 的部署）、`.github/workflows/deploy.yml`、`doc/architecture.md` 的部署。
+  - 要做什麼：`deploy.yml` 只在 GitHub 代管的 runner 上建置並推 GHCR 的映像，不再有跑在 VM 上的 job；VM 上用排程（systemd timer 或 cron，例如每 5 分鐘）檢查 GHCR 的映像有沒有更新，有就拉下來、重啟 bot，只認 `main` 對應的標籤或 digest；保留現在的資料夾、`.env`、資料的位置不變。寫清楚使用者在 VM 上要做的步驟（裝 timer、拿掉 runner），以及失敗時怎麼看 log、怎麼回到上一版。
+  - 不做什麼：不改 bot 的程式；不改網頁版、同步服務、代理的部署。
+  - 驗收：`npm test`、`npm run typecheck`；workflow 的語法檢查；使用者在 VM 上照步驟做完後，合併部署一次確認 bot 自動更新（`/status` 的版號），再拿掉 self-hosted runner。
+  - 注意：VM 的主機名稱、使用者、路徑不寫進 repo（用佔位字）；在使用者完成切換前，舊的 runner 照常運作，兩種方式不要同時重啟 bot。
+  - 狀態：待開發（2026-11-17；排在同步服務的修正之後）。
+
 - **安全掃描的通知改用 Email**（12.45 第 10 點；2026-11-17 使用者確認 Discord bot 只是用來通知安全問題後：「改用Email好了」）
   - 對應章節：12.45 第 10 點、`tools/security-scan/`（工作單「每天用代理掃 bug 與漏洞：試行四週」的實作）。
   - 要做什麼：
@@ -869,7 +878,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 步驟 2（使用者在本機）：`ant apply --dry-run` 看計畫 → `ant apply` → 填 vault 與 PAT → **手動觸發 `security-deep` 兩次**（proxy、sync）當基準審查兼試跑，把費用與結果的大概（幾個發現、看起來對不對，不要貼漏洞細節）告訴協調 session；確認 Security 分頁看得到、Discord 收得到、budget 有作用 → 沒問題再手動觸發剩下 5 片完成基準（可以分幾天）→ 打開兩個排程。
   - 步驟 3（協調 session）：CLAUDE.md 的合併部署加一步：建 PR 之前，對 `v上一版..v2` 的程式改動做一次獨立的安全審查（另一個 agent 只看程式，不看結論；用 Claude Code 的 session，不花 API 的錢）；發現的問題只在聊天裡回報，修好前不寫進 repo。
   - 發現問題之後：使用者在 Security 分頁看 → 要修的告訴協調 session → 寫工作單（工作單只寫「要改什麼」，不寫怎麼攻擊）→ 開發 session 在 `v2` 修 → 修好後 KI 記一行。
-  - 試行四週後的檢討（約 2026-12-21，協調 session 提醒）：每月實際的費用（Console 看這把 key）、每次 run 的平均費用與有沒有撞到 budget、發現幾個、幾個是真的（被標誤報的比例）、有沒有 run 失敗或卡住、通知會不會太吵 → 決定頻率、模型、片的大小要不要調，要不要加 trivy 掃 bot 的映像。
+  - 試行四週後的檢討（約 2026-12-15：排程 2026-11-17 打開，協調 session 提醒）：每月實際的費用（Console 看這把 key）、每次 run 的平均費用與有沒有撞到 budget、發現幾個、幾個是真的（被標誤報的比例）、有沒有 run 失敗或卡住、通知會不會太吵 → 決定頻率、模型、片的大小要不要調，要不要加 trivy 掃 bot 的映像。
   - 不做：自己跑 osv-scanner、gitleaks、semgrep（先用 GitHub 內建的）；代理自動修或開 PR；import graph 的切片；每季全掃（發版前的審查代替）；VM 的 OS、Docker、Cloudflare 的設定。
   - 驗收：`npm test`、`npm run typecheck` 過（含新腳本的測試：fingerprint 不受行號影響、SARIF 的格式、去重與狀態的轉換）；`ant apply --dry-run` 的格式由使用者在本機確認；第一次手動 run 的結果符合上面的「步驟 2」。
   - 注意：repo 公開：代理的設定與系統提示可以進 repo，**任何秘密、發現的內容、漏洞的細節都不行**；`claude-lock.json` 只有資源的 id，可以 commit。費用是粗估，以實際的為準。
@@ -5515,4 +5524,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 2026-11-17 排程建好並暫停（每日、每週各一，費用上限 1、5 美元，vault 與 memory store 接上），`claude-lock.json` 推上 v2（使用者，5532ad5，只有 id）。第一次手動深掃（proxy）：約 1.06 美元，5 個發現，信與 Security 分頁看起來正常（發現的內容不記在這裡）。無痕視窗（沒登入）打開 Security 分頁是 404，外人看不到。嚴重度：high 1、medium 3、low 1；high 的先處理，不等基準跑完。第二次（sync）：約 0.89 美元，high 2（使用者原本說 3，後來更正）、medium 與 low 若干；2 個 high 協調 session 對照程式確認是真的（同一個原因，影響是服務停擺，不會外洩資料），排在 proxy 的修正之後，跟下一版一起發。下一步：sync，再跑剩下 5 片完成基準，然後打開排程。
 - 2026-11-17 做法：**安全問題的工作單在修好、部署之前不進 repo**（repo 公開）。協調 session 對照程式確認後，把細節直接寫在開發 session 的指示裡；repo 的 commit、程式註解、規格只用一般的說法描述改了什麼，不寫原因與怎麼利用。修好、部署後，才在 KI 記一行「修了什麼」。推上 v2 到合併部署之間，改動本身是公開的，所以這類修正在 staging 試過後盡快單獨發版。
 - 2026-11-17 代理的「計費：先預扣、後結算」（12.39）使用者在 staging 試過：回覆到一半按「停止回覆」，那一次的輸出照 `max_tokens` 記（output_tokens 多 16000、金額多約 0.011 美元）；正常結束的照實際的記。等使用者說「合併部署」後單獨發 patch 版。
-- 2026-11-17 第三次深掃（sync-client）：約 1.53 美元，medium 1、low 1，沒有 high。第四次（web）：約 2.46 美元，low 1。第五次（coach）：約 2.14 美元，low 3。剩下 discord、deploy。到這裡 5 片合計約 8.1 美元（proxy 1.06、sync 0.89、sync-client 1.53、web 2.46、coach 2.14）。
+- 2026-11-17 第三次深掃（sync-client）：約 1.53 美元，medium 1、low 1，沒有 high。第四次（web）：約 2.46 美元，low 1。第五次（coach）：約 2.14 美元，low 3。第六次（discord）：約 0.64 美元，medium 1、low 1。第七次（deploy）：約 0.74 美元，high 1、medium 1、low 3。**基準審查完成**：7 片合計約 9.5 美元。deploy 的 high 協調 session 確認是真的；使用者同一天把 Settings → Actions 的 fork PR 核准改成「所有外部貢獻者都要核准」先擋住，根本解法見 9.4 的工作單「Discord bot 的部署改成 VM 自己拉映像」。2026-11-17 兩個排程打開（每天 04:23、每週六 05:23），試行四週開始，檢討約 2026-12-15。
