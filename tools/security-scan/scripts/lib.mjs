@@ -664,34 +664,114 @@ export function recordRun(state, run) {
   return next;
 }
 
-// ---------------------------------------------------------------- Discord
+// ---------------------------------------------------------------- Email（Resend）
 
-const DISCORD_LIMIT = 1900;
+export const RESEND_URL = "https://api.resend.com/emails";
+export const EMAIL_FROM = "Zone2Mate Security Scan <security-scan@notify.zone2mate.com>";
+const SUBJECT_PREFIX = "[Zone2Mate 安全掃描]";
+const EMAIL_TEXT_LIMIT = 6000;
+const MAX_RECIPIENTS = 50; // Resend 一封信的 to 最多 50 個
+const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+/** 一行文字：拿掉換行與控制字元（代理給的標題、片的 id 不能把主旨或一行拆開）。 */
+function oneLine(value, max = 200) {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+/** Security 分頁的網址，篩選這個工具在 v2 的警示。 */
+export function securityTabUrl(repo) {
+  return `https://github.com/${repo}/security/code-scanning?${new URLSearchParams({ query: `tool:${TOOL_NAME} branch:v2` })}`;
+}
 
 /**
- * 通知的文字。只寫數量、嚴重度、標題與檔案；怎麼觸發、細節在 Security 分頁。
- * daily：沒有新發現、也沒有附註時回 null（不通知）。deep：每次都發（當作「還活著」的訊號）。
+ * 通知信的主旨與內文（純文字）。只寫嚴重度、標題、片、檔案、代理的附註與 Security 分頁的連結；
+ * 怎麼觸發、影響、修法不寫（那些在 Security 分頁）。
+ * daily：沒有新發現、也沒有附註時回 null（不寄）。deep：每次都寄（當作「還活著」的訊號）。
  */
 export function formatNotification({ kind, slice, result, openCounts, note, securityUrl, date }) {
   const fresh = [...(result?.new ?? []), ...(result?.reopened ?? [])];
   const trimmedNote = (note ?? "").trim();
   if (kind === "daily" && fresh.length === 0 && trimmedNote === "") return null;
-  const head =
+  const newCount = result?.new?.length ?? 0;
+  const reopenedCount = result?.reopened?.length ?? 0;
+  const counts =
+    newCount === 0 && reopenedCount === 0
+      ? "沒有新發現"
+      : [newCount ? `新發現 ${newCount} 個` : "", reopenedCount ? `又出現 ${reopenedCount} 個` : ""].filter(Boolean).join("、");
+  const sliceName = oneLine(slice, 40);
+  const subject =
     kind === "deep"
-      ? `🔎 每週深掃 ${date}：${slice ?? "（沒有要掃的片）"}，新發現 ${result?.new?.length ?? 0} 個${result?.reopened?.length ? `、又出現 ${result.reopened.length} 個` : ""}`
-      : `🔎 每日掃描 ${date}：新發現 ${result?.new?.length ?? 0} 個${result?.reopened?.length ? `、又出現 ${result.reopened.length} 個` : ""}`;
-  const lines = [head];
+      ? `${SUBJECT_PREFIX} 每週深掃 ${sliceName || "（沒有要掃的片）"}：${counts}`
+      : `${SUBJECT_PREFIX} 每日：${counts}`;
+  const lines = [kind === "deep" ? `每週深掃 ${date}：${sliceName || "（沒有要掃的片）"}，${counts}` : `每日掃描 ${date}：${counts}`];
   const order = (s) => SEVERITIES.indexOf(s);
-  for (const f of fresh.slice().sort((a, b) => order(a.severity) - order(b.severity))) {
-    lines.push(`• [${f.severity}] ${f.title} — ${f.file}:${f.start_line}`);
+  const sorted = fresh.slice().sort((a, b) => order(a.severity) - order(b.severity));
+  if (sorted.length) lines.push("");
+  for (const f of sorted) {
+    const where = f.start_line ? `${oneLine(f.file)}:${f.start_line}` : oneLine(f.file);
+    lines.push(`- [${oneLine(f.severity, 20)}] ${oneLine(f.title)}（片：${oneLine(f.slice, 40) || "—"}）— ${where}`);
   }
   if (openCounts) {
     const parts = SEVERITIES.filter((s) => openCounts[s]).map((s) => `${s} ${openCounts[s]}`);
-    lines.push(`還沒處理的：${parts.length ? parts.join("、") : "0"}`);
+    lines.push("", `還沒處理的：${parts.length ? parts.join("、") : "0"}`);
   }
-  if (trimmedNote) lines.push(trimmedNote);
-  if (securityUrl) lines.push(securityUrl);
+  if (trimmedNote) lines.push("", "附註：", trimmedNote);
+  const tail = securityUrl ? `\n\n細節在 Security 分頁：${securityUrl}` : "";
   let text = lines.join("\n");
-  if (text.length > DISCORD_LIMIT) text = `${text.slice(0, DISCORD_LIMIT - 20)}\n…（其餘見 Security 分頁）`;
-  return text;
+  const room = EMAIL_TEXT_LIMIT - tail.length;
+  if (text.length > room) text = `${text.slice(0, room - 20)}\n…（其餘見 Security 分頁）`;
+  return { subject: subject.slice(0, 200), text: text + tail };
+}
+
+/** config.json 的 email_to（一個信箱或信箱的陣列）→ 陣列；沒有或格式不對時給看得懂的錯誤。 */
+export function parseRecipients(emailTo) {
+  if (emailTo === undefined || emailTo === null || emailTo === "" || (Array.isArray(emailTo) && emailTo.length === 0)) {
+    throw new Error("config.json 沒有 email_to（收件人的信箱）：照 tools/security-scan/README.md 的 2-4 放進 memory store");
+  }
+  const list = Array.isArray(emailTo) ? emailTo : [emailTo];
+  if (list.length > MAX_RECIPIENTS) throw new Error(`config.json 的 email_to 最多 ${MAX_RECIPIENTS} 個`);
+  for (const item of list) {
+    if (typeof item !== "string" || !EMAIL_RE.test(item.trim())) {
+      throw new Error("config.json 的 email_to 格式不對：要是一個信箱（例 name@example.com）或信箱的陣列");
+    }
+  }
+  return list.map((x) => x.trim());
+}
+
+/** 送給 Resend 的請求（網址、標頭、內容）。Idempotency-Key 用內容的雜湊：重試同一封不會寄兩次。 */
+export function buildEmailRequest({ apiKey, to, subject, text }) {
+  const body = JSON.stringify({ from: EMAIL_FROM, to, subject, text });
+  return {
+    url: RESEND_URL,
+    init: {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "User-Agent": TOOL_NAME,
+        "Idempotency-Key": `${TOOL_NAME}-${createHash("sha256").update(body).digest("hex").slice(0, 32)}`,
+      },
+      body,
+    },
+  };
+}
+
+/** 用 Resend 寄信。錯誤只帶狀態碼與 Resend 的錯誤名稱、訊息（不帶 key 或信的內容）。回 Resend 給的 id。 */
+export async function sendEmail({ fetchImpl = fetch, apiKey, to, subject, text }) {
+  if (!apiKey) throw new Error("沒有 RESEND_API_KEY（vault 的環境變數憑證）");
+  const { url, init } = buildEmailRequest({ apiKey, to, subject, text });
+  const res = await fetchImpl(url, init);
+  const raw = await res.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {}
+  if (!res.ok) {
+    const detail = [data?.name, data?.message].filter(Boolean).map((x) => oneLine(x, 200)).join(" ");
+    throw new Error(`Resend：${res.status}${detail ? ` ${detail}` : ""}`);
+  }
+  return data?.id ?? null;
 }

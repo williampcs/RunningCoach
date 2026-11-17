@@ -2,8 +2,8 @@
 // 安全掃描代理用的命令列工具（規格 12.45、9.4 工作單）。在 repo 的根目錄跑：
 //   node tools/security-scan/scripts/scan.mjs <指令> [選項]
 // 狀態檔放在 memory store 掛載的目錄（預設 /mnt/memory/security-scan-state，可用 --dir 或 SECURITY_SCAN_DIR 改）：
-//   state.json、findings.json、config.json（使用者放的：repo、discord_channel_id）。
-// 秘密只從環境變數讀（GITHUB_TOKEN、DISCORD_BOT_TOKEN）；在 Managed Agents 的沙盒裡它們是 vault 的佔位字串，
+//   state.json、findings.json、config.json（使用者放的：repo、email_to）。
+// 秘密只從環境變數讀（GITHUB_TOKEN、RESEND_API_KEY）；在 Managed Agents 的沙盒裡它們是 vault 的佔位字串，
 // 送出去時才換成真的值。這個腳本不印出它們，也不印出 secret scanning 找到的秘密。
 
 import { execFileSync } from "node:child_process";
@@ -23,11 +23,14 @@ import {
   mergeFindings,
   newAlerts,
   openFindings,
+  parseRecipients,
   parseFindings,
   parseState,
   pickNextSlice,
   recordRun,
   relocateFindings,
+  securityTabUrl,
+  sendEmail,
   setStatus,
   sliceFiles,
   sliceHash,
@@ -56,7 +59,7 @@ const USAGE = `用法：node tools/security-scan/scripts/scan.mjs <指令> [選�
   sarif [--out FILE]              產生 SARIF（全部 open 的發現）
   upload [--if-changed]           產生 SARIF 並上傳到 code scanning（ref ${REF}）；--if-changed：和上次一樣就不傳
   notify --kind daily|deep [--result FILE] [--slice ID] [--note-file FILE]
-                                  發 Discord 通知（daily 沒有新東西就不發）
+                                  寄通知信（Resend；daily 沒有新東西就不寄）
   record-run --kind daily|deep [--commit SHA] [--slice ID --hash H] [--partial --covered-file F...]
              [--result FILE] [--seen-alerts FILE] [--summary TEXT]
                                   記一次 run 到 state.json
@@ -148,7 +151,7 @@ function print(data) {
   process.stdout.write(`${typeof data === "string" ? data : JSON.stringify(data, null, 2)}\n`);
 }
 
-// ---------------------------------------------------------------- GitHub 與 Discord
+// ---------------------------------------------------------------- GitHub
 
 async function github(path, { method = "GET", body, query } = {}) {
   const token = process.env.GITHUB_TOKEN;
@@ -211,18 +214,6 @@ async function fetchAlerts(repo) {
   const codeScanning = await optional("code_scanning", () => githubAll(`/repos/${repo}/code-scanning/alerts`, { state: "open" }), problems);
   const secretScanning = await optional("secret_scanning", () => githubAll(`/repos/${repo}/secret-scanning/alerts`, { state: "open", hide_secret: true }), problems);
   return { summary: summarizeAlerts({ dependabot, codeScanning, secretScanning }), problems };
-}
-
-async function discordPost(channelId, content) {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) throw new Error("沒有 DISCORD_BOT_TOKEN（vault 的環境變數憑證）");
-  if (!/^\d{5,25}$/.test(String(channelId ?? ""))) throw new Error("config.json 的 discord_channel_id 不對（要是數字）");
-  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-    method: "POST",
-    headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json", "User-Agent": `DiscordBot (${TOOL_NAME}, 1)` },
-    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-  });
-  if (!res.ok) throw new Error(`Discord：${res.status}`);
 }
 
 // ---------------------------------------------------------------- 指令
@@ -383,22 +374,23 @@ const commands = {
   async notify(opts) {
     const dir = stateDir(opts);
     const config = loadConfig(dir);
+    const to = parseRecipients(config.email_to);
     const kind = need(opts, "kind");
     const result = typeof opts.result === "string" ? JSON.parse(readFileSync(opts.result, "utf8")) : { new: [], reopened: [] };
     const note = typeof opts["note-file"] === "string" ? readFileSync(opts["note-file"], "utf8").slice(0, 800) : "";
     const store = parseFindings(readText(join(dir, "findings.json")));
-    const text = formatNotification({
+    const message = formatNotification({
       kind,
       date: opts.date ?? today(),
       slice: opts.slice === true ? undefined : opts.slice,
       result,
       note,
       openCounts: countBySeverity(openFindings(store)),
-      securityUrl: `https://github.com/${config.repo}/security/code-scanning`,
+      securityUrl: securityTabUrl(config.repo),
     });
-    if (text === null) return print("沒有新的東西，不通知");
-    await discordPost(config.discord_channel_id, text);
-    print("sent");
+    if (message === null) return print("沒有新的東西，不通知");
+    const id = await sendEmail({ apiKey: process.env.RESEND_API_KEY, to, subject: message.subject, text: message.text });
+    print({ sent: true, id });
   },
 
   "record-run"(opts) {

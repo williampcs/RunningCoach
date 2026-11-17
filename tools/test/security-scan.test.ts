@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyAlertStates,
+  buildEmailRequest,
   classifyChanges,
   emptyFindings,
   emptyState,
@@ -21,10 +22,13 @@ import {
   mergeFindings,
   newAlerts,
   normalizeSnippet,
+  parseRecipients,
   parseSlicesYaml,
   pickNextSlice,
   recordRun,
   relocateFindings,
+  securityTabUrl,
+  sendEmail,
   setStatus,
   sliceFiles,
   sliceHash,
@@ -424,25 +428,105 @@ describe("formatNotification", () => {
     expect(formatNotification({ kind: "daily", date: DATE, result: { new: [], reopened: [] } })).toBeNull();
   });
 
-  it("always sends a line for a deep run", () => {
-    const text = formatNotification({ kind: "deep", date: DATE, slice: "proxy", result: { new: [], reopened: [] }, openCounts: { critical: 0, high: 0, medium: 0, low: 0 } });
-    expect(text).toContain("每週深掃");
-    expect(text).toContain("proxy");
-    expect(text).toContain("新發現 0 個");
+  it("always sends a mail for a deep run", () => {
+    const mail = formatNotification({ kind: "deep", date: DATE, slice: "proxy", result: { new: [], reopened: [] }, openCounts: { critical: 0, high: 0, medium: 0, low: 0 } })!;
+    expect(mail.subject).toBe("[Zone2Mate 安全掃描] 每週深掃 proxy：沒有新發現");
+    expect(mail.text).toContain("每週深掃");
+    expect(mail.text).toContain("proxy");
   });
 
-  it("lists new findings by severity, without the details", () => {
+  it("counts the new findings in the subject", () => {
+    const mail = formatNotification({ kind: "daily", date: DATE, result: { new: [f, f], reopened: [] } })!;
+    expect(mail.subject).toBe("[Zone2Mate 安全掃描] 每日：新發現 2 個");
+  });
+
+  it("lists findings by severity with slice and file, without trigger, impact or fix", () => {
     const low = { ...f, severity: "low", title: "低" };
-    const text = formatNotification({ kind: "daily", date: DATE, result: { new: [low, f], reopened: [] }, openCounts: { critical: 0, high: 1, medium: 0, low: 1 }, securityUrl: "https://example.test/s" })!;
-    expect(text.indexOf("[high]")).toBeLessThan(text.indexOf("[low]"));
+    const detailed = { ...candidate(), fingerprint: "g", severity: "medium" };
+    const mail = formatNotification({ kind: "daily", date: DATE, result: { new: [low, f, detailed], reopened: [] }, openCounts: { critical: 0, high: 1, medium: 1, low: 1 }, note: "代理的附註", securityUrl: "https://example.test/s" })!;
+    const { text } = mail;
+    expect(text.indexOf("[high]")).toBeLessThan(text.indexOf("[medium]"));
+    expect(text.indexOf("[medium]")).toBeLessThan(text.indexOf("[low]"));
     expect(text).toContain("apps/proxy/src/a.ts:3");
-    expect(text).toContain("high 1、low 1");
+    expect(text).toContain("片：proxy");
+    expect(text).toContain("high 1、medium 1、low 1");
+    expect(text).toContain("代理的附註");
     expect(text).toContain("https://example.test/s");
+    for (const secret of ["觸發的條件", "影響", "修法", "if (code === expected)"]) expect(text).not.toContain(secret);
   });
 
-  it("keeps under Discord's limit", () => {
-    const many = Array.from({ length: 200 }, (_, i) => ({ ...f, title: `很長的標題 ${i}`.repeat(3) }));
-    expect(formatNotification({ kind: "daily", date: DATE, result: { new: many, reopened: [] } })!.length).toBeLessThanOrEqual(1900);
+  it("keeps the subject on one line", () => {
+    const mail = formatNotification({ kind: "deep", date: DATE, slice: "proxy\r\nBcc: x@example.test", result: { new: [{ ...f, title: "a\nb" }], reopened: [] } })!;
+    expect(mail.subject).not.toMatch(/[\r\n]/);
+    expect(mail.text).toContain("a b");
+  });
+
+  it("stays under the length limit and keeps the link", () => {
+    const many = Array.from({ length: 500 }, (_, i) => ({ ...f, title: `很長的標題 ${i}`.repeat(3) }));
+    const mail = formatNotification({ kind: "daily", date: DATE, result: { new: many, reopened: [] }, securityUrl: "https://example.test/s" })!;
+    expect(mail.text.length).toBeLessThanOrEqual(6000);
+    expect(mail.text).toContain("其餘見 Security 分頁");
+    expect(mail.text.endsWith("https://example.test/s")).toBe(true);
+  });
+});
+
+describe("email", () => {
+  it("links to the Security tab filtered to this tool on v2", () => {
+    const url = new URL(securityTabUrl("owner/repo"));
+    expect(url.origin + url.pathname).toBe("https://github.com/owner/repo/security/code-scanning");
+    expect(url.searchParams.get("query")).toBe("tool:security-scan-agent branch:v2");
+  });
+
+  it("reads the recipients from config.json, with errors people understand", () => {
+    expect(parseRecipients("me@example.test")).toEqual(["me@example.test"]);
+    expect(parseRecipients(["a@example.test", "b@example.test"])).toEqual(["a@example.test", "b@example.test"]);
+    expect(() => parseRecipients(undefined)).toThrow(/config\.json 沒有 email_to/);
+    expect(() => parseRecipients([])).toThrow(/config\.json 沒有 email_to/);
+    expect(() => parseRecipients("not an email")).toThrow(/email_to 格式不對/);
+    expect(() => parseRecipients(["a@example.test", 3])).toThrow(/email_to 格式不對/);
+  });
+
+  it("posts to Resend with the bearer header and a plain-text body", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ id: "email-id" }), { status: 200 });
+    };
+    const id = await sendEmail({ fetchImpl, apiKey: "placeholder-key", to: ["me@example.test"], subject: "主旨", text: "內文" });
+    expect(id).toBe("email-id");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.resend.com/emails");
+    expect(calls[0].init.method).toBe("POST");
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer placeholder-key");
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(headers["Idempotency-Key"]).toMatch(/^security-scan-agent-[0-9a-f]{32}$/);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      from: "Zone2Mate Security Scan <security-scan@notify.zone2mate.com>",
+      to: ["me@example.test"],
+      subject: "主旨",
+      text: "內文",
+    });
+  });
+
+  it("uses the same idempotency key for the same mail only", () => {
+    const a = buildEmailRequest({ apiKey: "k", to: ["me@example.test"], subject: "s", text: "t" });
+    const b = buildEmailRequest({ apiKey: "k", to: ["me@example.test"], subject: "s", text: "t" });
+    const c = buildEmailRequest({ apiKey: "k", to: ["me@example.test"], subject: "s", text: "t2" });
+    expect(a.init.headers["Idempotency-Key"]).toBe(b.init.headers["Idempotency-Key"]);
+    expect(a.init.headers["Idempotency-Key"]).not.toBe(c.init.headers["Idempotency-Key"]);
+  });
+
+  it("reports Resend's error without the key", async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ statusCode: 403, name: "invalid_from_address", message: "domain not verified" }), { status: 403 });
+    await expect(sendEmail({ fetchImpl, apiKey: "placeholder-key", to: ["me@example.test"], subject: "s", text: "t" })).rejects.toThrow(
+      /^Resend：403 invalid_from_address domain not verified$/,
+    );
+    await expect(sendEmail({ fetchImpl, apiKey: "placeholder-key", to: ["me@example.test"], subject: "s", text: "t" })).rejects.not.toThrow(/placeholder-key/);
+  });
+
+  it("needs the key", async () => {
+    await expect(sendEmail({ fetchImpl: fetch, apiKey: undefined, to: ["me@example.test"], subject: "s", text: "t" })).rejects.toThrow(/RESEND_API_KEY/);
   });
 });
 
@@ -482,6 +566,21 @@ describe("scan.mjs (no network)", () => {
     expect(state.runs[0]).toMatchObject({ kind: "deep", new: 1 });
   });
 
+  it("notify explains a missing email_to, and needs the Resend key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "security-scan-"));
+    const notify = () =>
+      execFileSync(process.execPath, [join(SCAN_DIR, "scripts/scan.mjs"), "notify", "--kind", "deep", "--slice", "proxy", "--dir", dir, "--date", DATE], {
+        cwd: ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, RESEND_API_KEY: "" },
+      });
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ repo: "owner/repo" }));
+    expect(notify).toThrow(/config\.json 沒有 email_to/);
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ repo: "owner/repo", email_to: "me@example.test" }));
+    expect(notify).toThrow(/沒有 RESEND_API_KEY/);
+  });
+
   it("lists the files of a slice and picks the first slice", () => {
     const dir = mkdtempSync(join(tmpdir(), "security-scan-"));
     expect(run(dir, "files", "--slice", "proxy")).toContain("apps/proxy/src/");
@@ -515,10 +614,10 @@ describe("agent and deployment files", () => {
     }
   });
 
-  it("limit the network to GitHub and Discord", () => {
+  it("limit the network to GitHub and Resend", () => {
     const env = read("environments/security-scan.yaml");
     expect(env).toContain("type: limited");
     const hosts = [...env.matchAll(/^\s+- (\S+)$/gm)].map((m) => m[1]);
-    expect(hosts).toEqual(["github.com", "api.github.com", "discord.com"]);
+    expect(hosts).toEqual(["github.com", "api.github.com", "api.resend.com"]);
   });
 });

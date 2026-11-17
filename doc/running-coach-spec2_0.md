@@ -300,6 +300,7 @@
 | 2.0-draft | 2026-11-17 | 安全掃描的通知改用 Email（Resend，寄件人用子網域），工作單寫好（12.45 第 10 點、9.4） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 | 2.0-draft | 2026-11-17 | `packages/core` 的正規表示式改成線性時間（CodeQL 的 10 個效能警示與同類寫法；共用的 `text-match.ts`，行為不變，加對照與長輸入的測試）（12.45 第 8 點、9.4） |
+| 2.0-draft | 2026-11-17 | 安全掃描的通知從 Discord 改成 Email：`scan.mjs notify` 用 Resend 的 API 寄純文字信（寄件人 `security-scan@notify.zone2mate.com`，收件人在 memory store 的 `config.json` 的 `email_to`），沙盒改開 `api.resend.com`、拿掉 Discord；兩個代理的提示、測試（模擬的 fetch）、README 的 0-4、2-3、2-4 跟著改（12.45 第 10 點、9.4） |
 
 ---
 
@@ -840,7 +841,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做什麼：不改掃描的其他行為；不加其他通知管道。
   - 驗收：`npm test`、`npm run typecheck`；寄信的部分用模擬的 fetch 測：網址、標頭、內容（沒有觸發方式與修法）、長度上限；`config.json` 沒有 `email_to` 時錯誤訊息看得懂。
   - 注意：使用者還沒做到步驟 2，所以不用考慮已經建好的 vault 或 memory store。Resend 的免費方案的額度以它網站上的為準（每月寄十幾、二十封，應該夠）。
-  - 狀態：開發中（開發 session「安全掃描：通知改用 Email」，2026-11-17）。
+  - 狀態：已推上 v2（2026-11-17）。使用者要做的：README 的 0-4（Resend 與 DNS）、2-3 的 Resend key 與測試信、2-4 的 `email_to`（還沒做步驟 2 的話照新的 README 做就好）。
 
 - **每天用代理掃 bug 與漏洞：試行四週**（12.45；2026-11-16 使用者：「你決定後寫一版計劃，我看過沒問題的話就照做，實際 run 一段時間再看成本或各種問題」）
   - 對應章節：12.45（現況、選項、決定）、KI-037／KI-045（以前的安全審查）、CLAUDE.md 的「合併部署」。
@@ -5485,3 +5486,11 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 **10. 通知改用 Email**（2026-11-17）
 - 使用者問 Discord bot 是不是只用來通知安全問題、有沒有其他方法。協調 session 列了選項：秘密要放在標頭或內容 vault 才能代換，所以 Discord webhook、Telegram、Slack webhook 這類把秘密放在網址裡的都不行；可行的是 Discord bot、Email（Resend 這類寄信服務）、手機推播（Pushover，一次性付費）、不主動通知（要自己去 Security 分頁看，GitHub 對 code scanning 的新警示不會主動寄信）。使用者：「改用Email好了」。
 - 決定：Resend；寄件人用子網域 `notify.zone2mate.com`（不碰根網域現有的信件設定）；收件人放 memory store，不進 repo；信裡只有嚴重度、標題、片、檔案與連結，細節在 Security 分頁。工作單見 9.4「安全掃描的通知改用 Email」。
+- 實作（2026-11-17，開發 session，已推上 v2）：
+  - `scripts/lib.mjs`：`formatNotification` 改回主旨與純文字內文（主旨例「[Zone2Mate 安全掃描] 每日：新發現 2 個」「[Zone2Mate 安全掃描] 每週深掃 proxy：沒有新發現」；內文每個發現一行：嚴重度、標題、片、檔案與行，加上還沒處理的數量、代理的附註、Security 分頁的連結（篩選 `tool:security-scan-agent branch:v2`）；不放觸發方式、影響、修法、程式片段；內文上限 6000 字，超過時截斷但保留連結；標題、片的換行拿掉，主旨不會被拆成兩行）。`parseRecipients` 讀 `config.json` 的 `email_to`（一個信箱或陣列，最多 50 個；沒有或格式不對時說要照 README 2-4 放）。`sendEmail` 送 `POST https://api.resend.com/emails`（`Authorization: Bearer`、JSON 的 `from`、`to`、`subject`、`text`），錯誤只帶狀態碼與 Resend 的錯誤名稱、訊息。
+  - `Idempotency-Key` 用信的內容的雜湊：代理重試同一封不會寄兩次，內容不同的照寄（工作單沒寫，Resend 支援這個標頭）。
+  - `scan.mjs notify` 改用上面的函式，`RESEND_API_KEY` 從環境變數讀（vault 的佔位字串）；寄信的時機不變（每日沒有新東西不寄，每週深掃每次都寄）。寄件人顯示的名稱用英文 `Zone2Mate Security Scan`。
+  - 沙盒的 allowed_hosts 換成 `api.resend.com`；兩個代理的系統提示、memory store 與 vault 的說明、README（0-4 寫 Resend 的註冊、Domains、Cloudflare 的 DNS 紀錄、驗證、Sending access 的 key；2-3 加 Resend 的 key 並寄測試信，收件人用 `read -r` 讀進來；2-4 放 `email_to`）一起改，Discord 的東西都拿掉（片 `discord` 指的是 `apps/discord`，保留）。
+  - Resend 的 API 格式：這個 session 連不到 resend.com 的文件，照 npm 上 Resend 官方 SDK（`resend` 6.38.1）的原始碼確認網址、標頭、欄位名稱、錯誤的格式與 key 的權限（`sending_access`）。
+- 驗證：`npm test`（新增：主旨與內文、沒有觸發方式與修法、排序、長度上限、主旨一行、Security 分頁的網址、`email_to` 的錯誤訊息、模擬的 fetch 檢查網址、標頭與內容、Resend 的錯誤不帶 key、`notify` 指令沒有 `email_to` 或 key 時的錯誤）、`npm run typecheck`。
+- 沒驗證到的：真的 Resend API 與寄到信箱（由使用者在 README 2-3 寄測試信確認）；README 0-4 的畫面名稱（Resend 與 Cloudflare 的按鈕名稱照一般的畫面寫，實際以畫面為準）。

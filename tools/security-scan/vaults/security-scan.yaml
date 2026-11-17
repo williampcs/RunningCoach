@@ -1,4 +1,4 @@
 # 安全掃描的 vault（規格 12.45、9.4）。ant apply 只建立這個空的容器；
-# 兩個憑證（GITHUB_TOKEN、DISCORD_BOT_TOKEN）由使用者照 README 在自己的終端機加，不寫進任何檔案。
+# 兩個憑證（GITHUB_TOKEN、RESEND_API_KEY）由使用者照 README 在自己的終端機加，不寫進任何檔案。
 type: vault
 display_name: security-scan
