@@ -396,25 +396,67 @@ export class SyncStore {
   }
 
   /**
-   * 寫入一筆：只有伺服器上的版本還是 base（客戶端上次看到的序號；新的一筆是 0）時才寫入，
-   * 否則是衝突，客戶端要先取回別台的變更。回傳新的序號，衝突時是 null
+   * 寫入一批（一次送出的全部）：查詢的次數固定（讀現在的版本 1 次、寫入每約 1 MB 1 次、更新大小 1 次），和筆數無關.
+   * 每筆只有伺服器上的版本還是 base 時才寫入，否則是衝突；同一批裡重複的 id 只算第一筆.
+   * 序號是這個空間目前最大的加上在這批裡的位置（同一個敘述裡算），會跳號但只會變大，取回時不會跳過還沒寫入的.
+   * reserved：送出前 reserveBytes 保留的位元組，這裡換成實際的大小
    */
-  async put(space: string, id: string, base: number, blob: string): Promise<number | null> {
-    const current = (await this.driver.all("SELECT seq, LENGTH(blob) AS size FROM records WHERE space=? AND id=?", [space, id]))[0];
-    if ((current ? Number(current.seq) : 0) !== base) return null;
-    // 配序號和寫入在同一個 SQL 敘述裡完成（這個空間目前最大的序號加一）：
-    // 同時有好幾台在送出時，別台取回的序號不會跳過還沒寫入的那筆.
-    // 寫入時再檢查一次版本：同時有兩台寫同一筆時，後到的會失敗
-    const written = (
-      await this.driver.all(
-        "INSERT INTO records (space, id, seq, blob) VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM records WHERE space=?), ?)" +
-          " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob WHERE records.seq=? RETURNING seq",
-        [space, id, space, blob, base],
-      )
-    )[0];
-    if (!written) return null;
-    await this.driver.run("UPDATE spaces SET bytes=bytes+?, updated_at=? WHERE id=?", [blob.length - Number(current?.size ?? 0), this.now().toISOString(), space]);
-    return Number(written.seq);
+  async putMany(space: string, items: { id: string; base: number; blob: string }[], reserved = 0): Promise<{ applied: { id: string; seq: number }[]; conflicts: string[] }> {
+    const conflicts: string[] = [];
+    const seen = new Set<string>();
+    const unique = items.filter((item) => {
+      if (seen.has(item.id)) {
+        conflicts.push(item.id);
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+    const before = new Map<string, number>();
+    if (unique.length) {
+      const rows = await this.driver.all("SELECT id, LENGTH(blob) AS size FROM records WHERE space=? AND id IN (SELECT value FROM json_each(?))", [
+        space,
+        JSON.stringify(unique.map((i) => i.id)),
+      ]);
+      for (const r of rows) before.set(String(r.id), Number(r.size));
+    }
+    // 每個敘述帶的內容不超過約 1 MB（D1 單一個值的上限是 2 MB；單筆最大約 1.4 MB 自己一組）
+    const chunks: (typeof unique)[] = [];
+    let current: typeof unique = [];
+    let size = 0;
+    for (const item of unique) {
+      if (current.length && size + item.blob.length > 1_000_000) {
+        chunks.push(current);
+        current = [];
+        size = 0;
+      }
+      current.push(item);
+      size += item.blob.length;
+    }
+    if (current.length) chunks.push(current);
+    const applied: { id: string; seq: number }[] = [];
+    for (const chunk of chunks) {
+      // 版本的檢查與寫入在同一個敘述：同時有兩台寫同一筆時，後到的是衝突
+      const rows = await this.driver.all(
+        "INSERT INTO records (space, id, seq, blob)" +
+          " SELECT ?, json_extract(j.value, '$.id'), (SELECT COALESCE(MAX(seq), 0) FROM records WHERE space=?) + j.key + 1, json_extract(j.value, '$.blob')" +
+          " FROM json_each(?) AS j" +
+          " WHERE COALESCE((SELECT r.seq FROM records r WHERE r.space=? AND r.id=json_extract(j.value, '$.id')), 0) = json_extract(j.value, '$.base')" +
+          " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob RETURNING id, seq",
+        [space, space, JSON.stringify(chunk), space],
+      );
+      const done = new Map(rows.map((r) => [String(r.id), Number(r.seq)]));
+      for (const item of chunk) {
+        const seq = done.get(item.id);
+        if (seq === undefined) conflicts.push(item.id);
+        else applied.push({ id: item.id, seq });
+      }
+    }
+    const blobs = new Map(unique.map((i) => [i.id, i.blob.length]));
+    const delta = applied.reduce((sum, a) => sum + (blobs.get(a.id) ?? 0) - (before.get(a.id) ?? 0), 0);
+    await this.driver.run("UPDATE spaces SET bytes=MAX(0, bytes - ? + ?), updated_at=? WHERE id=?", [reserved, delta, this.now().toISOString(), space]);
+    applied.sort((a, b) => a.seq - b.seq);
+    return { applied, conflicts };
   }
 
   // -------------------------------------------------------------------------

@@ -127,6 +127,8 @@ export class SyncApi {
         signal: AbortSignal.timeout(30_000),
       });
     } catch (e) {
+      // 逾時：伺服器一直沒有回應（例如太忙）
+      if (e instanceof Error && e.name === "TimeoutError") throw new SyncApiError(0, "同步服務 30 秒沒有回應，請稍後再試");
       throw new SyncApiError(0, `連不上同步服務：${e instanceof Error ? e.message : String(e)}`);
     }
     const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -139,6 +141,9 @@ export class SyncApi {
     return json as T;
   }
 }
+
+/** 換金鑰進行到哪裡（畫面顯示用）：取回資料、複製到新的空間（done／total 筆）、送出換金鑰、改用新的金鑰 */
+export type RekeyProgress = { step: "fetch" } | { step: "copy"; done: number; total: number } | { step: "rekey" } | { step: "switch" };
 
 /** 裝置清單的一台（規格 12.27） */
 export interface SyncDevice {
@@ -365,7 +370,7 @@ export class SyncEngine {
    * 解不開裝置紀錄的（伺服器塞的、或不是用這組同步金鑰登記的）不給新金鑰，也不算它的移除證明.
    * 回傳新的同步金鑰（已經用 onRootChanged 存起來），App 顯示新的復原碼
    */
-  async rekey(remove: string[] = [], expected?: string[]): Promise<Uint8Array> {
+  async rekey(remove: string[] = [], expected?: string[], onProgress?: (step: RekeyProgress) => void): Promise<Uint8Array> {
     if (!this.device) throw new Error("換金鑰要開啟裝置清單");
     const { identity } = this.device;
     await this.sync();
@@ -380,6 +385,7 @@ export class SyncEngine {
       throw new SyncApiError(409, "裝置清單剛剛變了，請重新確認後再試", { state: "devices_changed" });
     }
     if (remove.some((id) => !ids.includes(id) || id === identity.id)) throw new Error("要移除的裝置不在清單裡");
+    onProgress?.({ step: "fetch" });
     const { remote } = await this.fetchRemote(keys, 0);
 
     const newRoot = newRootKey();
@@ -387,41 +393,48 @@ export class SyncEngine {
     // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）. 帶上舊空間並用這台的金鑰簽：
     // 伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制
     await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}`, undefined, { device: identity, token: newKeys.token });
-    const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
-    await this.api.request(
-      "POST",
-      `/v1/spaces/${newKeys.space}/devices`,
-      { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
-      { device: identity, token: newKeys.token },
-    );
-    const copied = await this.copyInto(newKeys, remote);
-
-    const keep: { id: string; label: string; box: string }[] = [];
-    const removed: { id: string; proof: string | null }[] = [];
-    for (const d of raw.devices) {
-      if (d.id === identity.id) {
-        keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, newRoot, newKeys.space, identity) });
-        continue;
-      }
-      if (remove.includes(d.id)) {
-        removed.push({ id: d.id, proof: await removalProof(keys, d.id) });
-        continue;
-      }
-      const label = await openLabel(keys, d, d.label);
-      if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, d) });
-      else removed.push({ id: d.id, proof: null });
-    }
-    const boxes: Record<string, string> = {};
-    for (const k of keep) boxes[k.id] = await boxHash(k.box);
-    const signed = await signStatement(identity, {
-      v: 1,
-      from: keys.space,
-      to: newKeys.space,
-      keep: keep.map((k) => k.id),
-      remove: removed.map((r) => r.id),
-      boxes,
-    });
+    // 之後任何一步失敗：刪掉剛建立的新空間（只有這台知道它），舊的照舊，可以重試
+    const abandon = async (e: unknown): Promise<never> => {
+      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, this.auth(newKeys)).catch(() => undefined);
+      throw this.cooldownOf(e) ?? e;
+    };
+    let copied: Awaited<ReturnType<SyncEngine["copyInto"]>>;
     try {
+      const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
+      await this.api.request(
+        "POST",
+        `/v1/spaces/${newKeys.space}/devices`,
+        { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
+        { device: identity, token: newKeys.token },
+      );
+      copied = await this.copyInto(newKeys, remote, (done) => onProgress?.({ step: "copy", done, total: remote.size }));
+
+      const keep: { id: string; label: string; box: string }[] = [];
+      const removed: { id: string; proof: string | null }[] = [];
+      for (const d of raw.devices) {
+        if (d.id === identity.id) {
+          keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, newRoot, newKeys.space, identity) });
+          continue;
+        }
+        if (remove.includes(d.id)) {
+          removed.push({ id: d.id, proof: await removalProof(keys, d.id) });
+          continue;
+        }
+        const label = await openLabel(keys, d, d.label);
+        if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, d) });
+        else removed.push({ id: d.id, proof: null });
+      }
+      const boxes: Record<string, string> = {};
+      for (const k of keep) boxes[k.id] = await boxHash(k.box);
+      const signed = await signStatement(identity, {
+        v: 1,
+        from: keys.space,
+        to: newKeys.space,
+        keep: keep.map((k) => k.id),
+        remove: removed.map((r) => r.id),
+        boxes,
+      });
+      onProgress?.({ step: "rekey" });
       await this.api.request(
         "POST",
         `/v1/spaces/${keys.space}/rekey`,
@@ -429,10 +442,9 @@ export class SyncEngine {
         this.auth(keys),
       );
     } catch (e) {
-      // 沒有換成：刪掉剛建立的新空間（只有這台知道它），舊的照舊
-      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, this.auth(newKeys)).catch(() => undefined);
-      throw this.cooldownOf(e) ?? e;
+      return abandon(e);
     }
+    onProgress?.({ step: "switch" });
     await this.switchTo(newRoot, newKeys);
     await this.db.syncTransaction(async (sql) => {
       for (const c of copied) await saveState(sql, c.name, c.hash, c.seq, c.v);
@@ -458,6 +470,7 @@ export class SyncEngine {
   private async copyInto(
     keys: SyncKeys,
     remote: Map<string, { env: Envelope; seq: number }>,
+    onCopied?: (done: number) => void,
   ): Promise<{ name: string; hash: string; seq: number; v: number }[]> {
     const copied: { name: string; hash: string; seq: number; v: number }[] = [];
     const all = [...remote.values()].sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
@@ -480,6 +493,7 @@ export class SyncEngine {
         const seq = seqById.get(items[index]!.id);
         if (seq !== undefined) copied.push({ name: env.k, hash: env.d ? await hashOf(env.d) : DELETED, seq, v: env.v });
       }
+      onCopied?.(Math.min(i + PUSH_BATCH, all.length));
     }
     return copied;
   }

@@ -229,3 +229,114 @@ describe("換金鑰不受整個服務的空間數擋（一換一）", () => {
     });
   });
 });
+
+describe("每個請求的 D1 查詢次數固定（Workers 每次呼叫有查詢數的上限，D1 每個查詢都是一次來回）", () => {
+  /** 每個請求最多 50 個查詢（免費方案的上限），超過就丟錯，像 D1 一樣 */
+  const MAX_QUERIES = 50;
+  let queries = 0;
+  let limitedStore: SyncStore;
+  let limitedHandle: (request: Request) => Promise<Response>;
+
+  beforeEach(async () => {
+    const count = <T>(fn: () => T): T => {
+      if (++queries > MAX_QUERIES) throw new Error("Too many API requests by single worker invocation");
+      return fn();
+    };
+    const limited = {
+      exec: (sql: string) => count(() => driver.exec(sql)),
+      run: (sql: string, params?: any[]) => count(() => driver.run(sql, params)),
+      all: (sql: string, params?: any[]) => count(() => driver.all(sql, params)),
+    };
+    limitedStore = new SyncStore(limited, () => now);
+    const limitedLimiter = new SqlRateLimiter(limited, () => now.getTime());
+    limitedHandle = async (request) => {
+      queries = 0;
+      return createSyncHandler({ store: limitedStore, allowedOrigins: [], rateLimiter: limitedLimiter })(request);
+    };
+  });
+
+  it("一次送 200 筆只用十幾個查詢；同一批重複的 id 只算第一筆", async () => {
+    await call("PUT", `/v1/spaces/${space(1)}?create=1`, { handler: limitedHandle });
+    const items = Array.from({ length: 200 }, (_, i) => item(i, 100));
+    const res = await call("POST", `/v1/spaces/${space(1)}/changes`, { handler: limitedHandle, body: { items } });
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toHaveLength(200);
+    expect(queries).toBeLessThan(20);
+    // 序號只會變大、不重複
+    const seqs = res.body.applied.map((a: { seq: number }) => a.seq);
+    expect(new Set(seqs).size).toBe(200);
+    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * 100);
+    // 更新一部分（一筆的 base 是舊的、一筆重複）
+    const update = [
+      { ...item(0, 50), base: seqs[0] },
+      { ...item(1, 50), base: 0 },
+      { ...item(0, 70), base: seqs[0] },
+    ];
+    const second = await call("POST", `/v1/spaces/${space(1)}/changes`, { handler: limitedHandle, body: { items: update } });
+    expect(second.body.applied).toHaveLength(1);
+    expect(second.body.applied[0].seq).toBeGreaterThan(Math.max(...seqs));
+    expect(second.body.conflicts.sort()).toEqual([item(0, 1).id, item(1, 1).id].sort());
+    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * 100 - 50);
+  });
+
+  it("換金鑰把 450 筆重送一次：每個請求都在查詢數的上限內", async () => {
+    const api = new SyncApi("http://sync.test", (input, init) => limitedHandle(new Request(input as string, init)));
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    for (let i = 0; i < 450; i++) {
+      await db.saveCheckin({ date: new Date(Date.UTC(2025, 0, 1) + i * 86_400_000).toISOString().slice(0, 10), energy: 3, soreness: 2, sleep: 4, notes: "x" });
+    }
+    const identity = await newDeviceIdentity();
+    let root = newRootKey();
+    const engine = new SyncEngine(db, api, root, () => now, { identity, label: () => ({ name: "A", platform: "t" }), onRootChanged: async (r) => void (root = r) });
+    await engine.ensureSpace();
+    await engine.sync();
+    advance(25 * HOUR);
+    const before = root;
+    await engine.rekey();
+    expect(root).not.toEqual(before);
+    const keys = await deriveKeys(root);
+    expect(Number((await driver.all("SELECT COUNT(*) AS n FROM records WHERE space=?", [keys.space]))[0]!.n)).toBeGreaterThanOrEqual(450);
+  });
+});
+
+describe("換金鑰中途失敗", () => {
+  it("複製到新空間時失敗：刪掉剛建立的新空間、舊的照舊、可以重試；進度回報到哪一步", async () => {
+    const handle = freshHandler({ limits: { spaces: 1 } });
+    let failCopy = true;
+    let newSpace: string | null = null;
+    const api = new SyncApi("http://sync.test", (input, init) => {
+      const request = new Request(input as string, init);
+      const url = new URL(request.url);
+      if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
+      if (failCopy && newSpace && request.method === "POST" && url.pathname === `/v1/spaces/${newSpace}/changes`) {
+        return Promise.reject(Object.assign(new Error("signal timed out"), { name: "TimeoutError" }));
+      }
+      return handle(request);
+    });
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    await db.saveCheckin({ date: "2026-11-01", energy: 3, soreness: 2, sleep: 4, notes: "x" });
+    let root = newRootKey();
+    const engine = new SyncEngine(db, api, root, () => now, {
+      identity: await newDeviceIdentity(),
+      label: () => ({ name: "A", platform: "t" }),
+      onRootChanged: async (r) => void (root = r),
+    });
+    await engine.ensureSpace();
+    await engine.sync();
+    advance(25 * HOUR);
+    const steps: string[] = [];
+    await expect(engine.rekey([], undefined, (p) => steps.push(p.step))).rejects.toMatchObject({ status: 0, message: "同步服務 30 秒沒有回應，請稍後再試" });
+    expect(steps).toEqual(["fetch"]);
+    expect(await store.spaceToken(newSpace!)).toBeNull();
+    expect((await store.totals()).spaces).toBe(1);
+    // 舊的照常同步；再試一次就成功
+    await engine.sync();
+    failCopy = false;
+    const before = root;
+    await engine.rekey([], undefined, (p) => steps.push(p.step));
+    expect(root).not.toEqual(before);
+    expect(steps.slice(1)).toEqual(["fetch", "copy", "rekey", "switch"]);
+  });
+});

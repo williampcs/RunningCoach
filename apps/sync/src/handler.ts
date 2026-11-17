@@ -455,10 +455,18 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
           log(`sync service full: bytes`);
           throw new HttpError(503, "同步服務已滿");
         }
+        let valid: { id: string; base: number; blob: string }[];
         try {
-          return await applyPush(space, items);
-        } finally {
+          valid = validItems(items);
+        } catch (e) {
           await store.releaseBytes(space, incoming);
+          throw e;
+        }
+        try {
+          return await store.putMany(space, valid, incoming);
+        } catch (e) {
+          await store.releaseBytes(space, incoming).catch(() => undefined);
+          throw e;
         }
       }
       throw new HttpError(405, "不支援的方法");
@@ -472,22 +480,16 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     throw new HttpError(404, "找不到");
   }
 
-  async function applyPush(space: string, items: unknown[]) {
-    const applied: { id: string; seq: number }[] = [];
-    const conflicts: string[] = [];
-    for (const raw of items) {
+  /** 先檢查整批的格式，有一筆不對就整批不寫 */
+  function validItems(items: unknown[]): { id: string; base: number; blob: string }[] {
+    return items.map((raw) => {
       const item = raw as Record<string, unknown>;
-      const id = item.id;
-      const base = item.base;
-      const blob = item.blob;
+      const { id, base, blob } = item ?? {};
       if (typeof id !== "string" || !RECORD_ID.test(id)) throw new HttpError(400, "紀錄 id 格式不對");
       if (typeof base !== "number" || !Number.isInteger(base) || base < 0) throw new HttpError(400, "base 要是非負整數");
       if (typeof blob !== "string" || blob.length > MAX_BLOB || !BASE64URL.test(blob)) throw new HttpError(400, "blob 格式不對或太大");
-      const seq = await store.put(space, id, base, blob);
-      if (seq === null) conflicts.push(id);
-      else applied.push({ id, seq });
-    }
-    return { applied, conflicts };
+      return { id, base, blob };
+    });
   }
 
   async function pairRoute(request: Request, parts: string[], method: string): Promise<Record<string, unknown>> {

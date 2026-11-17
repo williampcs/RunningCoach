@@ -6,6 +6,7 @@ export {
   SyncCooldownError,
   SyncEngine,
   SyncRemovedError,
+  type RekeyProgress,
   type SyncAuth,
   type SyncDevice,
   type SyncDeviceOptions,
