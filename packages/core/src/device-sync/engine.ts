@@ -92,6 +92,8 @@ export class SyncApi {
   constructor(
     baseUrl: string,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+    /** 等一段時間（被頻率限制時）；測試時可以換掉 */
+    readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ) {
     this.base = trimTrailingSlashes(baseUrl);
   }
@@ -142,8 +144,25 @@ export class SyncApi {
   }
 }
 
-/** 換金鑰進行到哪裡（畫面顯示用）：取回資料、複製到新的空間（done／total 筆）、送出換金鑰、改用新的金鑰 */
-export type RekeyProgress = { step: "fetch" } | { step: "copy"; done: number; total: number } | { step: "rekey" } | { step: "switch" };
+/**
+ * 換金鑰進行到哪裡（畫面顯示用）：取回資料、複製到新的空間（done／total 筆）、被頻率限制時等待（seconds 秒）、送出換金鑰、改用新的金鑰
+ */
+export type RekeyProgress =
+  | { step: "fetch" }
+  | { step: "copy"; done: number; total: number }
+  | { step: "wait"; seconds: number }
+  | { step: "rekey" }
+  | { step: "switch" };
+
+/** 換金鑰時被頻率限制，最多等這麼久（每小時的位元組上限）；更久的就停下來 */
+const MAX_RATE_WAIT_MS = 65 * 60_000;
+
+/** 換金鑰最後一步的結果不確定（連不上或伺服器出錯，伺服器可能已經換好）：沒有清掉任何東西 */
+export class SyncRekeyUnknownError extends Error {
+  constructor() {
+    super("換金鑰的結果還不確定（同步服務沒有回應）。資料都還在：請稍後重新整理，已經換好的話這台會自動改用新的金鑰，到「顯示復原碼」看新的復原碼；沒有換成的話再試一次。");
+  }
+}
 
 /** 裝置清單的一台（規格 12.27） */
 export interface SyncDevice {
@@ -393,11 +412,12 @@ export class SyncEngine {
     // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）. 帶上舊空間並用這台的金鑰簽：
     // 伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制
     await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}`, undefined, { device: identity, token: newKeys.token });
-    // 之後任何一步失敗：刪掉剛建立的新空間（只有這台知道它），舊的照舊，可以重試
+    // 之後任何一步失敗：放棄剛建立的新空間（只有這台知道它；伺服器只刪這一個，換金鑰已經完成的拒絕），舊的照舊，可以重試
     const abandon = async (e: unknown): Promise<never> => {
-      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, this.auth(newKeys)).catch(() => undefined);
+      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}?abandon=1`, undefined, this.auth(newKeys)).catch(() => undefined);
       throw this.cooldownOf(e) ?? e;
     };
+    let rekeySent = false;
     let copied: Awaited<ReturnType<SyncEngine["copyInto"]>>;
     try {
       const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
@@ -407,7 +427,12 @@ export class SyncEngine {
         { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
         { device: identity, token: newKeys.token },
       );
-      copied = await this.copyInto(newKeys, remote, (done) => onProgress?.({ step: "copy", done, total: remote.size }));
+      copied = await this.copyInto(
+        newKeys,
+        remote,
+        (done) => onProgress?.({ step: "copy", done, total: remote.size }),
+        (seconds) => onProgress?.({ step: "wait", seconds }),
+      );
 
       const keep: { id: string; label: string; box: string }[] = [];
       const removed: { id: string; proof: string | null }[] = [];
@@ -435,6 +460,7 @@ export class SyncEngine {
         boxes,
       });
       onProgress?.({ step: "rekey" });
+      rekeySent = true;
       await this.api.request(
         "POST",
         `/v1/spaces/${keys.space}/rekey`,
@@ -442,7 +468,11 @@ export class SyncEngine {
         this.auth(keys),
       );
     } catch (e) {
-      return abandon(e);
+      // 送出換金鑰之後連不上或伺服器出錯：伺服器可能已經換好了. 先問舊空間，不確定時什麼都不刪
+      if (!(rekeySent && e instanceof SyncApiError && (e.status === 0 || e.status >= 500))) return abandon(e);
+      const outcome = await this.rekeyOutcome(keys, newKeys.space);
+      if (outcome === "unknown") throw new SyncRekeyUnknownError();
+      if (outcome === "not_done") return abandon(e);
     }
     onProgress?.({ step: "switch" });
     await this.switchTo(newRoot, newKeys);
@@ -467,10 +497,39 @@ export class SyncEngine {
   }
 
   /** 把舊空間的紀錄用新的金鑰重新加密送到新的空間（版本號不變）；回傳每一筆在新空間的狀態，換過去之後才記 */
+  /** 換金鑰送出之後結果不明：舊空間說「搬到這個新空間」就是換好了；舊空間照常回答就是沒有換；問不到是不確定 */
+  private async rekeyOutcome(oldKeys: SyncKeys, newSpace: string): Promise<"done" | "not_done" | "unknown"> {
+    try {
+      await this.api.request("GET", `/v1/spaces/${oldKeys.space}/devices`, undefined, this.auth(oldKeys));
+      return "not_done";
+    } catch (e) {
+      if (e instanceof SyncApiError && e.status === 410 && e.state === "moved") return e.detail.space === newSpace ? "done" : "unknown";
+      return "unknown";
+    }
+  }
+
+  /** 被頻率限制（state: rate_limited）時照伺服器說的時間等一下再送同一個請求；等太久的停下來 */
+  private async patiently<T>(send: () => Promise<T>, onWait?: (seconds: number) => void): Promise<T> {
+    let waited = 0;
+    for (;;) {
+      try {
+        return await send();
+      } catch (e) {
+        if (!(e instanceof SyncApiError && e.status === 429 && e.state === "rate_limited")) throw e;
+        const seconds = typeof e.detail.retryAfter === "number" && e.detail.retryAfter > 0 ? e.detail.retryAfter : 60;
+        waited += seconds * 1000;
+        if (waited > MAX_RATE_WAIT_MS) throw e;
+        onWait?.(seconds);
+        await this.api.sleep(seconds * 1000);
+      }
+    }
+  }
+
   private async copyInto(
     keys: SyncKeys,
     remote: Map<string, { env: Envelope; seq: number }>,
     onCopied?: (done: number) => void,
+    onWait?: (seconds: number) => void,
   ): Promise<{ name: string; hash: string; seq: number; v: number }[]> {
     const copied: { name: string; hash: string; seq: number; v: number }[] = [];
     const all = [...remote.values()].sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
@@ -482,11 +541,10 @@ export class SyncEngine {
           return { id, base: 0, blob: await seal(keys, id, env) };
         }),
       );
-      const response = await this.api.request<{ applied: { id: string; seq: number }[]; conflicts: string[] }>(
-        "POST",
-        `/v1/spaces/${keys.space}/changes`,
-        { items },
-        this.auth(keys),
+      // 資料多的時候會碰到自己的頻率限制：等時間窗過了接著送，不整個重來
+      const response = await this.patiently(
+        () => this.api.request<{ applied: { id: string; seq: number }[]; conflicts: string[] }>("POST", `/v1/spaces/${keys.space}/changes`, { items }, this.auth(keys)),
+        onWait,
       );
       const seqById = new Map(response.applied.map((a) => [a.id, a.seq]));
       for (const [index, { env }] of batch.entries()) {

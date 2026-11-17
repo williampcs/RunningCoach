@@ -5,6 +5,7 @@ export {
   SyncApiError,
   SyncCooldownError,
   SyncEngine,
+  SyncRekeyUnknownError,
   SyncRemovedError,
   type RekeyProgress,
   type SyncAuth,

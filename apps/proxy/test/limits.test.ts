@@ -140,7 +140,9 @@ describe("工具迴圈的接續另外算", () => {
     expect(await errorOf(await send(proxy, token, toolLoopBody))).toMatchObject({
       status: 403,
       type: "daily_limit",
-      limit: 5,
+      limit: 2,
+      scope: "tool_turns",
+      message: "今天教練查資料的次數（2 次）用完了，明天 00:00 恢復",
       resets_at: "2026-11-18T00:00:00+08:00",
     });
     // 最後一則不是選手的（例如 assistant）也算接續

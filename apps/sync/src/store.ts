@@ -169,23 +169,30 @@ export class SyncStore {
   }
 
   /**
-   * 回傳是否新建立. maxSpaces：整個服務最多幾個空間（換過金鑰的舊空間不算），查數量與寫入在同一個敘述裡，並行時不會一起超過；
-   * null 表示不受這個限制（換金鑰：一換一）. 已經存在、或服務已滿時回傳 false
+   * 回傳是否新建立. maxSpaces：整個服務最多幾個空間（換過金鑰的舊空間不算）；null 表示不限.
+   * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時，
+   * 不受空間數限制（換金鑰是一換一）. 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或服務已滿時回傳 false
    */
   async createSpace(space: string, tokenHash: string, maxSpaces: number | null = null, rekeyFrom: string | null = null): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
       "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from) SELECT ?, ?, ?, ?, ?" +
-        " WHERE ? OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ? ON CONFLICT(id) DO NOTHING",
-      [space, tokenHash, stamp, stamp, rekeyFrom, maxSpaces === null ? 1 : 0, maxSpaces ?? 0],
+        " WHERE ? OR (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
+        " OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ? ON CONFLICT(id) DO NOTHING",
+      [space, tokenHash, stamp, stamp, rekeyFrom, maxSpaces === null ? 1 : 0, rekeyFrom, rekeyFrom, maxSpaces ?? 0],
     );
     return result.changes > 0;
   }
 
-  /** 從這個空間換金鑰、還沒換成的新空間有幾個 */
-  async pendingRekeys(from: string): Promise<number> {
-    const row = (await this.driver.all("SELECT COUNT(*) AS n FROM spaces WHERE rekey_from=? AND id NOT IN (SELECT moved_to FROM moves)", [from]))[0];
-    return Number(row?.n ?? 0);
+  /** 換金鑰建立的新空間從哪個空間換來；不是的話 null */
+  async rekeyFrom(space: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT rekey_from FROM spaces WHERE id=?", [space]))[0];
+    return row?.rekey_from === null || row?.rekey_from === undefined ? null : String(row.rekey_from);
+  }
+
+  /** 只刪這一個空間（放棄換到一半的新空間），不沿著換金鑰往回刪 */
+  async deleteSingleSpace(space: string): Promise<void> {
+    await this.deleteOne(space);
   }
 
   /**

@@ -21,12 +21,21 @@ export interface RateLimiter {
   take(key: string, rule: RateRule, weight?: number): Promise<boolean>;
 }
 
-/** 依序檢查每條規則；有一條超過就回傳 false（前面已經通過的那幾條照算） */
-export async function takeAll(limiter: RateLimiter, key: string, rules: Record<string, RateRule>, weight = 1): Promise<boolean> {
+/**
+ * 依序檢查每條規則. 都在限制內時回傳 null；有一條超過時回傳還要等幾毫秒（那條的時間窗結束），
+ * 前面已經通過的那幾條照算
+ */
+export async function takeAll(
+  limiter: RateLimiter,
+  key: string,
+  rules: Record<string, RateRule>,
+  weight = 1,
+  nowMs: number = Date.now(),
+): Promise<number | null> {
   for (const [name, rule] of Object.entries(rules)) {
-    if (!(await limiter.take(`${key}:${name}`, rule, weight))) return false;
+    if (!(await limiter.take(`${key}:${name}`, rule, weight))) return (slotOf(nowMs, rule) + 1) * rule.windowMs - nowMs;
   }
-  return true;
+  return null;
 }
 
 /** 來源 IP 的雜湊（不存原文） */
@@ -35,9 +44,31 @@ export async function hashSource(text: string): Promise<string> {
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** 請求的來源 IP：Workers 是 cf-connecting-ip；本機的 Node 版沒有時算同一個來源 */
+/**
+ * 請求的來源：只信 Cloudflare 給的 cf-connecting-ip（用戶端可以自己帶其他標頭）；沒有時（本機的 Node 版）全部算同一個來源.
+ * IPv6 取前 64 bits（一般一個用戶拿到的就是整個 /64），IPv4 是完整的位址
+ */
 export function sourceIp(request: Request): string {
-  return request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ip = request.headers.get("cf-connecting-ip")?.trim();
+  return ip ? sourceKey(ip) : "unknown";
+}
+
+/** 同一個來源的 key：IPv6 的前四段（展開 :: 之後），IPv4（含 IPv4 對應的 IPv6）是完整的位址 */
+export function sourceKey(ip: string): string {
+  const address = ip.toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+  if (!address.includes(":")) return address;
+  const mapped = /^(?:0*:)*:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address);
+  if (mapped) return mapped[1]!;
+  const [head = "", tail] = address.split("::", 2);
+  const front = head ? head.split(":") : [];
+  const back = tail === undefined ? [] : tail ? tail.split(":") : [];
+  // 最後一段是 IPv4 寫法時算兩段
+  const groups = (parts: string[]) => parts.flatMap((g) => (g.includes(".") ? ["0", "0"] : [g]));
+  const full = tail === undefined ? groups(front) : [...groups(front), ...Array(Math.max(0, 8 - groups(front).length - groups(back).length)).fill("0"), ...groups(back)];
+  return `${full
+    .slice(0, 4)
+    .map((g) => (parseInt(g || "0", 16) || 0).toString(16))
+    .join(":")}::/64`;
 }
 
 const slotOf = (nowMs: number, rule: RateRule) => Math.floor(nowMs / rule.windowMs);

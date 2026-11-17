@@ -5,7 +5,7 @@ import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, typ
 import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
-import { createSyncHandler, maintain, type ServiceLimits, type SyncDeps } from "../src/handler";
+import { createSyncHandler, maintain, type ServiceLimits, type SyncDeps, type SyncRateLimits } from "../src/handler";
 import { SyncStore } from "../src/store";
 
 const HOUR = 3600_000;
@@ -338,5 +338,154 @@ describe("換金鑰中途失敗", () => {
     await engine.rekey([], undefined, (p) => steps.push(p.step));
     expect(root).not.toEqual(before);
     expect(steps.slice(1)).toEqual(["fetch", "copy", "rekey", "switch"]);
+  });
+});
+
+describe("換金鑰的結果不明、被頻率限制、並行", () => {
+  type Hook = (request: Request, url: URL, handle: (r: Request) => Promise<Response>) => Promise<Response> | null;
+
+  async function setup(opts: { records?: number; hook?: Hook; deps?: Partial<SyncDeps> } = {}) {
+    const handle = freshHandler(opts.deps);
+    const sleeps: number[] = [];
+    const api = new SyncApi(
+      "http://sync.test",
+      (input, init) => {
+        const request = new Request(input as string, init);
+        return opts.hook?.(request, new URL(request.url), handle) ?? handle(request);
+      },
+      async (ms) => {
+        sleeps.push(ms);
+        advance(ms);
+      },
+    );
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    for (let i = 0; i < (opts.records ?? 3); i++) {
+      await db.saveCheckin({ date: new Date(Date.UTC(2024, 0, 1) + i * 86_400_000).toISOString().slice(0, 10), energy: 3, soreness: 2, sleep: 4, notes: "x" });
+    }
+    const identity = await newDeviceIdentity();
+    const state = { root: newRootKey() };
+    const engine = new SyncEngine(db, api, state.root, () => now, {
+      identity,
+      label: () => ({ name: "A", platform: "t" }),
+      onRootChanged: async (r) => void (state.root = r),
+    });
+    await engine.ensureSpace();
+    await engine.sync();
+    const oldSpace = (await deriveKeys(state.root)).space;
+    advance(25 * HOUR);
+    return { engine, state, oldSpace, sleeps, identity, api };
+  }
+
+  const rekeyPath = (oldSpace: string) => `/v1/spaces/${oldSpace}/rekey`;
+  const timeout = () => Promise.reject(Object.assign(new Error("signal timed out"), { name: "TimeoutError" }));
+  const recordsIn = async (space: string) => Number((await driver.all("SELECT COUNT(*) AS n FROM records WHERE space=?", [space]))[0]!.n);
+
+  it("最後一步逾時，但伺服器已經換好：當成成功，改用新的金鑰，資料都在", async () => {
+    let oldSpace = "";
+    const t = await setup({
+      hook: (request, url, handle) => (request.method === "POST" && url.pathname === rekeyPath(oldSpace) ? handle(request).then(timeout) : null),
+    });
+    oldSpace = t.oldSpace;
+    const before = t.state.root;
+    await t.engine.rekey();
+    expect(t.state.root).not.toEqual(before);
+    const newSpace = (await deriveKeys(t.state.root)).space;
+    expect(await store.movedTo(oldSpace)).toBe(newSpace);
+    expect(await recordsIn(newSpace)).toBeGreaterThanOrEqual(3);
+    expect((await t.engine.sync()).devices!.devices).toHaveLength(1);
+  });
+
+  it("最後一步伺服器出錯、沒有換成：放棄新空間，舊的照舊", async () => {
+    let oldSpace = "";
+    let newSpace = "";
+    const t = await setup({
+      hook: (request, url) => {
+        if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
+        return request.method === "POST" && url.pathname === rekeyPath(oldSpace) ? Promise.resolve(Response.json({ error: "x" }, { status: 502 })) : null;
+      },
+    });
+    oldSpace = t.oldSpace;
+    const before = t.state.root;
+    await expect(t.engine.rekey()).rejects.toMatchObject({ status: 502 });
+    expect(t.state.root).toEqual(before);
+    expect(await store.spaceToken(newSpace)).toBeNull();
+    expect(await recordsIn(oldSpace)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("最後一步逾時、也問不到舊空間：結果不確定，什麼都不刪；之後同步時自動跟上", async () => {
+    let oldSpace = "";
+    let newSpace = "";
+    let down = false;
+    const t = await setup({
+      hook: (request, url, handle) => {
+        if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
+        if (down) return timeout();
+        if (request.method === "POST" && url.pathname === rekeyPath(oldSpace)) {
+          down = true;
+          return handle(request).then(timeout);
+        }
+        return null;
+      },
+    });
+    oldSpace = t.oldSpace;
+    await expect(t.engine.rekey()).rejects.toMatchObject({ name: "Error", message: expect.stringContaining("結果還不確定") });
+    expect(await store.spaceToken(newSpace)).not.toBeNull();
+    expect(await store.spaceToken(oldSpace)).not.toBeNull();
+    expect(await recordsIn(newSpace)).toBeGreaterThanOrEqual(3);
+    // 連得上之後：舊空間回「已搬家」與給這台的新金鑰，這台跟過去
+    down = false;
+    await t.engine.sync();
+    expect((await deriveKeys(t.state.root)).space).toBe(newSpace);
+  });
+
+  it("伺服器：換金鑰完成之後，放棄（?abandon=1）被拒絕；一般的刪除 10 分鐘內也拒絕，不會連帶刪掉舊的空間", async () => {
+    const t = await setup();
+    await t.engine.rekey();
+    const newKeys = await deriveKeys(t.state.root);
+    const auth = { device: t.identity, token: newKeys.token };
+    await expect(t.api.request("DELETE", `/v1/spaces/${newKeys.space}?abandon=1`, undefined, auth)).rejects.toMatchObject({ status: 409, state: "rekey_done" });
+    await expect(t.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, auth)).rejects.toMatchObject({ status: 429, state: "too_soon" });
+    expect(await store.spaceToken(newKeys.space)).not.toBeNull();
+    expect(await store.spaceToken(t.oldSpace)).not.toBeNull();
+    expect(await recordsIn(newKeys.space)).toBeGreaterThanOrEqual(3);
+    // 過了 10 分鐘，使用者自己按「刪除雲端的資料」照舊（連同換金鑰之前的舊空間）
+    advance(11 * 60_000);
+    await t.api.request("DELETE", `/v1/spaces/${newKeys.space}`, undefined, auth);
+    expect(await store.spaceToken(newKeys.space)).toBeNull();
+    expect(await store.spaceToken(t.oldSpace)).toBeNull();
+  });
+
+  it("資料多、碰到自己的頻率限制：等時間窗過了接著送，最後換成；進度顯示在等", async () => {
+    // 開始同步時照預設的上限；換金鑰前改成每分鐘只能送 3 次（450 筆要送 5 次）
+    const rateLimits: Partial<SyncRateLimits> = {};
+    const t = await setup({ records: 450, deps: { rateLimits } });
+    rateLimits.push = { minute: { limit: 3, windowMs: 60_000 } };
+    const steps: string[] = [];
+    const before = t.state.root;
+    await t.engine.rekey([], undefined, (p) => steps.push(p.step === "wait" ? `wait:${p.seconds}` : p.step));
+    expect(t.state.root).not.toEqual(before);
+    expect(steps.some((s) => s.startsWith("wait:"))).toBe(true);
+    expect(t.sleeps.length).toBeGreaterThan(0);
+    expect(t.sleeps.every((ms) => ms > 0 && ms <= 60_000)).toBe(true);
+    expect(await recordsIn((await deriveKeys(t.state.root)).space)).toBeGreaterThanOrEqual(450);
+  });
+
+  it("同時送好幾個從同一個舊空間換金鑰的建立：只有一個不受空間數限制", async () => {
+    const t = await setup({ deps: { limits: { spaces: 1 } } });
+    const auth = { device: t.identity, token: TOKEN };
+    const results = await Promise.allSettled(
+      [90, 91, 92, 93].map((n) => t.api.request("PUT", `/v1/spaces/${space(n)}?create=1&devices=1&from=${t.oldSpace}`, undefined, auth)),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected" && (r.reason as { status: number }).status === 503)).toHaveLength(3);
+  });
+
+  it("IPv6：同一個 /64 的不同位址算同一個來源", async () => {
+    for (let i = 0; i < 10; i++) {
+      expect((await call("PUT", `/v1/spaces/${space(300 + i)}?create=1`, { ip: `2001:db8:aa:bb::${(i + 1).toString(16)}` })).status).toBe(200);
+    }
+    expect((await call("PUT", `/v1/spaces/${space(320)}?create=1`, { ip: "2001:db8:aa:bb:ffff:ffff:ffff:ffff" })).status).toBe(429);
+    expect((await call("PUT", `/v1/spaces/${space(321)}?create=1`, { ip: "2001:db8:aa:bc::1" })).status).toBe(200);
   });
 });

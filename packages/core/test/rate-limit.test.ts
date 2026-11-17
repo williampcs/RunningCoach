@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
-import { MemoryRateLimiter, SqlRateLimiter, takeAll, type RateLimiter } from "../src/rate-limit";
+import { MemoryRateLimiter, sourceIp, sourceKey, SqlRateLimiter, takeAll, type RateLimiter } from "../src/rate-limit";
 
 async function limiters(now: () => number): Promise<[string, RateLimiter & { purge?: () => Promise<number> }][]> {
   const sql = new SqlRateLimiter(openNodeSqlite(":memory:"), now);
@@ -38,9 +38,10 @@ describe("頻率限制", () => {
     const t = 0;
     for (const [, limiter] of await limiters(() => t)) {
       const rules = { short: { limit: 5, windowMs: 1000 }, long: { limit: 2, windowMs: 60_000 } };
-      expect(await takeAll(limiter, "k", rules)).toBe(true);
-      expect(await takeAll(limiter, "k", rules)).toBe(true);
-      expect(await takeAll(limiter, "k", rules)).toBe(false);
+      expect(await takeAll(limiter, "k", rules, 1, t)).toBeNull();
+      expect(await takeAll(limiter, "k", rules, 1, t)).toBeNull();
+      // 超過的是 60 秒的那條：要等到它的時間窗結束
+      expect(await takeAll(limiter, "k", rules, 1, t)).toBe(60_000);
     }
   });
 
@@ -52,5 +53,25 @@ describe("頻率限制", () => {
     expect(await sql.purge()).toBe(0);
     t = 1001;
     expect(await sql.purge()).toBe(1);
+  });
+
+  it("來源：IPv6 同一個 /64 算同一個；IPv4 完整的位址；只信 cf-connecting-ip", () => {
+    const a = sourceKey("2001:db8:1234:5678:aaaa:bbbb:cccc:dddd");
+    expect(a).toBe("2001:db8:1234:5678::/64");
+    expect(sourceKey("2001:0db8:1234:5678::1")).toBe(a);
+    expect(sourceKey("2001:DB8:1234:5678:0:0:0:ffff")).toBe(a);
+    expect(sourceKey("[2001:db8:1234:5678::2]")).toBe(a);
+    expect(sourceKey("2001:db8:1234:5679::1")).not.toBe(a);
+    expect(sourceKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(sourceKey("::1")).toBe("0:0:0:0::/64");
+    expect(sourceKey("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+    expect(sourceKey("::ffff:198.51.100.7")).toBe("198.51.100.7");
+    expect(sourceKey("198.51.100.7")).toBe("198.51.100.7");
+    expect(sourceKey("198.51.100.8")).not.toBe(sourceKey("198.51.100.7"));
+    const req = (headers: Record<string, string>) => new Request("http://x/", { headers });
+    expect(sourceIp(req({ "cf-connecting-ip": "2001:db8:1:2:3:4:5:6" }))).toBe("2001:db8:1:2::/64");
+    // 用戶端自己帶的標頭不算
+    expect(sourceIp(req({ "x-forwarded-for": "203.0.113.9" }))).toBe("unknown");
+    expect(sourceIp(req({}))).toBe("unknown");
   });
 });

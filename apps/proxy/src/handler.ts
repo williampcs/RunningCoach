@@ -363,8 +363,16 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
     const today = day();
     if (!(await store.reserveDaily(account.id, today, kind, dailyLimit[kind]))) {
       const resets_at = nextDayStart();
-      if (kind === "chat" || kind === "tool") {
+      if (kind === "chat") {
         return errorResponse(403, "daily_limit", `今天的 ${policy.dailyMessages} 則用完了，明天 00:00 恢復`, { resets_at, limit: policy.dailyMessages });
+      }
+      if (kind === "tool") {
+        // 和對話用完同一種（網頁版照 daily_limit 說明）；scope 與 limit 是工具迴圈接續的
+        return errorResponse(403, "daily_limit", `今天教練查資料的次數（${dailyLimit.tool} 次）用完了，明天 00:00 恢復`, {
+          resets_at,
+          limit: dailyLimit.tool,
+          scope: "tool_turns",
+        });
       }
       return errorResponse(403, "daily_auto_limit", "今天自動分析的次數用完了，明天 00:00 恢復", { resets_at, limit: dailyLimit[kind] });
     }

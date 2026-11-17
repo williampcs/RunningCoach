@@ -140,13 +140,14 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const rateLimits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
   const log = deps.log ?? (() => undefined);
 
-  /** 這個來源這次還在限制內嗎；超過時回 429（state: rate_limited） */
+  /** 這個來源這次還在限制內嗎；超過時回 429（state: rate_limited，retryAfter 是要等幾秒） */
   async function limitSource(request: Request, kind: keyof SyncRateLimits, weight = 1): Promise<void> {
     if (!deps.rateLimiter) return;
     const source = await hashSource(sourceIp(request));
-    if (!(await takeAll(deps.rateLimiter, `sync:${kind}:${source}`, rateLimits[kind], weight))) {
+    const waitMs = await takeAll(deps.rateLimiter, `sync:${kind}:${source}`, rateLimits[kind], weight, nowMs());
+    if (waitMs !== null) {
       log(`rate limited: ${kind}`);
-      throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited" });
+      throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
     }
   }
 
@@ -246,8 +247,9 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   }
 
   /**
-   * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求），
-   * 而且舊空間還沒有別的換到一半的新空間 → 新的空間不受整個服務的空間數限制（換金鑰是一換一）. 條件不符時照一般的建立
+   * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求）→ 記下從哪裡換來.
+   * 舊空間還沒有別的換到一半的新空間時，新的空間不受整個服務的空間數限制（換金鑰是一換一；這個條件在寫入的敘述裡檢查）.
+   * 條件不符時照一般的建立
    */
   async function rekeyCreation(request: Request, url: URL, from: string, space: string, text: string): Promise<boolean> {
     if (!SPACE.test(from) || from === space) throw new HttpError(400, "舊的同步空間 id 格式不對");
@@ -256,8 +258,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     const device = await store.device(from, deviceId);
     if (!device || device.removedAt !== null || (await store.movedTo(from)) !== null) return false;
     await checkSignature(request, url, text, deviceId, device.signPub);
-    if (nowMs() < cooldownUntil(device)) return false;
-    return (await store.pendingRekeys(from)) === 0;
+    return nowMs() >= cooldownUntil(device);
   }
 
   /**
@@ -388,7 +389,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const from = url.searchParams.get("from");
         const rekeying = from !== null && (await rekeyCreation(request, url, from, space, text));
         await limitSource(request, "createSpace");
-        let created = await store.createSpace(space, hash, rekeying ? null : limits.spaces, rekeying ? from : null);
+        let created = await store.createSpace(space, hash, limits.spaces, rekeying ? from : null);
         if (!created && (await store.spaceToken(space)) === null) {
           // 服務已滿：先清掉沒在用的空空間再試一次
           if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces);
@@ -405,11 +406,22 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
 
       const caller = await authenticate(request, url, space, text);
       if (parts.length === 3 && method === "DELETE") {
-        // 換金鑰沒有完成時，換金鑰的那台刪掉它剛建立、只有它自己的新空間：不受冷卻期限制
         const created = await store.spaceCreatedAt(space);
         const others = (await store.devices(space)).filter((d) => caller.kind !== "device" || d.id !== caller.device.id);
-        const abandoned = caller.kind === "device" && others.length === 0 && created !== null && nowMs() - created < 3600_000;
-        if (!abandoned) requireCooldown(caller);
+        const movedIn = await store.movedInAt(space);
+        const fresh = caller.kind === "device" && others.length === 0 && created !== null && nowMs() - created < 3600_000;
+        // ?abandon=1：換金鑰沒有完成時，換金鑰的那台放棄它剛建立的新空間. 只刪這一個、不受冷卻期限制；
+        // 換金鑰已經完成（有空間搬進來）時拒絕，不會連帶刪掉舊的空間
+        if (url.searchParams.get("abandon") === "1") {
+          if (movedIn !== null) throw new HttpError(409, "換金鑰已經完成，不能放棄", { state: "rekey_done" });
+          if (caller.kind !== "device" || (!fresh && (await store.rekeyFrom(space)) === null)) throw new HttpError(403, "這個同步空間不是換到一半的新空間");
+          await store.deleteSingleSpace(space);
+          return { deleted: true };
+        }
+        // 刪除雲端的資料（連同換金鑰之前的舊空間）：剛換過金鑰的空間不走放棄的捷徑，換好 10 分鐘內也不能刪
+        // （舊版的用戶端在換金鑰的結果不明時會送這個）
+        if (movedIn !== null && nowMs() - movedIn < 10 * 60_000) throw new HttpError(429, "剛換過金鑰，請稍後再試", { state: "too_soon" });
+        if (!(fresh && movedIn === null)) requireCooldown(caller);
         await store.deleteSpace(space);
         return { deleted: true };
       }
@@ -546,7 +558,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       const status = e instanceof HttpError ? e.status : 500;
       const message = e instanceof HttpError ? e.message : "伺服器錯誤";
       const extra = e instanceof HttpError ? e.extra : {};
-      return new Response(JSON.stringify({ ...extra, error: message }), { status, headers });
+      const retry: Record<string, string> = typeof extra.retryAfter === "number" ? { "retry-after": String(extra.retryAfter) } : {};
+      return new Response(JSON.stringify({ ...extra, error: message }), { status, headers: { ...headers, ...retry } });
     }
   };
 }
