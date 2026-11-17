@@ -5515,4 +5515,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 2026-11-17 排程建好並暫停（每日、每週各一，費用上限 1、5 美元，vault 與 memory store 接上），`claude-lock.json` 推上 v2（使用者，5532ad5，只有 id）。第一次手動深掃（proxy）：約 1.06 美元，5 個發現，信與 Security 分頁看起來正常（發現的內容不記在這裡）。無痕視窗（沒登入）打開 Security 分頁是 404，外人看不到。嚴重度：high 1、medium 3、low 1；high 的先處理，不等基準跑完。第二次（sync）：約 0.89 美元，high 2（使用者原本說 3，後來更正）、medium 與 low 若干；2 個 high 協調 session 對照程式確認是真的（同一個原因，影響是服務停擺，不會外洩資料），排在 proxy 的修正之後，跟下一版一起發。下一步：sync，再跑剩下 5 片完成基準，然後打開排程。
 - 2026-11-17 做法：**安全問題的工作單在修好、部署之前不進 repo**（repo 公開）。協調 session 對照程式確認後，把細節直接寫在開發 session 的指示裡；repo 的 commit、程式註解、規格只用一般的說法描述改了什麼，不寫原因與怎麼利用。修好、部署後，才在 KI 記一行「修了什麼」。推上 v2 到合併部署之間，改動本身是公開的，所以這類修正在 staging 試過後盡快單獨發版。
 - 2026-11-17 代理的「計費：先預扣、後結算」（12.39）使用者在 staging 試過：回覆到一半按「停止回覆」，那一次的輸出照 `max_tokens` 記（output_tokens 多 16000、金額多約 0.011 美元）；正常結束的照實際的記。等使用者說「合併部署」後單獨發 patch 版。
-- 2026-11-17 第三次深掃（sync-client）：medium 1、low 1，沒有 high。剩下 web、coach、discord、deploy。
+- 2026-11-17 第三次深掃（sync-client）：約 1.53 美元，medium 1、low 1，沒有 high。第四次（web）：約 2.46 美元，low 1。剩下 coach、discord、deploy。到這裡 4 片合計約 5.9 美元（proxy 1.06、sync 0.89、sync-client 1.53、web 2.46）。
