@@ -1239,3 +1239,13 @@ v1 需要使用者自己架 VM、設定 Discord bot、申請 API key，只有會
 - 驗證：單元測試 `apps/web/test/ime.test.ts`；E2E `verify-ui-round1`、`verify-memory`、`verify-profile` 照過（一般的 Enter 照樣送出與離開欄位）；在 Chromium 裡照 Safari 的順序發事件（compositionstart → compositionend → keydown Enter，keyCode 13 與 229 各一次）不會送出，之後真的按 Enter 會送出（臨時的腳本，沒有加進 E2E：Playwright 的 Chromium 不會自己產生這個順序）。
 - 沒驗證到：真的 Safari（雲端沒有）。
 - 使用者要做的：在 staging 用 Safari 的中文輸入法打字，按 Enter 選字不送出、再按一次 Enter 才送出；iPhone 的 Safari 也試一次。
+
+## [KI-050] 免費試用的用量在回覆沒有正常結束時少計
+
+- 發現：2026-11-17，每週安全掃描的第一次深掃（proxy 這片，12.45），協調 session 對照程式確認。
+- 狀態：已修，v0.9.0 部署（2026-11-17）。
+- 原因：代理只在上游的串流裡讀到用量事件時才記帳；回覆沒有正常結束（下游中斷、上游出錯）時，只記到開頭的輸入，輸出幾乎沒有記到，每月額度與總額度因此低估。
+- 修正：計費改成先預扣、後結算（規格 12.39）：送出前先記下這次最多可能的花費，拿到最後的用量再多退少補，沒拿到的維持預扣。
+- 驗證：`apps/proxy/test/proxy.test.ts`「計費：先預扣、後結算」；使用者在 staging 試過（回覆到一半按「停止回覆」，那一次照 `max_tokens` 記）。
+- 使用者要做的：無。之後的相關強化（頻率限制、不需要的內容類型）見規格 12.45。
+
