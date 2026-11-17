@@ -306,7 +306,7 @@
 | 2.0-draft | 2026-11-17 | 安全掃描的通知從 Discord 改成 Email：`scan.mjs notify` 用 Resend 的 API 寄純文字信（寄件人 `security-scan@notify.zone2mate.com`，收件人在 memory store 的 `config.json` 的 `email_to`），沙盒改開 `api.resend.com`、拿掉 Discord；兩個代理的提示、測試（模擬的 fetch）、README 的 0-4、2-3、2-4 跟著改（12.45 第 10 點、9.4） |
 | 2.0-draft | 2026-11-17 | 代理的計費改成先預扣、後結算：送出前先記下這次最多可能的花費（輸出照 `max_tokens`、輸入照請求大小），拿到上游最後的用量再改成實際的；每月額度與總額度在請求進行中就算進去，用量在各種結束方式下都準確（12.39） |
 | 0.9.0 | 2026-11-17 | **發版 v0.9.0**：每日的身體狀況改在「回報」分頁填（今天的身體狀況 → 傷的分數 → 跑完的那一趟），教練動態只留提醒；免費試用的帳號跟著加密的同步走，用復原碼或配對新裝置時試用也一起帶過去（API key 不帶）；修正：週末請教練排下週的課表卻存進這週，下週還沒排日期的課放在下週的分隔下面；免費試用的用量計算改成先預扣、後結算，各種結束方式都準確；文字處理改成很長的輸入也不會讓頁面變慢；回報安全問題的說明（`SECURITY.md`）；內部：每天與每週的安全掃描（`tools/security-scan/`）。passkey 的測試頁只在 staging。功能開關沒有變。 |
-| 2.0-draft | 2026-11-17 | v0.9.0 已部署（[williampcs/RunningCoach#51](https://github.com/williampcs/RunningCoach/pull/51)；網頁版、同步服務、代理、Discord bot、標籤 v0.9.0 都成功）。發版前的獨立審查沒有 critical／high；CodeQL 在 PR 上的 1 個新警示是誤報（只存試用帳號的 id 與時間），使用者標掉（12.45、KI-050） |
+| 2.0-draft | 2026-11-17 | v0.9.0 已部署（[williampcs/RunningCoach#51](https://github.com/williampcs/RunningCoach/pull/51)；網頁版、同步服務、代理、Discord bot、標籤 v0.9.0 都成功）。發版前的獨立審查沒有 critical／high；CodeQL 在 PR 上的 1 個新警示是誤報（只存試用帳號的 id 與時間），使用者標掉；使用者確認正式版顯示 0.9.0（12.45、KI-050） |
 
 ---
 
