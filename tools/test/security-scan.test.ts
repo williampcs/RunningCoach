@@ -597,6 +597,7 @@ describe("agent and deployment files", () => {
       expect(md).toMatch(/name: web_search\n\s+enabled: false/);
       expect(md).toMatch(/name: web_fetch\n\s+enabled: false/);
       expect(md).toContain("type: always_allow");
+      expect(md).toContain("git clone --quiet --filter=blob:none --branch v2 https://github.com/williampcs/RunningCoach.git /workspace/RunningCoach");
     }
   });
 
@@ -609,8 +610,8 @@ describe("agent and deployment files", () => {
     expect(deep).toContain('amount: "500"');
     for (const d of [daily, deep]) {
       expect(d).toContain("timezone: Asia/Taipei");
-      expect(d).toContain("name: v2");
       expect(d).not.toMatch(/authorization_token/);
+      expect(d).not.toContain("type: github_repository");
     }
   });
 

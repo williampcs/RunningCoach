@@ -298,6 +298,7 @@
 | 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
 | 2.0-draft | 2026-11-16 | `CLAUDE.md` 的合併部署加第 0 步：發版前對整段程式改動做獨立的安全審查，發現只在聊天裡回報（12.45 工作單的步驟 3） |
 | 2.0-draft | 2026-11-17 | 安全掃描的通知改用 Email（Resend，寄件人用子網域），工作單寫好（12.45 第 10 點、9.4） |
+| 2.0-draft | 2026-11-17 | 安全掃描的排程不掛 GitHub repo 資源（Claude Platform 一定要它附 token），改成代理每次自己 clone 公開的 `v2`；協調 session 的小修（12.45 第 10 點） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 | 2.0-draft | 2026-11-17 | `packages/core` 的正規表示式改成線性時間（CodeQL 的 10 個效能警示與同類寫法；共用的 `text-match.ts`，行為不變，加對照與長輸入的測試）（12.45 第 8 點、9.4） |
 | 2.0-draft | 2026-11-17 | 安全掃描的通知從 Discord 改成 Email：`scan.mjs notify` 用 Resend 的 API 寄純文字信（寄件人 `security-scan@notify.zone2mate.com`，收件人在 memory store 的 `config.json` 的 `email_to`），沙盒改開 `api.resend.com`、拿掉 Discord；兩個代理的提示、測試（模擬的 fetch）、README 的 0-4、2-3、2-4 跟著改（12.45 第 10 點、9.4） |
@@ -5494,3 +5495,4 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
   - Resend 的 API 格式：這個 session 連不到 resend.com 的文件，照 npm 上 Resend 官方 SDK（`resend` 6.38.1）的原始碼確認網址、標頭、欄位名稱、錯誤的格式與 key 的權限（`sending_access`）。
 - 驗證：`npm test`（新增：主旨與內文、沒有觸發方式與修法、排序、長度上限、主旨一行、Security 分頁的網址、`email_to` 的錯誤訊息、模擬的 fetch 檢查網址、標頭與內容、Resend 的錯誤不帶 key、`notify` 指令沒有 `email_to` 或 key 時的錯誤）、`npm run typecheck`。
 - 沒驗證到的：真的 Resend API 與寄到信箱（由使用者在 README 2-3 寄測試信確認）；README 0-4 的畫面名稱（Resend 與 Cloudflare 的按鈕名稱照一般的畫面寫，實際以畫面為準）。
+- 2026-11-17 步驟 2：使用者建好代理、沙盒、memory store、vault（工作區的 id 對過），GitHub 與 Resend 的憑證放進 vault，測試信收到，`config.json` 寫進 memory store。建立排程時失敗：「github_repository resources require an authorization_token」（公開 repo 也一定要附 token；開發 session 原本以為不用）。協調 session 的小修（使用者正在設定、等著用，改的只有設定檔與提示）：排程拿掉 github_repository 資源，兩個代理的第 1 步改成自己 `git clone --filter=blob:none --branch v2` 公開的 repo（沙盒的網路本來就允許 github.com）；clone 失敗時沒有 scan.mjs，只能在對話裡寫原因，要在 Console 看。這樣排程檔裡不用放任何 token。`npm test`（817）、typecheck 過。

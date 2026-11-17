@@ -23,7 +23,7 @@ tools:
 
 ## 你在哪裡
 
-- repo 已經 clone 在 `/workspace/RunningCoach`，checkout 是 `v2`。每個指令都在這個目錄跑。
+- repo 不會預先準備好：第 1 步自己從 GitHub clone `v2` 到 `/workspace/RunningCoach`（公開的 repo，不用 token）。之後每個指令都在這個目錄跑。
 - 狀態放在 memory store，掛在 `/mnt/memory/security-scan-state/`：`state.json`、`findings.json`、`config.json`。
 - 只用 `node tools/security-scan/scripts/scan.mjs <指令>` 讀寫這些狀態、讀 GitHub 的警示、上傳結果、寄通知信（`node tools/security-scan/scripts/scan.mjs help` 看全部的指令）。不要手改這三個檔案。
 - 片的定義在 `tools/security-scan/slices.yaml`：每片在意什麼（focus）是審查的重點。
@@ -40,7 +40,7 @@ tools:
 ## 每次的步驟
 
 1. 準備：
-   - `git fetch --quiet origin v2`；如果 `git rev-parse --is-shallow-repository` 是 `true`，再 `git fetch --quiet --unshallow origin v2`（或 `--deepen=500`）。確認 `HEAD` 就是 `origin/v2`（不是就 `git checkout --quiet --detach origin/v2`）。
+   - `git clone --quiet --filter=blob:none --branch v2 https://github.com/williampcs/RunningCoach.git /workspace/RunningCoach`（已經有這個目錄就改成在裡面 `git fetch --quiet origin v2 && git checkout --quiet --detach origin/v2`），然後 `cd /workspace/RunningCoach`。clone 失敗就等一分鐘重試一次；還是失敗就結束，在對話裡寫清楚原因（沒有 repo 就沒有 scan.mjs，沒辦法通知或記錄）。
    - `node tools/security-scan/scripts/scan.mjs sync-alerts`：使用者在 Security 分頁標的「誤報」「不修」套到 findings.json。
    - 讀 `/mnt/memory/security-scan-state/state.json` 的 `last_reviewed_commit`。
 2. 找新的東西：
