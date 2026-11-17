@@ -297,6 +297,7 @@
 | 2.0-draft | 2026-11-16 | 加 `SECURITY.md`：請用 GitHub 的私下回報、不要開公開的 Issue，範圍與之後的處理（中英文；合併部署到 `main` 後 GitHub 的 Security policy 才會顯示「Enabled」）；CodeQL 第一次掃出 17 個警示，待分類（12.45 第 8 點） |
 | 2.0-draft | 2026-11-16 | CodeQL 第一次的 17 個警示分類：API key 的存放 6 個（4 個誤報、2 個設計如此，KI-027）、正規表示式的效能 10 個（低風險，工作單「正規表示式改成不會被很長的特殊輸入拖慢」）、v1 測試腳本 1 個（已遮罩，誤報）（12.45、9.4） |
 | 2.0-draft | 2026-11-16 | `CLAUDE.md` 的合併部署加第 0 步：發版前對整段程式改動做獨立的安全審查，發現只在聊天裡回報（12.45 工作單的步驟 3） |
+| 2.0-draft | 2026-11-17 | 安全掃描的通知改用 Email（Resend，寄件人用子網域），工作單寫好（12.45 第 10 點、9.4） |
 | 2.0-draft | 2026-11-16 | 每天掃 bug 與漏洞的步驟 1：`tools/security-scan/`（兩個代理、沙盒、memory store、vault、兩個排程，照 `ant apply` 的格式；7 片的 `slices.yaml`；去重、fingerprint、SARIF、上傳、Discord 通知的 Node 腳本與測試；README 寫步驟 0、2）；待使用者做步驟 0、2（12.45 第 9 點、9.4） |
 | 2.0-draft | 2026-11-17 | `packages/core` 的正規表示式改成線性時間（CodeQL 的 10 個效能警示與同類寫法；共用的 `text-match.ts`，行為不變，加對照與長輸入的測試）（12.45 第 8 點、9.4） |
 
@@ -828,6 +829,18 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
 這一節是目前的清單；下面「2026-10-15 盤點」保留當時的內容，其中還沒做的已併進這裡。協作方式（協調 session 與開發 session、工作單的格式）見 repo 根目錄的 `CLAUDE.md`。
 
 *已決定、待開發*（工作單）
+
+- **安全掃描的通知改用 Email**（12.45 第 10 點；2026-11-17 使用者確認 Discord bot 只是用來通知安全問題後：「改用Email好了」）
+  - 對應章節：12.45 第 10 點、`tools/security-scan/`（工作單「每天用代理掃 bug 與漏洞：試行四週」的實作）。
+  - 要做什麼：
+    1. 通知從 Discord 改成寄信，用 Resend 的 API（`POST https://api.resend.com/emails`，`Authorization: Bearer` 標頭）：key 放 vault 的環境變數憑證 `RESEND_API_KEY`，只送 `api.resend.com`。寄件人 `security-scan@notify.zone2mate.com`（用子網域，不碰根網域現有的信件設定）；收件人放 memory store 的 `config.json` 的 `email_to`（使用者的信箱不進 repo）。
+    2. 信的內容：主旨例「[Zone2Mate 安全掃描] 每日：新發現 2 個」「[Zone2Mate 安全掃描] 每週深掃 proxy：沒有新發現」；內文每個發現一行（嚴重度、標題、片、檔案），加上代理的附註與 Security 分頁的連結（篩選 `tool:security-scan-agent branch:v2`）。**不寫怎麼觸發、影響、修法**（那些在 Security 分頁）。純文字就好。什麼時候寄照原本 Discord 的規則（每日沒有新東西不寄；每週深掃每次都寄）。
+    3. 拿掉 Discord：沙盒的 allowed_hosts 把 `discord.com` 換成 `api.resend.com`；scan.mjs 的 notify、`config.json` 的欄位、兩個代理的系統提示、memory store 的說明、測試、README 一起改。
+    4. README 的 0-4 改成 Resend 的設定：註冊、Domains 加 `notify.zone2mate.com`、在 Cloudflare 的 DNS 加 Resend 給的那幾筆紀錄（照 Resend 畫面上的，Proxy 狀態要「DNS only」）、驗證成功、建一把只能寄信、只限這個網域的 API key（Sending access）；2-3 的第二個憑證、驗證指令（寄一封測試信到自己的信箱）、2-4 的 `config.json` 跟著改。
+  - 不做什麼：不改掃描的其他行為；不加其他通知管道。
+  - 驗收：`npm test`、`npm run typecheck`；寄信的部分用模擬的 fetch 測：網址、標頭、內容（沒有觸發方式與修法）、長度上限；`config.json` 沒有 `email_to` 時錯誤訊息看得懂。
+  - 注意：使用者還沒做到步驟 2，所以不用考慮已經建好的 vault 或 memory store。Resend 的免費方案的額度以它網站上的為準（每月寄十幾、二十封，應該夠）。
+  - 狀態：開發中（2026-11-17）。
 
 - **每天用代理掃 bug 與漏洞：試行四週**（12.45；2026-11-16 使用者：「你決定後寫一版計劃，我看過沒問題的話就照做，實際 run 一段時間再看成本或各種問題」）
   - 對應章節：12.45（現況、選項、決定）、KI-037／KI-045（以前的安全審查）、CLAUDE.md 的「合併部署」。
@@ -5468,3 +5481,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 驗證：`npm test`（新增 47 個測試：片的定義與每個路徑都對得到檔案、fingerprint 不受行號與縮排影響、去重與狀態的轉換、使用者標註的同步、SARIF 的格式與 gzip＋base64、輪替與 partial、通知的文字與長度、腳本的指令）、`npm run typecheck`；用模擬的 fetch 跑過 `alerts`、`sync-alerts`、`upload`、`notify` 的請求（網址、標頭、內容的欄位）。
 - 沒驗證到的：`ant apply` 的檔案格式（這個 session 沒有 Anthropic 的 key，照官方文件寫；由使用者的 `ant apply --dry-run` 確認）；真的 GitHub 與 Discord 的 API；代理實際跑起來的品質與費用（步驟 2 的試跑）。
 - 待使用者確認的一件事：公開 repo 的 code scanning 警示是不是只有維護者看得到（README 2-6 用無痕視窗檢查；看得到就先暫停，再討論改放哪裡）。上傳到 `refs/heads/v2` 的警示在 Security 分頁要篩選 `branch:v2` 才看得到。
+
+**10. 通知改用 Email**（2026-11-17）
+- 使用者問 Discord bot 是不是只用來通知安全問題、有沒有其他方法。協調 session 列了選項：秘密要放在標頭或內容 vault 才能代換，所以 Discord webhook、Telegram、Slack webhook 這類把秘密放在網址裡的都不行；可行的是 Discord bot、Email（Resend 這類寄信服務）、手機推播（Pushover，一次性付費）、不主動通知（要自己去 Security 分頁看，GitHub 對 code scanning 的新警示不會主動寄信）。使用者：「改用Email好了」。
+- 決定：Resend；寄件人用子網域 `notify.zone2mate.com`（不碰根網域現有的信件設定）；收件人放 memory store，不進 repo；信裡只有嚴重度、標題、片、檔案與連結，細節在 Security 分頁。工作單見 9.4「安全掃描的通知改用 Email」。
