@@ -27,16 +27,18 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 - 把討論與決定寫進文件（見下面的「紀錄方式」），要開發的寫成工作單，放在規格 9.4 的「已決定、待開發」。
 - 決定誰做：只改文件的自己做；要改程式的開一個開發 session（有 session 工具時直接建立並交付工作單，否則請使用者開），告訴使用者是哪一個。
 - 原則上不改程式；很小或緊急的修正例外，要說明。
-- 開發 session 回報後，檢查結果、更新工作單的狀態，再回覆使用者。
+- 開發 session 回報後，檢查結果（PR 的 CI、改動），合併 PR、更新工作單的狀態，再回覆使用者。
 
 **開發 session**（一次一個主題）
 - 開始時讀：本檔、規格第 9 節（進度、下一步、接手須知）、工作單指到的章節。工作單沒寫清楚的，先問協調 session 或使用者，不要自己猜大方向。
-- 開發在 `v2`，開始前先 `git pull`。做完：`npm test`、`npm run typecheck`、網頁實測（`tools/e2e/README.md`）、更新文件，commit 並推到 `v2`。推上去後 staging 會自動更新，回報時請使用者在 staging 試。
+- 從最新的 `v2` 開自己的分支（例 `dev/passkey-step3`），在分支上開發。做完：`npm test`、`npm run typecheck`、網頁實測（`tools/e2e/README.md`）、更新文件，commit、推自己的分支，開 PR 到 `v2`（不是 `main`）；CI 會在 PR 上跑。PR 有衝突時由開 PR 的 session 合進最新的 `v2` 解決。由協調 session 檢查後合併，合併後 staging 才更新；回報時附 PR 的連結。
 - 回報：做了什麼、怎麼驗證的、沒驗證到的、使用者要做的事。
 - 發現工作單以外的問題：記到規格 9.4 或 KI，回報時提出，不要順手擴大範圍；明顯的錯誤可以修，但要在回報裡說。
 
 **共同規則**
-- 同一時間只有一個開發 session 改程式並推 `v2`；協調 session 與架構 session 推文件前先 `git pull`。
+- 改程式一律走 PR（2026-11-18 使用者決定）：會改程式的 session（協調 session 底下的開發 session、安全 session 底下的 session）都在自己的分支開發、開 PR 到 `v2`，不直接推 `v2`。PR 由協調 session 檢查（CI 全綠、看過改動、必要時本機重跑）後用 merge 合進 `v2`，一次合一個，staging 跟著更新。理由：好幾個 session 同時改程式時，直接推 `v2` 會撞車，壞掉的改動也會直接上 staging。
+- 只改文件的（協調 session、架構 session、安全 session 寫的紀錄）照舊直接推 `v2`，推之前先 `git pull`。
+- 很小或緊急的修正，協調 session 可以直接推 `v2`，要在回覆裡說明。
 - 一個主題做完、合併部署後，下一個大主題開新的開發 session，避免 context 壓縮後細節不足。
 
 ## 紀錄方式
@@ -55,7 +57,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 
 ## staging 與正式環境
 
-流程：開發 session 推 `v2` → staging（`staging.zone2mate.com`）自動更新（`.github/workflows/staging.yml`）→ 使用者在 staging 實際試 → 使用者說「合併部署」→ 正式環境（`app.zone2mate.com`）。緊急修正一樣走這條。
+流程：開發 session 開 PR → 協調 session 合進 `v2` → staging（`staging.zone2mate.com`）自動更新（`.github/workflows/staging.yml`）→ 使用者在 staging 實際試 → 使用者說「合併部署」→ 正式環境（`app.zone2mate.com`）。緊急修正一樣走這條。
 
 - staging 的網頁版是另一個 Pages 專案，同步服務是另一個 Worker 與 D1：在 staging 試的資料不碰正式的；網頁上標示「Staging」。
 - 兩個環境的網址、專案名稱、D1 的 id 都在 GitHub 的 Variables（規格 12.19 有清單），不寫進 repo。
