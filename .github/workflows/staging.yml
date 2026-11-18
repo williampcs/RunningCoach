@@ -14,6 +14,7 @@
 #   STAGING_TURNSTILE_SITE_KEY   人機驗證的 site key（選填，規格 12.10）；沒有時用正式的 TURNSTILE_SITE_KEY（一個 widget 填兩個網址）。
 #                                secret key 是 Secrets 的 STAGING_TURNSTILE_SECRET_KEY，沒有時用正式的 TURNSTILE_SECRET_KEY
 #   STAGING_SYNC_DAILY_WRITE_BUDGET  staging 同步服務每天的寫入上限（選填，預設 10000：免費方案每天 10 萬列是整個帳號一起算）
+#   來源與網段的代碼用的金鑰：Secrets 的 STAGING_RATE_LIMIT_HASH_KEY，沒有時用正式的 RATE_LIMIT_HASH_KEY；兩個都沒有時同步服務與代理不部署
 #   代理的 Secrets：STAGING_PROXY_ADMIN_TOKEN（必填）；Anthropic 的 key 用 STAGING_PROXY_ANTHROPIC_API_KEY，沒有時用正式的 PROXY_ANTHROPIC_API_KEY
 # 沒設定的部分跳過、不失敗：沒有 STAGING_PAGES_PROJECT 不部署網頁版；沒有 D1 的 id 或 STAGING_WEB_URL 不部署同步服務；
 # 沒有 STAGING_PROXY_D1_DATABASE_ID 或 STAGING_WEB_URL 不部署代理。
@@ -89,6 +90,37 @@ jobs:
           # site key 是公開的；有 site key 與 secret key 時 Worker 才驗證（secret 不經過這一步）
           TURNSTILE_SITE_KEY: ${{ (secrets.STAGING_TURNSTILE_SECRET_KEY != '' || secrets.TURNSTILE_SECRET_KEY != '') && (vars.STAGING_TURNSTILE_SITE_KEY || vars.TURNSTILE_SITE_KEY) || '' }}
         run: npx tsx tools/sync-config.ts
+      - name: Rate limit hash key
+        # 來源 IP 與網段的代碼用的金鑰（規格 12.10）：寫成 Worker 的 secret RATE_LIMIT_HASH_KEY（HMAC，沒有金鑰算不出、也反推不回 IP）。
+        # 在部署之前寫；沒有設定時部署失敗（不退回沒有金鑰的做法）。從 stdin 給，不印出
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RATE_LIMIT_HASH_KEY: ${{ secrets.STAGING_RATE_LIMIT_HASH_KEY || secrets.RATE_LIMIT_HASH_KEY }}
+        run: |
+          if [ -z "$RATE_LIMIT_HASH_KEY" ]; then
+            echo "::error::要先設定 Secrets 的 STAGING_RATE_LIMIT_HASH_KEY（或正式的 RATE_LIMIT_HASH_KEY）（在自己的電腦執行 openssl rand -base64 32 產生），規格 12.10"
+            exit 1
+          fi
+          printf '%s' "$RATE_LIMIT_HASH_KEY" | npx --yes wrangler@4.148.0 secret put RATE_LIMIT_HASH_KEY > /dev/null
+          echo "已寫入代碼用的金鑰"
+      - name: Turnstile secret key
+        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出。
+        # 在部署之前寫：新的設定（TURNSTILE="on"）上線時 secret 已經在了；沒有 secret 時 Worker 回「人機驗證暫時無法使用」，不會跳過驗證
+        if: ${{ vars.STAGING_TURNSTILE_SITE_KEY != '' || vars.TURNSTILE_SITE_KEY != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY || secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
+            echo "::warning::有 Turnstile 的 site key、沒有 secret key：staging 的同步服務不驗證人機驗證"
+            exit 0
+          fi
+          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
+          echo "已寫入 Turnstile 的 secret key"
       - name: Deploy
         working-directory: apps/sync
         env:
@@ -111,21 +143,6 @@ jobs:
           fi
           printf '%s' "$INTERVALS_CLIENT_SECRET" | npx --yes wrangler@4.148.0 secret put INTERVALS_CLIENT_SECRET > /dev/null
           echo "已寫入 Intervals.icu 的 client_secret"
-      - name: Turnstile secret key
-        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出
-        if: ${{ vars.STAGING_TURNSTILE_SITE_KEY != '' || vars.TURNSTILE_SITE_KEY != '' }}
-        working-directory: apps/sync
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY || secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
-            echo "::warning::有 Turnstile 的 site key、沒有 secret key：staging 的同步服務不驗證人機驗證"
-            exit 0
-          fi
-          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
-          echo "已寫入 Turnstile 的 secret key"
 
   proxy:
     name: Deploy staging proxy
@@ -161,6 +178,21 @@ jobs:
             echo "::error::要先設定 Secrets 的 STAGING_PROXY_ADMIN_TOKEN 與 PROXY_ANTHROPIC_API_KEY（或 STAGING_PROXY_ANTHROPIC_API_KEY）"
             exit 1
           fi
+      - name: Rate limit hash key
+        # 來源 IP 與網段的代碼用的金鑰（規格 12.10）：寫成 Worker 的 secret RATE_LIMIT_HASH_KEY（HMAC，沒有金鑰算不出、也反推不回 IP）。
+        # 在部署之前寫；沒有設定時部署失敗（不退回沒有金鑰的做法）。從 stdin 給，不印出
+        working-directory: apps/proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RATE_LIMIT_HASH_KEY: ${{ secrets.STAGING_RATE_LIMIT_HASH_KEY || secrets.RATE_LIMIT_HASH_KEY }}
+        run: |
+          if [ -z "$RATE_LIMIT_HASH_KEY" ]; then
+            echo "::error::要先設定 Secrets 的 STAGING_RATE_LIMIT_HASH_KEY（或正式的 RATE_LIMIT_HASH_KEY）（在自己的電腦執行 openssl rand -base64 32 產生），規格 12.10"
+            exit 1
+          fi
+          printf '%s' "$RATE_LIMIT_HASH_KEY" | npx --yes wrangler@4.148.0 secret put RATE_LIMIT_HASH_KEY > /dev/null
+          echo "已寫入代碼用的金鑰"
       - name: Deploy
         working-directory: apps/proxy
         env:

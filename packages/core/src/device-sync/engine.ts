@@ -58,6 +58,7 @@ const STATE_TEXT: Record<string, string> = {
   human_check: "人機驗證沒有通過或已經過期，請再試一次",
   human_check_unavailable: "人機驗證暫時無法使用，請稍後再試",
   daily_limit: "今天的同步量已達上限，明天會自動恢復；資料都還在這台",
+  network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
 };
 
 export class SyncApiError extends Error {

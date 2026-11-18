@@ -13,11 +13,16 @@ interface Env {
   /** 用 Intervals.icu 登入（規格 12.37）：client_id 是 wrangler.toml 的 var，client_secret 是 Worker 的 secret；沒有設定時登入不能用 */
   INTERVALS_CLIENT_ID?: string;
   INTERVALS_CLIENT_SECRET?: string;
-  /** 人機驗證（Turnstile）：網頁版有 site key 時部署填成 "on"（wrangler.toml 的 var）；secret key 是 Worker 的 secret. 兩個都有才驗證 */
+  /**
+   * 人機驗證（Turnstile）：網頁版有 site key 時部署填成 "on"（wrangler.toml 的 var）；secret key 是 Worker 的 secret.
+   * "on" 但沒有 secret 時，建立空間與開配對碼一律回「人機驗證暫時無法使用」（不跳過）
+   */
   TURNSTILE?: string;
   TURNSTILE_SECRET_KEY?: string;
   /** 整個服務每天估算最多寫入幾列（wrangler.toml 的 var，部署時填入；空的用預設） */
   DAILY_WRITE_BUDGET?: string;
+  /** 來源與網段的代碼用的金鑰（Worker 的 secret，部署時寫入） */
+  RATE_LIMIT_HASH_KEY?: string;
 }
 
 const originsOf = (env: Env) =>
@@ -25,6 +30,16 @@ const originsOf = (env: Env) =>
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
+/** 人機驗證的 token 要是在這些網頁拿到的：允許的網頁來源的主機名稱（"*" 不算） */
+const hostnamesOf = (env: Env) =>
+  originsOf(env).flatMap((origin) => {
+    try {
+      return origin === "*" ? [] : [new URL(origin).hostname.toLowerCase()];
+    } catch {
+      return [];
+    }
+  });
 
 function d1Driver(db: D1Database): SyncSqlDriver {
   return {
@@ -90,10 +105,11 @@ export default {
       store,
       allowedOrigins: originsOf(env),
       rateLimiter: limiter,
-      turnstile: env.TURNSTILE === "on" && env.TURNSTILE_SECRET_KEY?.trim() ? { secret: env.TURNSTILE_SECRET_KEY.trim() } : undefined,
+      turnstile: env.TURNSTILE === "on" ? { secret: env.TURNSTILE_SECRET_KEY?.trim() ?? "", hostnames: hostnamesOf(env) } : undefined,
       dailyWrites: Number(env.DAILY_WRITE_BUDGET) > 0 ? Number(env.DAILY_WRITE_BUDGET) : undefined,
       // 只有數量與被限制的種類，沒有 IP 或內容
       log: (line) => console.warn(line),
+      hashKey: env.RATE_LIMIT_HASH_KEY,
     });
     return handle(request);
   },

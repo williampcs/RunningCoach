@@ -12,7 +12,19 @@
  */
 import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
 
-import { requestSourceLevels, takeEntries, tieredEntries, type RateLimiter, type RateRule, type TieredRules } from "@running-coach/core/rate-limit";
+import {
+  requestSourceLevels,
+  sourceHasher,
+  takeEntries,
+  tieredEntries,
+  type RateEntry,
+  type RateLimiter,
+  type RateRule,
+  type SourceHasher,
+  type SourceLevel,
+  type SourceTier,
+  type TieredRules,
+} from "@running-coach/core/rate-limit";
 
 import { RECORD_OVERHEAD, type DeviceRow, type SyncStore } from "./store";
 import { HUMAN_HEADER, verifyTurnstile, type TurnstileConfig } from "./turnstile";
@@ -39,11 +51,17 @@ export interface SyncDeps {
   dailyWrites?: number;
   /** 只會收到數量（服務已滿、被限制的是哪一種），沒有 IP 或內容 */
   log?: (line: string) => void;
+  /**
+   * 來源與網段的代碼用的金鑰（Worker 的 secret RATE_LIMIT_HASH_KEY）：有的話用 HMAC，沒有金鑰算不出、也反推不回 IP.
+   * 沒有給時（本機、模擬服務、測試）用沒有金鑰的雜湊. 換了金鑰之後，計數與網段的代碼都重新開始算
+   */
+  hashKey?: string;
 }
 
 /**
  * 每個來源的頻率限制（規格 12.10）：每一種、每一層（TieredRules）可以有好幾個時間窗.
- * 寬的層先檢查；有一條超過時這次都不算
+ * 先只讀檢查每一層；有一條超過時這次都不算. 建立空間、開配對碼與配對的每一步，寬的層（/56、/48、IPv4 的 /24）
+ * 只在通過人機驗證（或換金鑰的簽章）、配對碼存在時才算：同一段位址的鄰居不能不經驗證就把整段用完
  */
 export interface SyncRateLimits {
   /** 建立同步空間（開始同步、換金鑰） */
@@ -56,10 +74,14 @@ export interface SyncRateLimits {
   pairStep: TieredRules;
   /** 送出紀錄的次數 */
   push: TieredRules;
-  /** 送出紀錄的位元組 */
+  /** 送出紀錄的位元組（內容加上每筆的固定額外；換金鑰的複製不算） */
   pushBytes: TieredRules;
-  /** 送出紀錄的筆數（每筆在資料庫寫 3 列：資料與兩個索引） */
-  pushRecords: TieredRules;
+  /** 每個來源每天估算的寫入列數；沒有給時照整個服務每天的上限（dailyWrites）乘上 SOURCE_WRITE_SHARE */
+  writes?: TieredRules;
+  /** 每個同步空間每天估算的寫入列數；沒有給時照 dailyWrites 乘上 SPACE_WRITE_SHARE */
+  spaceWrites?: number;
+  /** 每個同步空間每天送出的位元組；沒有給時 SPACE_DAILY_BYTES */
+  spaceBytes?: number;
 }
 
 const MINUTE = 60_000;
@@ -87,9 +109,34 @@ export const DEFAULT_RATE_LIMITS: SyncRateLimits = {
   pairMiss: tiers({ hour: per(20, HOUR) }, { hour: per(40, HOUR) }, { hour: per(60, HOUR) }),
   pairStep: tiers({ hour: per(30, HOUR) }, { hour: per(45, HOUR) }, { hour: per(60, HOUR) }),
   push: { "v6/64": { minute: per(120, MINUTE) }, "v4/32": { minute: per(120, MINUTE) } },
-  pushBytes: { "v6/64": { day: per(300_000_000, DAY) }, "v4/32": { day: per(300_000_000, DAY) } },
-  pushRecords: tiers({ day: per(10_000, DAY) }, null, { day: per(20_000, DAY) }),
+  pushBytes: tiers({ day: per(25_000_000, DAY) }, { day: per(40_000_000, DAY) }, { day: per(60_000_000, DAY) }),
 };
+
+/** 每個來源每天能用掉整個服務每天寫入額度（dailyWrites）的比例：/64 與 IPv4 的位址、/56、/48 與 IPv4 的 /24 */
+export const SOURCE_WRITE_SHARE = { narrow: 0.1, wide: 0.15, widest: 0.2 };
+/** 每個同步空間每天：送出的位元組、能用掉寫入額度的比例（換金鑰的複製不算） */
+export const SPACE_DAILY_BYTES = 15_000_000;
+export const SPACE_WRITE_SHARE = 0.1;
+/** 每台裝置每天最多開幾次換金鑰的新空間（不用人機驗證的那條路；中途失敗重試也算） */
+export const REKEY_CREATIONS_PER_DAY = 4;
+/** 換金鑰的複製：新空間最多比舊空間多這麼多（重新加密的大小差一點），超過的照一般的送出計算 */
+const REKEY_SLACK = { bytes: 1_000_000, records: 50 };
+
+/** 依來源計數的種類 */
+type SourceKind = "createSpace" | "createPair" | "pairMiss" | "pairStep" | "push" | "pushBytes";
+
+/** 窄的層：每個請求一定算；其他（寬的層）視情況 */
+const NARROW_TIERS = new Set<SourceTier>(["v6/64", "v4/32", "unknown"]);
+type TierScope = "all" | "narrow" | "wide";
+const inScope = (levels: SourceLevel[], scope: TierScope) =>
+  scope === "all" ? levels : levels.filter((l) => NARROW_TIERS.has(l.tier) === (scope === "narrow"));
+
+const sourceWriteRules = (dailyWrites: number): TieredRules =>
+  tiers(
+    { day: per(Math.floor(dailyWrites * SOURCE_WRITE_SHARE.narrow), DAY) },
+    { day: per(Math.floor(dailyWrites * SOURCE_WRITE_SHARE.wide), DAY) },
+    { day: per(Math.floor(dailyWrites * SOURCE_WRITE_SHARE.widest), DAY) },
+  );
 
 /** 整個服務每天估算的寫入列數上限（正式；staging 由部署設定調小） */
 export const DEFAULT_DAILY_WRITES = 40_000;
@@ -106,13 +153,27 @@ export interface ServiceLimits {
   spaces: number;
   bytes: number;
   pairSlots: number;
+  /** 同一個網段（IPv4 的 /24、IPv6 的 /48）建立的同步空間加起來最多多大 */
+  networkBytes: number;
 }
 
 /**
  * 整個服務的上限：Cloudflare 免費方案每個 D1 最多 500 MB，總容量留下約 200 MB 給簽章的亂數、頻率限制的計數、索引與換金鑰時的暫存.
  * bytes 算的是每筆的內容加上每筆的固定額外（RECORD_OVERHEAD）
  */
-export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200 };
+export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200, networkBytes: 50_000_000 };
+
+/**
+ * 建立者的網段（IPv4 的 /24、IPv6 的 /48）的代碼：同一個網段建立的空間有總容量上限. 不存原始的位址；
+ * 沒有 IP 時（本機的 Node 版）null，不限. 代碼保存 NETWORK_RETENTION_MS（maintain 清掉）
+ */
+async function networkOf(request: Request, hash: SourceHasher): Promise<string | null> {
+  const level = requestSourceLevels(request).find((l) => l.tier === "v4/24" || l.tier === "v6/48");
+  return level ? hash(`sync-network:${level.source}`) : null;
+}
+
+/** 網段的代碼保存多久：之後清成 NULL，那個空間不再算進網段的總容量 */
+export const NETWORK_RETENTION_MS = 30 * 24 * 3600_000;
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -188,53 +249,112 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const nowMs = () => store.now().getTime();
   const rateLimits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
   const log = deps.log ?? (() => undefined);
+  const hashCode = sourceHasher(deps.hashKey);
 
-  /**
-   * 這個來源（每一層）這次還在限制內嗎；超過時回 429（state: rate_limited，retryAfter 是要等幾秒）.
-   * 好幾種一起檢查（一個查詢先讀，都沒超過才加）；weights 是每一種這次要加多少（預設 1）
-   */
-  async function limitSource(request: Request, kinds: (keyof SyncRateLimits)[], weights: number[] = []): Promise<void> {
-    if (!deps.rateLimiter) return;
-    const levels = requestSourceLevels(request);
-    const entries = (await Promise.all(kinds.map((kind, i) => tieredEntries(`sync:${kind}`, levels, rateLimits[kind], weights[i] ?? 1)))).flat();
-    const waitMs = await takeEntries(deps.rateLimiter, entries, 1, nowMs());
-    if (waitMs !== null) {
-      log(`rate limited: ${kinds.join(",")}`);
-      throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
-    }
+  const rateLimited = (waitMs: number, what: string): HttpError => {
+    log(`rate limited: ${what}`);
+    return new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
+  };
+  const windowLeft = (rule: RateRule) => {
+    const now = nowMs();
+    return (Math.floor(now / rule.windowMs) + 1) * rule.windowMs - now;
+  };
+
+  async function sourceEntries(request: Request, kinds: SourceKind[], weights: number[], scope: TierScope): Promise<RateEntry[]> {
+    const levels = inScope(requestSourceLevels(request), scope);
+    return (await Promise.all(kinds.map((kind, i) => tieredEntries(`sync:${kind}`, levels, rateLimits[kind], weights[i] ?? 1, hashCode)))).flat();
   }
 
-  /** 只查不加：這個來源（每一層）的額度用完時回 429；查配對碼時先看，用完的不讓它知道配對碼存不存在 */
-  async function requireSourceRoom(request: Request, kind: keyof SyncRateLimits): Promise<void> {
+  /**
+   * 這個來源（scope 的那幾層）這次還在限制內嗎；超過時回 429（state: rate_limited，retryAfter 是要等幾秒）.
+   * 好幾種一起檢查（一個查詢先讀，都沒超過才加）；weights 是每一種這次要加多少（預設 1）
+   */
+  async function limitSource(request: Request, kinds: SourceKind[], weights: number[] = [], scope: TierScope = "all"): Promise<void> {
+    if (!deps.rateLimiter) return;
+    const waitMs = await takeEntries(deps.rateLimiter, await sourceEntries(request, kinds, weights, scope), 1, nowMs());
+    if (waitMs !== null) throw rateLimited(waitMs, kinds.join(","));
+  }
+
+  /** 只查不加：這個來源（每一層）的額度用完時回 429. 查配對碼時先看（用完的不讓它知道配對碼存不存在）；建立前先看寬的層 */
+  async function requireSourceRoom(request: Request, kinds: SourceKind[], weights: number[] = []): Promise<void> {
     if (!deps.rateLimiter?.firstOver) return;
-    const entries = await tieredEntries(`sync:${kind}`, requestSourceLevels(request), rateLimits[kind], 1);
+    const entries = await sourceEntries(request, kinds, weights, "all");
     const over = await deps.rateLimiter.firstOver(entries);
-    if (over < 0) return;
-    log(`rate limited: ${kind}`);
-    const rule = entries[over]!.rule;
-    const now = nowMs();
-    const waitMs = (Math.floor(now / rule.windowMs) + 1) * rule.windowMs - now;
-    throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
+    if (over >= 0) throw rateLimited(windowLeft(entries[over]!.rule), kinds.join(","));
+  }
+
+  /** 加上計數；之後請求沒有用到時可以退回（寫入失敗、衝突） */
+  async function takeRefundable(entries: RateEntry[], what: string): Promise<(weight?: number) => Promise<void>> {
+    if (!deps.rateLimiter || entries.length === 0) return async () => undefined;
+    const limiter = deps.rateLimiter;
+    const waitMs = await takeEntries(limiter, entries, 1, nowMs());
+    if (waitMs !== null) throw rateLimited(waitMs, what);
+    return refunder(entries);
+  }
+
+  /** 退回 entries 加上的計數；weight 是要退多少（預設全部，每一條最多退回它自己加上的） */
+  function refunder(entries: RateEntry[]): (weight?: number) => Promise<void> {
+    const left = entries.map((e) => e.weight ?? 1);
+    return async (weight?: number) => {
+      const limiter = deps.rateLimiter;
+      if (!limiter?.release) return;
+      for (const [i, e] of entries.entries()) {
+        const back = Math.min(left[i]!, weight ?? left[i]!);
+        if (back <= 0) continue;
+        left[i]! -= back;
+        await limiter.release(e.key, e.rule, back).catch(() => undefined);
+      }
+    };
   }
 
   const dailyWrites = deps.dailyWrites ?? DEFAULT_DAILY_WRITES;
+  const writeRules = deps.rateLimits?.writes ?? sourceWriteRules(dailyWrites);
+  const spaceWrites = deps.rateLimits?.spaceWrites ?? Math.floor(dailyWrites * SPACE_WRITE_SHARE);
+  const spaceBytes = deps.rateLimits?.spaceBytes ?? SPACE_DAILY_BYTES;
 
   /**
    * 整個服務今天（UTC）估算的寫入列數. fresh：新的空間或配對碼，只能用到一半；其他（送出、換金鑰的新空間）可以用到上限.
-   * 超過時回 503（state: daily_limit，retryAfter 是到 UTC 午夜的秒數）
+   * 超過時回 503（state: daily_limit，retryAfter 是到 UTC 午夜的秒數）.
+   * 每個來源（每一層）、每個空間（space）也只能用掉一小部分：超過時回 429（state: rate_limited）.
+   * own: false 只算整個服務（換金鑰的複製）. 回傳的函式退回沒有用到的列數（寫入失敗、衝突）
    */
-  async function spendWrites(weight: number, fresh: boolean): Promise<void> {
-    if (!deps.rateLimiter) return;
-    const rule = { limit: fresh ? Math.floor(dailyWrites * NEW_SHARE) : dailyWrites, windowMs: DAY };
-    if (await deps.rateLimiter.take(WRITES_KEY, rule, weight)) return;
-    log(`sync daily writes limit: ${fresh ? "new spaces and pairing" : "all writes"}`);
-    const now = nowMs();
-    throw new HttpError(503, "今天的同步量已達上限，明天會恢復", { state: "daily_limit", retryAfter: Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000)) });
+  async function spendWrites(
+    request: Request,
+    weight: number,
+    fresh: boolean,
+    opts: { own?: boolean; space?: string } = {},
+  ): Promise<(weight?: number) => Promise<void>> {
+    const limiter = deps.rateLimiter;
+    if (!limiter || weight <= 0) return async () => undefined;
+    const own: RateEntry[] =
+      opts.own === false
+        ? []
+        : [
+            ...(await tieredEntries("sync:writes", requestSourceLevels(request), writeRules, weight, hashCode)),
+            ...(opts.space ? [{ key: `sync:space-writes:${opts.space}`, rule: per(spaceWrites, DAY), weight }] : []),
+          ];
+    if (own.length && limiter.firstOver) {
+      const over = await limiter.firstOver(own);
+      if (over >= 0) throw rateLimited(windowLeft(own[over]!.rule), "writes");
+    }
+    const global: RateEntry = { key: WRITES_KEY, rule: { limit: fresh ? Math.floor(dailyWrites * NEW_SHARE) : dailyWrites, windowMs: DAY }, weight };
+    if (!(await limiter.take(global.key, global.rule, weight))) {
+      log(`sync daily writes limit: ${fresh ? "new spaces and pairing" : "all writes"}`);
+      const now = nowMs();
+      throw new HttpError(503, "今天的同步量已達上限，明天會恢復", { state: "daily_limit", retryAfter: Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000)) });
+    }
+    const waitMs = await takeEntries(limiter, own, 1, nowMs());
+    if (waitMs !== null) {
+      await limiter.release?.(global.key, global.rule, weight);
+      throw rateLimited(waitMs, "writes");
+    }
+    return refunder([global, ...own]);
   }
 
   /** 人機驗證（有設定 Turnstile 時）：建立同步空間與開配對碼之前 */
   async function requireHuman(request: Request, action: "create-space" | "pair"): Promise<void> {
-    if (!deps.turnstile?.secret) return;
+    // 沒有設定時不驗證；有開但 secret 沒有設定好時 verifyTurnstile 回 unavailable（503），不會默默跳過
+    if (!deps.turnstile) return;
     const result = await verifyTurnstile(deps.turnstile, request.headers.get(HUMAN_HEADER), action);
     if (result === "ok") return;
     log(`human check: ${result}`);
@@ -338,18 +458,18 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   }
 
   /**
-   * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求）→ 記下從哪裡換來.
-   * 舊空間還沒有別的換到一半的新空間時，新的空間不受整個服務的空間數限制（換金鑰是一換一；這個條件在寫入的敘述裡檢查）.
-   * 條件不符時照一般的建立
+   * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求）→ 回傳那台的 id.
+   * 這時新的空間不用人機驗證、不受整個服務的空間數限制，但同一個舊空間同時只有一個換到一半的新空間（一換一：
+   * 建立新的時刪掉之前沒完成的），每台每天最多開 REKEY_CREATIONS_PER_DAY 次. 條件不符時回傳 null，照一般的建立
    */
-  async function rekeyCreation(request: Request, url: URL, from: string, space: string, text: string): Promise<boolean> {
+  async function rekeyCreation(request: Request, url: URL, from: string, space: string, text: string): Promise<string | null> {
     if (!SPACE.test(from) || from === space) throw new HttpError(400, "舊的同步空間 id 格式不對");
     const deviceId = request.headers.get("x-device");
-    if (deviceId === null || !DEVICE_ID.test(deviceId)) return false;
+    if (deviceId === null || !DEVICE_ID.test(deviceId)) return null;
     const device = await store.device(from, deviceId);
-    if (!device || device.removedAt !== null || (await store.movedTo(from)) !== null) return false;
+    if (!device || device.removedAt !== null || (await store.movedTo(from)) !== null) return null;
     await checkSignature(request, url, text, deviceId, device.signPub);
-    return nowMs() >= cooldownUntil(device);
+    return nowMs() >= cooldownUntil(device) ? deviceId : null;
   }
 
   /**
@@ -478,21 +598,46 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         }
         if (url.searchParams.get("create") !== "1") throw new HttpError(404, "同步空間不存在");
         const from = url.searchParams.get("from");
-        const rekeying = from !== null && (await rekeyCreation(request, url, from, space, text));
-        await limitSource(request, ["createSpace"]);
-        // 換金鑰的新空間：舊空間裡過了冷卻期的裝置簽過，不用人機驗證，也不受「新空間只能用到一半」的限制
-        if (!rekeying) await requireHuman(request, "create-space");
-        await spendWrites(WRITE_COST.space, !rekeying);
-        let created = await store.createSpace(space, hash, limits.spaces, rekeying ? from : null);
-        if (!created && (await store.spaceToken(space)) === null) {
-          // 服務已滿：先清掉沒在用的空空間再試一次
-          if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces);
-          if (!created && (await store.spaceToken(space)) === null) {
-            log(`sync service full: spaces >= ${limits.spaces}`);
-            throw new HttpError(503, "同步服務已滿");
-          }
+        // 先只讀檢查每一層（被寬的層擋下時不會用掉窄的），再算窄的層；寬的層等通過人機驗證（或換金鑰的簽章）之後才算
+        await requireSourceRoom(request, ["createSpace"]);
+        // 換金鑰的簽章先檢查（時間不對時用戶端校正後重送，不重複計數）
+        const rekeyDevice = from !== null ? await rekeyCreation(request, url, from, space, text) : null;
+        await limitSource(request, ["createSpace"], [], "narrow");
+        const rekeyFrom = rekeyDevice !== null ? from : null;
+        if (rekeyDevice !== null && deps.rateLimiter) {
+          // 換金鑰的新空間：舊空間裡過了冷卻期的裝置簽過，不用人機驗證，也不受「新空間只能用到一半」的限制；每台每天有次數上限
+          const rule = per(REKEY_CREATIONS_PER_DAY, DAY);
+          if (!(await deps.rateLimiter.take(`sync:rekey-create:${rekeyDevice}`, rule))) throw rateLimited(windowLeft(rule), "rekey");
         }
-        if (!created && (await store.spaceToken(space)) !== hash) throw new HttpError(403, "憑證不符");
+        if (rekeyFrom === null) await requireHuman(request, "create-space");
+        await limitSource(request, ["createSpace"], [], "wide");
+        const refund = await spendWrites(request, WRITE_COST.space, rekeyFrom === null);
+        let created = false;
+        try {
+          if (rekeyFrom !== null) {
+            // 同一個舊空間只留一個換到一半的新空間：之前沒完成的（重試、放棄沒送到）刪掉
+            await store.abandonPendingRekeys(rekeyFrom, space);
+            created = await store.createSpace(space, hash, limits.spaces, rekeyFrom);
+            if (!created && (await store.spaceToken(space)) === null) {
+              throw new HttpError(409, "同時有另一個換金鑰在進行，請稍後再試", { state: "rekey_conflict" });
+            }
+          } else {
+            const network = await networkOf(request, hashCode);
+            created = await store.createSpace(space, hash, limits.spaces, null, network);
+            if (!created && (await store.spaceToken(space)) === null) {
+              // 服務已滿：先清掉沒在用的空空間再試一次
+              if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces, null, network);
+              if (!created && (await store.spaceToken(space)) === null) {
+                log(`sync service full: spaces >= ${limits.spaces}`);
+                throw new HttpError(503, "同步服務已滿");
+              }
+            }
+          }
+          if (!created && (await store.spaceToken(space)) !== hash) throw new HttpError(403, "憑證不符");
+        } finally {
+          // 沒有建立（失敗，或並行的同一個請求已經建好）：這次的寫入額度退回
+          if (!created) await refund();
+        }
         if (created && url.searchParams.get("devices") === "1") await store.setSpaceMode(space, { devicesAt: nowMs(), legacyUntil: nowMs() });
         return { created };
       }
@@ -550,34 +695,71 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const body = parseJson(text);
         const items = Array.isArray(body.items) ? body.items : null;
         if (!items || items.length > MAX_PUSH) throw new HttpError(400, `items 要是陣列，最多 ${MAX_PUSH} 筆`);
-        const blobBytes = items.reduce((sum: number, item) => sum + String((item as Record<string, unknown>)?.blob ?? "").length, 0);
+        await limitSource(request, ["push"]);
+        // 格式不對的整批不寫，也不算位元組與寫入的額度
+        const valid = validItems(items);
+        const sizeOf = (item: { blob: string }) => item.blob.length + RECORD_OVERHEAD;
         // 這次最多會用到的空間：內容加上每筆的固定額外（更新已經有的那筆時，寫完會照實際的還回去）
-        const incoming = blobBytes + items.length * RECORD_OVERHEAD;
-        await limitSource(request, ["push", "pushBytes", "pushRecords"], [1, blobBytes, items.length]);
-        if (items.length > 0) await spendWrites(WRITE_COST.pushBase + WRITE_COST.perRecord * items.length, false);
-        // 先保留這次最多會用到的位元組（這個空間與整個服務都放得下才保留），寫完再還回去
-        if (!(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes))) {
+        const incoming = valid.reduce((sum, item) => sum + sizeOf(item), 0);
+        // 換金鑰的複製（還沒換完的新空間，量不超過舊空間）：不算來源與空間每天的位元組與寫入（只算整個服務的），
+        // 整個服務的總量可以暫時多用一個空間的量（舊空間的資料換好就刪掉）
+        const copy = await rekeyCopy(space, incoming, valid.length);
+        // 先保留這次最多會用到的位元組（這個空間、整個服務、同一個網段建立的空間都放得下才保留），寫完再還回去.
+        // 換金鑰的複製不受網段的上限（量不超過舊空間，舊空間的資料換好就刪掉）
+        const networkCap = copy ? null : limits.networkBytes;
+        if (!(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes, networkCap))) {
           if ((await store.spaceUsage(space)).bytes + incoming > MAX_SPACE_BYTES) throw new HttpError(413, "同步空間已滿");
-          // 換金鑰的新空間（還沒換完）：舊空間的資料換好就刪掉，整個服務可以暫時多用一個空間的量
-          const rekeyHeadroom = (await store.rekeyFrom(space)) !== null && (await store.movedInAt(space)) === null;
-          if (!rekeyHeadroom || !(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes + MAX_SPACE_BYTES))) {
+          const network = networkCap === null ? null : await store.networkUsage(space);
+          if (network !== null && networkCap !== null && network + incoming > networkCap) {
+            log(`sync network full`);
+            throw new HttpError(413, "這個網路建立的同步空間已達總容量", { state: "network_full" });
+          }
+          if (!copy || !(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes + MAX_SPACE_BYTES, null))) {
             log(`sync service full: bytes`);
             throw new HttpError(503, "同步服務已滿");
           }
         }
-        let valid: { id: string; base: number; blob: string }[];
+        const none = async () => undefined;
+        let refundBytes: (weight?: number) => Promise<void> = none;
+        let refundWrites: (weight?: number) => Promise<void> = none;
+        let result: Awaited<ReturnType<SyncStore["putMany"]>>;
         try {
-          valid = validItems(items);
-        } catch (e) {
-          await store.releaseBytes(space, incoming);
-          throw e;
-        }
-        try {
-          return await store.putMany(space, valid, incoming);
+          if (!copy && incoming > 0) {
+            const bytesEntries = [
+              ...(await sourceEntries(request, ["pushBytes"], [incoming], "all")),
+              { key: `sync:space-bytes:${space}`, rule: per(spaceBytes, DAY), weight: incoming },
+            ];
+            refundBytes = await takeRefundable(bytesEntries, "pushBytes");
+          }
+          if (valid.length > 0) {
+            refundWrites = await spendWrites(request, WRITE_COST.pushBase + WRITE_COST.perRecord * valid.length, false, copy ? { own: false } : { space });
+          }
+          result = await store.putMany(space, valid, incoming);
         } catch (e) {
           await store.releaseBytes(space, incoming).catch(() => undefined);
+          await refundBytes();
+          await refundWrites();
           throw e;
         }
+        // 沒有寫入的（衝突、同一批重複的 id）退回位元組與寫入的額度
+        const applied = new Set(result.applied.map((a) => a.id));
+        const counted = new Set<string>();
+        let unusedBytes = 0;
+        let unusedRecords = 0;
+        for (const item of valid) {
+          if (applied.has(item.id) && !counted.has(item.id)) {
+            counted.add(item.id);
+            continue;
+          }
+          unusedBytes += sizeOf(item);
+          unusedRecords += 1;
+        }
+        if (unusedRecords > 0) {
+          await refundBytes(unusedBytes);
+          // 整批都沒有寫入時連固定的部分也退回
+          await refundWrites(WRITE_COST.perRecord * unusedRecords + (applied.size === 0 ? WRITE_COST.pushBase : 0));
+        }
+        return result;
       }
       throw new HttpError(405, "不支援的方法");
     }
@@ -588,6 +770,17 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     }
 
     throw new HttpError(404, "找不到");
+  }
+
+  /**
+   * 這次送出是換金鑰的複製嗎：還沒換完的新空間（換金鑰建立的、還沒有空間搬進來），送完之後的大小與筆數不超過舊空間（加一點寬容）.
+   * 新空間是舊空間裡過了冷卻期的裝置簽過才建立的、同一個舊空間同時只有一個，所以這條路最多複製舊空間有的量
+   */
+  async function rekeyCopy(space: string, incoming: number, records: number): Promise<boolean> {
+    const from = await store.rekeyFrom(space);
+    if (from === null || (await store.movedInAt(space)) !== null) return false;
+    const [source, mine] = [await store.spaceUsage(from), await store.spaceUsage(space)];
+    return mine.bytes + incoming <= source.bytes + REKEY_SLACK.bytes && mine.records + records <= source.records + REKEY_SLACK.records;
   }
 
   /** 先檢查整批的格式，有一筆不對就整批不寫 */
@@ -607,24 +800,29 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       const body = parseJson(await readText(request));
       if (!isKey(body.pub)) throw new HttpError(400, "pub 格式不對");
       if (!isKey(body.commitment, 100)) throw new HttpError(400, "commitment 格式不對");
-      await limitSource(request, ["createPair"]);
+      // 寬的層等通過人機驗證之後才算（先只讀檢查，被寬的層擋下時不會用掉窄的）
+      await requireSourceRoom(request, ["createPair"]);
+      await limitSource(request, ["createPair"], [], "narrow");
       await requireHuman(request, "pair");
-      await spendWrites(WRITE_COST.pair, true);
+      await limitSource(request, ["createPair"], [], "wide");
+      const refund = await spendWrites(request, WRITE_COST.pair, true);
       for (let attempt = 0; attempt < 5; attempt++) {
         const slot = [...random(8)].map((b) => SLOT_ALPHABET[b % 32]).join("");
         if (await store.createSlot(slot, body.pub, body.commitment, PAIR_TTL_MS, limits.pairSlots)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
         if ((await store.activeSlots()) >= limits.pairSlots) {
+          await refund();
           log(`sync service full: pair slots >= ${limits.pairSlots}`);
           throw new HttpError(503, "暫時無法建立配對碼，請稍後再試");
         }
       }
+      await refund();
       throw new HttpError(503, "暫時無法建立配對碼");
     }
     const slot = parts[2]?.toUpperCase();
     if (!slot || !SLOT.test(slot)) throw new HttpError(400, "配對碼格式不對");
     if (parts.length === 3 && method === "GET") {
       // 找不到的次數用完時，這個來源查任何配對碼都回 429；找得到的不算，等另一台時每 2 秒查一次
-      await requireSourceRoom(request, "pairMiss");
+      await requireSourceRoom(request, ["pairMiss"]);
       const found = await store.getSlot(slot);
       if (!found) {
         await limitSource(request, ["pairMiss"]);
@@ -632,13 +830,23 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       }
       return { ...found };
     }
+    // 配對的每一步：窄的層每次都算；寬的層只在配對碼存在、這一步的順序對時才算（每個配對碼最多幾次，而開配對碼要通過人機驗證）
+    const countStep = async (valid: boolean) => {
+      if (valid) await requireSourceRoom(request, ["pairStep"]);
+      await limitSource(request, ["pairStep"], [], "narrow");
+      if (valid) await limitSource(request, ["pairStep"], [], "wide");
+    };
     if (parts.length === 3 && method === "DELETE") {
-      await limitSource(request, ["pairStep"]);
+      await countStep((await store.getSlot(slot)) !== null);
       await store.deleteSlot(slot);
       return { deleted: true };
     }
     if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "nonce" || parts[3] === "box")) {
-      await limitSource(request, ["pairStep"]);
+      const current = await store.getSlot(slot);
+      const inOrder =
+        current !== null &&
+        (parts[3] === "hello" ? current.oldPub === null : parts[3] === "nonce" ? current.oldPub !== null && current.nonce === null : current.nonce !== null && current.box === null);
+      await countStep(inOrder);
       const body = parseJson(await readText(request));
       const value = parts[3] === "hello" ? body.pub : parts[3] === "nonce" ? body.nonce : body.box;
       if (!isKey(value, 4000)) throw new HttpError(400, "格式不對");
@@ -692,10 +900,12 @@ function requireJson(request: Request): void {
 export async function maintain(
   store: SyncStore,
   options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
-): Promise<{ spaces: number; slots: number; nonces: number; rates: number }> {
+): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number }> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const log = options.log ?? (() => undefined);
   const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
+  // 網段的代碼只保存 30 天（從記下的時間算；換金鑰的新空間沿用舊空間的時間，不會因此延長）
+  const networks = await store.expireNetworks(NETWORK_RETENTION_MS);
   const { slots, nonces } = await store.purgeExpired();
   const rates = (await options.purgeRates?.()) ?? 0;
   const totals = await store.totals();
@@ -704,6 +914,6 @@ export async function maintain(
   if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
   if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
   if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
-  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates}; spaces=${totals.spaces} bytes=${totals.bytes}`);
-  return { spaces, slots, nonces, rates };
+  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`);
+  return { spaces, slots, nonces, rates, networks };
 }

@@ -266,7 +266,7 @@ erDiagram
 | `ta:帳號` | 免費試用的帳號（規格 12.44 第 1 步，schema 20 的 `trial_accounts`）：代理的網址、帳號的復原密鑰（用同步金鑰 HKDF 分出的另一把再加密一次，AAD 綁網址與帳號，`device-sync/trial-account.ts`）、修改時間；舊版不認得，不套用也不刪 |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
-- `spaces`：同步空間與存取憑證的雜湊（換金鑰建立的新空間記下從哪個空間換來，`rekey_from`）。
+- `spaces`：同步空間與存取憑證的雜湊（換金鑰建立的新空間記下從哪個空間換來，`rekey_from`；建立者的網段的代碼，`network`，以秘密金鑰的 HMAC 計算、記下的時間 `network_at`，30 天後清掉；同一個網段建立的空間有總容量上限）。
 - `records`：加密後的每一筆與序號。
 - `pair_slots`：配對新裝置時的暫存，幾分鐘後過期。
 - 裝置（規格 12.27，功能開關 `devices`）：
@@ -274,7 +274,7 @@ erDiagram
   - `devices`：每台的公開金鑰、加密的名稱、加入與最後同步的時間、移除的時間與證明、換金鑰後給它的新金鑰。
   - `moves`：換過金鑰的空間搬到哪個新空間。
   - `sig_nonces`：簽章用過的一次性亂數，十分鐘後過期。
-- `rate_limits`：依來源的頻率限制的計數（來源的每一層——IPv6 的 /64、/56、/48，IPv4 的位址與 /24——的雜湊、時間窗、次數或位元組），以及整個服務每天估算的寫入列數（`sync:daily-writes`），時間窗過了就刪（規格 12.10「頻率限制與容量」「多層計數、人機驗證與免費方案的容量」）。
+- `rate_limits`：依來源的頻率限制的計數（來源的每一層——IPv6 的 /64、/56、/48，IPv4 的位址與 /24——的代碼（有 `RATE_LIMIT_HASH_KEY` 時是 HMAC）、時間窗、次數或位元組），以及整個服務每天估算的寫入列數（`sync:daily-writes`）、每個來源與每個空間每天的寫入與位元組（`sync:writes`、`sync:space-writes`、`sync:space-bytes`）、每台每天開換金鑰新空間的次數（`sync:rekey-create`），時間窗過了就刪（規格 12.10「頻率限制與容量」「多層計數、人機驗證與免費方案的容量」「每個來源與每個空間的份額」）。
 - 上限對齊 Cloudflare 免費方案：總共 300 MB、每個空間 25 MB（每筆的內容加上 200 bytes 的固定額外）；每天的寫入估算到一半時停止新的空間與配對碼，到上限時停止送出。
 - 人機驗證（Turnstile，有設定時）：建立同步空間與開配對碼的請求帶 `x-turnstile`，Worker 送到 Turnstile 的 siteverify 確認（`apps/sync/src/turnstile.ts`；網頁版的方塊在 `apps/web/src/human-check.tsx`）。
 - 每小時的排程（`wrangler.toml` 的 crons）：清掉建立超過 24 小時、沒有紀錄也沒有裝置的空空間，過期的配對碼、亂數與計數；用量到上限的 80% 時在 log 留警告。

@@ -21,6 +21,8 @@ export interface RateLimiter {
   take(key: string, rule: RateRule, weight?: number): Promise<boolean>;
   /** 只讀不加：每一條在目前的時間窗再加上它的 weight 還在上限內嗎；回傳第一條超過的位置，都沒超過時 -1 */
   firstOver?(entries: RateEntry[]): Promise<number>;
+  /** 退回之前加上的 weight（請求最後沒有用到，例如寫入失敗或衝突）；時間窗已經換了就不動，不會低於 0 */
+  release?(key: string, rule: RateRule, weight: number): Promise<void>;
 }
 
 /** 一條要檢查的計數：key、規則與這次要加多少（沒有時用 takeEntries 的 weight） */
@@ -112,19 +114,43 @@ export function requestSourceLevels(request: Request): SourceLevel[] {
   return sourceLevels(request.headers.get("cf-connecting-ip"));
 }
 
-/** 規則套到每一層：回傳要檢查的計數（key 是 prefix、層級、來源的雜湊與規則的名稱） */
-export async function tieredEntries(prefix: string, levels: SourceLevel[], rules: TieredRules, weight?: number): Promise<RateEntry[]> {
+/** 來源（IP 或網段）轉成存得下的代碼 */
+export type SourceHasher = (text: string) => Promise<string>;
+
+/**
+ * 來源的代碼：有金鑰（Worker 的 secret RATE_LIMIT_HASH_KEY）時用 HMAC-SHA256，沒有金鑰的人算不出、也反推不回 IP；
+ * 沒有金鑰時（本機、模擬服務、測試）用沒有金鑰的雜湊（hashSource）. 一樣取 16 bytes
+ */
+export function sourceHasher(key?: string | null): SourceHasher {
+  const secret = key?.trim();
+  if (!secret) return hashSource;
+  let imported: Promise<CryptoKey> | undefined;
+  return async (text) => {
+    imported ??= crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(`rate-limit:${text}`));
+    return Array.from(new Uint8Array(mac).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+  };
+}
+
+/** 規則套到每一層：回傳要檢查的計數（key 是 prefix、層級、來源的代碼與規則的名稱）. hash 預設沒有金鑰 */
+export async function tieredEntries(
+  prefix: string,
+  levels: SourceLevel[],
+  rules: TieredRules,
+  weight?: number,
+  hash: SourceHasher = hashSource,
+): Promise<RateEntry[]> {
   const entries: RateEntry[] = [];
   for (const level of levels) {
     const forTier = rules[level.tier] ?? (level.tier === "unknown" ? (rules["v6/64"] ?? rules["v4/32"]) : undefined);
     if (!forTier) continue;
-    const hashed = await hashSource(level.source);
+    const hashed = await hash(level.source);
     for (const [name, rule] of Object.entries(forTier)) entries.push({ key: `${prefix}:${level.tier}:${hashed}:${name}`, rule, weight });
   }
   return entries;
 }
 
-/** 來源 IP 的雜湊（不存原文） */
+/** 來源 IP 的雜湊（不存原文；沒有金鑰，正式環境用 sourceHasher(金鑰)） */
 export async function hashSource(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`rate-limit:${text}`));
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -200,6 +226,13 @@ export class MemoryRateLimiter implements RateLimiter {
       return count + (e.weight ?? 1) > e.rule.limit;
     });
   }
+
+  async release(key: string, rule: RateRule, weight: number): Promise<void> {
+    const id = `${key}:${rule.windowMs}`;
+    const current = this.counts.get(id);
+    if (!current || current.slot !== slotOf(this.now(), rule) || weight <= 0) return;
+    current.count = Math.max(0, current.count - weight);
+  }
 }
 
 const SCHEMA = `
@@ -249,6 +282,11 @@ export class SqlRateLimiter implements RateLimiter {
     );
     const counts = new Map(rows.map((r) => [`${String(r.key)}#${Number(r.slot)}`, Number(r.count)]));
     return entries.findIndex((e, i) => (counts.get(`${ids[i]!.key}#${ids[i]!.slot}`) ?? 0) + (e.weight ?? 1) > e.rule.limit);
+  }
+
+  async release(key: string, rule: RateRule, weight: number): Promise<void> {
+    if (weight <= 0) return;
+    await this.driver.run("UPDATE rate_limits SET count = MAX(0, count - ?) WHERE key = ? AND slot = ?", [weight, `${key}:${rule.windowMs}`, slotOf(this.now(), rule)]);
   }
 
   /** 刪掉時間窗已經過了的計數 */

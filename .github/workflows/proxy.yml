@@ -7,6 +7,7 @@
 #                    PROXY_ADMIN_TOKEN（管理端點的憑證，自己產生一串夠長的亂數；tools/proxy-admin.ts 用它產生邀請碼）
 #   repo 的 Variables：PROXY_D1_DATABASE_ID（D1 資料庫的 id）
 #                      PROXY_POLICY（選填：覆寫政策的 JSON，例 {"dailyMessages":20}；沒設定時用 apps/proxy/src/policy.ts 的預設）
+#                    RATE_LIMIT_HASH_KEY（來源 IP 的代碼用的金鑰，openssl rand -base64 32；和同步服務共用，沒有時部署失敗）
 #   允許的網頁來源沿用 WEB_URL。
 # 還沒設定 PROXY_D1_DATABASE_ID 時只跑測試，不部署。
 # 部署完成後，把 Workers 的網址設成 Variables 的 PROXY_URL，WEB_FEATURES 加上 trial，再手動執行一次「Deploy web app」。
@@ -69,6 +70,22 @@ jobs:
             echo "::error::要先設定 Secrets 的 PROXY_ANTHROPIC_API_KEY 與 PROXY_ADMIN_TOKEN"
             exit 1
           fi
+      - name: Rate limit hash key
+        # 來源 IP 與網段的代碼用的金鑰（規格 12.10）：寫成 Worker 的 secret RATE_LIMIT_HASH_KEY（HMAC，沒有金鑰算不出、也反推不回 IP）。
+        # 在部署之前寫；沒有設定時部署失敗（不退回沒有金鑰的做法）。從 stdin 給，不印出
+        if: ${{ vars.PROXY_D1_DATABASE_ID != '' }}
+        working-directory: apps/proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RATE_LIMIT_HASH_KEY: ${{ secrets.RATE_LIMIT_HASH_KEY }}
+        run: |
+          if [ -z "$RATE_LIMIT_HASH_KEY" ]; then
+            echo "::error::要先設定 Secrets 的 RATE_LIMIT_HASH_KEY（在自己的電腦執行 openssl rand -base64 32 產生），規格 12.10"
+            exit 1
+          fi
+          printf '%s' "$RATE_LIMIT_HASH_KEY" | npx --yes wrangler@4.148.0 secret put RATE_LIMIT_HASH_KEY > /dev/null
+          echo "已寫入代碼用的金鑰"
       - name: Deploy
         if: ${{ vars.PROXY_D1_DATABASE_ID != '' }}
         working-directory: apps/proxy

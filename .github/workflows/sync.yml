@@ -9,6 +9,7 @@
 #   人機驗證（選填，規格 12.10）：Variables 的 TURNSTILE_SITE_KEY、Secrets 的 TURNSTILE_SECRET_KEY；兩個都有時同步服務才驗證，
 #   網頁版（web.yml）用同一個 site key。改了要手動執行一次這裡與「Deploy web app」
 #   每天的寫入上限（選填）：Variables 的 SYNC_DAILY_WRITE_BUDGET；沒有時用程式裡的預設
+#   來源與網段的代碼用的金鑰（必填）：Secrets 的 RATE_LIMIT_HASH_KEY（openssl rand -base64 32），和代理共用；沒有時部署失敗
 # 還沒設定 SYNC_D1_DATABASE_ID 時只跑測試，不部署。
 # 部署完成後，把 Workers 的網址設成 repo 的 Variables：SYNC_URL，再手動執行一次「Deploy web app」。
 # Variables 的 WEB_URL（網頁版的網址）改了要再手動執行一次這裡。
@@ -63,6 +64,38 @@ jobs:
           # site key 是公開的；有的話 Worker 才驗證（secret 不經過這一步）。只有 site key、沒有 secret 時不開，免得每次建立都失敗
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SECRET_KEY != '' && vars.TURNSTILE_SITE_KEY || '' }}
         run: npx tsx tools/sync-config.ts
+      - name: Rate limit hash key
+        # 來源 IP 與網段的代碼用的金鑰（規格 12.10）：寫成 Worker 的 secret RATE_LIMIT_HASH_KEY（HMAC，沒有金鑰算不出、也反推不回 IP）。
+        # 在部署之前寫；沒有設定時部署失敗（不退回沒有金鑰的做法）。從 stdin 給，不印出
+        if: ${{ vars.SYNC_D1_DATABASE_ID != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RATE_LIMIT_HASH_KEY: ${{ secrets.RATE_LIMIT_HASH_KEY }}
+        run: |
+          if [ -z "$RATE_LIMIT_HASH_KEY" ]; then
+            echo "::error::要先設定 Secrets 的 RATE_LIMIT_HASH_KEY（在自己的電腦執行 openssl rand -base64 32 產生），規格 12.10"
+            exit 1
+          fi
+          printf '%s' "$RATE_LIMIT_HASH_KEY" | npx --yes wrangler@4.148.0 secret put RATE_LIMIT_HASH_KEY > /dev/null
+          echo "已寫入代碼用的金鑰"
+      - name: Turnstile secret key
+        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出。
+        # 在部署之前寫：新的設定（TURNSTILE="on"）上線時 secret 已經在了；沒有 secret 時 Worker 回「人機驗證暫時無法使用」，不會跳過驗證
+        if: ${{ vars.SYNC_D1_DATABASE_ID != '' && vars.TURNSTILE_SITE_KEY != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
+            echo "::warning::有 TURNSTILE_SITE_KEY、沒有 Secrets 的 TURNSTILE_SECRET_KEY：同步服務不驗證人機驗證"
+            exit 0
+          fi
+          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
+          echo "已寫入 Turnstile 的 secret key"
       - name: Deploy
         if: ${{ vars.SYNC_D1_DATABASE_ID != '' }}
         working-directory: apps/sync
@@ -86,21 +119,6 @@ jobs:
           fi
           printf '%s' "$INTERVALS_CLIENT_SECRET" | npx --yes wrangler@4.148.0 secret put INTERVALS_CLIENT_SECRET > /dev/null
           echo "已寫入 Intervals.icu 的 client_secret"
-      - name: Turnstile secret key
-        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出
-        if: ${{ vars.SYNC_D1_DATABASE_ID != '' && vars.TURNSTILE_SITE_KEY != '' }}
-        working-directory: apps/sync
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
-            echo "::warning::有 TURNSTILE_SITE_KEY、沒有 Secrets 的 TURNSTILE_SECRET_KEY：同步服務不驗證人機驗證"
-            exit 0
-          fi
-          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
-          echo "已寫入 Turnstile 的 secret key"
       - name: Not configured
         if: ${{ vars.SYNC_D1_DATABASE_ID == '' }}
         run: echo "還沒設定 SYNC_D1_DATABASE_ID，只跑測試、不部署（設定步驟見規格 12.10）。"
