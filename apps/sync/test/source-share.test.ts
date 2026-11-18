@@ -16,6 +16,7 @@ import {
   maintain,
   MAX_SPACE_BYTES,
   NETWORK_RETENTION_MS,
+  REKEY_WRITE_SHARE,
   REKEY_CREATIONS_PER_DAY,
   SOURCE_WRITE_SHARE,
   SPACE_DAILY_BYTES,
@@ -72,7 +73,8 @@ const push = (n: number, items: unknown[], ip: string, handler?: (r: Request) =>
 const item = (id: number, size: number, base = 0) => ({ id: `record${String(id).padStart(10, "0")}`, base, blob: "b".repeat(size) });
 
 /** 整個服務今天用掉的寫入（估算的列數） */
-const writesToday = async () => Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE 'sync:daily-writes%'"))[0]!.n);
+const writesToday = async () =>
+  Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE 'sync:daily-writes%' AND slot=?", [Math.floor(now.getTime() / DAY)]))[0]!.n);
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -300,8 +302,10 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
     expect(a.state.root).not.toEqual(before);
     const to = (await deriveKeys(a.state.root)).space;
     expect((await store.spaceUsage(to)).records).toBeGreaterThanOrEqual(1200);
-    // 整個服務的寫入照算
-    expect(await writesToday()).toBeGreaterThan(3 * 1200);
+    // 複製算在換金鑰自己的那一份（今天的時間窗）
+    const slot = Math.floor(now.getTime() / DAY);
+    const rekeyCount = Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE 'sync:rekey-writes%' AND slot=?", [slot]))[0]!.n);
+    expect(rekeyCount).toBeGreaterThan(3 * 1200);
   });
 
   it("換金鑰的新空間送超過舊空間的量：超過的照一般的送出計算（不是繞過的路）", async () => {
@@ -499,6 +503,137 @@ describe("來源與網段的代碼（有金鑰時 HMAC）、網段代碼保存 3
     expect((await push(2, [item(1, 4000)], "198.51.100.2", handler)).status).toBe(200);
     await create(4, "198.51.100.4", handler);
     expect((await push(4, [item(1, 4000)], "198.51.100.4", handler)).status).toBe(200);
+  });
+});
+
+describe("換金鑰的複製有自己的每日額度，同一個舊空間每天最多複製一份", () => {
+  const rekeyCount = async () =>
+    Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE 'sync:rekey-writes%' AND slot=?", [Math.floor(now.getTime() / DAY)]))[0]!.n);
+
+  async function setupDevice(handler: (r: Request) => Promise<Response>, records: number, hook?: (request: Request) => Promise<Response> | null) {
+    const api = new SyncApi(
+      "http://sync.test",
+      (input, init) => {
+        const request = new Request(input as string, init);
+        return hook?.(request) ?? handler(request);
+      },
+      async (ms) => advance(ms),
+    );
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    for (let i = 0; i < records; i++) {
+      await db.saveCheckin({ date: new Date(Date.UTC(2022, 0, 1) + i * DAY).toISOString().slice(0, 10), energy: 3, soreness: 2, sleep: 4, notes: `n${i}` });
+    }
+    const identity = await newDeviceIdentity();
+    const state = { root: newRootKey() };
+    const engine = new SyncEngine(db, api, state.root, () => now, {
+      identity,
+      label: () => ({ name: "A", platform: "t" }),
+      onRootChanged: async (r) => void (state.root = r),
+    });
+    await engine.ensureSpace();
+    await engine.sync();
+    advance(25 * HOUR);
+    return { engine, state, api, identity };
+  }
+
+  it("一般的寫入最多用到扣掉換金鑰那一份的量；換金鑰的那一份用完不影響一般的送出與新空間", async () => {
+    expect(REKEY_WRITE_SHARE).toBe(0.25);
+    // 每天 400 列：換金鑰 100、一般 300、新空間與配對 200
+    const handler = handlerWith({ dailyWrites: 400, rateLimits: { writes: {}, spaceWrites: 10_000 } });
+    const a = await setupDevice(handler, 20);
+    const from = (await deriveKeys(a.state.root)).space;
+    // 換金鑰的那一份用完（直接把計數加滿）
+    await limiter.take("sync:rekey-writes", { limit: 100, windowMs: DAY }, 100);
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit", message: expect.stringContaining("今天換金鑰的量已達上限") });
+    // 新空間沒有建立、舊的照常
+    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
+    await a.engine.sync();
+    // 一般的送出、新空間照常
+    expect((await create(50, "198.51.100.50", handler)).status).toBe(200);
+    expect((await push(50, [item(1, 10)], "198.51.100.50", handler)).status).toBe(200);
+    // 一般的寫入用到 300 為止（換金鑰的那一份不給一般的用）
+    const used = await writesToday();
+    await limiter.take("sync:daily-writes", { limit: 300, windowMs: DAY }, 300 - used);
+    expect(await push(50, [item(2, 10)], "198.51.100.50", handler)).toMatchObject({ status: 503, body: { state: "daily_limit" } });
+  });
+
+  it("重複開換金鑰：同一個舊空間一天複製的量不超過一份（加寬容），超過時新空間被清掉、舊的照常", async () => {
+    let failCopies = 0;
+    let newSpace = "";
+    const handler = handlerWith();
+    const a = await setupDevice(handler, 400, (request) => {
+      const url = new URL(request.url);
+      if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
+      // 每次複製送完前兩批（400 筆）之後，最後一步失敗：一直重開
+      if (failCopies > 0 && request.method === "POST" && url.pathname.endsWith("/rekey")) {
+        failCopies--;
+        return Promise.resolve(Response.json({ error: "x" }, { status: 409, headers: { "content-type": "application/json" } }));
+      }
+      return null;
+    });
+    const from = (await deriveKeys(a.state.root)).space;
+    failCopies = 3;
+    // 第一次：整份複製完，最後一步失敗 → 放棄
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 409 });
+    expect(await store.spaceToken(newSpace)).toBeNull();
+    advance(2 * 60_000);
+    // 第二次：今天這個舊空間已經複製過一份（400 筆，寬容 100 筆），開始前就擋下，不會複製到一半
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit" });
+    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
+    const copied = Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE ? ", [`sync:rekey-copy:${from}%`]))[0]!.n);
+    expect(copied).toBeLessThanOrEqual(400 + 100);
+    // 舊的照常
+    await a.engine.sync();
+    expect((await store.spaceUsage(from)).records).toBeGreaterThanOrEqual(400);
+    // 隔天恢復
+    failCopies = 0;
+    advance(DAY);
+    const before = a.state.root;
+    await a.engine.rekey();
+    expect(a.state.root).not.toEqual(before);
+  });
+
+  it("複製到一半碰到上限（另一台同時在用）：503 rekey_limit，用戶端放棄新空間，舊的照常", async () => {
+    // 400 筆的複製估 1,220 列，這一份 1,300 列：本來搬得完
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 1300 } });
+    let newSpace = "";
+    let pushes = 0;
+    const a = await setupDevice(handler, 400, (request) => {
+      const url = new URL(request.url);
+      if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
+      if (newSpace && request.method === "POST" && url.pathname === `/v1/spaces/${newSpace}/changes` && ++pushes === 2) {
+        // 第一批送完後，別的換金鑰把這一份用掉
+        return limiter.take("sync:rekey-writes", { limit: 1300, windowMs: DAY }, 1300 - 610).then(() => handler(request));
+      }
+      return null;
+    });
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit" });
+    expect(await store.spaceToken(newSpace)).toBeNull();
+    expect(await store.movedTo(from)).toBeNull();
+    await a.engine.sync();
+    expect((await store.spaceUsage(from)).records).toBeGreaterThanOrEqual(400);
+  });
+
+  it("資料多到一份額度搬不完：一開始就說明（rekey_too_large），不建立新空間", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_too_large", message: expect.stringContaining("一天搬不完") });
+    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
+    expect(await rekeyCount()).toBe(0);
+  });
+
+  it("正常大小的換金鑰照樣完成（每天額度調小）", async () => {
+    // 每天 4,000 列：換金鑰的那一份 1,000 列，200 筆的複製（約 610 列）搬得完
+    const handler = handlerWith({ dailyWrites: 4000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
+    const a = await setupDevice(handler, 200);
+    const before = a.state.root;
+    await a.engine.rekey();
+    expect(a.state.root).not.toEqual(before);
+    expect(await rekeyCount()).toBeGreaterThanOrEqual(3 * 200);
+    expect(await rekeyCount()).toBeLessThanOrEqual(1000);
   });
 });
 

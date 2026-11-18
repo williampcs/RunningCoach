@@ -82,6 +82,8 @@ export interface SyncRateLimits {
   spaceWrites?: number;
   /** 每個同步空間每天送出的位元組；沒有給時 SPACE_DAILY_BYTES */
   spaceBytes?: number;
+  /** 換金鑰的複製每天估算的寫入列數（整個服務一起）；沒有給時 dailyWrites 乘上 REKEY_WRITE_SHARE */
+  rekeyWrites?: number;
 }
 
 const MINUTE = 60_000;
@@ -121,6 +123,16 @@ export const SPACE_WRITE_SHARE = 0.1;
 export const REKEY_CREATIONS_PER_DAY = 4;
 /** 換金鑰的複製：新空間最多比舊空間多這麼多（重新加密的大小差一點），超過的照一般的送出計算 */
 const REKEY_SLACK = { bytes: 1_000_000, records: 50 };
+/**
+ * 換金鑰的複製有自己的一份每日額度：整個服務每天寫入額度的 25%，從整個服務的額度切出來（一般的送出最多用剩下的 75%），
+ * 用完不影響一般的送出、新空間與配對
+ */
+export const REKEY_WRITE_SHARE = 0.25;
+/** 同一個舊空間每天最多複製幾筆：舊空間的筆數加上寬容（中途斷掉重試一次還夠）. 重開換金鑰不會讓複製量加倍 */
+const rekeyCopyAllowance = (records: number) => records + Math.max(REKEY_SLACK.records, Math.ceil(records * 0.25));
+/** 估算複製 records 筆要寫幾列（每次最多送 200 筆） */
+const rekeyCopyCost = (records: number) => WRITE_COST.perRecord * records + WRITE_COST.pushBase * Math.max(1, Math.ceil(records / 200));
+const REKEY_WRITES_KEY = "sync:rekey-writes";
 
 /** 依來源計數的種類 */
 type SourceKind = "createSpace" | "createPair" | "pairMiss" | "pairStep" | "push" | "pushBytes";
@@ -311,33 +323,79 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const writeRules = deps.rateLimits?.writes ?? sourceWriteRules(dailyWrites);
   const spaceWrites = deps.rateLimits?.spaceWrites ?? Math.floor(dailyWrites * SPACE_WRITE_SHARE);
   const spaceBytes = deps.rateLimits?.spaceBytes ?? SPACE_DAILY_BYTES;
+  const rekeyWrites = deps.rateLimits?.rekeyWrites ?? Math.floor(dailyWrites * REKEY_WRITE_SHARE);
+  const untilMidnight = () => {
+    const now = nowMs();
+    return Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000));
+  };
+  const rekeyLimited = () => {
+    log("sync rekey copy limit");
+    return new HttpError(503, "今天換金鑰的量已達上限，明天再試", { state: "rekey_limit", retryAfter: untilMidnight() });
+  };
+  /** 換金鑰的複製這兩條計數：整個服務的那一份（列數）與這個舊空間今天的（筆數） */
+  const rekeyEntries = (from: string, fromRecords: number, writes: number, records: number): RateEntry[] => [
+    { key: REKEY_WRITES_KEY, rule: per(rekeyWrites, DAY), weight: writes },
+    { key: `sync:rekey-copy:${from}`, rule: per(rekeyCopyAllowance(fromRecords), DAY), weight: records },
+  ];
+
+  /**
+   * 開始換金鑰（建立新空間）之前：整個空間的複製在免費方案的額度內搬得完嗎、今天還夠嗎. 不夠就先不建立，
+   * 不會複製到一半才失敗. 只讀
+   */
+  async function requireRekeyRoom(from: string): Promise<void> {
+    const limiter = deps.rateLimiter;
+    if (!limiter) return;
+    const records = (await store.spaceUsage(from)).records;
+    const cost = rekeyCopyCost(records);
+    if (cost > rekeyWrites) {
+      log("sync rekey too large");
+      throw new HttpError(503, "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰", { state: "rekey_too_large" });
+    }
+    if (limiter.firstOver && (await limiter.firstOver(rekeyEntries(from, records, cost, records))) >= 0) throw rekeyLimited();
+  }
+
+  /** 換金鑰的複製：扣自己的那一份與這個舊空間今天的；超過時 503（rekey_limit）. 回傳退回沒有寫入的（列數、筆數） */
+  async function spendRekeyCopy(from: string, records: number): Promise<(writes: number, records: number) => Promise<void>> {
+    const limiter = deps.rateLimiter;
+    if (!limiter || records <= 0) return async () => undefined;
+    const fromRecords = (await store.spaceUsage(from)).records;
+    const entries = rekeyEntries(from, fromRecords, WRITE_COST.pushBase + WRITE_COST.perRecord * records, records);
+    if ((await takeEntries(limiter, entries, 1, nowMs())) !== null) throw rekeyLimited();
+    const [writesBack, recordsBack] = [refunder([entries[0]!]), refunder([entries[1]!])];
+    return async (w, r) => {
+      await writesBack(w);
+      await recordsBack(r);
+    };
+  }
 
   /**
    * 整個服務今天（UTC）估算的寫入列數. fresh：新的空間或配對碼，只能用到一半；其他（送出、換金鑰的新空間）可以用到上限.
    * 超過時回 503（state: daily_limit，retryAfter 是到 UTC 午夜的秒數）.
    * 每個來源（每一層）、每個空間（space）也只能用掉一小部分：超過時回 429（state: rate_limited）.
-   * own: false 只算整個服務（換金鑰的複製）. 回傳的函式退回沒有用到的列數（寫入失敗、衝突）
+   * 換金鑰的複製不走這裡（spendRekeyCopy）. 回傳的函式退回沒有用到的列數（寫入失敗、衝突）
    */
   async function spendWrites(
     request: Request,
     weight: number,
     fresh: boolean,
-    opts: { own?: boolean; space?: string } = {},
+    opts: { space?: string } = {},
   ): Promise<(weight?: number) => Promise<void>> {
     const limiter = deps.rateLimiter;
     if (!limiter || weight <= 0) return async () => undefined;
-    const own: RateEntry[] =
-      opts.own === false
-        ? []
-        : [
-            ...(await tieredEntries("sync:writes", requestSourceLevels(request), writeRules, weight, hashCode)),
-            ...(opts.space ? [{ key: `sync:space-writes:${opts.space}`, rule: per(spaceWrites, DAY), weight }] : []),
-          ];
+    const own: RateEntry[] = [
+      ...(await tieredEntries("sync:writes", requestSourceLevels(request), writeRules, weight, hashCode)),
+      ...(opts.space ? [{ key: `sync:space-writes:${opts.space}`, rule: per(spaceWrites, DAY), weight }] : []),
+    ];
     if (own.length && limiter.firstOver) {
       const over = await limiter.firstOver(own);
       if (over >= 0) throw rateLimited(windowLeft(own[over]!.rule), "writes");
     }
-    const global: RateEntry = { key: WRITES_KEY, rule: { limit: fresh ? Math.floor(dailyWrites * NEW_SHARE) : dailyWrites, windowMs: DAY }, weight };
+    // 一般的寫入最多用到扣掉換金鑰那一份的量；新的空間與配對碼只能用到一半
+    const global: RateEntry = {
+      key: WRITES_KEY,
+      rule: { limit: fresh ? Math.min(Math.floor(dailyWrites * NEW_SHARE), dailyWrites - rekeyWrites) : dailyWrites - rekeyWrites, windowMs: DAY },
+      weight,
+    };
     if (!(await limiter.take(global.key, global.rule, weight))) {
       log(`sync daily writes limit: ${fresh ? "new spaces and pairing" : "all writes"}`);
       const now = nowMs();
@@ -609,6 +667,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
           const rule = per(REKEY_CREATIONS_PER_DAY, DAY);
           if (!(await deps.rateLimiter.take(`sync:rekey-create:${rekeyDevice}`, rule))) throw rateLimited(windowLeft(rule), "rekey");
         }
+        // 整個空間的複製今天搬得完才建立（不會複製到一半才失敗）
+        if (rekeyFrom !== null) await requireRekeyRoom(rekeyFrom);
         if (rekeyFrom === null) await requireHuman(request, "create-space");
         await limitSource(request, ["createSpace"], [], "wide");
         const refund = await spendWrites(request, WRITE_COST.space, rekeyFrom === null);
@@ -703,7 +763,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const incoming = valid.reduce((sum, item) => sum + sizeOf(item), 0);
         // 換金鑰的複製（還沒換完的新空間，量不超過舊空間）：不算來源與空間每天的位元組與寫入（只算整個服務的），
         // 整個服務的總量可以暫時多用一個空間的量（舊空間的資料換好就刪掉）
-        const copy = await rekeyCopy(space, incoming, valid.length);
+        const copyFrom = await rekeyCopy(space, incoming, valid.length);
+        const copy = copyFrom !== null;
         // 先保留這次最多會用到的位元組（這個空間、整個服務、同一個網段建立的空間都放得下才保留），寫完再還回去.
         // 換金鑰的複製不受網段的上限（量不超過舊空間，舊空間的資料換好就刪掉）
         const networkCap = copy ? null : limits.networkBytes;
@@ -722,6 +783,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const none = async () => undefined;
         let refundBytes: (weight?: number) => Promise<void> = none;
         let refundWrites: (weight?: number) => Promise<void> = none;
+        let refundCopy: (writes: number, records: number) => Promise<void> = none;
         let result: Awaited<ReturnType<SyncStore["putMany"]>>;
         try {
           if (!copy && incoming > 0) {
@@ -732,13 +794,15 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
             refundBytes = await takeRefundable(bytesEntries, "pushBytes");
           }
           if (valid.length > 0) {
-            refundWrites = await spendWrites(request, WRITE_COST.pushBase + WRITE_COST.perRecord * valid.length, false, copy ? { own: false } : { space });
+            if (copyFrom !== null) refundCopy = await spendRekeyCopy(copyFrom, valid.length);
+            else refundWrites = await spendWrites(request, WRITE_COST.pushBase + WRITE_COST.perRecord * valid.length, false, { space });
           }
           result = await store.putMany(space, valid, incoming);
         } catch (e) {
           await store.releaseBytes(space, incoming).catch(() => undefined);
           await refundBytes();
           await refundWrites();
+          await refundCopy(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
           throw e;
         }
         // 沒有寫入的（衝突、同一批重複的 id）退回位元組與寫入的額度
@@ -758,6 +822,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
           await refundBytes(unusedBytes);
           // 整批都沒有寫入時連固定的部分也退回
           await refundWrites(WRITE_COST.perRecord * unusedRecords + (applied.size === 0 ? WRITE_COST.pushBase : 0));
+          await refundCopy(WRITE_COST.perRecord * unusedRecords + (applied.size === 0 ? WRITE_COST.pushBase : 0), unusedRecords);
         }
         return result;
       }
@@ -774,13 +839,14 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
 
   /**
    * 這次送出是換金鑰的複製嗎：還沒換完的新空間（換金鑰建立的、還沒有空間搬進來），送完之後的大小與筆數不超過舊空間（加一點寬容）.
-   * 新空間是舊空間裡過了冷卻期的裝置簽過才建立的、同一個舊空間同時只有一個，所以這條路最多複製舊空間有的量
+   * 是的話回傳舊空間. 新空間是舊空間裡過了冷卻期的裝置簽過才建立的、同一個舊空間同時只有一個；
+   * 複製扣自己的每日額度與這個舊空間每天的筆數（spendRekeyCopy），重開換金鑰不會讓複製量加倍
    */
-  async function rekeyCopy(space: string, incoming: number, records: number): Promise<boolean> {
+  async function rekeyCopy(space: string, incoming: number, records: number): Promise<string | null> {
     const from = await store.rekeyFrom(space);
-    if (from === null || (await store.movedInAt(space)) !== null) return false;
+    if (from === null || (await store.movedInAt(space)) !== null) return null;
     const [source, mine] = [await store.spaceUsage(from), await store.spaceUsage(space)];
-    return mine.bytes + incoming <= source.bytes + REKEY_SLACK.bytes && mine.records + records <= source.records + REKEY_SLACK.records;
+    return mine.bytes + incoming <= source.bytes + REKEY_SLACK.bytes && mine.records + records <= source.records + REKEY_SLACK.records ? from : null;
   }
 
   /** 先檢查整批的格式，有一筆不對就整批不寫 */
