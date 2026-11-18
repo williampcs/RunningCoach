@@ -63,6 +63,12 @@ const SCHEMA = `
   );
 `;
 
+/**
+ * 每筆紀錄除了內容之外，在資料庫裡的固定額外（id、序號、兩個索引）：空間的大小把它算進去，
+ * 很多筆很小的紀錄也不會超過資料庫的容量
+ */
+export const RECORD_OVERHEAD = 200;
+
 /** D1 的 batch 是一個交易；沒有 batch 的（Node 的 SQLite）用 BEGIN／COMMIT */
 export interface SyncSqlDriver extends SqlDriver {
   batch?(statements: { sql: string; params: SqlValue[] }[]): Promise<void>;
@@ -406,7 +412,7 @@ export class SyncStore {
    * 寫入一批（一次送出的全部）：查詢的次數固定（讀現在的版本 1 次、寫入每約 1 MB 1 次、更新大小 1 次），和筆數無關.
    * 每筆只有伺服器上的版本還是 base 時才寫入，否則是衝突；同一批裡重複的 id 只算第一筆.
    * 序號是這個空間目前最大的加上在這批裡的位置（同一個敘述裡算），會跳號但只會變大，取回時不會跳過還沒寫入的.
-   * reserved：送出前 reserveBytes 保留的位元組，這裡換成實際的大小
+   * reserved：送出前 reserveBytes 保留的位元組，這裡換成實際的大小（新的一筆另外加上 RECORD_OVERHEAD）
    */
   async putMany(space: string, items: { id: string; base: number; blob: string }[], reserved = 0): Promise<{ applied: { id: string; seq: number }[]; conflicts: string[] }> {
     const conflicts: string[] = [];
@@ -460,7 +466,11 @@ export class SyncStore {
       }
     }
     const blobs = new Map(unique.map((i) => [i.id, i.blob.length]));
-    const delta = applied.reduce((sum, a) => sum + (blobs.get(a.id) ?? 0) - (before.get(a.id) ?? 0), 0);
+    // 新的一筆另外加上固定額外；更新已經有的只算內容的差
+    const delta = applied.reduce((sum, a) => {
+      const old = before.get(a.id);
+      return sum + (blobs.get(a.id) ?? 0) - (old ?? -RECORD_OVERHEAD);
+    }, 0);
     await this.driver.run("UPDATE spaces SET bytes=MAX(0, bytes - ? + ?), updated_at=? WHERE id=?", [reserved, delta, this.now().toISOString(), space]);
     applied.sort((a, b) => a.seq - b.seq);
     return { applied, conflicts };

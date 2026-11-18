@@ -24,7 +24,16 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:5173,ht
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const syncHandle = createSyncHandler({ store, allowedOrigins, rateLimiter: limiter, log: (line) => console.warn(line) });
+// 人機驗證（Turnstile）：TURNSTILE_SECRET_KEY 有設定時才驗證
+const turnstileSecret = process.env.TURNSTILE_SECRET_KEY?.trim();
+const syncHandle = createSyncHandler({
+  store,
+  allowedOrigins,
+  rateLimiter: limiter,
+  turnstile: turnstileSecret ? { secret: turnstileSecret, url: process.env.TURNSTILE_VERIFY_URL || undefined } : undefined,
+  dailyWrites: Number(process.env.DAILY_WRITE_BUDGET) > 0 ? Number(process.env.DAILY_WRITE_BUDGET) : undefined,
+  log: (line) => console.warn(line),
+});
 // 用 Intervals.icu 登入（規格 12.37）：INTERVALS_CLIENT_ID、INTERVALS_CLIENT_SECRET 有設定時才能用
 const handle = (request: Request) =>
   isIntervalsTokenPath(new URL(request.url).pathname)

@@ -274,7 +274,9 @@ erDiagram
   - `devices`：每台的公開金鑰、加密的名稱、加入與最後同步的時間、移除的時間與證明、換金鑰後給它的新金鑰。
   - `moves`：換過金鑰的空間搬到哪個新空間。
   - `sig_nonces`：簽章用過的一次性亂數，十分鐘後過期。
-- `rate_limits`：依來源的頻率限制的計數（來源 IP 的雜湊、時間窗、次數或位元組），時間窗過了就刪（規格 12.10「頻率限制與容量」）。
+- `rate_limits`：依來源的頻率限制的計數（來源的每一層——IPv6 的 /64、/56、/48，IPv4 的位址與 /24——的雜湊、時間窗、次數或位元組），以及整個服務每天估算的寫入列數（`sync:daily-writes`），時間窗過了就刪（規格 12.10「頻率限制與容量」「多層計數、人機驗證與免費方案的容量」）。
+- 上限對齊 Cloudflare 免費方案：總共 300 MB、每個空間 25 MB（每筆的內容加上 200 bytes 的固定額外）；每天的寫入估算到一半時停止新的空間與配對碼，到上限時停止送出。
+- 人機驗證（Turnstile，有設定時）：建立同步空間與開配對碼的請求帶 `x-turnstile`，Worker 送到 Turnstile 的 siteverify 確認（`apps/sync/src/turnstile.ts`；網頁版的方塊在 `apps/web/src/human-check.tsx`）。
 - 每小時的排程（`wrangler.toml` 的 crons）：清掉建立超過 24 小時、沒有紀錄也沒有裝置的空空間，過期的配對碼、亂數與計數；用量到上限的 80% 時在 log 留警告。
 
 **裝置與換金鑰**（規格 12.27，`device-sync/device.ts`；網頁版在功能開關 `devices` 後面）
@@ -332,6 +334,8 @@ Secrets：
 | `CLOUDFLARE_ACCOUNT_ID` | 同上 | Cloudflare 的帳號 | 是 |
 | `INTERVALS_CLIENT_SECRET` | 正式的同步服務 | 用 Intervals.icu 登入 | 有 `INTERVALS_CLIENT_ID` 時 |
 | `STAGING_INTERVALS_CLIENT_SECRET` | staging 的同步服務 | 同上 | 有 `STAGING_INTERVALS_CLIENT_ID` 時 |
+| `TURNSTILE_SECRET_KEY` | 正式的同步服務（staging 沒有自己的時也用它） | 人機驗證的 secret key，部署時寫成 Worker 的 secret（規格 12.10） | 有 `TURNSTILE_SITE_KEY` 時 |
+| `STAGING_TURNSTILE_SECRET_KEY` | staging 的同步服務 | 同上（staging 另外建 widget 時） | 否 |
 | `PROXY_ANTHROPIC_API_KEY` | 正式的代理（staging 沒有自己的時也用它） | 代理轉送用的 Anthropic key | 部署代理時 |
 | `STAGING_PROXY_ANTHROPIC_API_KEY` | staging 的代理 | 同上，分開計用量 | 否 |
 | `PROXY_ADMIN_TOKEN` | 正式的代理 | 管理端點（`tools/proxy-admin.ts`） | 部署代理時 |
@@ -349,6 +353,8 @@ Variables：
 | `SYNC_URL` | 正式的網頁版；staging 用來檢查沒有連到正式的 | 正式的同步服務網址 |
 | `SYNC_D1_DATABASE_ID` | 正式的同步服務 | D1 的 id；沒有就不部署 |
 | `INTERVALS_CLIENT_ID` | 正式的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `TURNSTILE_SITE_KEY` | 正式的網頁版、同步服務（staging 沒有自己的時也用它） | 人機驗證的 site key（公開的）；和 `TURNSTILE_SECRET_KEY` 都有時才驗證（選填） |
+| `SYNC_DAILY_WRITE_BUDGET` | 正式的同步服務 | 每天估算的寫入列數上限（選填，預設 40000） |
 | `PROXY_URL` | 正式的網頁版；staging 用來檢查 | 正式的代理網址；沒有就不出現免費試用 |
 | `PROXY_D1_DATABASE_ID` | 正式的代理 | D1 的 id；沒有就只跑測試、不部署 |
 | `PROXY_POLICY` | 正式的代理 | 覆寫政策的 JSON（選填） |
@@ -357,6 +363,8 @@ Variables：
 | `STAGING_SYNC_URL` | staging 的網頁版 | staging 的同步服務網址（不能和 `SYNC_URL` 相同） |
 | `STAGING_SYNC_D1_DATABASE_ID` | staging 的同步服務 | D1 的 id |
 | `STAGING_INTERVALS_CLIENT_ID` | staging 的網頁版、同步服務 | 用 Intervals.icu 登入（選填） |
+| `STAGING_TURNSTILE_SITE_KEY` | staging 的網頁版、同步服務 | 人機驗證的 site key（選填；沒有時用 `TURNSTILE_SITE_KEY`） |
+| `STAGING_SYNC_DAILY_WRITE_BUDGET` | staging 的同步服務 | 每天估算的寫入列數上限（選填，預設 10000） |
 | `STAGING_PROXY_URL` | staging 的網頁版 | staging 的代理網址（不能和 `PROXY_URL` 相同） |
 | `STAGING_PROXY_D1_DATABASE_ID` | staging 的代理 | D1 的 id |
 | `STAGING_PROXY_POLICY` | staging 的代理 | 覆寫政策的 JSON（選填） |

@@ -315,6 +315,7 @@
 | 2.0-draft | 2026-11-18 | 安全測試：先在本機測、之後少量確認 staging；計畫、結果與還沒修的安全問題放在使用者的私人 repo（12.45） |
 | 2.0-draft | 2026-11-18 | 新增架構 session 與 `doc/strategy-map.md`（策略地圖：北極星、約束、六條軸線、路線、打平的帳、四個出口、交接與模塊簡報的格式）；使用者決定成功的樣子是「打平」（`product-brief.md` 第 5 節）；`CLAUDE.md` 的協作方式加上架構 session（12.46） |
 | 2.0-draft | 2026-11-18 | 架構 session 第二輪：使用者說明「為什麼選我們」（直接串接數據與 AI、最低摩擦；大廠做好了就停更）與第一批試用者很少（約 5 位）；提案把朋友試用和 iOS App 合成一站、加「隨時可以停」的約束，待使用者決定（12.46、`product-brief.md` 第 4、7 節） |
+| 2.0-draft | 2026-11-18 | 同步服務依來源的限制改成多層計數（IPv6 的 /64、/56、/48，IPv4 的位址與 /24）；建立同步空間與開配對碼前加上人機驗證（Cloudflare Turnstile，有設定時）；容量上限對齊 Cloudflare 免費方案（總共 300 MB、每個空間 25 MB）與整個服務每天的寫入上限；配對的每一步加上依來源的限制；有內容的請求只接受 application/json；隱私說明補上人機驗證（12.10、12.20） |
 
 ---
 
@@ -2685,9 +2686,9 @@ Intervals.icu 算的數字建立在設定值上：閾值心率設錯，負荷、
 *同步服務*（`apps/sync`，和代理同樣的結構：處理請求的程式共用，Cloudflare Workers 與 Node 各一個進入點）
 - 同步空間：以同步金鑰導出的 32 字元 id 存取，憑證只存雜湊。每筆紀錄只有隨機的 id、序號與加密後的內容；序號是這個空間目前最大的加一，配號和寫入在同一個 SQL 敘述裡完成，取回時不會跳過還沒寫入的紀錄。只有「開始同步」的第一台會建立空間（`PUT ...?create=1`），其他時候空間不存在就是 404。
 - 寫入要附「上次看到的序號」，伺服器上的版本不同時拒絕（衝突），客戶端先取回再送。取回時依序號分頁。
-- 上限：單筆約 1 MB、一次 200 筆、每個空間 10 萬筆或 100 MB。
+- 上限：單筆約 1 MB、一次 200 筆、每個空間 25 MB（2026-11-18 起，內容加上每筆的固定額外；原本 10 萬筆或 100 MB）。
 - 配對：新裝置建立 8 字元的配對碼（Crockford base32，不含 I、L、O、U），放上它的臨時公開金鑰與亂數的承諾；依序是舊裝置的公開金鑰、新裝置公開的亂數、加密的同步金鑰，每一項只能寫一次、順序不對就拒絕；10 分鐘失效。配對碼本身就是存取權限，不需要憑證（協定見下面的「安全強化」）。
-- 整個服務的上限（建立空間與配對碼不需要帳號）：最多 500 個空間、總共 2 GB、同時 200 組配對碼。
+- 整個服務的上限（建立空間與配對碼不需要帳號）：最多 500 個空間、總共 300 MB（2026-11-18 起對齊 Cloudflare 免費方案；原本 2 GB）、同時 200 組配對碼。
 - 不記錄任何請求：程式不寫 log，`wrangler.toml` 關閉觀測日誌。Cloudflare 的平台本身在網路層仍會經手 IP，這是我們控制不到的。
 - 回應一律不快取；只對允許的網頁來源（`https://<owner>.github.io`）回 CORS。
 
@@ -2788,7 +2789,7 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 *依來源的頻率限制*
 - 做法（和代理共用）：計數放在服務自己的 D1（`rate_limits` 表，`SqlRateLimiter`）。Workers 的每個請求可能在不同的執行個體，記憶體裡的計數不會累積，所以不能放記憶體。加上這次與比較上限在同一個 SQL 敘述裡（`INSERT … ON CONFLICT DO UPDATE … WHERE count + 這次 <= 上限 RETURNING`），並行的請求不會一起超過；超過時不加。來源 IP 只存雜湊，時間窗過了就刪（每小時的排程與偶爾順手清）。本機與測試可以換成記憶體的（`MemoryRateLimiter`）；本機的模擬服務（`tools/mock-upstream.ts`）不限制。
 - 沒有用 Cloudflare 的 Rate Limiting 綁定：它的上限寫死在 `wrangler.toml`、只能算次數不能算位元組、各地的資料中心分開算；D1 的計數可以照位元組算，部署也不用另外設定。代價是每次被限制的動作多一次 D1 寫入（只有建立空間、配對碼、送出才算，取回不算）。
-- 數字（每個來源 IP；`DEFAULT_RATE_LIMITS`）：
+- 數字（每個來源 IP；`DEFAULT_RATE_LIMITS`；2026-11-18 起改成多層計數，現在的數字見下面的「多層計數、人機驗證與免費方案的容量」）：
 
   | 動作 | 上限 | 正常使用 |
   |---|---|---|
@@ -2799,7 +2800,7 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 
   手機網路常常很多人共用一個 IP，所以數字放寬；只擋不正常的量。超過時回 429（`state: rate_limited`），用戶端顯示「同步太頻繁了，請稍後再試」。
 
-*整個服務的總量*（500 個空間、2 GB、同時 200 組配對碼，原本就有）
+*整個服務的總量*（500 個空間、2 GB、同時 200 組配對碼，原本就有；2026-11-18 起總量 300 MB、每個空間 25 MB）
 - 查總量與寫入在同一個敘述：建立空間是 `INSERT … SELECT … WHERE 空間數 < 上限`；配對碼一樣；送出前先保留這次最多會用到的位元組（`UPDATE spaces SET bytes = bytes + ? WHERE 這個空間與整個服務都放得下`），寫完再還回去（每筆寫入時加上實際的大小）。並行的請求不會一起超過。
 - 沒有紀錄、也沒有登記裝置的空間（開始同步之後就沒再用的），建立 24 小時後清掉；換金鑰的前後兩個空間不動、有資料的不動。每小時的排程（`wrangler.toml` 的 crons，`maintain`）清，服務已滿時建立空間前也先清一次再試。配對碼照原本的 10 分鐘失效、排程一起清。
 - 換金鑰建立的新空間（`PUT …?create=1&devices=1&from=舊空間`）不受整個服務的空間數限制，因為換完之後舊空間不算（一換一）：請求要用舊空間裡登記過、已過冷卻期的那台的金鑰簽章，而且同一個舊空間同時只能有一個換到一半的新空間；條件不符時照一般的建立（服務已滿就 503）。舊版的用戶端沒有帶 `from`，照一般的建立。
@@ -2817,6 +2818,54 @@ Cloudflare 後台的選單名稱可能和這裡寫的略有不同，以實際畫
 *寫入的查詢次數*（2026-11-17，[KI-051](known-issues.md)）：D1 的每個查詢都是 Worker 到資料庫的一次來回，Workers 每次呼叫的查詢數也有上限。一次送出的整批用固定次數的查詢寫入（`SyncStore.putMany`：讀現在的版本 1 次、每約 1 MB 寫入 1 次〔`json_each` 帶整批，版本的檢查、配序號與寫入在同一個敘述〕、更新大小 1 次），一個送出的請求約 15 個查詢，和筆數無關。序號是空間目前最大的加上在這批裡的位置，會跳號但只會變大。換金鑰時把整個空間重送一次也不會變慢。
 
 驗證：`apps/sync/test/capacity.test.ts`（每個請求都重新建立處理器、計數只能靠共用的 SQLite：建立空間每小時與每天的上限、不同的 IP 分開算、已有的空間不算建立、配對碼、送出的次數與位元組、IP 只存雜湊；空的空間被清、有資料與有裝置的不清、服務已滿時先清再建；並行 10 個建立只成功 3 個、並行送出不越過總位元組、並行配對碼；換金鑰在服務已滿時仍成功、沒有簽章／不是那個空間的裝置／還在冷卻期的不能繞過、同一個舊空間不能同時開兩個）；`packages/core/test/rate-limit.test.ts`。沒有在真的 D1 上跑過並行。
+
+**多層計數、人機驗證與免費方案的容量**（2026-11-18，`apps/sync/src/handler.ts`、`turnstile.ts`、`store.ts`、`packages/core/src/rate-limit.ts`、`apps/web/src/human-check.tsx`）
+
+同步服務依來源的限制改成多層計數；建立同步空間與開配對碼前加上人機驗證；容量上限對齊 Cloudflare 免費方案；整個服務估算每天的寫入列數；配對的每一步也有依來源的限制；有內容的請求只接受 `application/json`。加密與資料格式不變。
+
+*多層計數*
+- 同一個來源同時以好幾層計數，每一層有自己的上限，上層寬鬆一些（`sourceLevels`、`TieredRules`）：IPv6 的 /64、/56、/48；IPv4 的完整位址與 /24。沒有 IP 時（本機的 Node 版）用 /64 的規則。
+- 寬的層先檢查。一個請求要檢查的計數（好幾層、好幾個時間窗、好幾種）先用一個查詢全部讀出來（`firstOver`），有一條超過就這次都不算、回 429，被擋下的請求不會把其他層的計數也用掉；都沒超過才逐條加上（加的那一步照舊和上限比在同一個敘述裡）。
+- 數字（`DEFAULT_RATE_LIMITS`；/64 與 IPv4 的位址｜/56｜/48 與 IPv4 的 /24）：
+
+  | 動作 | /64、IPv4 位址 | /56 | /48、IPv4 /24 | 正常使用 |
+  |---|---|---|---|---|
+  | 建立同步空間 | 每小時 5、每天 10 | 每小時 10、每天 20 | 每小時 20、每天 40 | 一個人開始同步一兩次；換金鑰的新空間一次一個 |
+  | 建立配對碼 | 每 10 分鐘 10、每天 30 | 每 10 分鐘 15、每天 60 | 每 10 分鐘 20、每天 100 | 配對一台一個，打錯重來幾次 |
+  | 查詢配對碼時找不到 | 每小時 20 | 40 | 60 | 打錯配對碼幾次；找得到的不算（等另一台時每 2 秒查一次） |
+  | 配對的每一步（hello、nonce、box、取消） | 每小時 30 | 45 | 60 | 一次配對 4、5 步 |
+  | 送出紀錄的次數 | 每分鐘 120 | — | — | 一台每分鐘最多約 15 次 |
+  | 送出的位元組 | 每天 300 MB | — | — | 一個空間最多 25 MB，換金鑰重送一次 |
+  | 送出的筆數 | 每天 1 萬筆 | — | 每天 2 萬筆 | 重度使用一年約 4 千筆；換金鑰把整個空間重送一次 |
+
+  同一個家庭、學校、公司的網路通常是同一個 IPv4 或同一個 /48、/56；手機網路很多人共用 IPv4，IPv6 是每支手機一個 /64。開始同步與配對一個人一輩子沒幾次，所以寬的層是窄的層的 2～4 倍，幾個人同時開始也不受影響。送出只在窄的層算次數與位元組（每多一層每次送出就多寫一列），筆數多算 /48 與 /24。
+- 查詢配對碼：找不到的才計數；那個來源的「找不到」用完時，查任何配對碼都回 429。
+
+*人機驗證（Cloudflare Turnstile）*
+- 建立同步空間（「開始同步」、「用這台重新開始」）與開配對碼（新裝置「加入已經在同步的裝置」）之前，網頁版先顯示 Turnstile 的方塊，多數情況幾秒內自動通過；通過拿到的一次性 token 放在請求的 `x-turnstile` 標頭。同步服務從 Worker 送到 Turnstile 的 siteverify 確認（只送 secret 與 token，不送 IP），通過才建立。token 是給哪一步的（`action`：`create-space`、`pair`）也要對得上。
+- 換金鑰的新空間不用驗證：建立的請求已經要舊空間裡登記過、過了冷卻期的那台簽章，而且一換一。配對的其他步驟（舊裝置的 hello 與 box、新裝置的 nonce、查詢、取消）不用驗證，靠上面的頻率限制。已經有的空間每次同步時的確認（`PUT ?create=1` 而空間已存在）也不用。
+- 失敗時：沒有 token 或驗證沒過回 403（`state: human_check`，`reason: missing／failed`），用戶端顯示「人機驗證沒有通過或已經過期，請再試一次」；Turnstile 連不上或 secret 設錯回 503（`state: human_check_unavailable`）。網頁版的方塊失敗、過期時顯示說明與「重試」；token 只能用一次，建立失敗後回到開始，下次重新驗證。
+- 設定：site key 是 GitHub 的 Variables `TURNSTILE_SITE_KEY`（staging 可以另外設 `STAGING_TURNSTILE_SITE_KEY`，沒有時用正式的；建議一個 widget 同時填 app.zone2mate.com 與 staging.zone2mate.com）；secret key 是 Secrets 的 `TURNSTILE_SECRET_KEY`（staging 的 `STAGING_TURNSTILE_SECRET_KEY`，沒有時用正式的），部署時以 `wrangler secret put` 寫成 Worker 的 secret（從 stdin 給，不印出）。site key 與 secret key 都有時，部署才把 `wrangler.toml` 的 `TURNSTILE` 填成 `on`，Worker 才驗證；只有其中一個時不驗證（網頁版有 site key 就顯示方塊，無害）。網頁版的建置有 site key 時，CSP 的 `script-src` 加上 `https://challenges.cloudflare.com`、加一條 `frame-src https://challenges.cloudflare.com`；沒有時 CSP 不變。
+- 沒有設定時（本機、模擬服務、一般的 E2E）照舊不驗證。測試用 Turnstile 官方的測試金鑰（`apps/sync/src/turnstile-testing.ts`：一定通過、一定失敗、用過的 secret 與 dummy token，不連網路）；模擬上游 `MOCK_TURNSTILE=1` 時照一定通過的測試 secret 驗證。
+- 改了 site key 或 secret key 要手動執行一次「Deploy sync service」與「Deploy web app」（staging 是「Deploy staging」）。部署的那幾分鐘，還開著舊版網頁的人開始同步或配對會失敗，重新整理就好。
+
+*容量（Cloudflare 免費方案：每個 D1 最多 500 MB）*
+- 總容量 300 MB（`DEFAULT_LIMITS.bytes`），留下約 200 MB 給簽章的亂數、頻率限制的計數、索引與換金鑰時的暫存；每個空間 25 MB（`MAX_SPACE_BYTES`）。
+- 大小算的是每筆的內容加上每筆 200 bytes 的固定額外（`RECORD_OVERHEAD`：id、序號、兩個索引）；更新已經有的那筆只算內容的差。不再用每個空間的筆數上限（原本 10 萬筆；現在 25 MB 就是約 12 萬筆很小的紀錄），送出時也就不用每次數一遍空間裡有幾筆。2026-11-18 之前寫入的紀錄沒有算固定額外（量很小）。
+- 估算：重度使用（每天對話、課表、自評、匯入活動檔）一年約 4 千筆、5 MB，25 MB 可以用好幾年；一般的使用一年 1～2 MB。300 MB 約可放 100 人以上的一般使用。
+- 換金鑰的新空間（還沒換完）可以暫時超過總量一個空間的量（25 MB）：舊空間的資料換好就刪掉。
+
+*整個服務每天的寫入上限*（Cloudflare 免費方案整個帳號每天 10 萬列，staging 與正式、同步與代理一起算；超過就被擋到 UTC 的隔天）
+- 每次寫入的動作估算會寫幾列（`WRITE_COST`），累計在 `rate_limits` 的一列（`sync:daily-writes`，以 UTC 的日為時間窗）：建立空間 12、開配對碼 12、送出每筆 3 列（資料與兩個索引）加 10（計數、大小、簽章的亂數）。
+- 用到一半時停止新的空間與配對碼（503，`state: daily_limit`），已經在同步的照常送出；用到上限時送出也停止，`retryAfter` 是到 UTC 午夜的秒數，用戶端顯示「今天的同步量已達上限，明天會自動恢復；資料都還在這台」。資料都留在裝置上，隔天自動送出。換金鑰的新空間不受「一半」的限制。取回（只讀）不受影響。
+- 上限：正式 4 萬列（`DEFAULT_DAILY_WRITES`，Variables 的 `SYNC_DAILY_WRITE_BUDGET` 可以改），staging 1 萬列（`STAGING_SYNC_DAILY_WRITE_BUDGET`，預設 10000）：兩個同步服務最多 5 萬列，留一半給代理與其他。
+- 正常使用一天大約：每次送出（1～3 筆）約 15 列，一個人一天送 10～20 次約 200～300 列；每個簽章的請求（含取回）另外寫簽章的亂數 2 列、最後同步時間 1 列（一分鐘最多一次），一天開 30 次約 100～150 列。合計一個人一天約 300～450 列，4 萬列約可給 100 個每天使用的人。開始同步一次 30～50 列，配對一次約 30 列，換金鑰是空間的筆數乘 6（新空間寫 3、舊空間刪 3）。人多了以後要換付費方案（每月 5 美元，寫入 5 千萬列）。
+- 估算不含簽章的亂數與最後同步時間（每個請求都有，計數會讓每個請求多寫一列）；所以上限比免費方案保守。
+
+*只接受 application/json*
+- 有內容的請求（POST，以及帶內容的 PUT、DELETE）的 `content-type` 不是 `application/json` 時回 415。沒有內容的 PUT（開始同步）、DELETE 與 preflight（OPTIONS）照舊。
+
+驗證：`apps/sync/test/protection.test.ts`（同一個 /48 的不同 /64、也在不同的 /56 累積到 /48 的上限、隔壁的 /48 不受影響、過了時間窗恢復；同一個 /56 的不同 /64；IPv4 /24；被寬的層擋下時窄的層沒被用掉；計數裡看不到 IP；Turnstile：沒有 token、錯的、用過的、格式不對的 token 拒絕且沒有建立，官方測試 token 通過、已有的空間不用再驗證、開配對碼要驗證其他步驟不用、只送 secret 與 token、別的步驟的 token 不能用、連不上與 secret 設錯是 503、沒設定時不驗證、CORS 允許標頭、引擎帶 token 開始同步而換金鑰不用；容量：25 MB 的空間 413、很多筆小紀錄也算進大小、換金鑰的新空間可以暫時超過總量；每天的寫入：一半時擋新的空間與配對碼但送出照常、用完時送出也擋且沒有寫入、讀取不受影響、隔天恢復、沒有計數時不限制、引擎的說明；content-type：text/plain、表單、沒有 content-type 的 POST 是 415 且沒有建立配對碼、preflight 照舊；配對：找不到的每小時 20 次、用完後查任何配對碼都是 429、找得到的不算、每一步每小時 30 次）；`packages/core/test/rate-limit.test.ts`（多層的來源、先讀再加）；`tools/test/sync-config.test.ts`；網頁實測 `tools/e2e/verify-human-check.cjs`（瀏覽器裡的 Turnstile 換成假的，CSP 照樣檢查）。沒有在真的 Cloudflare 上試過 Turnstile 的方塊與 siteverify（開發環境連不到 Cloudflare），要在 staging 試。
 
 ### 12.11 對話裡想記住的事（2026-10-23，已實作）
 
@@ -3466,6 +3515,7 @@ API token：現有的部署用 token（12.10、12.13：Workers 編輯、D1 編�
 | App 的程式不使用 cookie | `apps/web/src`、`packages/core/src` 沒有 `document.cookie` |
 | 全部重置刪除資料庫與設定（含 API key、同步金鑰） | `Settings.tsx` 的 `reset(null)`、`settings.ts` 的 `clearSettings()` |
 | 刪除雲端的同步資料 | `DeviceSync.tsx` 的「刪除雲端的資料」、`apps/sync/src/store.ts` 的 `deleteSpace()` |
+| 開始同步與配對新裝置時用 Cloudflare 的人機驗證（Turnstile，有 site key 的建置才有）；同步服務只送驗證的代碼、不送 IP（2026-11-18，12.10） | `apps/web/src/human-check.tsx`、`DeviceSync.tsx`；`apps/sync/src/turnstile.ts` 的 `verifyTurnstile()`；`privacy/render.ts` 的 `humanCheck` |
 | 清除天氣的城市、密碼鎖、各個按鈕名稱 | `WeatherSettings.tsx`、`Settings.tsx` |
 
 沒有寫的：Cloudflare 自己的流量統計、各家服務實際怎麼保存資料（只附它們的隱私政策：Anthropic、OpenAI、Google Gemini API 的條款、Intervals.icu、Open-Meteo、Cloudflare；雲端環境連不到這些網站，網址用搜尋確認，Anthropic 的實際打開過）；訂閱代理、手機 App、Discord bot（照工作單不寫，頁面開頭寫明只說明「使用你自己的 AI API key」的網頁版）。

@@ -23,6 +23,8 @@ export interface PrivacyBuild {
   intervalsLogin?: boolean;
   /** 這次建置提供免費試用（功能開關 trial 與 VITE_PROXY_URL，規格 12.39）：代理的網址 */
   trialProxyUrl?: string;
+  /** 這次建置有人機驗證（VITE_TURNSTILE_SITE_KEY 與同步服務，規格 12.10）：開始同步與配對時用 Cloudflare Turnstile */
+  humanCheck?: boolean;
 }
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
@@ -105,6 +107,10 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
     "<!--INTERVALS_LOGIN-->": build.intervalsLogin
       ? "<li><strong>用 Intervals.icu 登入（選用）</strong>：按「用 Intervals.icu 登入」時，你在 Intervals.icu 按同意後，它給的一次性授權碼會經過我們的同步服務轉送一次，換成只能讀你自己資料的 token（要用到只有我們有的 App 密碼，所以要經過伺服器）；同步服務不保存授權碼與 token、不留紀錄。token 只存在這台裝置的瀏覽器（密碼鎖開著時加密），不會同步；之後由瀏覽器直接帶著 token 向 Intervals.icu 讀資料。權限只有讀：活動、恢復資料、運動設定。按「中斷連結」會請 Intervals.icu 取消授權並刪掉這台的 token；也可以在 Intervals.icu 的設定頁移除 Zone2Mate。</li>"
       : "",
+    "<!--HUMAN_CHECK-->": build.humanCheck
+      ? '<li>開始同步與配對新裝置時，先用 Cloudflare 的人機驗證（Turnstile）確認不是機器人：網頁會從 <code>challenges.cloudflare.com</code> 載入它的方塊，Cloudflare 依它的<a href="https://www.cloudflare.com/turnstile-privacy-policy/">Turnstile 隱私說明</a>處理連線與瀏覽器的資訊；同步服務只把驗證結果的代碼送去 Cloudflare 確認，不送你的 IP，也不留紀錄。</li>'
+      : "",
+    "<!--HUMAN_CHECK_CHANGE-->": build.humanCheck ? "<li>2026-11-18：開始同步與配對新裝置時，先用 Cloudflare 的人機驗證（Turnstile）。</li>" : "",
     "<!--INTERVALS_LOGIN_CHANGE-->": build.intervalsLogin
       ? "<li>2026-11-02：可以用 Intervals.icu 登入（授權碼經過同步服務轉送一次換成 token，不保存；token 只存在你的裝置）。</li>"
       : "",

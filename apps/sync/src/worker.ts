@@ -13,6 +13,11 @@ interface Env {
   /** 用 Intervals.icu 登入（規格 12.37）：client_id 是 wrangler.toml 的 var，client_secret 是 Worker 的 secret；沒有設定時登入不能用 */
   INTERVALS_CLIENT_ID?: string;
   INTERVALS_CLIENT_SECRET?: string;
+  /** 人機驗證（Turnstile）：網頁版有 site key 時部署填成 "on"（wrangler.toml 的 var）；secret key 是 Worker 的 secret. 兩個都有才驗證 */
+  TURNSTILE?: string;
+  TURNSTILE_SECRET_KEY?: string;
+  /** 整個服務每天估算最多寫入幾列（wrangler.toml 的 var，部署時填入；空的用預設） */
+  DAILY_WRITE_BUDGET?: string;
 }
 
 const originsOf = (env: Env) =>
@@ -85,6 +90,8 @@ export default {
       store,
       allowedOrigins: originsOf(env),
       rateLimiter: limiter,
+      turnstile: env.TURNSTILE === "on" && env.TURNSTILE_SECRET_KEY?.trim() ? { secret: env.TURNSTILE_SECRET_KEY.trim() } : undefined,
+      dailyWrites: Number(env.DAILY_WRITE_BUDGET) > 0 ? Number(env.DAILY_WRITE_BUDGET) : undefined,
       // 只有數量與被限制的種類，沒有 IP 或內容
       log: (line) => console.warn(line),
     });

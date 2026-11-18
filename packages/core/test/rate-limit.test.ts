@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
-import { MemoryRateLimiter, sourceIp, sourceKey, SqlRateLimiter, takeAll, type RateLimiter } from "../src/rate-limit";
+import { MemoryRateLimiter, sourceIp, sourceKey, sourceLevels, SqlRateLimiter, takeAll, takeEntries, type RateLimiter } from "../src/rate-limit";
 
 async function limiters(now: () => number): Promise<[string, RateLimiter & { purge?: () => Promise<number> }][]> {
   const sql = new SqlRateLimiter(openNodeSqlite(":memory:"), now);
@@ -73,5 +73,43 @@ describe("頻率限制", () => {
     // 用戶端自己帶的標頭不算
     expect(sourceIp(req({ "x-forwarded-for": "203.0.113.9" }))).toBe("unknown");
     expect(sourceIp(req({}))).toBe("unknown");
+  });
+
+  it("多層的來源：IPv6 由寬到窄 /48、/56、/64；IPv4 /24 與完整的位址；沒有 IP 時 unknown", () => {
+    expect(sourceLevels("2001:db8:aa:12bb:1:2:3:4")).toEqual([
+      { tier: "v6/48", source: "2001:db8:aa:0::/48" },
+      { tier: "v6/56", source: "2001:db8:aa:1200::/56" },
+      { tier: "v6/64", source: "2001:db8:aa:12bb::/64" },
+    ]);
+    // 同一個 /48 的不同 /64：/48 一樣、/64 不同
+    const a = sourceLevels("2001:db8:aa:1::1");
+    const b = sourceLevels("2001:db8:aa:ff01::1");
+    expect(a[0]).toEqual(b[0]);
+    expect(a[2]).not.toEqual(b[2]);
+    expect(sourceLevels("2001:db8::1")[0]!.source).toBe("2001:db8:0:0::/48");
+    expect(sourceLevels("198.51.100.7")).toEqual([
+      { tier: "v4/24", source: "198.51.100.0/24" },
+      { tier: "v4/32", source: "198.51.100.7" },
+    ]);
+    expect(sourceLevels("::ffff:198.51.100.7")[1]).toEqual({ tier: "v4/32", source: "198.51.100.7" });
+    expect(sourceLevels(null)).toEqual([{ tier: "unknown", source: "unknown" }]);
+    expect(sourceLevels("  ")).toEqual([{ tier: "unknown", source: "unknown" }]);
+  });
+
+  it("takeEntries：有一條超過時都不加（先只讀檢查），每一條可以有自己的 weight", async () => {
+    const t = 0;
+    for (const [, limiter] of await limiters(() => t)) {
+      const small = { limit: 2, windowMs: 1000 };
+      const big = { limit: 100, windowMs: 1000 };
+      expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 10 }, { key: "narrow", rule: small }], 1, t)).toBeNull();
+      expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 10 }, { key: "narrow", rule: small }], 1, t)).toBeNull();
+      // narrow 用完：wide 不會再被加
+      for (let i = 0; i < 5; i++) expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 10 }, { key: "narrow", rule: small }], 1, t)).toBe(1000);
+      // wide 還剩 80
+      expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 80 }], 1, t)).toBeNull();
+      expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 1 }], 1, t)).toBe(1000);
+      // weight 0 的不算
+      expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 0 }], 1, t)).toBeNull();
+    }
   });
 });

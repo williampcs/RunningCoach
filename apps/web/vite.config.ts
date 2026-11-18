@@ -28,10 +28,14 @@ function buildInfo() {
  * 建置結果同時有 <meta>（GitHub Pages 不能設定回應標頭）與 Cloudflare Pages 的 _headers（真正的回應標頭，
  * 另外加上 <meta> 做不到的 frame-ancestors 等，見 securityHeaders）.
  */
+/** 人機驗證（Turnstile，規格 12.10）：有 site key 的建置才允許它的腳本與方塊（iframe） */
+const TURNSTILE_ORIGIN = process.env.VITE_TURNSTILE_SITE_KEY?.trim() ? " https://challenges.cloudflare.com" : "";
+
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   // sqlite-wasm 需要編譯 WebAssembly；這不允許 eval 一般的 JavaScript
-  "script-src 'self' 'wasm-unsafe-eval'",
+  `script-src 'self' 'wasm-unsafe-eval'${TURNSTILE_ORIGIN}`,
+  ...(TURNSTILE_ORIGIN ? [`frame-src${TURNSTILE_ORIGIN}`] : []),
   "style-src 'self'",
   "img-src 'self' data:",
   // LLM 供應商與「其他相容服務」的網址由使用者填寫，無法事先列舉
@@ -93,6 +97,7 @@ function legalPages() {
     onboarding: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("onboarding"),
     intervalsLogin: !!process.env.VITE_INTERVALS_CLIENT_ID?.trim() && !!process.env.VITE_SYNC_URL?.trim(),
     trialProxyUrl: parseFeatures(process.env.VITE_FEATURES, { staging }).includes("trial") ? (process.env.VITE_PROXY_URL ?? "") : "",
+    humanCheck: !!process.env.VITE_TURNSTILE_SITE_KEY?.trim() && !!process.env.VITE_SYNC_URL?.trim(),
   };
   return { privacy: renderPrivacyPage(build), terms: renderTermsPage({ staging }) };
 }

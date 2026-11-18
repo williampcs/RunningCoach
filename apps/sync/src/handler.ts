@@ -5,13 +5,17 @@
  * - 裝置（規格 12.27）：空間有登記的裝置之後（裝置模式），每個請求要用那台自己的金鑰簽章，
  *   舊的憑證只能用來登記新裝置. 移除某台＝換金鑰：留下的裝置搬到新的空間，舊空間只回答「搬到哪裡」與「已被移除」.
  *   沒有登記過裝置的空間照舊（舊版的用戶端）
- * 依來源 IP 限制建立空間、配對碼與送出的頻率（IP 只以雜湊計數，時間窗過了就刪）；不記錄 IP、標頭或內容；回應不快取.
+ * 依來源限制建立空間、配對碼、配對的每一步與送出的頻率：同一個來源以好幾層計數（IPv6 的 /64、/56、/48，IPv4 的位址與 /24），
+ * 每一層有自己的上限（IP 只以雜湊計數，時間窗過了就刪）；不記錄 IP、標頭或內容；回應不快取.
+ * 建立同步空間與開配對碼之前要通過人機驗證（Turnstile，有設定時）. 整個服務每天估算寫入的列數，接近上限時先停止新的空間與配對.
+ * 有內容的請求只接受 application/json.
  */
 import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
 
-import { hashSource, sourceIp, takeAll, type RateLimiter, type RateRule } from "@running-coach/core/rate-limit";
+import { requestSourceLevels, takeEntries, tieredEntries, type RateLimiter, type RateRule, type TieredRules } from "@running-coach/core/rate-limit";
 
-import type { DeviceRow, SyncStore } from "./store";
+import { RECORD_OVERHEAD, type DeviceRow, type SyncStore } from "./store";
+import { HUMAN_HEADER, verifyTurnstile, type TurnstileConfig } from "./turnstile";
 
 export interface SyncDeps {
   store: SyncStore;
@@ -26,32 +30,74 @@ export interface SyncDeps {
   /** 依來源的頻率限制；沒有給時不限制（本機的模擬服務） */
   rateLimiter?: RateLimiter;
   rateLimits?: Partial<SyncRateLimits>;
+  /** 人機驗證（Turnstile）的設定；沒有給時不驗證（本機、模擬服務、E2E） */
+  turnstile?: TurnstileConfig;
+  /**
+   * 整個服務每天（UTC）估算最多寫入幾列（Cloudflare 免費方案整個帳號每天 10 萬列，staging、正式、同步與代理共用）.
+   * 用到一半時停止新的空間與配對碼，用完時連送出也停止（換金鑰的新空間不受一半的限制）. 沒有 rateLimiter 時不計
+   */
+  dailyWrites?: number;
   /** 只會收到數量（服務已滿、被限制的是哪一種），沒有 IP 或內容 */
   log?: (line: string) => void;
 }
 
-/** 每個來源 IP 的頻率限制（規格 12.10）：每一種可以有好幾個時間窗 */
+/**
+ * 每個來源的頻率限制（規格 12.10）：每一種、每一層（TieredRules）可以有好幾個時間窗.
+ * 寬的層先檢查；有一條超過時這次都不算
+ */
 export interface SyncRateLimits {
   /** 建立同步空間（開始同步、換金鑰） */
-  createSpace: Record<string, RateRule>;
+  createSpace: TieredRules;
   /** 建立配對碼 */
-  createPair: Record<string, RateRule>;
+  createPair: TieredRules;
+  /** 查詢配對碼時找不到的次數；找得到的（等另一台時每 2 秒查一次）不算 */
+  pairMiss: TieredRules;
+  /** 配對的每一步：hello、nonce、box 與取消 */
+  pairStep: TieredRules;
   /** 送出紀錄的次數 */
-  push: Record<string, RateRule>;
+  push: TieredRules;
   /** 送出紀錄的位元組 */
-  pushBytes: Record<string, RateRule>;
+  pushBytes: TieredRules;
+  /** 送出紀錄的筆數（每筆在資料庫寫 3 列：資料與兩個索引） */
+  pushRecords: TieredRules;
 }
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
+/** 同一組規則套到 IPv6 與 IPv4 對應的層：narrow 是 /64 與 IPv4 的位址，wide 是 /56，widest 是 /48 與 IPv4 的 /24 */
+const tiers = (narrow: Record<string, RateRule>, wide: Record<string, RateRule> | null, widest: Record<string, RateRule>): TieredRules => ({
+  "v6/48": widest,
+  ...(wide ? { "v6/56": wide } : {}),
+  "v6/64": narrow,
+  "v4/24": widest,
+  "v4/32": narrow,
+});
+
+const per = (limit: number, windowMs: number): RateRule => ({ limit, windowMs });
+
+/**
+ * 預設的上限（規格 12.10 有理由）：一般人開始同步一兩次、配對幾次；同一個家庭、學校、手機網路共用一段位址時，
+ * 寬的層讓好幾個人同時用也不受影響
+ */
 export const DEFAULT_RATE_LIMITS: SyncRateLimits = {
-  createSpace: { hour: { limit: 10, windowMs: HOUR }, day: { limit: 30, windowMs: DAY } },
-  createPair: { tenMinutes: { limit: 10, windowMs: 10 * MINUTE }, day: { limit: 50, windowMs: DAY } },
-  push: { minute: { limit: 120, windowMs: MINUTE } },
-  pushBytes: { hour: { limit: 150_000_000, windowMs: HOUR }, day: { limit: 400_000_000, windowMs: DAY } },
+  createSpace: tiers({ hour: per(5, HOUR), day: per(10, DAY) }, { hour: per(10, HOUR), day: per(20, DAY) }, { hour: per(20, HOUR), day: per(40, DAY) }),
+  createPair: tiers({ tenMinutes: per(10, 10 * MINUTE), day: per(30, DAY) }, { tenMinutes: per(15, 10 * MINUTE), day: per(60, DAY) }, { tenMinutes: per(20, 10 * MINUTE), day: per(100, DAY) }),
+  pairMiss: tiers({ hour: per(20, HOUR) }, { hour: per(40, HOUR) }, { hour: per(60, HOUR) }),
+  pairStep: tiers({ hour: per(30, HOUR) }, { hour: per(45, HOUR) }, { hour: per(60, HOUR) }),
+  push: { "v6/64": { minute: per(120, MINUTE) }, "v4/32": { minute: per(120, MINUTE) } },
+  pushBytes: { "v6/64": { day: per(300_000_000, DAY) }, "v4/32": { day: per(300_000_000, DAY) } },
+  pushRecords: tiers({ day: per(10_000, DAY) }, null, { day: per(20_000, DAY) }),
 };
+
+/** 整個服務每天估算的寫入列數上限（正式；staging 由部署設定調小） */
+export const DEFAULT_DAILY_WRITES = 40_000;
+/** 用到這個比例後不再建立新的空間與配對碼，留給已經在同步的 */
+const NEW_SHARE = 0.5;
+/** 估算的寫入列數：建立空間（空間、裝置模式、登記這台與計數）、配對碼（配對碼的每一步與計數）、送出（每筆 3 列，加上計數、大小、簽章的亂數） */
+const WRITE_COST = { space: 12, pair: 12, pushBase: 10, perRecord: 3 };
+const WRITES_KEY = "sync:daily-writes";
 
 /** 沒有紀錄也沒有登記裝置的空間，建立多久之後清掉 */
 export const EMPTY_SPACE_TTL_MS = DAY;
@@ -62,7 +108,11 @@ export interface ServiceLimits {
   pairSlots: number;
 }
 
-export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 2_000_000_000, pairSlots: 200 };
+/**
+ * 整個服務的上限：Cloudflare 免費方案每個 D1 最多 500 MB，總容量留下約 200 MB 給簽章的亂數、頻率限制的計數、索引與換金鑰時的暫存.
+ * bytes 算的是每筆的內容加上每筆的固定額外（RECORD_OVERHEAD）
+ */
+export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200 };
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -70,9 +120,8 @@ const MAX_BLOB = 1_400_000;
 const MAX_BODY = 4_000_000;
 const MAX_PUSH = 200;
 const MAX_PULL = 500;
-/** 每個同步空間的上限 */
-const MAX_RECORDS = 100_000;
-const MAX_BYTES = 100_000_000;
+/** 每個同步空間的上限（紀錄的內容加上每筆的固定額外）：重度使用約一年 4,000 筆、5 MB，可以用好幾年 */
+export const MAX_SPACE_BYTES = 25_000_000;
 const PAIR_TTL_MS = 10 * 60_000;
 export const COOLDOWN_MS = 24 * 3600_000;
 /**
@@ -140,15 +189,57 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const rateLimits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
   const log = deps.log ?? (() => undefined);
 
-  /** 這個來源這次還在限制內嗎；超過時回 429（state: rate_limited，retryAfter 是要等幾秒） */
-  async function limitSource(request: Request, kind: keyof SyncRateLimits, weight = 1): Promise<void> {
+  /**
+   * 這個來源（每一層）這次還在限制內嗎；超過時回 429（state: rate_limited，retryAfter 是要等幾秒）.
+   * 好幾種一起檢查（一個查詢先讀，都沒超過才加）；weights 是每一種這次要加多少（預設 1）
+   */
+  async function limitSource(request: Request, kinds: (keyof SyncRateLimits)[], weights: number[] = []): Promise<void> {
     if (!deps.rateLimiter) return;
-    const source = await hashSource(sourceIp(request));
-    const waitMs = await takeAll(deps.rateLimiter, `sync:${kind}:${source}`, rateLimits[kind], weight, nowMs());
+    const levels = requestSourceLevels(request);
+    const entries = (await Promise.all(kinds.map((kind, i) => tieredEntries(`sync:${kind}`, levels, rateLimits[kind], weights[i] ?? 1)))).flat();
+    const waitMs = await takeEntries(deps.rateLimiter, entries, 1, nowMs());
     if (waitMs !== null) {
-      log(`rate limited: ${kind}`);
+      log(`rate limited: ${kinds.join(",")}`);
       throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
     }
+  }
+
+  /** 只查不加：這個來源（每一層）的額度用完時回 429；查配對碼時先看，用完的不讓它知道配對碼存不存在 */
+  async function requireSourceRoom(request: Request, kind: keyof SyncRateLimits): Promise<void> {
+    if (!deps.rateLimiter?.firstOver) return;
+    const entries = await tieredEntries(`sync:${kind}`, requestSourceLevels(request), rateLimits[kind], 1);
+    const over = await deps.rateLimiter.firstOver(entries);
+    if (over < 0) return;
+    log(`rate limited: ${kind}`);
+    const rule = entries[over]!.rule;
+    const now = nowMs();
+    const waitMs = (Math.floor(now / rule.windowMs) + 1) * rule.windowMs - now;
+    throw new HttpError(429, "太頻繁了，請稍後再試", { state: "rate_limited", retryAfter: Math.max(1, Math.ceil(waitMs / 1000)) });
+  }
+
+  const dailyWrites = deps.dailyWrites ?? DEFAULT_DAILY_WRITES;
+
+  /**
+   * 整個服務今天（UTC）估算的寫入列數. fresh：新的空間或配對碼，只能用到一半；其他（送出、換金鑰的新空間）可以用到上限.
+   * 超過時回 503（state: daily_limit，retryAfter 是到 UTC 午夜的秒數）
+   */
+  async function spendWrites(weight: number, fresh: boolean): Promise<void> {
+    if (!deps.rateLimiter) return;
+    const rule = { limit: fresh ? Math.floor(dailyWrites * NEW_SHARE) : dailyWrites, windowMs: DAY };
+    if (await deps.rateLimiter.take(WRITES_KEY, rule, weight)) return;
+    log(`sync daily writes limit: ${fresh ? "new spaces and pairing" : "all writes"}`);
+    const now = nowMs();
+    throw new HttpError(503, "今天的同步量已達上限，明天會恢復", { state: "daily_limit", retryAfter: Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000)) });
+  }
+
+  /** 人機驗證（有設定 Turnstile 時）：建立同步空間與開配對碼之前 */
+  async function requireHuman(request: Request, action: "create-space" | "pair"): Promise<void> {
+    if (!deps.turnstile?.secret) return;
+    const result = await verifyTurnstile(deps.turnstile, request.headers.get(HUMAN_HEADER), action);
+    if (result === "ok") return;
+    log(`human check: ${result}`);
+    if (result === "unavailable") throw new HttpError(503, "人機驗證暫時無法使用，請稍後再試", { state: "human_check_unavailable" });
+    throw new HttpError(403, result === "missing" ? "需要人機驗證" : "人機驗證沒有通過", { state: "human_check", reason: result });
   }
 
   function corsHeaders(request: Request): Record<string, string> {
@@ -158,7 +249,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     return {
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "access-control-allow-headers": "authorization, content-type, x-device, x-time, x-nonce, x-signature",
+      "access-control-allow-headers": `authorization, content-type, x-device, x-time, x-nonce, x-signature, ${HUMAN_HEADER}`,
       "access-control-max-age": "86400",
       vary: "Origin",
     };
@@ -388,7 +479,10 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         if (url.searchParams.get("create") !== "1") throw new HttpError(404, "同步空間不存在");
         const from = url.searchParams.get("from");
         const rekeying = from !== null && (await rekeyCreation(request, url, from, space, text));
-        await limitSource(request, "createSpace");
+        await limitSource(request, ["createSpace"]);
+        // 換金鑰的新空間：舊空間裡過了冷卻期的裝置簽過，不用人機驗證，也不受「新空間只能用到一半」的限制
+        if (!rekeying) await requireHuman(request, "create-space");
+        await spendWrites(WRITE_COST.space, !rekeying);
         let created = await store.createSpace(space, hash, limits.spaces, rekeying ? from : null);
         if (!created && (await store.spaceToken(space)) === null) {
           // 服務已滿：先清掉沒在用的空空間再試一次
@@ -456,16 +550,20 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const body = parseJson(text);
         const items = Array.isArray(body.items) ? body.items : null;
         if (!items || items.length > MAX_PUSH) throw new HttpError(400, `items 要是陣列，最多 ${MAX_PUSH} 筆`);
-        const incoming = items.reduce((sum: number, item) => sum + String((item as Record<string, unknown>)?.blob ?? "").length, 0);
-        await limitSource(request, "push");
-        if (incoming > 0) await limitSource(request, "pushBytes", incoming);
-        const usage = await store.spaceUsage(space);
-        if (usage.records + items.length > MAX_RECORDS) throw new HttpError(413, "同步空間已滿");
+        const blobBytes = items.reduce((sum: number, item) => sum + String((item as Record<string, unknown>)?.blob ?? "").length, 0);
+        // 這次最多會用到的空間：內容加上每筆的固定額外（更新已經有的那筆時，寫完會照實際的還回去）
+        const incoming = blobBytes + items.length * RECORD_OVERHEAD;
+        await limitSource(request, ["push", "pushBytes", "pushRecords"], [1, blobBytes, items.length]);
+        if (items.length > 0) await spendWrites(WRITE_COST.pushBase + WRITE_COST.perRecord * items.length, false);
         // 先保留這次最多會用到的位元組（這個空間與整個服務都放得下才保留），寫完再還回去
-        if (!(await store.reserveBytes(space, incoming, MAX_BYTES, limits.bytes))) {
-          if ((await store.spaceUsage(space)).bytes + incoming > MAX_BYTES) throw new HttpError(413, "同步空間已滿");
-          log(`sync service full: bytes`);
-          throw new HttpError(503, "同步服務已滿");
+        if (!(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes))) {
+          if ((await store.spaceUsage(space)).bytes + incoming > MAX_SPACE_BYTES) throw new HttpError(413, "同步空間已滿");
+          // 換金鑰的新空間（還沒換完）：舊空間的資料換好就刪掉，整個服務可以暫時多用一個空間的量
+          const rekeyHeadroom = (await store.rekeyFrom(space)) !== null && (await store.movedInAt(space)) === null;
+          if (!rekeyHeadroom || !(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes + MAX_SPACE_BYTES))) {
+            log(`sync service full: bytes`);
+            throw new HttpError(503, "同步服務已滿");
+          }
         }
         let valid: { id: string; base: number; blob: string }[];
         try {
@@ -509,7 +607,9 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       const body = parseJson(await readText(request));
       if (!isKey(body.pub)) throw new HttpError(400, "pub 格式不對");
       if (!isKey(body.commitment, 100)) throw new HttpError(400, "commitment 格式不對");
-      await limitSource(request, "createPair");
+      await limitSource(request, ["createPair"]);
+      await requireHuman(request, "pair");
+      await spendWrites(WRITE_COST.pair, true);
       for (let attempt = 0; attempt < 5; attempt++) {
         const slot = [...random(8)].map((b) => SLOT_ALPHABET[b % 32]).join("");
         if (await store.createSlot(slot, body.pub, body.commitment, PAIR_TTL_MS, limits.pairSlots)) return { slot, ttlSeconds: PAIR_TTL_MS / 1000 };
@@ -523,15 +623,22 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     const slot = parts[2]?.toUpperCase();
     if (!slot || !SLOT.test(slot)) throw new HttpError(400, "配對碼格式不對");
     if (parts.length === 3 && method === "GET") {
+      // 找不到的次數用完時，這個來源查任何配對碼都回 429；找得到的不算，等另一台時每 2 秒查一次
+      await requireSourceRoom(request, "pairMiss");
       const found = await store.getSlot(slot);
-      if (!found) throw new HttpError(404, "配對碼不存在或已過期");
+      if (!found) {
+        await limitSource(request, ["pairMiss"]);
+        throw new HttpError(404, "配對碼不存在或已過期");
+      }
       return { ...found };
     }
     if (parts.length === 3 && method === "DELETE") {
+      await limitSource(request, ["pairStep"]);
       await store.deleteSlot(slot);
       return { deleted: true };
     }
     if (parts.length === 4 && method === "POST" && (parts[3] === "hello" || parts[3] === "nonce" || parts[3] === "box")) {
+      await limitSource(request, ["pairStep"]);
       const body = parseJson(await readText(request));
       const value = parts[3] === "hello" ? body.pub : parts[3] === "nonce" ? body.nonce : body.box;
       if (!isKey(value, 4000)) throw new HttpError(400, "格式不對");
@@ -552,6 +659,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     const headers = { ...cors, "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
     try {
+      requireJson(request);
       const body = await route(request);
       return new Response(JSON.stringify(body), { status: 200, headers });
     } catch (e) {
@@ -562,6 +670,19 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       return new Response(JSON.stringify({ ...extra, error: message }), { status, headers: { ...headers, ...retry } });
     }
   };
+}
+
+/**
+ * 有內容的請求（POST，以及帶內容的 PUT、DELETE）只接受 application/json，其他一律 415.
+ * 沒有內容的 PUT（開始同步）、DELETE 照舊
+ */
+function requireJson(request: Request): void {
+  const method = request.method;
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
+  const type = request.headers.get("content-type");
+  const hasBody = method === "POST" || type !== null || Number(request.headers.get("content-length") ?? 0) > 0 || request.headers.has("transfer-encoding");
+  if (!hasBody) return;
+  if (!type || !/^application\/json\s*(;|$)/i.test(type.trim())) throw new HttpError(415, "只接受 application/json");
 }
 
 /**

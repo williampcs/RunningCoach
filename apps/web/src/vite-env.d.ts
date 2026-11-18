@@ -24,6 +24,8 @@ interface ImportMetaEnv {
   readonly VITE_INTERVALS_CLIENT_ID?: string;
   /** 開發用：Intervals.icu 的授權頁指向本機的模擬服務 */
   readonly VITE_INTERVALS_OAUTH_URL?: string;
+  /** 人機驗證（Cloudflare Turnstile，規格 12.10）的 site key（Variables 的 TURNSTILE_SITE_KEY）；沒有時不顯示 */
+  readonly VITE_TURNSTILE_SITE_KEY?: string;
 }
 
 /** 使用須知與隱私說明在面板裡的內容（KI-046）：建置時由靜態頁產生（vite.config.ts 的 legalPagesModule） */

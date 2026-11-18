@@ -28,6 +28,7 @@ import {
 
 import { errorText, useApp } from "../app-context";
 import { InfoTip } from "../ui";
+import { HUMAN_CHECK_ON, HumanCheck } from "../human-check";
 import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "../device-identity";
 import { checkPassword, lockEnabled } from "../settings";
 import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
@@ -66,9 +67,13 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
   const [confirm, setConfirm] = useState<string | null>(null);
   const [box, setBox] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 人機驗證（有設定時）通過後的 token：拿到才建立配對碼 */
+  const [human, setHuman] = useState<string | null>(null);
   const secrets = useRef<PairSecrets | null>(null);
+  const waitingHuman = HUMAN_CHECK_ON && !human;
 
   useEffect(() => {
+    if (waitingHuman) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = Date.now();
@@ -76,7 +81,13 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
       const key = await newPairKey();
       const nonce = newPairNonce();
       const commitment = await pairCommitment(nonce);
-      const { slot: code } = await api.request<{ slot: string }>("POST", "/v1/pair", { pub: key.pub, commitment });
+      const { slot: code } = await api.request<{ slot: string }>(
+        "POST",
+        "/v1/pair",
+        { pub: key.pub, commitment },
+        undefined,
+        human ? { "x-turnstile": human } : undefined,
+      );
       if (!alive) return;
       setSlot(code);
       const link = `${location.origin}${location.pathname}#pair=${code}.${await pairFingerprint(key.pub, commitment)}`;
@@ -115,7 +126,7 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [api]);
+  }, [api, waitingHuman, human]);
 
   async function accept() {
     try {
@@ -130,6 +141,19 @@ function JoinFlow({ onDone, onCancel }: { onDone: (root: Uint8Array) => Promise<
   async function cancel() {
     if (slot) await api.request("DELETE", `/v1/pair/${slot}`).catch(() => undefined);
     onCancel();
+  }
+
+  if (waitingHuman) {
+    return (
+      <div className="pairing">
+        <HumanCheck action="pair" onToken={setHuman} />
+        <div className="row">
+          <button className="text" onClick={onCancel}>
+            取消
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -621,7 +645,7 @@ function rekeyError(e: unknown, what: string): string {
 export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const { settings, updateSettings, deviceSync, trialSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
-    "idle" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
+    "idle" | "verify" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
   >("idle");
   /** 要移除的那台（規格 12.27） */
   const [target, setTarget] = useState<SyncDevice | null>(null);
@@ -674,20 +698,27 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
 
   const saveKey = (root: Uint8Array | null) => updateSettings({ ...settings, sync: { ...settings.sync, key: root ? toBase64url(root) : "" } });
 
-  async function begin() {
-    setBusy(true);
+  /** 開始同步（建立新的同步空間）. 有人機驗證時先顯示，通過後帶著 token 再進來 */
+  async function begin(humanToken?: string) {
     setMessage(null);
+    if (HUMAN_CHECK_ON && !humanToken) {
+      setMode("verify");
+      return;
+    }
+    setBusy(true);
     try {
       const root = newRootKey();
       // 裝置模式：新的空間一開始就只接受登記過的裝置，並登記這台
       const device = deviceSync.devicesMode
         ? { identity: await loadDeviceIdentity(), label: () => defaultDeviceLabel(), onRootChanged: async () => undefined }
         : null;
-      await new SyncEngine(coach.db, deviceSync.api!, root, undefined, device).ensureSpace();
+      await new SyncEngine(coach.db, deviceSync.api!, root, undefined, device).ensureSpace(humanToken);
       setNewRoot(root);
       setCode(await recoveryCode(root));
       setMode("start");
     } catch (e) {
+      // 人機驗證的 token 只能用一次：失敗時回到開始，下次重新驗證
+      if (humanToken) setMode("idle");
       setMessage({ kind: "error", text: errorText(e) });
     } finally {
       setBusy(false);
@@ -851,6 +882,17 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
             {busy ? "確認中…" : "還原"}
           </button>
           <button className="text" onClick={() => setMode("idle")}>取消</button>
+        </div>
+      </div>
+    );
+  } else if (mode === "verify") {
+    body = (
+      <div className="pairing">
+        {busy ? <p className="muted small">開始同步中…</p> : <HumanCheck action="create-space" onToken={(token) => void begin(token)} />}
+        <div className="row">
+          <button className="text" disabled={busy} onClick={() => setMode("idle")}>
+            取消
+          </button>
         </div>
       </div>
     );
