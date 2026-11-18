@@ -13,6 +13,7 @@ import { RECORD_OVERHEAD, SyncStore } from "../src/store";
 import { DUMMY_TOKEN, fakeTurnstileFetch, TEST_SECRET_FAIL, TEST_SECRET_PASS, TEST_SECRET_SPENT } from "../src/turnstile-testing";
 
 const HOUR = 3600_000;
+const DAY = 24 * HOUR;
 const TOKEN = "t".repeat(43);
 
 let now: Date;
@@ -195,6 +196,7 @@ describe("容量", () => {
 
   it("一個空間超過 25 MB（內容加上每筆的固定額外）時 413；整個服務還有空間", async () => {
     await create(1, "198.51.100.1");
+    // 每天的位元組另外有上限：這裡一天送一次
     const big = 1_390_000;
     let id = 0;
     let status = 200;
@@ -202,6 +204,7 @@ describe("容量", () => {
     while (status === 200 && pushes < 20) {
       status = (await call("POST", `/v1/spaces/${space(1)}/changes`, { ip: "198.51.100.1", body: { items: [item(id++, big), item(id++, big)] } })).status;
       pushes++;
+      advance(DAY);
     }
     expect(status).toBe(413);
     const bytes = (await store.spaceUsage(space(1))).bytes;
@@ -234,7 +237,8 @@ async function sha256(text: string): Promise<string> {
 
 describe("整個服務每天的寫入上限", () => {
   it("用到一半時停止新的空間與配對碼，已經在同步的照常送出；用完時送出也停止；隔天（UTC）恢復", async () => {
-    const handler = handlerWith({ dailyWrites: 98 });
+    // 這裡只看整個服務的上限：每個來源、每個空間的比例另外測
+    const handler = handlerWith({ dailyWrites: 98, rateLimits: { writes: {}, spaceWrites: 1000 } });
     // 建立空間估 12 列：一半是 49，前 4 個可以
     for (let i = 0; i < 4; i++) expect((await create(i, `198.51.100.${i + 1}`, handler)).status).toBe(200);
     const full = await create(9, "198.51.100.9", handler);
@@ -262,7 +266,7 @@ describe("整個服務每天的寫入上限", () => {
   });
 
   it("引擎看到每日上限時顯示明天會恢復", async () => {
-    const handler = handlerWith({ dailyWrites: 30 });
+    const handler = handlerWith({ dailyWrites: 30, rateLimits: { writes: {} } });
     const api = new SyncApi("http://sync.test", (input, init) => handler(new Request(input as string, init)));
     await api.request("PUT", `/v1/spaces/${space(1)}?create=1`, undefined, TOKEN);
     await expect(api.request("PUT", `/v1/spaces/${space(2)}?create=1`, undefined, TOKEN)).rejects.toMatchObject({

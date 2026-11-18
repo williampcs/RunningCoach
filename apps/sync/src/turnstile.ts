@@ -1,6 +1,8 @@
 /**
  * 人機驗證（Cloudflare Turnstile，規格 12.10）：建立同步空間與開配對碼之前，網頁版先通過 Turnstile 拿到一次性的 token，
- * 同步服務從 Worker 送到 Turnstile 的 siteverify 確認. 沒有設定 secret 時（本機、模擬服務、E2E）不驗證.
+ * 同步服務從 Worker 送到 Turnstile 的 siteverify 確認. 沒有設定時（本機、模擬服務、E2E）不驗證；
+ * 有開但沒有 secret 時一律回「暫時無法使用」，不會默默跳過.
+ * 正式的設定（hostnames）：token 要是在這個環境的網頁拿到的（hostname），而且是給這一步的（action 完全相同）.
  *
  * 只送 secret 與 token，不送使用者的 IP；不記錄 token.
  */
@@ -11,7 +13,13 @@ export const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile
 export const HUMAN_HEADER = "x-turnstile";
 
 export interface TurnstileConfig {
+  /** 空的表示有開人機驗證、但 secret 沒有設定好：一律 unavailable */
   secret: string;
+  /**
+   * 這個環境的網頁的主機名稱（正式與 staging 各自只有自己的）. 有給時：siteverify 回的 hostname 要在裡面、action 要完全相同；
+   * 給了空的清單時一律 unavailable. 沒給時（本機、模擬服務）只在有回 action 時比對
+   */
+  hostnames?: string[];
   /** 測試時可以換掉 */
   fetch?: typeof fetch;
   url?: string;
@@ -24,10 +32,12 @@ export type HumanCheck = "ok" | "missing" | "failed" | "unavailable";
 const TOKEN = /^[A-Za-z0-9._:-]{1,2048}$/;
 
 export async function verifyTurnstile(config: TurnstileConfig, token: string | null, action: string): Promise<HumanCheck> {
+  if (!config.secret) return "unavailable";
+  if (config.hostnames && config.hostnames.length === 0) return "unavailable";
   if (!token) return "missing";
   if (!TOKEN.test(token)) return "failed";
   const fetchImpl = config.fetch ?? ((input, init) => fetch(input, init));
-  let result: { success?: unknown; action?: unknown; "error-codes"?: unknown };
+  let result: { success?: unknown; action?: unknown; hostname?: unknown; "error-codes"?: unknown };
   try {
     const response = await fetchImpl(config.url ?? TURNSTILE_VERIFY_URL, {
       method: "POST",
@@ -44,7 +54,13 @@ export async function verifyTurnstile(config: TurnstileConfig, token: string | n
   // secret 沒設定好：不是使用者的問題
   if (codes.some((c) => c.includes("secret"))) return "unavailable";
   if (result.success !== true) return "failed";
-  // 給別的步驟拿到的 token 不能拿來用（Turnstile 有回 action 時才比）
+  if (config.hostnames) {
+    // 別的網頁（例如另一個環境）拿到的、給別的步驟拿到的 token 都不能用
+    if (typeof result.hostname !== "string" || !config.hostnames.includes(result.hostname.toLowerCase())) return "failed";
+    if (result.action !== action) return "failed";
+    return "ok";
+  }
+  // 本機與模擬服務：Turnstile 有回 action 時才比
   if (typeof result.action === "string" && result.action !== "" && result.action !== action) return "failed";
   return "ok";
 }

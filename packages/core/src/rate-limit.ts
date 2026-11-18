@@ -21,6 +21,8 @@ export interface RateLimiter {
   take(key: string, rule: RateRule, weight?: number): Promise<boolean>;
   /** 只讀不加：每一條在目前的時間窗再加上它的 weight 還在上限內嗎；回傳第一條超過的位置，都沒超過時 -1 */
   firstOver?(entries: RateEntry[]): Promise<number>;
+  /** 退回之前加上的 weight（請求最後沒有用到，例如寫入失敗或衝突）；時間窗已經換了就不動，不會低於 0 */
+  release?(key: string, rule: RateRule, weight: number): Promise<void>;
 }
 
 /** 一條要檢查的計數：key、規則與這次要加多少（沒有時用 takeEntries 的 weight） */
@@ -200,6 +202,13 @@ export class MemoryRateLimiter implements RateLimiter {
       return count + (e.weight ?? 1) > e.rule.limit;
     });
   }
+
+  async release(key: string, rule: RateRule, weight: number): Promise<void> {
+    const id = `${key}:${rule.windowMs}`;
+    const current = this.counts.get(id);
+    if (!current || current.slot !== slotOf(this.now(), rule) || weight <= 0) return;
+    current.count = Math.max(0, current.count - weight);
+  }
 }
 
 const SCHEMA = `
@@ -249,6 +258,11 @@ export class SqlRateLimiter implements RateLimiter {
     );
     const counts = new Map(rows.map((r) => [`${String(r.key)}#${Number(r.slot)}`, Number(r.count)]));
     return entries.findIndex((e, i) => (counts.get(`${ids[i]!.key}#${ids[i]!.slot}`) ?? 0) + (e.weight ?? 1) > e.rule.limit);
+  }
+
+  async release(key: string, rule: RateRule, weight: number): Promise<void> {
+    if (weight <= 0) return;
+    await this.driver.run("UPDATE rate_limits SET count = MAX(0, count - ?) WHERE key = ? AND slot = ?", [weight, `${key}:${rule.windowMs}`, slotOf(this.now(), rule)]);
   }
 
   /** 刪掉時間窗已經過了的計數 */

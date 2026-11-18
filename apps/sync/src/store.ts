@@ -176,18 +176,32 @@ export class SyncStore {
 
   /**
    * 回傳是否新建立. maxSpaces：整個服務最多幾個空間（換過金鑰的舊空間不算）；null 表示不限.
-   * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時，
-   * 不受空間數限制（換金鑰是一換一）. 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或服務已滿時回傳 false
+   * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時才建立，
+   * 不受空間數限制（換金鑰是一換一）；已經有一個換到一半的時不建立（先用 abandonPendingRekeys 清掉）.
+   * 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或條件不符時回傳 false
    */
   async createSpace(space: string, tokenHash: string, maxSpaces: number | null = null, rekeyFrom: string | null = null): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
       "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from) SELECT ?, ?, ?, ?, ?" +
-        " WHERE ? OR (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
-        " OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ? ON CONFLICT(id) DO NOTHING",
-      [space, tokenHash, stamp, stamp, rekeyFrom, maxSpaces === null ? 1 : 0, rekeyFrom, rekeyFrom, maxSpaces ?? 0],
+        " WHERE (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
+        " OR (? IS NULL AND (? OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ?)) ON CONFLICT(id) DO NOTHING",
+      [space, tokenHash, stamp, stamp, rekeyFrom, rekeyFrom, rekeyFrom, rekeyFrom, maxSpaces === null ? 1 : 0, maxSpaces ?? 0],
     );
     return result.changes > 0;
+  }
+
+  /**
+   * 刪掉從 from 換金鑰、還沒搬進去的新空間（except 以外）：同一個舊空間同時只留一個換到一半的.
+   * 已經搬進去的（換好了）不動. 回傳刪掉幾個
+   */
+  async abandonPendingRekeys(from: string, except: string): Promise<number> {
+    const rows = await this.driver.all(
+      "SELECT id FROM spaces WHERE rekey_from = ? AND id <> ? AND id NOT IN (SELECT moved_to FROM moves)",
+      [from, except],
+    );
+    for (const r of rows) await this.deleteOne(String(r.id));
+    return rows.length;
   }
 
   /** 換金鑰建立的新空間從哪個空間換來；不是的話 null */
@@ -371,8 +385,9 @@ export class SyncStore {
     const now = this.now().getTime();
     const stamp = this.now().toISOString();
     await this.batch([
+      // 新的空間不在了（例如同一個舊空間又開了新的換金鑰）時 moved_to 是 NULL，整個交易失敗、舊空間不動
       {
-        sql: "INSERT INTO moves (space, moved_to, moved_at, signer, statement, signature) VALUES (?, ?, ?, ?, ?, ?)",
+        sql: "INSERT INTO moves (space, moved_to, moved_at, signer, statement, signature) VALUES (?, (SELECT id FROM spaces WHERE id=?), ?, ?, ?, ?)",
         params: [space, plan.newSpace, now, plan.caller, plan.statement, plan.signature],
       },
       { sql: "DELETE FROM devices WHERE space=?", params: [plan.newSpace] },

@@ -89,6 +89,22 @@ jobs:
           # site key 是公開的；有 site key 與 secret key 時 Worker 才驗證（secret 不經過這一步）
           TURNSTILE_SITE_KEY: ${{ (secrets.STAGING_TURNSTILE_SECRET_KEY != '' || secrets.TURNSTILE_SECRET_KEY != '') && (vars.STAGING_TURNSTILE_SITE_KEY || vars.TURNSTILE_SITE_KEY) || '' }}
         run: npx tsx tools/sync-config.ts
+      - name: Turnstile secret key
+        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出。
+        # 在部署之前寫：新的設定（TURNSTILE="on"）上線時 secret 已經在了；沒有 secret 時 Worker 回「人機驗證暫時無法使用」，不會跳過驗證
+        if: ${{ vars.STAGING_TURNSTILE_SITE_KEY != '' || vars.TURNSTILE_SITE_KEY != '' }}
+        working-directory: apps/sync
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY || secrets.TURNSTILE_SECRET_KEY }}
+        run: |
+          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
+            echo "::warning::有 Turnstile 的 site key、沒有 secret key：staging 的同步服務不驗證人機驗證"
+            exit 0
+          fi
+          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
+          echo "已寫入 Turnstile 的 secret key"
       - name: Deploy
         working-directory: apps/sync
         env:
@@ -111,21 +127,6 @@ jobs:
           fi
           printf '%s' "$INTERVALS_CLIENT_SECRET" | npx --yes wrangler@4.148.0 secret put INTERVALS_CLIENT_SECRET > /dev/null
           echo "已寫入 Intervals.icu 的 client_secret"
-      - name: Turnstile secret key
-        # 人機驗證（規格 12.10）：有 site key 與 secret key 時寫成 Worker 的 secret。從 stdin 給，不印出
-        if: ${{ vars.STAGING_TURNSTILE_SITE_KEY != '' || vars.TURNSTILE_SITE_KEY != '' }}
-        working-directory: apps/sync
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY || secrets.TURNSTILE_SECRET_KEY }}
-        run: |
-          if [ -z "$TURNSTILE_SECRET_KEY" ]; then
-            echo "::warning::有 Turnstile 的 site key、沒有 secret key：staging 的同步服務不驗證人機驗證"
-            exit 0
-          fi
-          printf '%s' "$TURNSTILE_SECRET_KEY" | npx --yes wrangler@4.148.0 secret put TURNSTILE_SECRET_KEY > /dev/null
-          echo "已寫入 Turnstile 的 secret key"
 
   proxy:
     name: Deploy staging proxy
