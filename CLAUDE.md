@@ -11,7 +11,7 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 - commit、PR 與程式裡不寫模型的名稱。
 - 回覆使用者用繁體中文。
 
-## 協作方式：架構 session、協調 session 與開發 session
+## 協作方式：架構 session、協調 session、安全 session 與開發 session
 
 使用者和一個長期的**協調 session** 討論，開發交給**開發 session**。較高層次的方向與架構另外由**架構 session** 討論（2026-11-18 起，規格 12.46）。
 
@@ -34,6 +34,13 @@ AI 跑步教練。TypeScript 版（`packages/`、`apps/`）於 2026-10-15 由 `v
 - 從最新的 `v2` 開自己的分支（例 `dev/passkey-step3`），在分支上開發。做完：`npm test`、`npm run typecheck`、網頁實測（`tools/e2e/README.md`）、更新文件，commit、推自己的分支，開 PR 到 `v2`（不是 `main`）；CI 會在 PR 上跑。PR 有衝突時由開 PR 的 session 合進最新的 `v2` 解決。由協調 session 檢查後合併，合併後 staging 才更新；回報時附 PR 的連結。
 - 回報：做了什麼、怎麼驗證的、沒驗證到的、使用者要做的事。
 - 發現工作單以外的問題：記到規格 9.4 或 KI，回報時提出，不要順手擴大範圍；明顯的錯誤可以修，但要在回報裡說。
+
+**安全 session**（找問題、決定修法、派單；2026-11-18 起，規格 12.45）
+- 負責：安全掃描（`tools/security-scan/`）的設定與結果、GitHub Security 分頁的分類、本機的安全測試、安全問題的修法。協調 session 碰到安全問題（Security 分頁的警示、使用者回報的漏洞）轉給安全 session。
+- 細節只放在使用者的私人 repo（安全問題的總表、測試的計畫、結果與腳本）。這個公開的 repo 裡，修好並部署之前不寫問題的原因與怎麼利用；commit、程式註解、規格只寫改了什麼的設計；修好、部署後在 `doc/known-issues.md` 記一行修了什麼。
+- 要改程式的：安全 session 開開發 session，把細節寫在給它的指示裡（不寫進 9.4）。開發 session 照共同規則開 PR 到 `v2`，把 PR 的連結傳給協調 session，由協調 session 合併；安全 session 在合併前確認修法（必要時在本機重測）。
+- 不敏感的改進（例如一般的強化建議）交給協調 session 照一般流程寫工作單。
+- 發版由協調 session 排。critical／high 修好、使用者在 staging 試過後，安全 session 建議使用者盡快對協調 session 說「合併部署」。
 
 **共同規則**
 - 改程式一律走 PR（2026-11-18 使用者決定）：會改程式的 session（協調 session 底下的開發 session、安全 session 底下的 session）都在自己的分支開發、開 PR 到 `v2`，不直接推 `v2`。PR 由協調 session 檢查（CI 全綠、看過改動、必要時本機重跑）後用 merge 合進 `v2`，一次合一個，staging 跟著更新。理由：好幾個 session 同時改程式時，直接推 `v2` 會撞車，壞掉的改動也會直接上 staging。
