@@ -12,7 +12,8 @@ const SCHEMA = `
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     rekey_from  TEXT,
-    network     TEXT
+    network     TEXT,
+    network_at  INTEGER
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -154,11 +155,15 @@ export class SyncStore {
   async init(): Promise<void> {
     await this.driver.exec(SCHEMA);
     // 之前建的資料表沒有的欄：換金鑰的新空間從哪個空間換來（rekey_from）、建立者的網段的雜湊（network）
-    for (const column of ["rekey_from", "network"]) {
+    for (const [column, type] of [
+      ["rekey_from", "TEXT"],
+      ["network", "TEXT"],
+      ["network_at", "INTEGER"],
+    ]) {
       const has = async () => (await this.driver.all("PRAGMA table_info(spaces)")).some((c) => String(c.name) === column);
       if (await has()) continue;
       try {
-        await this.driver.run(`ALTER TABLE spaces ADD COLUMN ${column} TEXT`);
+        await this.driver.run(`ALTER TABLE spaces ADD COLUMN ${column} ${type}`);
       } catch (e) {
         // 兩個執行個體同時加：另一個已經加好了就沒事
         if (!(await has())) throw e;
@@ -182,7 +187,8 @@ export class SyncStore {
    * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時才建立，
    * 不受空間數限制（換金鑰是一換一）；已經有一個換到一半的時不建立（先用 abandonPendingRekeys 清掉）.
    * 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或條件不符時回傳 false.
-   * network：建立者的網段的雜湊（同一個網段建立的空間有總容量上限）；換金鑰的新空間沿用舊空間的（忽略這裡給的）
+   * network：建立者的網段的代碼（同一個網段建立的空間有總容量上限），記下的時間是 network_at；
+   * 換金鑰的新空間沿用舊空間的代碼與記下的時間（忽略這裡給的），保存期限不會因為換金鑰延長
    */
   async createSpace(
     space: string,
@@ -193,11 +199,30 @@ export class SyncStore {
   ): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
-      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from, network)" +
-        " SELECT ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN ? ELSE (SELECT network FROM spaces WHERE id = ?) END" +
+      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from, network, network_at)" +
+        " SELECT ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN ? ELSE (SELECT network FROM spaces WHERE id = ?) END," +
+        " CASE WHEN ? IS NULL THEN (CASE WHEN ? IS NULL THEN NULL ELSE ? END) ELSE (SELECT network_at FROM spaces WHERE id = ?) END" +
         " WHERE (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
         " OR (? IS NULL AND (? OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ?)) ON CONFLICT(id) DO NOTHING",
-      [space, tokenHash, stamp, stamp, rekeyFrom, rekeyFrom, network, rekeyFrom, rekeyFrom, rekeyFrom, rekeyFrom, maxSpaces === null ? 1 : 0, maxSpaces ?? 0],
+      [
+        space,
+        tokenHash,
+        stamp,
+        stamp,
+        rekeyFrom,
+        rekeyFrom,
+        network,
+        rekeyFrom,
+        rekeyFrom,
+        network,
+        this.now().getTime(),
+        rekeyFrom,
+        rekeyFrom,
+        rekeyFrom,
+        rekeyFrom,
+        maxSpaces === null ? 1 : 0,
+        maxSpaces ?? 0,
+      ],
     );
     return result.changes > 0;
   }
@@ -238,6 +263,12 @@ export class SyncStore {
       [bytes, space, bytes, maxSpaceBytes, bytes, maxTotalBytes, maxNetworkBytes, bytes, maxNetworkBytes],
     );
     return result.changes > 0;
+  }
+
+  /** 記下超過 olderThanMs 的網段代碼清成 NULL（那個空間不再算進網段的總容量）；回傳清了幾個 */
+  async expireNetworks(olderThanMs: number): Promise<number> {
+    const cutoff = this.now().getTime() - olderThanMs;
+    return (await this.driver.run("UPDATE spaces SET network = NULL, network_at = NULL WHERE network IS NOT NULL AND (network_at IS NULL OR network_at < ?)", [cutoff])).changes;
   }
 
   /** 同一個網段建立的空間現在的總大小；這個空間沒有記下網段時 null */

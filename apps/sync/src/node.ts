@@ -33,6 +33,8 @@ const syncHandle = createSyncHandler({
   turnstile: turnstileSecret ? { secret: turnstileSecret, url: process.env.TURNSTILE_VERIFY_URL || undefined } : undefined,
   dailyWrites: Number(process.env.DAILY_WRITE_BUDGET) > 0 ? Number(process.env.DAILY_WRITE_BUDGET) : undefined,
   log: (line) => console.warn(line),
+  // 來源與網段的代碼用的金鑰（選填）：沒有時用沒有金鑰的雜湊
+  hashKey: process.env.RATE_LIMIT_HASH_KEY?.trim() || undefined,
 });
 // 用 Intervals.icu 登入（規格 12.37）：INTERVALS_CLIENT_ID、INTERVALS_CLIENT_SECRET 有設定時才能用
 const handle = (request: Request) =>

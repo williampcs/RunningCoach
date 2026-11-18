@@ -8,7 +8,7 @@
  * 帳號的復原密鑰（規格 12.44 第 1 步）：裝置產生後放進選手加密的同步；新裝置用它換自己的憑證（POST /v1/recover）.
  * 代理只存雜湊，不知道同步空間；同步服務只看到密文.
  */
-import { MemoryRateLimiter, hashSource, sourceIp, type RateLimiter } from "@running-coach/core/rate-limit";
+import { MemoryRateLimiter, sourceHasher, sourceIp, type RateLimiter } from "@running-coach/core/rate-limit";
 
 import { emptyUsage, meterSseStream, usageFromJson, type MeterResult } from "./metering";
 import { costMicroUsd, usdToMicro, type ModelPrice, type Policy, type TokenUsage } from "./policy";
@@ -32,6 +32,11 @@ export interface ProxyDeps {
    * 每分鐘次數的計數. Workers 用 D1 的（所有執行個體共用，SqlRateLimiter）；沒有給時用這個執行個體記憶體裡的（本機、測試）
    */
   rateLimiter?: RateLimiter;
+  /**
+   * 來源 IP 的代碼用的金鑰（Worker 的 secret RATE_LIMIT_HASH_KEY）：有的話用 HMAC，沒有金鑰算不出、也反推不回 IP.
+   * 沒有給時（本機、測試）用沒有金鑰的雜湊
+   */
+  hashKey?: string;
 }
 
 // 允許轉發的請求欄位。其餘欄位（加價的 speed、service_tier、container 等）一律拒絕
@@ -258,8 +263,9 @@ export function createProxy(deps: ProxyDeps): (request: Request) => Promise<Resp
   // 每分鐘次數：Workers 上每個請求可能在不同的執行個體，計數要放在共用的地方（worker.ts 給 D1 的）
   const limiter = deps.rateLimiter ?? new MemoryRateLimiter(() => now().getTime());
   const overLimit = async (key: string, limit: number) => !(await limiter.take(`proxy:${key}`, { limit, windowMs: 60_000 }));
-  /** 兌換邀請碼、連結碼與取回共用每個來源 IP 的次數；IP 只以雜湊計數，不寫進儲存的其他地方或日誌 */
-  const overRedeemLimit = async (request: Request) => overLimit(`redeem:${await hashSource(sourceIp(request))}`, policy.redeemsPerMinute);
+  /** 兌換邀請碼、連結碼與取回共用每個來源 IP 的次數；IP 只以代碼（有金鑰時是 HMAC）計數，一分鐘後失效，不寫進儲存的其他地方或日誌 */
+  const hashCode = sourceHasher(deps.hashKey);
+  const overRedeemLimit = async (request: Request) => overLimit(`redeem:${await hashCode(sourceIp(request))}`, policy.redeemsPerMinute);
 
   function corsHeaders(request: Request): Record<string, string> {
     const origin = request.headers.get("origin");

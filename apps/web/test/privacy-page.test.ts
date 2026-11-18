@@ -36,6 +36,14 @@ const LINKS_ONLY: Record<string, string> = {
 };
 
 describe("隱私說明頁（規格 12.20）", () => {
+  it("照實寫同步服務為了防止濫用記下的網段代碼（秘密金鑰、30 天）與請求次數，不記錄 IP 位址本身（12.10）", () => {
+    expect(page).not.toContain("同步服務的程式不記錄 IP 位址");
+    expect(page).toContain("不記錄 IP 位址本身");
+    expect(page).toContain("無法還原成 IP 位址，保存 30 天");
+    const trial = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, trialProxyUrl: "https://running-coach-proxy.example.workers.dev" });
+    expect(trial).toContain("無法還原成 IP 位址）計算每分鐘的次數");
+  });
+
   it("網頁版預設會連的外部網址都寫在頁面上", () => {
     const defaults = [
       new Anthropic({ apiKey: "x", dangerouslyAllowBrowser: true }).baseURL,

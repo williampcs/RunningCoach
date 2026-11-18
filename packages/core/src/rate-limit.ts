@@ -114,19 +114,43 @@ export function requestSourceLevels(request: Request): SourceLevel[] {
   return sourceLevels(request.headers.get("cf-connecting-ip"));
 }
 
-/** 規則套到每一層：回傳要檢查的計數（key 是 prefix、層級、來源的雜湊與規則的名稱） */
-export async function tieredEntries(prefix: string, levels: SourceLevel[], rules: TieredRules, weight?: number): Promise<RateEntry[]> {
+/** 來源（IP 或網段）轉成存得下的代碼 */
+export type SourceHasher = (text: string) => Promise<string>;
+
+/**
+ * 來源的代碼：有金鑰（Worker 的 secret RATE_LIMIT_HASH_KEY）時用 HMAC-SHA256，沒有金鑰的人算不出、也反推不回 IP；
+ * 沒有金鑰時（本機、模擬服務、測試）用沒有金鑰的雜湊（hashSource）. 一樣取 16 bytes
+ */
+export function sourceHasher(key?: string | null): SourceHasher {
+  const secret = key?.trim();
+  if (!secret) return hashSource;
+  let imported: Promise<CryptoKey> | undefined;
+  return async (text) => {
+    imported ??= crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", await imported, new TextEncoder().encode(`rate-limit:${text}`));
+    return Array.from(new Uint8Array(mac).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+  };
+}
+
+/** 規則套到每一層：回傳要檢查的計數（key 是 prefix、層級、來源的代碼與規則的名稱）. hash 預設沒有金鑰 */
+export async function tieredEntries(
+  prefix: string,
+  levels: SourceLevel[],
+  rules: TieredRules,
+  weight?: number,
+  hash: SourceHasher = hashSource,
+): Promise<RateEntry[]> {
   const entries: RateEntry[] = [];
   for (const level of levels) {
     const forTier = rules[level.tier] ?? (level.tier === "unknown" ? (rules["v6/64"] ?? rules["v4/32"]) : undefined);
     if (!forTier) continue;
-    const hashed = await hashSource(level.source);
+    const hashed = await hash(level.source);
     for (const [name, rule] of Object.entries(forTier)) entries.push({ key: `${prefix}:${level.tier}:${hashed}:${name}`, rule, weight });
   }
   return entries;
 }
 
-/** 來源 IP 的雜湊（不存原文） */
+/** 來源 IP 的雜湊（不存原文；沒有金鑰，正式環境用 sourceHasher(金鑰)） */
 export async function hashSource(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`rate-limit:${text}`));
   return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");

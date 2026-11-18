@@ -21,6 +21,8 @@ interface Env {
   TURNSTILE_SECRET_KEY?: string;
   /** 整個服務每天估算最多寫入幾列（wrangler.toml 的 var，部署時填入；空的用預設） */
   DAILY_WRITE_BUDGET?: string;
+  /** 來源與網段的代碼用的金鑰（Worker 的 secret，部署時寫入） */
+  RATE_LIMIT_HASH_KEY?: string;
 }
 
 const originsOf = (env: Env) =>
@@ -107,6 +109,7 @@ export default {
       dailyWrites: Number(env.DAILY_WRITE_BUDGET) > 0 ? Number(env.DAILY_WRITE_BUDGET) : undefined,
       // 只有數量與被限制的種類，沒有 IP 或內容
       log: (line) => console.warn(line),
+      hashKey: env.RATE_LIMIT_HASH_KEY,
     });
     return handle(request);
   },

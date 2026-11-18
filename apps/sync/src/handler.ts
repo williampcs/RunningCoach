@@ -13,13 +13,14 @@
 import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
 
 import {
-  hashSource,
   requestSourceLevels,
+  sourceHasher,
   takeEntries,
   tieredEntries,
   type RateEntry,
   type RateLimiter,
   type RateRule,
+  type SourceHasher,
   type SourceLevel,
   type SourceTier,
   type TieredRules,
@@ -50,6 +51,11 @@ export interface SyncDeps {
   dailyWrites?: number;
   /** 只會收到數量（服務已滿、被限制的是哪一種），沒有 IP 或內容 */
   log?: (line: string) => void;
+  /**
+   * 來源與網段的代碼用的金鑰（Worker 的 secret RATE_LIMIT_HASH_KEY）：有的話用 HMAC，沒有金鑰算不出、也反推不回 IP.
+   * 沒有給時（本機、模擬服務、測試）用沒有金鑰的雜湊. 換了金鑰之後，計數與網段的代碼都重新開始算
+   */
+  hashKey?: string;
 }
 
 /**
@@ -158,13 +164,16 @@ export interface ServiceLimits {
 export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200, networkBytes: 50_000_000 };
 
 /**
- * 建立者的網段（IPv4 的 /24、IPv6 的 /48）的雜湊：同一個網段建立的空間有總容量上限. 不存原始的位址；
- * 沒有 IP 時（本機的 Node 版）null，不限
+ * 建立者的網段（IPv4 的 /24、IPv6 的 /48）的代碼：同一個網段建立的空間有總容量上限. 不存原始的位址；
+ * 沒有 IP 時（本機的 Node 版）null，不限. 代碼保存 NETWORK_RETENTION_MS（maintain 清掉）
  */
-async function networkOf(request: Request): Promise<string | null> {
+async function networkOf(request: Request, hash: SourceHasher): Promise<string | null> {
   const level = requestSourceLevels(request).find((l) => l.tier === "v4/24" || l.tier === "v6/48");
-  return level ? hashSource(`sync-network:${level.source}`) : null;
+  return level ? hash(`sync-network:${level.source}`) : null;
 }
+
+/** 網段的代碼保存多久：之後清成 NULL，那個空間不再算進網段的總容量 */
+export const NETWORK_RETENTION_MS = 30 * 24 * 3600_000;
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -240,6 +249,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const nowMs = () => store.now().getTime();
   const rateLimits = { ...DEFAULT_RATE_LIMITS, ...deps.rateLimits };
   const log = deps.log ?? (() => undefined);
+  const hashCode = sourceHasher(deps.hashKey);
 
   const rateLimited = (waitMs: number, what: string): HttpError => {
     log(`rate limited: ${what}`);
@@ -252,7 +262,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
 
   async function sourceEntries(request: Request, kinds: SourceKind[], weights: number[], scope: TierScope): Promise<RateEntry[]> {
     const levels = inScope(requestSourceLevels(request), scope);
-    return (await Promise.all(kinds.map((kind, i) => tieredEntries(`sync:${kind}`, levels, rateLimits[kind], weights[i] ?? 1)))).flat();
+    return (await Promise.all(kinds.map((kind, i) => tieredEntries(`sync:${kind}`, levels, rateLimits[kind], weights[i] ?? 1, hashCode)))).flat();
   }
 
   /**
@@ -320,7 +330,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       opts.own === false
         ? []
         : [
-            ...(await tieredEntries("sync:writes", requestSourceLevels(request), writeRules, weight)),
+            ...(await tieredEntries("sync:writes", requestSourceLevels(request), writeRules, weight, hashCode)),
             ...(opts.space ? [{ key: `sync:space-writes:${opts.space}`, rule: per(spaceWrites, DAY), weight }] : []),
           ];
     if (own.length && limiter.firstOver) {
@@ -612,7 +622,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
               throw new HttpError(409, "同時有另一個換金鑰在進行，請稍後再試", { state: "rekey_conflict" });
             }
           } else {
-            const network = await networkOf(request);
+            const network = await networkOf(request, hashCode);
             created = await store.createSpace(space, hash, limits.spaces, null, network);
             if (!created && (await store.spaceToken(space)) === null) {
               // 服務已滿：先清掉沒在用的空空間再試一次
@@ -890,10 +900,12 @@ function requireJson(request: Request): void {
 export async function maintain(
   store: SyncStore,
   options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
-): Promise<{ spaces: number; slots: number; nonces: number; rates: number }> {
+): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number }> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const log = options.log ?? (() => undefined);
   const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
+  // 網段的代碼只保存 30 天（從記下的時間算；換金鑰的新空間沿用舊空間的時間，不會因此延長）
+  const networks = await store.expireNetworks(NETWORK_RETENTION_MS);
   const { slots, nonces } = await store.purgeExpired();
   const rates = (await options.purgeRates?.()) ?? 0;
   const totals = await store.totals();
@@ -902,6 +914,6 @@ export async function maintain(
   if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
   if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
   if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
-  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates}; spaces=${totals.spaces} bytes=${totals.bytes}`);
-  return { spaces, slots, nonces, rates };
+  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`);
+  return { spaces, slots, nonces, rates, networks };
 }

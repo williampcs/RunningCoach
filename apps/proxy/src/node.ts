@@ -46,6 +46,8 @@ await serve(
       .map((s) => s.trim())
       .filter(Boolean),
     log: (line) => console.log(`${new Date().toISOString()} ${line}`),
+    // 來源 IP 的代碼用的金鑰（選填）：沒有時用沒有金鑰的雜湊
+    hashKey: process.env.RATE_LIMIT_HASH_KEY?.trim() || undefined,
   }),
   port,
 );

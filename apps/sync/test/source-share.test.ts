@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine } from "@running-coach/core";
-import { SqlRateLimiter } from "@running-coach/core/rate-limit";
+import { hashSource, SqlRateLimiter, sourceHasher } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
 import {
@@ -13,7 +13,9 @@ import {
   DEFAULT_DAILY_WRITES,
   DEFAULT_LIMITS,
   DEFAULT_RATE_LIMITS,
+  maintain,
   MAX_SPACE_BYTES,
+  NETWORK_RETENTION_MS,
   REKEY_CREATIONS_PER_DAY,
   SOURCE_WRITE_SHARE,
   SPACE_DAILY_BYTES,
@@ -446,6 +448,57 @@ describe("同一個網段建立的同步空間的總容量", () => {
       state: "network_full",
       message: expect.stringContaining("這個網路建立的同步空間已達總容量上限"),
     });
+  });
+});
+
+describe("來源與網段的代碼（有金鑰時 HMAC）、網段代碼保存 30 天", () => {
+  it("有金鑰時代碼不同於沒有金鑰的；同一個來源、同一把金鑰得到相同的代碼；不同的金鑰不同", async () => {
+    const keyed = sourceHasher("k".repeat(44));
+    expect(await keyed("198.51.100.0/24")).toBe(await keyed("198.51.100.0/24"));
+    expect(await keyed("198.51.100.0/24")).not.toBe(await hashSource("198.51.100.0/24"));
+    expect(await keyed("198.51.100.0/24")).not.toBe(await sourceHasher("other key")("198.51.100.0/24"));
+    expect(await keyed("198.51.100.0/24")).toMatch(/^[0-9a-f]{32}$/);
+    // 沒有金鑰（或空的）時照舊
+    expect(await sourceHasher(undefined)("x")).toBe(await hashSource("x"));
+    expect(await sourceHasher("  ")("x")).toBe(await hashSource("x"));
+  });
+
+  it("同步服務用金鑰算網段與計數的代碼：同一個網段的兩個空間代碼相同，和沒有金鑰的不同", async () => {
+    const key = "secret-key-for-test-0123456789";
+    const keyed = handlerWith({ hashKey: key });
+    await create(1, "198.51.100.1", keyed);
+    await create(2, "198.51.100.2", keyed);
+    await create(3, "198.51.100.3");
+    const rows = await driver.all("SELECT id, network FROM spaces ORDER BY id");
+    expect(rows[0]!.network).toBe(rows[1]!.network);
+    expect(rows[0]!.network).not.toBe(rows[2]!.network);
+    expect(rows[0]!.network).toBe(await sourceHasher(key)("sync-network:198.51.100.0/24"));
+    const counters = (await driver.all("SELECT key FROM rate_limits WHERE key LIKE 'sync:createSpace:v4/24:%'")).map((r) => String(r.key).split(":")[3]);
+    expect(new Set(counters)).toEqual(new Set([await sourceHasher(key)("198.51.100.0/24"), await hashSource("198.51.100.0/24")]));
+  });
+
+  it("記下 30 天後網段的代碼清掉，不再算進網段的總容量；換金鑰的新空間沿用舊空間記下的時間", async () => {
+    expect(NETWORK_RETENTION_MS).toBe(30 * DAY);
+    const handler = handlerWith({ limits: { networkBytes: 5000 } });
+    await create(1, "198.51.100.1", handler);
+    expect((await push(1, [item(1, 4000)], "198.51.100.1", handler)).status).toBe(200);
+    await create(2, "198.51.100.2", handler);
+    expect(await push(2, [item(1, 4000)], "198.51.100.2", handler)).toMatchObject({ status: 413, body: { state: "network_full" } });
+    expect((await push(2, [item(2, 10)], "198.51.100.2", handler)).status).toBe(200);
+    // 換金鑰的新空間（第 20 天建立）沿用舊空間的代碼與記下的時間
+    advance(20 * DAY);
+    await store.createSpace(space(3), await sha256(TOKEN), null, space(1), "ignored");
+    await store.putMany(space(3), [item(1, 10)]);
+    const [old, renewed] = await driver.all("SELECT network, network_at FROM spaces WHERE id IN (?, ?) ORDER BY id", [space(1), space(3)]);
+    expect(renewed).toEqual(old);
+    expect((await maintain(store)).networks).toBe(0);
+    advance(10 * DAY + HOUR);
+    expect((await maintain(store)).networks).toBe(3);
+    expect(await driver.all("SELECT id FROM spaces WHERE network IS NOT NULL")).toHaveLength(0);
+    // 不再算進上限：同一個網段之前建立的空間照常送；新建立的從頭算
+    expect((await push(2, [item(1, 4000)], "198.51.100.2", handler)).status).toBe(200);
+    await create(4, "198.51.100.4", handler);
+    expect((await push(4, [item(1, 4000)], "198.51.100.4", handler)).status).toBe(200);
   });
 });
 
