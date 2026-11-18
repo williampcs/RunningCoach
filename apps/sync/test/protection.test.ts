@@ -238,7 +238,7 @@ async function sha256(text: string): Promise<string> {
 describe("整個服務每天的寫入上限", () => {
   it("用到一半時停止新的空間與配對碼，已經在同步的照常送出；用完時送出也停止；隔天（UTC）恢復", async () => {
     // 這裡只看整個服務的上限：每個來源、每個空間的比例另外測
-    const handler = handlerWith({ dailyWrites: 98, rateLimits: { writes: {}, spaceWrites: 1000 } });
+    const handler = handlerWith({ dailyWrites: 98, rateLimits: { writes: {}, spaceWrites: 1000, rekeyWrites: 0 } });
     // 建立空間估 12 列：一半是 49，前 4 個可以
     for (let i = 0; i < 4; i++) expect((await create(i, `198.51.100.${i + 1}`, handler)).status).toBe(200);
     const full = await create(9, "198.51.100.9", handler);

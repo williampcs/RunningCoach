@@ -59,6 +59,8 @@ const STATE_TEXT: Record<string, string> = {
   human_check_unavailable: "人機驗證暫時無法使用，請稍後再試",
   daily_limit: "今天的同步量已達上限，明天會自動恢復；資料都還在這台",
   network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
+  rekey_limit: "今天換金鑰的量已達上限，明天再試；資料都還在這台，原本的同步照常",
+  rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
 
 export class SyncApiError extends Error {
