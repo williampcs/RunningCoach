@@ -11,7 +11,8 @@ const SCHEMA = `
     bytes       INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    rekey_from  TEXT
+    rekey_from  TEXT,
+    network     TEXT
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -152,16 +153,18 @@ export class SyncStore {
 
   async init(): Promise<void> {
     await this.driver.exec(SCHEMA);
-    // 換金鑰建立的新空間記下從哪個空間換來的：之前建的資料表沒有這一欄
-    const hasRekeyFrom = async () => (await this.driver.all("PRAGMA table_info(spaces)")).some((c) => String(c.name) === "rekey_from");
-    if (!(await hasRekeyFrom())) {
+    // 之前建的資料表沒有的欄：換金鑰的新空間從哪個空間換來（rekey_from）、建立者的網段的雜湊（network）
+    for (const column of ["rekey_from", "network"]) {
+      const has = async () => (await this.driver.all("PRAGMA table_info(spaces)")).some((c) => String(c.name) === column);
+      if (await has()) continue;
       try {
-        await this.driver.run("ALTER TABLE spaces ADD COLUMN rekey_from TEXT");
+        await this.driver.run(`ALTER TABLE spaces ADD COLUMN ${column} TEXT`);
       } catch (e) {
         // 兩個執行個體同時加：另一個已經加好了就沒事
-        if (!(await hasRekeyFrom())) throw e;
+        if (!(await has())) throw e;
       }
     }
+    await this.driver.exec("CREATE INDEX IF NOT EXISTS spaces_network ON spaces (network)");
   }
 
   async spaceToken(space: string): Promise<string | null> {
@@ -178,15 +181,23 @@ export class SyncStore {
    * 回傳是否新建立. maxSpaces：整個服務最多幾個空間（換過金鑰的舊空間不算）；null 表示不限.
    * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時才建立，
    * 不受空間數限制（換金鑰是一換一）；已經有一個換到一半的時不建立（先用 abandonPendingRekeys 清掉）.
-   * 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或條件不符時回傳 false
+   * 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或條件不符時回傳 false.
+   * network：建立者的網段的雜湊（同一個網段建立的空間有總容量上限）；換金鑰的新空間沿用舊空間的（忽略這裡給的）
    */
-  async createSpace(space: string, tokenHash: string, maxSpaces: number | null = null, rekeyFrom: string | null = null): Promise<boolean> {
+  async createSpace(
+    space: string,
+    tokenHash: string,
+    maxSpaces: number | null = null,
+    rekeyFrom: string | null = null,
+    network: string | null = null,
+  ): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
-      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from) SELECT ?, ?, ?, ?, ?" +
+      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from, network)" +
+        " SELECT ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN ? ELSE (SELECT network FROM spaces WHERE id = ?) END" +
         " WHERE (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
         " OR (? IS NULL AND (? OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ?)) ON CONFLICT(id) DO NOTHING",
-      [space, tokenHash, stamp, stamp, rekeyFrom, rekeyFrom, rekeyFrom, rekeyFrom, maxSpaces === null ? 1 : 0, maxSpaces ?? 0],
+      [space, tokenHash, stamp, stamp, rekeyFrom, rekeyFrom, network, rekeyFrom, rekeyFrom, rekeyFrom, rekeyFrom, maxSpaces === null ? 1 : 0, maxSpaces ?? 0],
     );
     return result.changes > 0;
   }
@@ -216,15 +227,28 @@ export class SyncStore {
   }
 
   /**
-   * 送出之前先保留這次最多會用到的位元組：這個空間與整個服務都還放得下時才保留（一個敘述，並行的送出不會一起超過）.
+   * 送出之前先保留這次最多會用到的位元組：這個空間、整個服務、同一個網段建立的空間（maxNetworkBytes；null 不限，
+   * 沒有記下網段的舊空間也不限）都還放得下時才保留（一個敘述，並行的送出不會一起超過）.
    * 寫完之後用 releaseBytes 還回去（每筆寫入時已經加上實際的大小）
    */
-  async reserveBytes(space: string, bytes: number, maxSpaceBytes: number, maxTotalBytes: number): Promise<boolean> {
+  async reserveBytes(space: string, bytes: number, maxSpaceBytes: number, maxTotalBytes: number, maxNetworkBytes: number | null = null): Promise<boolean> {
     const result = await this.driver.run(
-      "UPDATE spaces SET bytes = bytes + ? WHERE id = ? AND bytes + ? <= ? AND (SELECT COALESCE(SUM(bytes), 0) FROM spaces) + ? <= ?",
-      [bytes, space, bytes, maxSpaceBytes, bytes, maxTotalBytes],
+      "UPDATE spaces SET bytes = bytes + ? WHERE id = ? AND bytes + ? <= ? AND (SELECT COALESCE(SUM(bytes), 0) FROM spaces) + ? <= ?" +
+        " AND (? IS NULL OR network IS NULL OR (SELECT COALESCE(SUM(s.bytes), 0) FROM spaces s WHERE s.network = spaces.network) + ? <= ?)",
+      [bytes, space, bytes, maxSpaceBytes, bytes, maxTotalBytes, maxNetworkBytes, bytes, maxNetworkBytes],
     );
     return result.changes > 0;
+  }
+
+  /** 同一個網段建立的空間現在的總大小；這個空間沒有記下網段時 null */
+  async networkUsage(space: string): Promise<number | null> {
+    const row = (
+      await this.driver.all(
+        "SELECT s.network AS network, (SELECT COALESCE(SUM(t.bytes), 0) FROM spaces t WHERE t.network = s.network) AS bytes FROM spaces s WHERE s.id = ?",
+        [space],
+      )
+    )[0];
+    return row?.network === null || row?.network === undefined ? null : Number(row.bytes);
   }
 
   async releaseBytes(space: string, bytes: number): Promise<void> {

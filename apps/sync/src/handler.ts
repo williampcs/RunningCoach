@@ -13,6 +13,7 @@
 import { DEVICE_ID, isP256Point, SIGNATURE_WINDOW_MS, bodyHash, signedMessage, verifySignature, verifyStatement } from "@running-coach/core/device";
 
 import {
+  hashSource,
   requestSourceLevels,
   takeEntries,
   tieredEntries,
@@ -146,13 +147,24 @@ export interface ServiceLimits {
   spaces: number;
   bytes: number;
   pairSlots: number;
+  /** 同一個網段（IPv4 的 /24、IPv6 的 /48）建立的同步空間加起來最多多大 */
+  networkBytes: number;
 }
 
 /**
  * 整個服務的上限：Cloudflare 免費方案每個 D1 最多 500 MB，總容量留下約 200 MB 給簽章的亂數、頻率限制的計數、索引與換金鑰時的暫存.
  * bytes 算的是每筆的內容加上每筆的固定額外（RECORD_OVERHEAD）
  */
-export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200 };
+export const DEFAULT_LIMITS: ServiceLimits = { spaces: 500, bytes: 300_000_000, pairSlots: 200, networkBytes: 50_000_000 };
+
+/**
+ * 建立者的網段（IPv4 的 /24、IPv6 的 /48）的雜湊：同一個網段建立的空間有總容量上限. 不存原始的位址；
+ * 沒有 IP 時（本機的 Node 版）null，不限
+ */
+async function networkOf(request: Request): Promise<string | null> {
+  const level = requestSourceLevels(request).find((l) => l.tier === "v4/24" || l.tier === "v6/48");
+  return level ? hashSource(`sync-network:${level.source}`) : null;
+}
 
 /** 單筆紀錄的上限（base64url 的長度，約 1 MB） */
 const MAX_BLOB = 1_400_000;
@@ -600,10 +612,11 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
               throw new HttpError(409, "同時有另一個換金鑰在進行，請稍後再試", { state: "rekey_conflict" });
             }
           } else {
-            created = await store.createSpace(space, hash, limits.spaces);
+            const network = await networkOf(request);
+            created = await store.createSpace(space, hash, limits.spaces, null, network);
             if (!created && (await store.spaceToken(space)) === null) {
               // 服務已滿：先清掉沒在用的空空間再試一次
-              if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces);
+              if ((await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS)) > 0) created = await store.createSpace(space, hash, limits.spaces, null, network);
               if (!created && (await store.spaceToken(space)) === null) {
                 log(`sync service full: spaces >= ${limits.spaces}`);
                 throw new HttpError(503, "同步服務已滿");
@@ -681,10 +694,17 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         // 換金鑰的複製（還沒換完的新空間，量不超過舊空間）：不算來源與空間每天的位元組與寫入（只算整個服務的），
         // 整個服務的總量可以暫時多用一個空間的量（舊空間的資料換好就刪掉）
         const copy = await rekeyCopy(space, incoming, valid.length);
-        // 先保留這次最多會用到的位元組（這個空間與整個服務都放得下才保留），寫完再還回去
-        if (!(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes))) {
+        // 先保留這次最多會用到的位元組（這個空間、整個服務、同一個網段建立的空間都放得下才保留），寫完再還回去.
+        // 換金鑰的複製不受網段的上限（量不超過舊空間，舊空間的資料換好就刪掉）
+        const networkCap = copy ? null : limits.networkBytes;
+        if (!(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes, networkCap))) {
           if ((await store.spaceUsage(space)).bytes + incoming > MAX_SPACE_BYTES) throw new HttpError(413, "同步空間已滿");
-          if (!copy || !(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes + MAX_SPACE_BYTES))) {
+          const network = networkCap === null ? null : await store.networkUsage(space);
+          if (network !== null && networkCap !== null && network + incoming > networkCap) {
+            log(`sync network full`);
+            throw new HttpError(413, "這個網路建立的同步空間已達總容量", { state: "network_full" });
+          }
+          if (!copy || !(await store.reserveBytes(space, incoming, MAX_SPACE_BYTES, limits.bytes + MAX_SPACE_BYTES, null))) {
             log(`sync service full: bytes`);
             throw new HttpError(503, "同步服務已滿");
           }

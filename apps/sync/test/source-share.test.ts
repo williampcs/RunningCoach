@@ -353,6 +353,102 @@ describe("人機驗證：沒有設定好時不跳過；比對網址與步驟", (
   });
 });
 
+describe("同一個網段建立的同步空間的總容量", () => {
+  it("同一個 /24 開很多空間、跨好幾天慢慢送：總量卡在上限（413 network_full），整個服務還有空間；別的網段照常", async () => {
+    expect(DEFAULT_LIMITS.networkBytes).toBeLessThanOrEqual(DEFAULT_LIMITS.bytes / 5);
+    const big = 1_390_000;
+    for (let n = 1; n <= 6; n++) expect((await create(n, `198.51.100.${n}`)).status).toBe(200);
+    let id = 0;
+    let full: Awaited<ReturnType<typeof call>> | null = null;
+    for (let day = 0; day < 10 && !full; day++) {
+      for (let n = 1; n <= 6 && !full; n++) {
+        for (let i = 0; i < 3; i++) {
+          const r = await push(n, [item(id++, big), item(id++, big)], `198.51.100.${n}`);
+          if (r.status === 413) full = r;
+          if (r.status !== 200) break;
+        }
+      }
+      advance(DAY);
+    }
+    expect(full).toMatchObject({ status: 413, body: { state: "network_full" } });
+    const total = (await store.totals()).bytes;
+    expect(total).toBeLessThanOrEqual(DEFAULT_LIMITS.networkBytes);
+    expect(total).toBeGreaterThan(DEFAULT_LIMITS.networkBytes - 4 * big);
+    expect(total).toBeLessThan(DEFAULT_LIMITS.bytes);
+    // 同一個網段的另一個位址開的新空間也送不上去；別的網段照常
+    await create(20, "198.51.100.77");
+    expect(await push(20, [item(1, big), item(2, big)], "198.51.100.77")).toMatchObject({ status: 413, body: { state: "network_full" } });
+    await create(21, "198.51.101.1");
+    expect((await push(21, [item(1, big)], "198.51.101.1")).status).toBe(200);
+    // 之後換到別的網路送也一樣（算的是建立時的網段）
+    expect(await push(1, [item(9998, big), item(9999, big)], "203.0.113.1")).toMatchObject({ status: 413, body: { state: "network_full" } });
+    // 網段只存雜湊
+    const networks = JSON.stringify(await driver.all("SELECT network FROM spaces"));
+    expect(networks).not.toContain("198.51");
+  });
+
+  it("沒有記下網段的舊空間不受限；本機（沒有 IP）不記網段", async () => {
+    const handler = handlerWith({ limits: { networkBytes: 1000 } });
+    await create(1, "198.51.100.1", handler);
+    await driver.run("UPDATE spaces SET network=NULL WHERE id=?", [space(1)]);
+    expect((await push(1, [item(1, 5000)], "198.51.100.1", handler)).status).toBe(200);
+    await create(2, "", handler);
+    expect((await driver.all("SELECT network FROM spaces WHERE id=?", [space(2)]))[0]!.network).toBeNull();
+  });
+
+  it("換金鑰不會因為網段的上限失敗；新空間沿用舊空間的網段", async () => {
+    const handler = handlerWith({ limits: { networkBytes: 60_000 } });
+    const ip = "198.51.100.9";
+    const api = new SyncApi(
+      "http://sync.test",
+      (input, init) => {
+        const request = new Request(input as string, init);
+        request.headers.set("cf-connecting-ip", ip);
+        return handler(request);
+      },
+      async (ms) => advance(ms),
+    );
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    for (let i = 0; i < 40; i++) await db.saveCheckin({ date: new Date(Date.UTC(2023, 0, 1) + i * DAY).toISOString().slice(0, 10), energy: 3, soreness: 2, sleep: 4, notes: "x".repeat(200) });
+    const state = { root: newRootKey() };
+    const engine = new SyncEngine(db, api, state.root, () => now, {
+      identity: await newDeviceIdentity(),
+      label: () => ({ name: "A", platform: "t" }),
+      onRootChanged: async (r) => void (state.root = r),
+    });
+    await engine.ensureSpace();
+    await engine.sync();
+    const from = (await deriveKeys(state.root)).space;
+    const used = (await store.spaceUsage(from)).bytes;
+    // 這個網段已經用掉一大半：換金鑰的複製（同樣的量）不受網段的上限
+    expect(used * 2).toBeGreaterThan(60_000);
+    advance(25 * HOUR);
+    await engine.rekey();
+    const to = (await deriveKeys(state.root)).space;
+    expect(to).not.toBe(from);
+    const rows = await driver.all("SELECT id, network FROM spaces WHERE id IN (?, ?)", [from, to]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.network).not.toBeNull();
+    expect(rows[0]!.network).toBe(rows[1]!.network);
+  });
+
+  it("引擎顯示看得懂的說明", async () => {
+    const handler = handlerWith({ limits: { networkBytes: 1000 } });
+    await create(1, "198.51.100.1", handler);
+    const api = new SyncApi("http://sync.test", (input, init) => {
+      const request = new Request(input as string, init);
+      request.headers.set("cf-connecting-ip", "198.51.100.1");
+      return handler(request);
+    });
+    await expect(api.request("POST", `/v1/spaces/${space(1)}/changes`, { items: [item(1, 5000)] }, TOKEN)).rejects.toMatchObject({
+      status: 413,
+      state: "network_full",
+      message: expect.stringContaining("這個網路建立的同步空間已達總容量上限"),
+    });
+  });
+});
+
 describe("預設的寫入額度", () => {
   it("每個來源與每個空間的上限照整個服務的額度算", () => {
     expect(Math.floor(DEFAULT_DAILY_WRITES * SOURCE_WRITE_SHARE.narrow)).toBe(4000);
