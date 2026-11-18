@@ -1,12 +1,13 @@
 {
   "name": "@running-coach/core",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./device": "./src/device-sync/device.ts"
+    "./device": "./src/device-sync/device.ts",
+    "./rate-limit": "./src/rate-limit.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json"

@@ -10,7 +10,8 @@ const SCHEMA = `
     token_hash  TEXT NOT NULL,
     bytes       INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    rekey_from  TEXT
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -143,8 +144,18 @@ export class SyncStore {
     }
   }
 
-  init(): Promise<void> {
-    return this.driver.exec(SCHEMA);
+  async init(): Promise<void> {
+    await this.driver.exec(SCHEMA);
+    // 換金鑰建立的新空間記下從哪個空間換來的：之前建的資料表沒有這一欄
+    const hasRekeyFrom = async () => (await this.driver.all("PRAGMA table_info(spaces)")).some((c) => String(c.name) === "rekey_from");
+    if (!(await hasRekeyFrom())) {
+      try {
+        await this.driver.run("ALTER TABLE spaces ADD COLUMN rekey_from TEXT");
+      } catch (e) {
+        // 兩個執行個體同時加：另一個已經加好了就沒事
+        if (!(await hasRekeyFrom())) throw e;
+      }
+    }
   }
 
   async spaceToken(space: string): Promise<string | null> {
@@ -157,14 +168,74 @@ export class SyncStore {
     return { records: Number(row?.n ?? 0), bytes: Number(row?.bytes ?? 0) };
   }
 
-  /** 回傳是否新建立 */
-  async createSpace(space: string, tokenHash: string): Promise<boolean> {
+  /**
+   * 回傳是否新建立. maxSpaces：整個服務最多幾個空間（換過金鑰的舊空間不算）；null 表示不限.
+   * rekeyFrom：換金鑰建立的新空間，從哪個空間換來（呼叫的人已經確認過）. 那個空間還沒有別的換到一半的新空間時，
+   * 不受空間數限制（換金鑰是一換一）. 這些條件與寫入在同一個敘述裡，並行時不會一起通過. 已經存在、或服務已滿時回傳 false
+   */
+  async createSpace(space: string, tokenHash: string, maxSpaces: number | null = null, rekeyFrom: string | null = null): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
-      "INSERT INTO spaces (id, token_hash, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
-      [space, tokenHash, stamp, stamp],
+      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from) SELECT ?, ?, ?, ?, ?" +
+        " WHERE ? OR (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
+        " OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ? ON CONFLICT(id) DO NOTHING",
+      [space, tokenHash, stamp, stamp, rekeyFrom, maxSpaces === null ? 1 : 0, rekeyFrom, rekeyFrom, maxSpaces ?? 0],
     );
     return result.changes > 0;
+  }
+
+  /** 換金鑰建立的新空間從哪個空間換來；不是的話 null */
+  async rekeyFrom(space: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT rekey_from FROM spaces WHERE id=?", [space]))[0];
+    return row?.rekey_from === null || row?.rekey_from === undefined ? null : String(row.rekey_from);
+  }
+
+  /** 只刪這一個空間（放棄換到一半的新空間），不沿著換金鑰往回刪 */
+  async deleteSingleSpace(space: string): Promise<void> {
+    await this.deleteOne(space);
+  }
+
+  /**
+   * 送出之前先保留這次最多會用到的位元組：這個空間與整個服務都還放得下時才保留（一個敘述，並行的送出不會一起超過）.
+   * 寫完之後用 releaseBytes 還回去（每筆寫入時已經加上實際的大小）
+   */
+  async reserveBytes(space: string, bytes: number, maxSpaceBytes: number, maxTotalBytes: number): Promise<boolean> {
+    const result = await this.driver.run(
+      "UPDATE spaces SET bytes = bytes + ? WHERE id = ? AND bytes + ? <= ? AND (SELECT COALESCE(SUM(bytes), 0) FROM spaces) + ? <= ?",
+      [bytes, space, bytes, maxSpaceBytes, bytes, maxTotalBytes],
+    );
+    return result.changes > 0;
+  }
+
+  async releaseBytes(space: string, bytes: number): Promise<void> {
+    await this.driver.run("UPDATE spaces SET bytes = MAX(0, bytes - ?) WHERE id = ?", [bytes, space]);
+  }
+
+  /**
+   * 清掉建立超過 olderThanMs、從來沒有紀錄也沒有登記裝置的空間（開始同步之後就沒再用的）；換金鑰的前後兩個空間不動.
+   * 回傳清掉幾個
+   */
+  async purgeEmptySpaces(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(this.now().getTime() - olderThanMs).toISOString();
+    const removed = (
+      await this.driver.run(
+        "DELETE FROM spaces WHERE created_at < ? AND bytes = 0" +
+          " AND NOT EXISTS (SELECT 1 FROM records WHERE records.space = spaces.id)" +
+          " AND NOT EXISTS (SELECT 1 FROM devices WHERE devices.space = spaces.id)" +
+          " AND NOT EXISTS (SELECT 1 FROM moves WHERE moves.space = spaces.id OR moves.moved_to = spaces.id)",
+        [cutoff],
+      )
+    ).changes;
+    if (removed > 0) await this.driver.run("DELETE FROM space_modes WHERE space NOT IN (SELECT id FROM spaces)");
+    return removed;
+  }
+
+  /** 過期的配對碼與簽章的亂數 */
+  async purgeExpired(): Promise<{ slots: number; nonces: number }> {
+    const now = this.now().getTime();
+    const slots = (await this.driver.run("DELETE FROM pair_slots WHERE expires_at<?", [now])).changes;
+    const nonces = (await this.driver.run("DELETE FROM sig_nonces WHERE expires_at<?", [now])).changes;
+    return { slots, nonces };
   }
 
   /** 刪除空間；換金鑰之前的舊空間（只剩「搬到哪裡」與裝置紀錄）也一起刪掉 */
@@ -332,25 +403,67 @@ export class SyncStore {
   }
 
   /**
-   * 寫入一筆：只有伺服器上的版本還是 base（客戶端上次看到的序號；新的一筆是 0）時才寫入，
-   * 否則是衝突，客戶端要先取回別台的變更。回傳新的序號，衝突時是 null
+   * 寫入一批（一次送出的全部）：查詢的次數固定（讀現在的版本 1 次、寫入每約 1 MB 1 次、更新大小 1 次），和筆數無關.
+   * 每筆只有伺服器上的版本還是 base 時才寫入，否則是衝突；同一批裡重複的 id 只算第一筆.
+   * 序號是這個空間目前最大的加上在這批裡的位置（同一個敘述裡算），會跳號但只會變大，取回時不會跳過還沒寫入的.
+   * reserved：送出前 reserveBytes 保留的位元組，這裡換成實際的大小
    */
-  async put(space: string, id: string, base: number, blob: string): Promise<number | null> {
-    const current = (await this.driver.all("SELECT seq, LENGTH(blob) AS size FROM records WHERE space=? AND id=?", [space, id]))[0];
-    if ((current ? Number(current.seq) : 0) !== base) return null;
-    // 配序號和寫入在同一個 SQL 敘述裡完成（這個空間目前最大的序號加一）：
-    // 同時有好幾台在送出時，別台取回的序號不會跳過還沒寫入的那筆.
-    // 寫入時再檢查一次版本：同時有兩台寫同一筆時，後到的會失敗
-    const written = (
-      await this.driver.all(
-        "INSERT INTO records (space, id, seq, blob) VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM records WHERE space=?), ?)" +
-          " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob WHERE records.seq=? RETURNING seq",
-        [space, id, space, blob, base],
-      )
-    )[0];
-    if (!written) return null;
-    await this.driver.run("UPDATE spaces SET bytes=bytes+?, updated_at=? WHERE id=?", [blob.length - Number(current?.size ?? 0), this.now().toISOString(), space]);
-    return Number(written.seq);
+  async putMany(space: string, items: { id: string; base: number; blob: string }[], reserved = 0): Promise<{ applied: { id: string; seq: number }[]; conflicts: string[] }> {
+    const conflicts: string[] = [];
+    const seen = new Set<string>();
+    const unique = items.filter((item) => {
+      if (seen.has(item.id)) {
+        conflicts.push(item.id);
+        return false;
+      }
+      seen.add(item.id);
+      return true;
+    });
+    const before = new Map<string, number>();
+    if (unique.length) {
+      const rows = await this.driver.all("SELECT id, LENGTH(blob) AS size FROM records WHERE space=? AND id IN (SELECT value FROM json_each(?))", [
+        space,
+        JSON.stringify(unique.map((i) => i.id)),
+      ]);
+      for (const r of rows) before.set(String(r.id), Number(r.size));
+    }
+    // 每個敘述帶的內容不超過約 1 MB（D1 單一個值的上限是 2 MB；單筆最大約 1.4 MB 自己一組）
+    const chunks: (typeof unique)[] = [];
+    let current: typeof unique = [];
+    let size = 0;
+    for (const item of unique) {
+      if (current.length && size + item.blob.length > 1_000_000) {
+        chunks.push(current);
+        current = [];
+        size = 0;
+      }
+      current.push(item);
+      size += item.blob.length;
+    }
+    if (current.length) chunks.push(current);
+    const applied: { id: string; seq: number }[] = [];
+    for (const chunk of chunks) {
+      // 版本的檢查與寫入在同一個敘述：同時有兩台寫同一筆時，後到的是衝突
+      const rows = await this.driver.all(
+        "INSERT INTO records (space, id, seq, blob)" +
+          " SELECT ?, json_extract(j.value, '$.id'), (SELECT COALESCE(MAX(seq), 0) FROM records WHERE space=?) + j.key + 1, json_extract(j.value, '$.blob')" +
+          " FROM json_each(?) AS j" +
+          " WHERE COALESCE((SELECT r.seq FROM records r WHERE r.space=? AND r.id=json_extract(j.value, '$.id')), 0) = json_extract(j.value, '$.base')" +
+          " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob RETURNING id, seq",
+        [space, space, JSON.stringify(chunk), space],
+      );
+      const done = new Map(rows.map((r) => [String(r.id), Number(r.seq)]));
+      for (const item of chunk) {
+        const seq = done.get(item.id);
+        if (seq === undefined) conflicts.push(item.id);
+        else applied.push({ id: item.id, seq });
+      }
+    }
+    const blobs = new Map(unique.map((i) => [i.id, i.blob.length]));
+    const delta = applied.reduce((sum, a) => sum + (blobs.get(a.id) ?? 0) - (before.get(a.id) ?? 0), 0);
+    await this.driver.run("UPDATE spaces SET bytes=MAX(0, bytes - ? + ?), updated_at=? WHERE id=?", [reserved, delta, this.now().toISOString(), space]);
+    applied.sort((a, b) => a.seq - b.seq);
+    return { applied, conflicts };
   }
 
   // -------------------------------------------------------------------------
@@ -358,12 +471,14 @@ export class SyncStore {
   // 加密後的同步金鑰；每一項只能寫一次，十分鐘後失效
   // -------------------------------------------------------------------------
 
-  async createSlot(slot: string, newPub: string, commitment: string, ttlMs: number): Promise<boolean> {
+  /** maxSlots：整個服務同時最多幾個有效的配對碼（查數量與寫入在同一個敘述裡）. 碼重複或已滿時回傳 false */
+  async createSlot(slot: string, newPub: string, commitment: string, ttlMs: number, maxSlots: number = Number.MAX_SAFE_INTEGER): Promise<boolean> {
     const now = this.now().getTime();
     await this.driver.run("DELETE FROM pair_slots WHERE expires_at<?", [now]);
     const result = await this.driver.run(
-      "INSERT INTO pair_slots (slot, new_pub, commitment, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(slot) DO NOTHING",
-      [slot, newPub, commitment, now + ttlMs],
+      "INSERT INTO pair_slots (slot, new_pub, commitment, expires_at) SELECT ?, ?, ?, ?" +
+        " WHERE (SELECT COUNT(*) FROM pair_slots WHERE expires_at>=?) < ? ON CONFLICT(slot) DO NOTHING",
+      [slot, newPub, commitment, now + ttlMs, now, maxSlots],
     );
     return result.changes > 0;
   }

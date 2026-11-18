@@ -18,8 +18,10 @@ import {
   SyncApiError,
   SyncCooldownError,
   SyncEngine,
+  SyncRekeyUnknownError,
   toBase64url,
   type PairSecrets,
+  type RekeyProgress,
   type SyncDevice,
   type SyncDevices,
 } from "@running-coach/core";
@@ -598,7 +600,18 @@ function DeviceList({
   );
 }
 
+/** 換金鑰的進度 */
+function rekeyProgressText(p: RekeyProgress): string {
+  if (p.step === "fetch") return "換金鑰中：取回雲端的資料…";
+  if (p.step === "copy") return `換金鑰中：用新的金鑰重新加密（${p.done}／${p.total} 筆）…`;
+  if (p.step === "wait") return `換金鑰中：資料比較多，同步服務請我們等一下（約 ${p.seconds < 90 ? `${p.seconds} 秒` : `${Math.ceil(p.seconds / 60)} 分鐘`}），之後會自動接著做…`;
+  if (p.step === "rekey") return "換金鑰中：移除與換金鑰…";
+  return "換金鑰中：改用新的金鑰…";
+}
+
 function rekeyError(e: unknown, what: string): string {
+  // 換金鑰送出了但結果不確定：不是失敗，照說明等一下再看
+  if (e instanceof SyncRekeyUnknownError) return e.message;
   if (e instanceof SyncCooldownError) return `這台加入還不到 24 小時，還不能${what}（${e.until ? `${deviceTime(e.until)} 之後可以` : "請稍後再試"}）。`;
   if (e instanceof SyncApiError && (e.state === "devices_changed" || e.state === "rekey_conflict")) return `${what}失敗：裝置清單剛剛變了（有裝置加入，或另一台也在換金鑰）。請看一下下面最新的清單，再試一次。`;
   return `${what}失敗：${errorText(e)}`;
@@ -618,6 +631,8 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const [saved, setSaved] = useState(false);
   const [restoreText, setRestoreText] = useState("");
   const [busy, setBusy] = useState(false);
+  /** 換金鑰進行到哪裡（資料多時要一段時間） */
+  const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
   const card = useRef<HTMLElement>(null);
 
@@ -747,7 +762,11 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
       // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
       const rotateTrial = await trialSync.beforeRekey();
       // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
-      const root = await deviceSync.engine!.rekey(remove ? [remove.id] : [], deviceSync.devices?.devices.map((d) => d.id));
+      const root = await deviceSync.engine!.rekey(
+        remove ? [remove.id] : [],
+        deviceSync.devices?.devices.map((d) => d.id),
+        (p) => setProgress(rekeyProgressText(p)),
+      );
       await rotateTrial(root);
       setCode(await recoveryCode(root));
       setSaved(false);
@@ -764,6 +783,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
       void deviceSync.run();
     } finally {
       setBusy(false);
+      setProgress(null);
       setTarget(null);
     }
   }
@@ -999,7 +1019,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           </div>
         ) : (
           <>
-            {busy && <p className="muted small">{target ? "移除並換金鑰中…" : "處理中…"}</p>}
+            {busy && <p className="muted small">{progress ?? (target ? "移除並換金鑰中…" : "處理中…")}</p>}
             {deviceSync.devicesMode && deviceSync.devices && (
               <DeviceList
                 devices={deviceSync.devices}

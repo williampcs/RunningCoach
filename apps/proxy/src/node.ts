@@ -2,6 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createProxy, purgeOld } from "./handler";
@@ -17,12 +18,15 @@ function required(name: string): string {
 
 const dbPath = process.env.PROXY_DB_PATH?.trim() || "./data/proxy.db";
 mkdirSync(dirname(dbPath), { recursive: true });
-const store = new AccountStore(openNodeSqlite(dbPath));
+const driver = openNodeSqlite(dbPath);
+const store = new AccountStore(driver);
 await store.init();
+const limiter = new SqlRateLimiter(driver);
+await limiter.init();
 
 const policy = loadPolicy(process.env.PROXY_POLICY);
 // 過了保存期限的用量紀錄：啟動時與之後每天刪一次
-const purge = () => void purgeOld(store, policy).catch((e) => console.error(`purge failed: ${e instanceof Error ? e.message : String(e)}`));
+const purge = () => void Promise.all([purgeOld(store, policy), limiter.purge()]).catch((e) => console.error(`purge failed: ${e instanceof Error ? e.message : String(e)}`));
 purge();
 setInterval(purge, 86_400_000).unref();
 
@@ -30,6 +34,7 @@ const port = Number(process.env.PORT ?? 8787);
 await serve(
   createProxy({
     store,
+    rateLimiter: limiter,
     policy,
     upstream: {
       baseUrl: process.env.UPSTREAM_BASE_URL?.trim() || "https://api.anthropic.com",

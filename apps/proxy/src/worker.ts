@@ -1,5 +1,6 @@
 /** Cloudflare Workers 進入點 — 用量存在 D1. */
 import type { Row, SqlDriver, SqlValue } from "@running-coach/core";
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 
 import { createProxy, purgeOld } from "./handler";
 import { loadPolicy } from "./policy";
@@ -35,13 +36,17 @@ function d1Driver(db: D1Database): SqlDriver {
 }
 
 // 每個執行個體只建立一次資料表
-let ready: Promise<AccountStore> | undefined;
+let ready: Promise<{ store: AccountStore; limiter: SqlRateLimiter }> | undefined;
 
-function storeOf(env: Env): Promise<AccountStore> {
+function storeOf(env: Env): Promise<{ store: AccountStore; limiter: SqlRateLimiter }> {
   ready ??= (async () => {
-    const store = new AccountStore(d1Driver(env.DB));
+    const driver = d1Driver(env.DB);
+    const store = new AccountStore(driver);
     await store.init();
-    return store;
+    // 每分鐘次數的計數也在同一個 D1：所有執行個體共用
+    const limiter = new SqlRateLimiter(driver);
+    await limiter.init();
+    return { store, limiter };
   })();
   return ready;
 }
@@ -51,16 +56,19 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       (async () => {
-        const removed = await purgeOld(await storeOf(env), loadPolicy(env.PROXY_POLICY));
-        console.log(`purged daily=${removed.daily} monthly=${removed.monthly}`);
+        const { store, limiter } = await storeOf(env);
+        const removed = await purgeOld(store, loadPolicy(env.PROXY_POLICY));
+        const rates = await limiter.purge();
+        console.log(`purged daily=${removed.daily} monthly=${removed.monthly} rates=${rates}`);
       })(),
     );
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-
+    const { store, limiter } = await storeOf(env);
     const handle = createProxy({
-      store: await storeOf(env),
+      store,
+      rateLimiter: limiter,
       policy: loadPolicy(env.PROXY_POLICY),
       upstream: { baseUrl: "https://api.anthropic.com", apiKey: env.ANTHROPIC_API_KEY },
       adminToken: env.ADMIN_TOKEN,

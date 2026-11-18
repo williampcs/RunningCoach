@@ -171,7 +171,7 @@ sequenceDiagram
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 | 免費試用的憑證（規格 12.39） | localStorage 的設定（`proxy.token`，密碼鎖開著時加密；`proxy.account` 是帳號代號） | 不會：每台一個自己的憑證 |
 | 免費試用帳號的復原密鑰（規格 12.44 第 1 步） | 資料庫的 `trial_accounts`（代理的網址、帳號、用同步金鑰再加密一次的密鑰） | 會（`ta:帳號`）；新的裝置用它向代理換自己的憑證 |
-| 免費試用的帳號與用量 | 代理的 D1，以帳號為中心：`accounts`（代號、狀態、預算）、`account_tokens`（每台裝置一個憑證：雜湊、粗略的裝置名稱、加入與最後使用的時間、可以單獨撤銷）、`identities`（怎麼建立或登入：這次只有 invite，subject 存雜湊；之後的 Google／Apple 登入加在同一個帳號上）、`link_codes`（在另一台使用的連結碼的雜湊，10 分鐘、用一次）、`accounts.recovery_hash`（帳號的復原密鑰的雜湊，規格 12.44）、`invites`（邀請碼的雜湊、批次名稱、到期日、用過沒）、`daily_usage`（每天的對話／自動分析／壓縮次數，留 90 天）、`usage`（每月的 token 與金額，留 13 個月）、`totals`（所有帳號每月合計，用來擋總預算）；沒有對話的內容、email、名字或 IP | — |
+| 免費試用的帳號與用量 | 代理的 D1，以帳號為中心：`accounts`（代號、狀態、預算）、`account_tokens`（每台裝置一個憑證：雜湊、粗略的裝置名稱、加入與最後使用的時間、可以單獨撤銷）、`identities`（怎麼建立或登入：這次只有 invite，subject 存雜湊；之後的 Google／Apple 登入加在同一個帳號上）、`link_codes`（在另一台使用的連結碼的雜湊，10 分鐘、用一次）、`accounts.recovery_hash`（帳號的復原密鑰的雜湊，規格 12.44）、`invites`（邀請碼的雜湊、批次名稱、到期日、用過沒）、`daily_usage`（每天的對話／自動分析／壓縮／工具迴圈接續的次數，留 90 天）、`rate_limits`（每個帳號、每個來源 IP 的雜湊每分鐘的次數，時間窗過了就刪，規格 12.39）、`usage`（每月的 token 與金額，留 13 個月）、`totals`（所有帳號每月合計，用來擋總預算）；沒有對話的內容、email、名字或 IP | — |
 | 設定精靈走到哪一步（規格 12.35 的 A，功能開關 `onboarding`） | localStorage（`running-coach.wizard.v1`） | 不會 |
 | 測試模式（規格 6.1、9.4） | 另一個資料庫檔（OPFS 的 `/coach-test.db`）；設定與上面那些小狀態也是自己一份（localStorage 的 `running-coach.test.` 開頭，`apps/web/src/storage-scope.ts`），第一次進測試模式時從正常模式複製（密碼鎖的密文照原樣），之後各改各的 | 不會：測試模式不同步 |
 | 「先看看」的範例（規格 12.35 的 B） | 記憶體裡的另一個資料庫（worker 的 `:memory:`），範例的狀態在 sessionStorage | 不會；不碰真的資料庫，離開就清掉 |
@@ -266,7 +266,7 @@ erDiagram
 | `ta:帳號` | 免費試用的帳號（規格 12.44 第 1 步，schema 20 的 `trial_accounts`）：代理的網址、帳號的復原密鑰（用同步金鑰 HKDF 分出的另一把再加密一次，AAD 綁網址與帳號，`device-sync/trial-account.ts`）、修改時間；舊版不認得，不套用也不刪 |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
-- `spaces`：同步空間與存取憑證的雜湊。
+- `spaces`：同步空間與存取憑證的雜湊（換金鑰建立的新空間記下從哪個空間換來，`rekey_from`）。
 - `records`：加密後的每一筆與序號。
 - `pair_slots`：配對新裝置時的暫存，幾分鐘後過期。
 - 裝置（規格 12.27，功能開關 `devices`）：
@@ -274,6 +274,8 @@ erDiagram
   - `devices`：每台的公開金鑰、加密的名稱、加入與最後同步的時間、移除的時間與證明、換金鑰後給它的新金鑰。
   - `moves`：換過金鑰的空間搬到哪個新空間。
   - `sig_nonces`：簽章用過的一次性亂數，十分鐘後過期。
+- `rate_limits`：依來源的頻率限制的計數（來源 IP 的雜湊、時間窗、次數或位元組），時間窗過了就刪（規格 12.10「頻率限制與容量」）。
+- 每小時的排程（`wrangler.toml` 的 crons）：清掉建立超過 24 小時、沒有紀錄也沒有裝置的空空間，過期的配對碼、亂數與計數；用量到上限的 80% 時在 log 留警告。
 
 **裝置與換金鑰**（規格 12.27，`device-sync/device.ts`；網頁版在功能開關 `devices` 後面）
 
