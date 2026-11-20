@@ -634,7 +634,7 @@ function RekeyStatus({ onCancel }: { onCancel: () => void }) {
     return (
       <div className="notice info rekey-status" role="status">
         <p>另一台正在換金鑰，這台先不開始。</p>
-        <p className="small muted">要改由這台重新開始，另一台換到一半的會取消。</p>
+        <p className="small muted">要改由這台重新開始，另一台換到一半的會取消，那時給的新復原碼也會失效。</p>
         <div className="actions">
           <button onClick={() => void rekey.replaceOther()}>改由這台換</button>
         </div>
@@ -812,7 +812,12 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
     if (ask && !confirm("停止這台的同步？這台的資料保留，雲端與其他裝置不受影響；之後可以用配對或復原碼再加入。")) return;
     // 裝置模式：從裝置清單移除自己，這台的裝置金鑰也刪掉（下次加入是新的裝置）
     if (deviceSync.devicesMode) {
-      await deviceSync.engine?.leave();
+      try {
+        await deviceSync.engine?.leave();
+      } catch (e) {
+        setMessage({ kind: "error", text: errorText(e) });
+        return;
+      }
       await deleteDeviceIdentity();
     } else await deviceSync.engine?.forget();
     await saveKey(null);

@@ -61,7 +61,8 @@ const STATE_TEXT: Record<string, string> = {
   network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
   rekey_limit: "今天換金鑰的額度用完了，明天會自動接著做；資料都還在這台，原本的同步照常",
   rekey_pending: "這個同步正在換新的金鑰：請用移除裝置時拿到的新復原碼還原，或等換好之後再加入",
-  rekey_locked: "已經移除了裝置，這次換金鑰只能完成、不能取消",
+  rekey_locked: "已經移除了裝置的換金鑰還在進行，只能完成；7 天沒有進度時，舊的另一台（過了冷卻期）可以改由它重新開始",
+  rekey_target: "換金鑰還沒完成：這台先不送出修改，換好之後會自動送出",
   rekey_in_progress: "另一台正在換金鑰。要改由這台重新開始，按「改由這台換」（另一台的換金鑰會取消）",
   rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
@@ -208,6 +209,8 @@ interface StoredRekey extends PendingRekey {
   from: string;
   /** 開始時（使用者確認過的）裝置清單 */
   expected?: string[];
+  /** 移除之後接手資訊還沒照新的清單重寫 */
+  handoffStale?: boolean;
 }
 
 /** 換金鑰的最後一步（留下的、解不開而移除的、聲明） */
@@ -342,6 +345,10 @@ export class SyncEngine {
 
   /** 停止這台的同步：裝置模式時先從伺服器的裝置清單移除自己（連不上也照樣停止） */
   async leave(): Promise<void> {
+    // 這台開始的換金鑰已經移除了裝置：要先完成（不然只剩新的復原碼能接手）
+    if (this.device && (await this.loadPending(await this.keys))?.stored.removed.length) {
+      throw new Error("換金鑰還沒完成：這台要先完成換金鑰才能停止同步。");
+    }
     if (this.device) {
       const keys = await this.keys;
       await this.api.request("DELETE", `/v1/spaces/${keys.space}/devices/${this.device.identity.id}`, undefined, this.auth(keys)).catch(() => undefined);
@@ -470,8 +477,9 @@ export class SyncEngine {
     const { keys, raw, pending } = await this.startRekey(remove, expected, opts);
     if (remove.length) {
       await this.removeNow(keys, pending, raw, remove);
-      // 移除之後清單變了：接手資訊照新的清單再寫一次
-      await this.publishHandoff(keys, pending, await this.fetchDevices(keys));
+      // 移除之後清單變了：接手資訊照新的清單再寫一次（寫成功之前記著，接著做時先重寫）
+      pending.stored.handoffStale = true;
+      await this.savePending(pending.stored);
     }
     return this.finishRekey(keys, pending, onProgress);
   }
@@ -746,6 +754,11 @@ export class SyncEngine {
     try {
       const raw0 = await this.fetchDevices(keys);
       await this.checkExpected(raw0, pending.stored);
+      if (pending.stored.handoffStale) {
+        await this.publishHandoff(keys, pending, raw0);
+        pending.stored.handoffStale = false;
+        await save();
+      }
       await this.registerInNew(keys, newKeys, raw0);
       onProgress?.({ step: "fetch" });
       const old = await this.fetchRemote(keys, 0);
@@ -858,8 +871,12 @@ export class SyncEngine {
     save: () => Promise<void>,
     onProgress?: (step: RekeyProgress) => void,
   ): Promise<void> {
+    // 只送新空間還沒有、或舊空間的版本比新空間的新的
     const todo = [...remote.values()]
-      .filter(({ env }) => copied.get(env.k)?.env.v !== env.v)
+      .filter(({ env }) => {
+        const have = copied.get(env.k);
+        return !have || env.v > have.env.v;
+      })
       .sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
     const total = remote.size;
     let done = total - todo.length;
@@ -992,6 +1009,9 @@ export class SyncEngine {
       }
       for (let round = 0; round < MAX_ROUNDS; round++) {
         result.received += await this.pull(keys);
+        // 換到一半的新空間（用新的復原碼還原、接手中）：只取回、不送出；這台的修改等換好之後才送
+        //（新空間裡只放複製的資料，換好之前別台的修改在舊空間，由複製帶過來）
+        if (result.devices?.rekeyTarget) break;
         const { sent, conflicts } = await this.push(keys);
         result.sent += sent;
         if (!conflicts) break;

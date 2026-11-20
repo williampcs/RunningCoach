@@ -249,6 +249,13 @@ export class SyncStore {
     return result.changes > 0;
   }
 
+  /** 換到一半的新空間最後一次有進度的時間（毫秒；沒有記下時是建立的時間） */
+  async lastProgress(space: string): Promise<number> {
+    const row = (await this.driver.all("SELECT progress_at, created_at FROM spaces WHERE id=?", [space]))[0];
+    if (!row) return 0;
+    return row.progress_at === null || row.progress_at === undefined ? Date.parse(String(row.created_at)) : Number(row.progress_at);
+  }
+
   /** 換到一半的新空間是哪一台開始的（舊空間裡的裝置 id）；不是換到一半的新空間、或沒有記下時 null */
   async rekeyBy(space: string): Promise<string | null> {
     const row = (
@@ -309,8 +316,10 @@ export class SyncStore {
     const rows = await this.driver.all(
       "SELECT id FROM spaces WHERE rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves)" +
         " AND ((progress_at IS NULL AND created_at < ?) OR progress_at < ?)" +
-        // 已經提早移除過裝置的不清（只能完成：清掉的話接手資訊沒了，舊空間又不能加入新的裝置）
-        " AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.space = spaces.rekey_from AND d.removed_at IS NOT NULL)",
+        // 已經提早移除過裝置、開始的那台還在的不清（只能完成：清掉的話接手資訊沒了，舊空間又不能加入新的裝置）；
+        // 開始的那台已經不在了的照常清
+        " AND NOT (EXISTS (SELECT 1 FROM devices d WHERE d.space = spaces.rekey_from AND d.removed_at IS NOT NULL)" +
+        " AND EXISTS (SELECT 1 FROM devices s WHERE s.space = spaces.rekey_from AND s.id = spaces.rekey_by AND s.removed_at IS NULL))",
       [new Date(cutoff).toISOString(), cutoff],
     );
     for (const r of rows) await this.deleteOne(String(r.id));
@@ -600,7 +609,7 @@ export class SyncStore {
       ...plan.remove.map((r) => ({ sql: "UPDATE devices SET removed_at=?, proof=? WHERE space=? AND id=?", params: [now, r.proof, space, r.id] as SqlValue[] })),
       { sql: "DELETE FROM records WHERE space=?", params: [space] },
       { sql: "UPDATE spaces SET bytes=0, updated_at=? WHERE id=?", params: [stamp, space] },
-      { sql: "UPDATE spaces SET progress_at=NULL WHERE id=?", params: [plan.newSpace] },
+      { sql: "UPDATE spaces SET progress_at=NULL, handoff=NULL WHERE id=?", params: [plan.newSpace] },
     ]);
   }
 
