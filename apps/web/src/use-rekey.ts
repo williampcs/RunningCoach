@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { SyncRekeyPausedError, type PendingRekey, type RekeyProgress, type SyncDevice } from "@running-coach/core";
+import { SyncApiError, SyncRekeyPausedError, type PendingRekey, type RekeyProgress, type SyncDevice } from "@running-coach/core";
 
 import type { DeviceSyncState } from "./device-sync";
 import type { TrialSyncState } from "./use-trial-sync";
@@ -22,7 +22,11 @@ export interface RekeyState {
   removed: SyncDevice | null;
   /** 換好了：新的同步金鑰（設定頁顯示新的復原碼後清掉） */
   finished: Uint8Array | null;
+  /** 另一台正在換金鑰（這台開始時伺服器上已經有一個換到一半的）：使用者可以選改由這台重新開始 */
+  otherInProgress: boolean;
   start(remove: SyncDevice | null, expected: string[] | undefined): Promise<void>;
+  /** 改由這台重新開始（取消另一台換到一半的） */
+  replaceOther(): Promise<void>;
   resume(): Promise<void>;
   cancel(): Promise<void>;
   clearFinished(): void;
@@ -41,6 +45,8 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
   const [removed, setRemoved] = useState<SyncDevice | null>(null);
   const [finished, setFinished] = useState<Uint8Array | null>(null);
   const [tick, setTick] = useState(0);
+  const [otherInProgress, setOtherInProgress] = useState(false);
+  const lastStart = useRef<{ remove: SyncDevice | null; expected: string[] | undefined } | null>(null);
   const running = useRef(false);
   /** 這次打開頁面自動接著做失敗過（連不上等）：不一直重試，等下次打開或使用者按 */
   const autoFailed = useRef(false);
@@ -59,6 +65,7 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
       running.current = true;
       setBusy(true);
       setError(null);
+      setOtherInProgress(false);
       try {
         // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
         const rotateTrial = await trialSync.beforeRekey();
@@ -70,7 +77,8 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
         }
       } catch (e) {
         // 今天的額度用完：不是錯誤，明天接著做（pending 會記著到哪裡、幾點之後）
-        if (!(e instanceof SyncRekeyPausedError)) {
+        if (e instanceof SyncApiError && e.state === "rekey_in_progress") setOtherInProgress(true);
+        else if (!(e instanceof SyncRekeyPausedError)) {
           setError(e);
           autoFailed.current = true;
         }
@@ -86,21 +94,32 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
     [engine, trialSync, deviceSync, refresh],
   );
 
-  const start = useCallback(
-    async (remove: SyncDevice | null, expected: string[] | undefined) => {
+  const begin = useCallback(
+    async (remove: SyncDevice | null, expected: string[] | undefined, replace: boolean) => {
       setRemoved(null);
       autoFailed.current = false;
+      lastStart.current = { remove, expected };
       await run(async (onProgress) => {
         // 移除的那台在 rekey 一開始就被伺服器拒絕：之後即使停下來（明天接著做）它也已經不能同步
-        const root = await engine!.rekey(remove ? [remove.id] : [], expected, (p) => {
-          if (remove && p.step === "fetch") setRemoved(remove);
-          onProgress(p);
-        });
+        const root = await engine!.rekey(
+          remove ? [remove.id] : [],
+          expected,
+          (p) => {
+            if (remove && p.step === "fetch") setRemoved(remove);
+            onProgress(p);
+          },
+          { replace },
+        );
         return root;
       });
     },
     [run, engine],
   );
+  const start = useCallback((remove: SyncDevice | null, expected: string[] | undefined) => begin(remove, expected, false), [begin]);
+  const replaceOther = useCallback(async () => {
+    const last = lastStart.current;
+    if (last) await begin(last.remove, last.expected, true);
+  }, [begin]);
 
   const resume = useCallback(async () => {
     autoFailed.current = false;
@@ -140,12 +159,14 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
       error,
       removed,
       finished,
+      otherInProgress,
       start,
+      replaceOther,
       resume,
       cancel,
       clearFinished: () => setFinished(null),
       clearError: () => setError(null),
     }),
-    [pending, busy, progress, error, removed, finished, start, resume, cancel],
+    [pending, busy, progress, error, removed, finished, otherInProgress, start, replaceOther, resume, cancel],
   );
 }

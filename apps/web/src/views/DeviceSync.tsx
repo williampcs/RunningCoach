@@ -629,7 +629,18 @@ function DeviceList({
  */
 function RekeyStatus({ onCancel }: { onCancel: () => void }) {
   const { rekey } = useApp();
-  const { pending, busy, progress, removed } = rekey;
+  const { pending, busy, progress, removed, otherInProgress } = rekey;
+  if (otherInProgress && !busy && !pending) {
+    return (
+      <div className="notice info rekey-status" role="status">
+        <p>另一台正在換金鑰，這台先不開始。</p>
+        <p className="small muted">要改由這台重新開始，另一台換到一半的會取消。</p>
+        <div className="actions">
+          <button onClick={() => void rekey.replaceOther()}>改由這台換</button>
+        </div>
+      </div>
+    );
+  }
   if (!busy && !pending && !removed) return null;
   const removedText = removed ? `已經移除「${deviceName(removed)}」：那台已經不能再同步。` : pending?.removed.length ? "移除的裝置已經不能再同步。" : null;
   const waiting = pending && !busy && pending.resumeAt > Date.now();

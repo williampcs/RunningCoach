@@ -61,6 +61,7 @@ const STATE_TEXT: Record<string, string> = {
   network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
   rekey_limit: "今天換金鑰的額度用完了，明天會自動接著做；資料都還在這台，原本的同步照常",
   rekey_pending: "正在換新的同步金鑰，換好之後才能加入新的裝置；請稍後再試",
+  rekey_in_progress: "另一台正在換金鑰。要改由這台重新開始，按「改由這台換」（另一台的換金鑰會取消）",
   rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
 
@@ -202,6 +203,8 @@ export interface PendingRekey {
 interface StoredRekey extends PendingRekey {
   root: string;
   from: string;
+  /** 開始時（使用者確認過的）裝置清單 */
+  expected?: string[];
 }
 
 const REKEY_META = "rekey_pending";
@@ -435,7 +438,13 @@ export class SyncEngine {
    * 解不開裝置紀錄的（伺服器塞的、或不是用這組同步金鑰登記的）不給新金鑰，也不算它的移除證明.
    * 回傳新的同步金鑰（已經用 onRootChanged 存起來），App 顯示新的復原碼
    */
-  async rekey(remove: string[] = [], expected?: string[], onProgress?: (step: RekeyProgress) => void): Promise<Uint8Array> {
+  async rekey(
+    remove: string[] = [],
+    expected?: string[],
+    onProgress?: (step: RekeyProgress) => void,
+    /** replace：伺服器上已經有一個這台不知道的換到一半的（另一台開始的、或這台的紀錄不見了）時，使用者明確選了改由這台重新開始 */
+    opts: { replace?: boolean } = {},
+  ): Promise<Uint8Array> {
     if (!this.device) throw new Error("換金鑰要開啟裝置清單");
     const { identity } = this.device;
     await this.sync();
@@ -457,17 +466,17 @@ export class SyncEngine {
       const root = newRootKey();
       const newKeys = await deriveKeys(root);
       // 帶上舊空間並用這台的金鑰簽：伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制.
-      // 伺服器上已經有一個這台不知道的（另一台開始的、或這台的紀錄不見了）：使用者這次明確要換，取代它
-      const create = (replace: boolean) =>
-        this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}${replace ? "&replace=1" : ""}`, undefined, {
-          device: identity,
-          token: newKeys.token,
-        });
-      await create(false).catch((e: unknown) => {
-        if (e instanceof SyncApiError && e.state === "rekey_pending") return create(true);
-        throw e;
+      // 伺服器上已經有一個這台不知道的（另一台正在換）：409 rekey_in_progress；使用者明確選了改由這台重新開始才取代它
+      await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}${opts.replace ? "&replace=1" : ""}`, undefined, {
+        device: identity,
+        token: newKeys.token,
       });
-      pending = { root, keys: newKeys, stored: { root: toBase64url(root), space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [] } };
+      // 使用者確認過的清單（換到一半時不會有別的裝置加入；萬一有，停下來請使用者重新確認）
+      pending = {
+        root,
+        keys: newKeys,
+        stored: { root: toBase64url(root), space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [], expected: ids },
+      };
       await this.savePending(pending.stored);
     }
     if (remove.length) await this.removeNow(keys, pending, raw, remove);
@@ -496,11 +505,13 @@ export class SyncEngine {
 
   /** 放棄換到一半的換金鑰：刪掉新的空間（已經移除的裝置維持移除，換好金鑰之前不能加入新的裝置） */
   async cancelRekey(): Promise<void> {
-    const pending = await this.loadPending(await this.keys);
+    const keys = await this.keys;
+    const pending = await this.loadPending(keys);
     if (!pending) return;
-    await this.api.request("DELETE", `/v1/spaces/${pending.keys.space}?abandon=1`, undefined, this.auth(pending.keys)).catch((e: unknown) => {
-      // 已經不在了（被清掉、被另一台取代）也算放棄了
-      if (!(e instanceof SyncApiError && (e.status === 404 || e.status === 403))) throw e;
+    // 在舊空間簽章（這台還沒登記到新空間時也放得掉）
+    await this.api.request("DELETE", `/v1/spaces/${keys.space}/rekey`, undefined, this.auth(keys)).catch((e: unknown) => {
+      // 舊空間已經不在：也就沒有換到一半的了
+      if (!(e instanceof SyncApiError && e.status === 404)) throw e;
     });
     await this.clearPending();
   }
@@ -550,6 +561,14 @@ export class SyncEngine {
     await this.savePending(pending.stored);
   }
 
+  /** 開始之後才出現的裝置（伺服器不該讓它加入）：不默默給它新的金鑰，放棄這次、請使用者重新確認 */
+  private async checkExpected(raw: RawDevices, stored: StoredRekey): Promise<void> {
+    const expected = stored.expected;
+    if (!expected || raw.devices.every((d) => expected.includes(d.id))) return;
+    await this.cancelRekey().catch(() => undefined);
+    throw new SyncApiError(409, "裝置清單剛剛變了，請重新確認後再試", { state: "devices_changed" });
+  }
+
   /** 換到一半的新空間已經不在（放棄太久被清掉、被另一台取代）：這台的紀錄也清掉，下次重新開始 */
   private async dropIfGone(e: unknown): Promise<void> {
     if (e instanceof SyncApiError && (e.state === "rekey_conflict" || (e.status === 404 && !e.state))) await this.clearPending();
@@ -566,7 +585,8 @@ export class SyncEngine {
     let rekeySent = false;
     let copied: Map<string, { env: Envelope; seq: number }>;
     try {
-      const raw0 = this.rawDevices ?? (await this.fetchDevices(keys));
+      const raw0 = await this.fetchDevices(keys);
+      await this.checkExpected(raw0, pending.stored);
       const self0 = raw0.devices.find((d) => d.id === identity.id);
       const selfLabel = (self0 && (await openLabel(keys, self0, self0.label))) ?? this.device!.label();
       // 在新空間登記這台（已經登記過時伺服器照樣回清單）
@@ -584,6 +604,7 @@ export class SyncEngine {
       for (let round = 0; ; round++) {
         await this.copyMissing(newKeys, old.remote, copied, pending.stored, onProgress);
         const raw = await this.fetchDevices(keys);
+        await this.checkExpected(raw, pending.stored);
         const keep: { id: string; label: string; box: string }[] = [];
         const removed: { id: string; proof: string | null }[] = [];
         for (const d of raw.devices) {

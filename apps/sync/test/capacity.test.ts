@@ -224,13 +224,13 @@ describe("換金鑰不受整個服務的空間數擋（一換一）", () => {
     await expect(api.request("PUT", `/v1/spaces/${space(79)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
       status: 503,
     });
-    // 過了冷卻期：可以，但同一個舊空間同時只有一個換到一半的：再開一個時回 rekey_pending（接著做那一個）；
+    // 過了冷卻期：可以，但同一個舊空間同時只有一個換到一半的：再開一個時回 rekey_in_progress（接著做那一個）；
     // 明確重新開始（replace=1）時之前沒完成的被刪掉（不會越積越多）
     advance(25 * HOUR);
     await api.request("PUT", `/v1/spaces/${space(80)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN });
     await expect(api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
       status: 409,
-      state: "rekey_pending",
+      state: "rekey_in_progress",
     });
     expect(await store.spaceToken(space(81))).toBeNull();
     await api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}&replace=1`, undefined, { device: a.identity, token: TOKEN });

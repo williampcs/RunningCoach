@@ -14,7 +14,8 @@ const SCHEMA = `
     rekey_from  TEXT,
     network     TEXT,
     network_at  INTEGER,
-    progress_at INTEGER
+    progress_at INTEGER,
+    rekey_by    TEXT
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -169,6 +170,7 @@ export class SyncStore {
       ["spaces", "network", "TEXT"],
       ["spaces", "network_at", "INTEGER"],
       ["spaces", "progress_at", "INTEGER"],
+      ["spaces", "rekey_by", "TEXT"],
       ["devices", "removed_by", "TEXT"],
       ["devices", "removal_statement", "TEXT"],
       ["devices", "removal_signature", "TEXT"],
@@ -209,6 +211,8 @@ export class SyncStore {
     maxSpaces: number | null = null,
     rekeyFrom: string | null = null,
     network: string | null = null,
+    /** 換金鑰的新空間：開始換金鑰的那台（舊空間裡的裝置 id）；只有它能登記到新空間、送複製 */
+    rekeyBy: string | null = null,
   ): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
@@ -239,7 +243,23 @@ export class SyncStore {
         maxSpaces ?? 0,
       ],
     );
+    if (result.changes > 0 && rekeyFrom !== null && rekeyBy !== null) await this.driver.run("UPDATE spaces SET rekey_by=? WHERE id=?", [rekeyBy, space]);
     return result.changes > 0;
+  }
+
+  /** 換到一半的新空間是哪一台開始的（舊空間裡的裝置 id）；不是換到一半的新空間、或沒有記下時 null */
+  async rekeyBy(space: string): Promise<string | null> {
+    const row = (
+      await this.driver.all("SELECT rekey_by FROM spaces WHERE id=? AND rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves)", [space])
+    )[0];
+    return row?.rekey_by === null || row?.rekey_by === undefined ? null : String(row.rekey_by);
+  }
+
+  /** 這幾筆 id 在這個空間已經有的內容長度（換金鑰的複製算新增的筆數與大小的差） */
+  async existingSizes(space: string, ids: string[]): Promise<Map<string, number>> {
+    if (!ids.length) return new Map();
+    const rows = await this.driver.all("SELECT id, LENGTH(blob) AS size FROM records WHERE space=? AND id IN (SELECT value FROM json_each(?))", [space, JSON.stringify(ids)]);
+    return new Map(rows.map((r) => [String(r.id), Number(r.size)]));
   }
 
   /**
@@ -293,19 +313,32 @@ export class SyncStore {
   }
 
   /**
-   * 換金鑰完成之前先移除裝置（一個敘述，只動還沒移除的）：之後伺服器拒絕它們的請求，它們下次連線拿到
-   * 移除的證明與 signer 簽的聲明. 回傳移除了幾台
+   * 換金鑰完成之前先移除裝置（每一台一個敘述，整批一個交易，只動還沒移除的）：之後伺服器拒絕它們的請求，它們下次連線拿到
+   * 移除的證明與 signer 簽的聲明. 同一個敘述裡再確認 signer 自己還沒被移除、newSpace 仍是這個舊空間換到一半的新空間
+   * （兩台同時互相移除時只有先到的生效）. 回傳這次移除了幾台
    */
-  async removeDevices(space: string, remove: { id: string; proof: string | null }[], removal: { signer: string; statement: string; signature: string }): Promise<number> {
+  async removeDevices(
+    space: string,
+    newSpace: string,
+    remove: { id: string; proof: string | null }[],
+    removal: { signer: string; statement: string; signature: string },
+  ): Promise<number> {
     const now = this.now().getTime();
-    let changed = 0;
     await this.batch(
       remove.map((r) => ({
-        sql: "UPDATE devices SET removed_at=?, proof=?, removed_by=?, removal_statement=?, removal_signature=? WHERE space=? AND id=? AND removed_at IS NULL",
-        params: [now, r.proof, removal.signer, removal.statement, removal.signature, space, r.id] as SqlValue[],
+        sql:
+          "UPDATE devices SET removed_at=?, proof=?, removed_by=?, removal_statement=?, removal_signature=? WHERE space=? AND id=? AND removed_at IS NULL" +
+          " AND EXISTS (SELECT 1 FROM devices s WHERE s.space=? AND s.id=? AND s.removed_at IS NULL)" +
+          " AND EXISTS (SELECT 1 FROM spaces n WHERE n.id=? AND n.rekey_from=? AND n.id NOT IN (SELECT moved_to FROM moves))" +
+          " AND NOT EXISTS (SELECT 1 FROM moves WHERE moves.space=?)",
+        params: [now, r.proof, removal.signer, removal.statement, removal.signature, space, r.id, space, removal.signer, newSpace, space, space] as SqlValue[],
       })),
     );
-    for (const r of remove) if ((await this.device(space, r.id))?.removedAt === now) changed++;
+    let changed = 0;
+    for (const r of remove) {
+      const d = await this.device(space, r.id);
+      if (d?.removedAt === now && d.removal?.signer === removal.signer && d.removal.statement === removal.statement) changed++;
+    }
     return changed;
   }
 
@@ -481,11 +514,19 @@ export class SyncStore {
   }
 
   /** 回傳是否新增（同一個 id 已經存在時不動） */
+  /**
+   * 回傳是否新增（同一個 id 已經存在時不動）. 檢查與寫入在同一個敘述：這個空間有換到一半的換金鑰、或有先移除還沒換金鑰的裝置時不新增；
+   * 這個空間是換到一半的新空間時，只有開始換金鑰的那台（rekey_by）能登記
+   */
   async addDevice(space: string, d: { id: string; signPub: string; boxPub: string; label: string; legacy: boolean }): Promise<boolean> {
     const now = this.now().getTime();
     const result = await this.driver.run(
-      "INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(space, id) DO NOTHING",
-      [space, d.id, d.signPub, d.boxPub, d.label, now, now, d.legacy ? 1 : 0],
+      "INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) SELECT ?, ?, ?, ?, ?, ?, ?, ?" +
+        " WHERE NOT EXISTS (SELECT 1 FROM spaces p WHERE p.rekey_from = ? AND p.id NOT IN (SELECT moved_to FROM moves))" +
+        " AND NOT EXISTS (SELECT 1 FROM devices r WHERE r.space = ? AND r.removed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM moves m WHERE m.space = ?))" +
+        " AND NOT EXISTS (SELECT 1 FROM spaces n WHERE n.id = ? AND n.rekey_from IS NOT NULL AND n.id NOT IN (SELECT moved_to FROM moves) AND COALESCE(n.rekey_by, '') <> ?)" +
+        " ON CONFLICT(space, id) DO NOTHING",
+      [space, d.id, d.signPub, d.boxPub, d.label, now, now, d.legacy ? 1 : 0, space, space, space, space, d.id],
     );
     return result.changes > 0;
   }
@@ -611,8 +652,10 @@ export class SyncStore {
           " SELECT ?, json_extract(j.value, '$.id'), (SELECT COALESCE(MAX(seq), 0) FROM records WHERE space=?) + j.key + 1, json_extract(j.value, '$.blob')" +
           " FROM json_each(?) AS j" +
           " WHERE COALESCE((SELECT r.seq FROM records r WHERE r.space=? AND r.id=json_extract(j.value, '$.id')), 0) = json_extract(j.value, '$.base')" +
+          // 換金鑰完成的那一刻還在途中的送出：不寫進已經搬走的舊空間（當成衝突，下次同步時跟著搬過去）
+          " AND NOT EXISTS (SELECT 1 FROM moves WHERE moves.space=?)" +
           " ON CONFLICT(space, id) DO UPDATE SET seq=excluded.seq, blob=excluded.blob RETURNING id, seq",
-        [space, space, JSON.stringify(chunk), space],
+        [space, space, JSON.stringify(chunk), space, space],
       );
       const done = new Map(rows.map((r) => [String(r.id), Number(r.seq)]));
       for (const item of chunk) {
