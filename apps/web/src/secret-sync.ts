@@ -50,8 +50,16 @@ const isCleared = (v: Content | null | undefined): v is ClearedSecret => Boolean
 
 /** 這個同步空間要不要帶 key：明確開了才帶（沒有紀錄的舊空間不帶） */
 export async function shareEnabled(db: Db): Promise<boolean> {
+  return (await shareState(db)).on;
+}
+
+/**
+ * 「提供分享」的狀態與那一筆的時間. 任何一台都能打開，所以每台第一次把自己的 key 送上去之前，
+ * 要在那台同意一次（settings.ts 的 shareAgreement 記同意的是哪一次）；拿別台的照舊自動
+ */
+export async function shareState(db: Db): Promise<{ on: boolean; at: string | null }> {
   const row = (await db.listSyncedSecrets()).find((r) => r.name === SHARE);
-  return row?.box === "on";
+  return { on: row?.box === "on", at: row?.updated_at ?? null };
 }
 
 /** 改要不要帶 key（每台都照它）；關掉時刪掉 sk:llm、sk:intervals（下次同步別台也刪掉） */
@@ -172,7 +180,8 @@ export interface Adoption {
 export type PendingReason = "recipient" | "both-changed" | "unknown";
 
 export interface PendingSecret {
-  value: SecretValue;
+  /** 另一台的；「已清除」是另一台清掉了 */
+  value: Content;
   remote: Remote;
   reason: PendingReason;
   /** llm：另一台的送到哪裡（畫面上顯示） */
@@ -197,9 +206,11 @@ export async function reconcileSecrets(
   root: Uint8Array,
   s: AppSettings,
   stamps: Partial<Record<SecretName, SecretStamp>> = secretStamps(),
-  opts: { now?: Date; allowLocalHttp?: boolean } = {},
+  opts: { now?: Date; allowLocalHttp?: boolean; uploadAllowed?: boolean } = {},
 ): Promise<ReconcileResult> {
   const now = opts.now ?? new Date();
+  // 這台同意帶上去了嗎（沒同意：只拿別台的，這台的不送）
+  const upload = opts.uploadAllowed ?? true;
   const nowIso = now.toISOString();
   const rows = await db.listSyncedSecrets();
   const result: ReconcileResult = { wrote: false, adopt: {}, pending: {}, stamps: {} };
@@ -216,6 +227,7 @@ export async function reconcileSecrets(
     const st = stamps[name];
     const there = remote[name];
     const push = async (value: Content, at: string) => {
+      if (!upload) return;
       const when = clampStamp(at, now);
       await store(db, root, name, value, when);
       result.wrote = true;
@@ -239,6 +251,11 @@ export async function reconcileSecrets(
       await push(local ?? { cleared: true }, st.at);
       continue;
     }
+    // 這台改過（還沒送出）、另一台也改過（包括清掉）：問使用者，兩邊都不默默蓋掉
+    if (st?.edited) {
+      result.pending[name] = { value: there.value, remote: there, reason: "both-changed", ...(name === "llm" && !remoteEmpty ? { recipient: recipientOf(there.value as LlmSecret) } : {}) };
+      continue;
+    }
     if (!remoteChanged) {
       // 雲端沒變、這台也沒改過卻不一樣（例如忘記密碼清掉了 key）：這台沒有就拿回來；有的話問使用者，不默默蓋掉任何一邊
       if (local === null) {
@@ -251,7 +268,7 @@ export async function reconcileSecrets(
     }
     // 雲端變了（另一台改過）
     if (remoteEmpty) {
-      // 另一台清掉了：這台也清（這台改過的不會走到這裡）
+      // 另一台清掉了：這台也清（這台改過的在上面已經問使用者）
       result.adopt[name] = { value: there.value, remote: there, kind: "cleared" };
       continue;
     }

@@ -562,6 +562,14 @@ function ShareKeysToggle() {
         <ShareKeysInfo />
       </p>
       {!on && <p className="small muted share-keys-hint">沒有勾：換手機或加入新裝置時，API key 與 Intervals.icu 要在那台重新填。</p>}
+      {on && changing === null && !secretSync.shareAgreed && !secretSync.shareAsk && (
+        <p className="row share-keys-hint">
+          <span className="small muted">這台的 key 沒有帶上去（別台的照樣拿得到）。</span>
+          <button className="text" onClick={() => void secretSync.answerShare(true)}>
+            這台也帶
+          </button>
+        </p>
+      )}
     </>
   );
 }

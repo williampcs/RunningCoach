@@ -115,19 +115,33 @@ async function device(root: Uint8Array, settings: AppSettings = defaultSettings(
 const withKey = (apiKey: string): AppSettings => ({ ...defaultSettings(), apiKey });
 const later = (ms = HOUR) => (now = new Date(now.getTime() + ms));
 
-/** 改 key（照 settings.ts 的 stampChanges 記下這台改的） */
+const editStamp = (old: SecretStamp | undefined): SecretStamp => ({
+  at: new Date(Math.max(now.getTime(), old ? Date.parse(old.at) + 1 : 0)).toISOString(),
+  seen: old?.seen ?? null,
+  edited: true,
+});
+
+/** 改 key（照 settings.ts 的 stampChanges：填了、換了算修改；變成空的不算） */
 function change(d: Device, next: AppSettings) {
   for (const name of NAMES) {
-    if (secretSkipped(next, name) || sameSecret(secretOf(d.settings, name), secretOf(next, name))) continue;
+    const value = secretOf(next, name);
+    if (secretSkipped(next, name) || sameSecret(secretOf(d.settings, name), value)) continue;
     const old = d.stamps[name];
-    const at = new Date(Math.max(now.getTime(), old ? Date.parse(old.at) + 1 : 0)).toISOString();
-    d.stamps[name] = { at, seen: old?.seen ?? null, edited: true };
+    if (value === null) {
+      if (old) d.stamps[name] = { ...old, edited: false };
+    } else d.stamps[name] = editStamp(old);
   }
   d.settings = next;
 }
 
+/** 使用者在畫面上清掉（同意帶 key 時，畫面呼叫 markUserCleared） */
+function userClear(d: Device, next: AppSettings) {
+  change(d, next);
+  for (const name of NAMES) if (secretOf(next, name) === null && !secretSkipped(next, name)) d.stamps[name] = editStamp(d.stamps[name]);
+}
+
 /** 同步完看一次（App 的 useSecretSync 做的事）；有寫入就再同步一次送出 */
-async function reconcile(d: Device, opts: { allowLocalHttp?: boolean } = {}): Promise<ReconcileResult> {
+async function reconcile(d: Device, opts: { allowLocalHttp?: boolean; uploadAllowed?: boolean } = {}): Promise<ReconcileResult> {
   const result = await reconcileSecrets(d.db, d.root, d.settings, d.stamps, { now, ...opts });
   for (const name of NAMES) {
     const a = result.adopt[name];
@@ -310,11 +324,11 @@ describe("API key 與 Intervals.icu 的連線跟著加密的同步", () => {
     expect(clampStamp("not a date", now)).toBe("1970-01-01T00:00:00.000Z");
   });
 
-  it("一台清掉 key、中斷 Intervals.icu：存一筆「已清除」，別台跟著清，不會再被帶回來", async () => {
+  it("使用者在畫面上清掉 key、中斷 Intervals.icu：存一筆「已清除」，別台跟著清，不會再被帶回來", async () => {
     const a = await deviceA();
     const b = await joined(a);
     later();
-    change(a, { ...a.settings, apiKey: "", intervals: { apiKey: "", athleteId: "i123", accessToken: "", account: null } });
+    userClear(a, { ...a.settings, apiKey: "", intervals: { apiKey: "", athleteId: "i123", accessToken: "", account: null } });
     expect((await reconcile(a)).wrote).toBe(true);
     expect(JSON.stringify(await syncedSecrets(a.db, a.root, now))).toContain("cleared");
     // A 下一輪不會又被帶回來
@@ -479,6 +493,89 @@ describe("API key 與 Intervals.icu 的連線跟著加密的同步", () => {
     // 這一版之前的種類清單（engine 對不認得的種類不套用、不刪，見 apps/sync/test/engine.test.ts「這個版本不認得的種類」）
     const before = /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/;
     expect(before.test("sk:llm")).toBe(false);
+  });
+
+  it("App 自己清掉的（被移除、忘記密碼）不算修改：被移除的那台重新加入後，別台的 key 還在", async () => {
+    const a = await deviceA();
+    const b = await joined(a);
+    later();
+    // 被移除：清掉 key（存設定），再清掉這台的同步狀態（App.tsx 的 onRemoved）
+    change(b, { ...b.settings, apiKey: "", intervals: { apiKey: "", athleteId: "", accessToken: "", account: null } });
+    expect(b.stamps.llm?.edited).toBe(false);
+    b.stamps = {};
+    // 重新加入：沒有送「已清除」，反而拿回 A 的
+    const again = await device(a.root, b.settings);
+    again.stamps = b.stamps;
+    await again.engine.sync();
+    const result = await reconcile(again);
+    expect(result.wrote).toBe(false);
+    expect(again.settings.apiKey).toBe(KEY_A);
+    await a.engine.sync();
+    expect(await reconcile(a)).toMatchObject(nothing);
+    expect(a.settings.apiKey).toBe(KEY_A);
+    expect(a.settings.intervals.apiKey).toBe(INTERVALS_KEY);
+
+    // 就算狀態沒清掉（只靠「變成空的不算修改」）也一樣
+    const c = await joined(a);
+    later();
+    change(c, { ...c.settings, apiKey: "" });
+    expect((await reconcile(c)).wrote).toBe(false);
+    expect(c.settings.apiKey).toBe(KEY_A);
+  });
+
+  it("存設定時變成空的不算修改（真的 saveSettings）", async () => {
+    await saveSettings(withKey(KEY_A));
+    expect(secretStamps().llm?.edited).toBe(true);
+    await saveSettings(withKey(""));
+    expect(secretStamps().llm?.edited).toBe(false);
+  });
+
+  it("這台還沒同意帶上去：拿得到別台的，這台的不送", async () => {
+    const a = await deviceA();
+    const b = await device(a.root);
+    await b.engine.sync();
+    const got = await reconcile(b, { uploadAllowed: false });
+    expect(got.adopt.llm?.kind).toBe("added");
+    later();
+    change(b, { ...b.settings, apiKey: KEY_B });
+    expect((await reconcile(b, { uploadAllowed: false })).wrote).toBe(false);
+    await a.engine.sync();
+    expect(await reconcile(a)).toMatchObject(nothing);
+    expect(a.settings.apiKey).toBe(KEY_A);
+    // 同意之後才送
+    expect((await reconcile(b, { uploadAllowed: true })).wrote).toBe(true);
+    await a.engine.sync();
+    await reconcile(a);
+    expect(a.settings.apiKey).toBe(KEY_B);
+  });
+
+  it("這台改過、還沒送出，另一台後來清掉了：問使用者，不默默清掉這台的", async () => {
+    const a = await deviceA();
+    const b = await joined(a);
+    later();
+    // A 離線時填了新的 key（還沒送）
+    change(a, { ...a.settings, apiKey: "fake-key-a-offline" });
+    later();
+    userClear(b, { ...b.settings, apiKey: "" });
+    await reconcile(b);
+    await a.engine.sync();
+    const result = await reconcileSecrets(a.db, a.root, a.settings, a.stamps, { now });
+    expect(result.adopt.llm).toBeUndefined();
+    expect(result.pending.llm).toMatchObject({ reason: "both-changed", value: { cleared: true } });
+    expect(a.settings.apiKey).toBe("fake-key-a-offline");
+
+    // 反過來：這台清掉了（使用者）、還沒送，另一台後來填了新的：也問
+    const c = await joined(a);
+    later();
+    userClear(c, { ...c.settings, apiKey: "" });
+    later();
+    change(a, { ...a.settings, apiKey: "fake-key-a-new" });
+    a.stamps.llm = editStamp(a.stamps.llm);
+    await reconcileSecrets(a.db, a.root, a.settings, a.stamps, { now }).then(async (r) => r.wrote && a.engine.sync());
+    await c.engine.sync();
+    const asked = await reconcileSecrets(c.db, c.root, c.settings, c.stamps, { now });
+    expect(asked.pending.llm?.reason).toBe("both-changed");
+    expect(c.settings.apiKey).toBe("");
   });
 
   it("不認得的 sk: 名稱：不存進資料庫", async () => {

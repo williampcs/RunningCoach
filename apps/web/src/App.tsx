@@ -39,7 +39,7 @@ import { wizardStart, type WizardStep } from "./wizard";
 import { peekLoginCallback } from "./intervals-login";
 import { Wizard } from "./views/Wizard";
 import { DemoBanner, DemoSettings } from "./views/Demo";
-import { buildProvider, defaultSettings, forgetLockedSecrets, intervalsConnected, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
+import { buildProvider, clearSecretSyncState, defaultSettings, forgetLockedSecrets, intervalsConnected, llmProblem, loadSettings, needsTermsConfirm, resolvedModels, saveSettings, termsAccepted, type AppSettings } from "./settings";
 import { deleteDeviceIdentity } from "./device-identity";
 import { forgetTestScope } from "./storage-scope";
 import { markRemoved, NewDevicesBanner, RemovedBanner, removedHere } from "./views/DeviceAlerts";
@@ -425,6 +425,8 @@ export function App() {
       const current = settingsRef.current;
       // 同步裡加密的 API key 與 Intervals.icu 的連線（規格 12.47）也刪掉：解得開的同步金鑰下面就清掉了
       if (coachRef.current) await forgetSyncedSecrets(coachRef.current.db).catch(() => undefined);
+      // 這次清掉 key 不算使用者的修改（重新加入時不會把「已清除」送給別台）；要不要帶上去也重新問
+      clearSecretSyncState();
       const next: AppSettings = {
         ...current,
         apiKey: "",

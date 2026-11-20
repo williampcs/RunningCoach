@@ -147,7 +147,7 @@ export function SecretPrompts({ only }: { only?: SecretName }) {
   const { secretSync } = useApp();
   const [busy, setBusy] = useState(false);
   const names = SECRET_NAMES.filter((n) => secretSync.pending[n] && (!only || n === only));
-  if (!names.length) return null;
+  if (!names.length && !secretSync.shareAsk) return null;
   const run = async (job: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -158,12 +158,34 @@ export function SecretPrompts({ only }: { only?: SecretName }) {
   };
   return (
     <>
+      {secretSync.shareAsk && (
+        <div className="notice warn secret-prompt" data-secret="share">
+          <span>
+            <strong>另一台打開了「帶 key 到其他裝置」</strong>
+            <br />
+            要把這台的 API key 與 Intervals.icu 的連線也加密後帶上去嗎？不帶的話，這台照樣拿得到別台的。如果不是你打開的，選「這台不帶」，到「多裝置同步」取消勾選並移除不認得的裝置。
+          </span>
+          <div className="actions">
+            <button disabled={busy} onClick={() => void run(() => secretSync.answerShare(true))}>
+              這台也帶
+            </button>
+            <button disabled={busy} onClick={() => void run(() => secretSync.answerShare(false))}>
+              這台不帶
+            </button>
+          </div>
+        </div>
+      )}
       {names.map((name) => {
         const item = secretSync.pending[name]!;
+        const intervals = item.value as Partial<IntervalsSecret>;
         const other =
-          name === "llm"
-            ? `另一台的 AI 服務：${item.recipient ?? ""}`
-            : `另一台的 Intervals.icu：${(item.value as IntervalsSecret).account?.name ?? ((item.value as IntervalsSecret).accessToken ? "用登入連接" : "用 API key 連接")}`;
+          "cleared" in item.value
+            ? name === "llm"
+              ? "另一台清掉了 API key"
+              : "另一台中斷了 Intervals.icu 的連線"
+            : name === "llm"
+              ? `另一台的 AI 服務：${item.recipient ?? ""}`
+              : `另一台的 Intervals.icu：${intervals.account?.name ?? (intervals.accessToken ? "用登入連接" : "用 API key 連接")}`;
         return (
           <div key={name} className="notice warn secret-prompt" data-secret={name}>
             <span>

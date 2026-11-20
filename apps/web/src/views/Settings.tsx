@@ -36,6 +36,9 @@ import {
   lockEnabled,
   PROVIDER_LABELS,
   PROVIDER_RECIPIENT,
+  SECRET_NAMES,
+  secretOf,
+  secretSkipped,
   suggestedModels,
   termsAccepted,
   type AppSettings,
@@ -209,7 +212,7 @@ function Subpage({ id, onBack, children }: { id: SettingsSection; onBack: () => 
 }
 
 export function SettingsView({ section }: { section: { id: SettingsSection | null; n: number } }) {
-  const { coach, db, settings, llmProblem, updateSettings, revision, reload, activitiesReady, testMode, deviceSync, toast } = useApp();
+  const { coach, db, settings, llmProblem, updateSettings, revision, reload, activitiesReady, testMode, deviceSync, toast, secretSync } = useApp();
   const [page, setPage] = useState<SettingsSection | null>(section.id);
   useEffect(() => setPage(section.id), [section]);
   const [draft, setDraft] = useState(settings);
@@ -311,12 +314,17 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       return;
     }
     try {
-      await updateSettings({
+      const next: AppSettings = {
         ...draft,
         sync: settings.sync,
         weather: settings.weather,
         intervals: { ...draft.intervals, accessToken: settings.intervals.accessToken, account: settings.intervals.account },
-      });
+      };
+      await updateSettings(next);
+      // 使用者自己清掉了 key：同意帶 key 的話，別台也跟著清（規格 12.47）
+      for (const name of SECRET_NAMES) {
+        if (!secretSkipped(next, name) && secretOf(settings, name) !== null && secretOf(next, name) === null) secretSync.userCleared(name);
+      }
       setError(null);
       toast("設定已儲存在這個瀏覽器。");
     } catch (e) {

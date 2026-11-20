@@ -214,6 +214,13 @@ async function serve(outDir) {
     await E2E.settings(B.page, "AI 教練");
     check.bConsentNotCopied = !(await B.page.locator("#side-panel").getByLabel("我了解並同意以上的資料流向").isChecked());
     await B.page.screenshot({ path: `${E2E.OUT}/keys-B-mobile-light-ai.png` });
+    // B 沒有自己打開：第一次送自己的之前要在 B 同意（拿 A 的照舊自動）
+    await E2E.settings(B.page, "我的鑰匙與帳號");
+    const askB = B.page.locator('#side-panel .secret-prompt[data-secret="share"]');
+    check.bAskedBeforeUpload = await askB.waitFor({ timeout: 5000 }).then(() => true, () => false);
+    await B.page.screenshot({ path: `${E2E.OUT}/keys-B-mobile-light-ask.png` });
+    await askB.getByRole("button", { name: "這台也帶" }).click();
+    check.bAskGone = await askB.waitFor({ state: "detached", timeout: 3000 }).then(() => true, () => false);
 
     // --- B 改 key → A 跟著換 ---
     step = "B 改 key";

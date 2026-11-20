@@ -15,17 +15,25 @@ import {
   pageIsLocal,
   reconcileSecrets,
   setShare as saveShare,
-  shareEnabled,
+  shareState,
   withSecret,
   type PendingSecret,
 } from "./secret-sync";
-import { llmProblem, SECRET_NAMES, setSecretStamp, type AppSettings, type SecretName } from "./settings";
+import { llmProblem, markUserCleared, SECRET_NAMES, setSecretStamp, setShareAgreement, shareAgreement, type AppSettings, type SecretName } from "./settings";
 
 export interface SecretSyncState {
   /** 這個同步空間要不要帶 API key 與 Intervals.icu 的連線；還不知道（資料庫還沒讀到）時是 null */
   share: boolean | null;
-  /** 改要不要帶（每台都照它）；關掉時刪掉雲端那筆 */
+  /** 改要不要帶（每台都照它）；關掉時刪掉雲端那筆. 在這台打開也算這台同意帶上去 */
   setShare(on: boolean): Promise<void>;
+  /** 另一台打開了「帶 key」、這台還沒決定要不要把自己的也帶上去（拿別台的照舊自動） */
+  shareAsk: boolean;
+  /** 這台決定了（帶上去／不帶） */
+  answerShare(agree: boolean): Promise<void>;
+  /** 這台同意把自己的 key 帶上去了 */
+  shareAgreed: boolean;
+  /** 使用者在畫面上清掉了 key 或中斷了連結（這台同意帶 key 時，別台也跟著清） */
+  userCleared(name: SecretName): void;
   /** 另一台的和這台的不一樣、要使用者決定的 */
   pending: Partial<Record<SecretName, PendingSecret>>;
   /** 改用另一台的 */
@@ -48,6 +56,9 @@ export function useSecretSync(
   toast: (text: string) => void,
 ): SecretSyncState {
   const [share, setShareState] = useState<boolean | null>(null);
+  /** sk:share 那一筆的時間（同意的是哪一次） */
+  const [shareAt, setShareAt] = useState<string | null>(null);
+  const [agreement, setAgreement] = useState<string | null>(shareAgreement);
   const [pending, setPending] = useState<Partial<Record<SecretName, PendingSecret>>>({});
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -74,8 +85,11 @@ export function useSecretSync(
         again.current = false;
         const s = settingsRef.current;
         const root = fromBase64url(s.sync.key.trim());
-        const result = await reconcileSecrets(db, root, s, undefined, { allowLocalHttp: pageIsLocal() });
-        setShareState(await shareEnabled(db));
+        const state = await shareState(db);
+        setShareState(state.on);
+        setShareAt(state.at);
+        const agreed = state.on && state.at !== null && shareAgreement() === state.at;
+        const result = await reconcileSecrets(db, root, s, undefined, { allowLocalHttp: pageIsLocal(), uploadAllowed: agreed });
         const names = SECRET_NAMES.filter((n) => result.adopt[n]);
         let saved = s;
         if (names.length) saved = await applySettings((current) => names.reduce((acc, n) => withSecret(acc, n, result.adopt[n]!.value), current));
@@ -99,10 +113,18 @@ export function useSecretSync(
 
   useEffect(() => {
     if (!db) return;
-    void shareEnabled(db)
-      .then(setShareState)
+    void shareState(db)
+      .then((state) => {
+        setShareState(state.on);
+        setShareAt(state.at);
+      })
       .catch(() => undefined);
   }, [db, deviceSync.lastAt]);
+
+  const agree = useCallback((value: string | null) => {
+    setShareAgreement(value);
+    setAgreement(value);
+  }, []);
 
   useEffect(() => {
     if (enabled) void check();
@@ -123,13 +145,44 @@ export function useSecretSync(
   const setShare = useCallback(
     async (on: boolean) => {
       if (!db) return;
-      await saveShare(db, on);
+      const at = new Date();
+      await saveShare(db, on, at);
       setShareState(on);
+      setShareAt(at.toISOString());
+      // 在這台打開：這台同意帶上去
+      if (on) agree(at.toISOString());
       await check();
       touch();
     },
-    [db, check, touch],
+    [db, check, touch, agree],
   );
+
+  const answerShare = useCallback(
+    async (yes: boolean) => {
+      if (!shareAt) return;
+      agree(yes ? shareAt : `declined:${shareAt}`);
+      if (yes) await check();
+    },
+    [shareAt, agree, check],
+  );
+
+  const userCleared = useCallback(
+    (name: SecretName) => {
+      // 這台同意帶 key 時才把「已清除」送出去；否則只清這台的
+      if (share && shareAt && shareAgreement() === shareAt) markUserCleared(name);
+    },
+    [share, shareAt],
+  );
+
+  const shareAgreed = Boolean(share && shareAt && agreement === shareAt);
+  const shareAsk = Boolean(enabled && share && shareAt && agreement !== shareAt && agreement !== `declined:${shareAt}`);
+  const asked = useRef<string | null>(null);
+  useEffect(() => {
+    if (shareAsk && shareAt && asked.current !== shareAt) {
+      asked.current = shareAt;
+      toast("另一台打開了「帶 key 到其他裝置」：到設定決定這台的要不要也帶上去。");
+    }
+  }, [shareAsk, shareAt, toast]);
 
   const accept = useCallback(
     async (name: SecretName) => {
@@ -180,5 +233,5 @@ export function useSecretSync(
     [db, touch],
   );
 
-  return { share, setShare, pending, accept, keep, beforeRekey, resealFrom };
+  return { share, setShare, shareAsk, answerShare, shareAgreed, userCleared, pending, accept, keep, beforeRekey, resealFrom };
 }

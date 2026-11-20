@@ -22,6 +22,7 @@ const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
 const LOCK_KEY = () => storageKey(SCOPED_KEYS.lock);
 /** API key 與 Intervals.icu 的連線在這台最後改的時間（規格 12.47）：只有時間，沒有 key */
 const STAMPS_KEY = () => storageKey(SCOPED_KEYS.secretStamps);
+const SHARE_OK_KEY = () => storageKey(SCOPED_KEYS.secretShare);
 
 /** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
 let lockSession: LockSession | null = null;
@@ -229,17 +230,64 @@ export function setSecretStamp(name: SecretName, stamp: SecretStamp): void {
   }
 }
 
-/** 存設定時：跟著同步的內容變了，記下這台改的時間（至少比這台現在這份晚：這台的修改一定比它看過的新） */
+/** 這台的修改的時間：至少比這台現在這份晚（這台的修改一定比它看過的新） */
+function editStamp(old: SecretStamp | undefined, now: Date): SecretStamp {
+  const after = old ? Date.parse(old.at) + 1 : 0;
+  const at = new Date(Math.max(now.getTime(), Number.isFinite(after) ? after : 0)).toISOString();
+  return { at, seen: old?.seen ?? null, edited: true };
+}
+
+/**
+ * 存設定時：跟著同步的內容變了（填了、換了 key），記成這台的修改.
+ * 變成空的不算（App 自己清的，例如被移除、忘記密碼）：當成「沒有意見」，之後照雲端的；
+ * 使用者在畫面上清掉、而且這台同意帶 key 時，畫面另外呼叫 markUserCleared() 才會把「已清除」送出去
+ */
 function stampChanges(prev: AppSettings, next: AppSettings, now = new Date()): void {
   const stamps = secretStamps();
   for (const name of SECRET_NAMES) {
     // 換成免費試用不算清掉 key
     if (secretSkipped(next, name)) continue;
-    if (sameSecret(secretOf(prev, name), secretOf(next, name))) continue;
+    const value = secretOf(next, name);
+    if (sameSecret(secretOf(prev, name), value)) continue;
     const old = stamps[name];
-    const after = old ? Date.parse(old.at) + 1 : 0;
-    const at = new Date(Math.max(now.getTime(), Number.isFinite(after) ? after : 0)).toISOString();
-    setSecretStamp(name, { at, seen: old?.seen ?? null, edited: true });
+    if (value === null) {
+      if (old) setSecretStamp(name, { at: old.at, seen: old.seen, edited: false });
+      continue;
+    }
+    setSecretStamp(name, editStamp(old, now));
+  }
+}
+
+/** 使用者在畫面上清掉了 key 或中斷了連結（這台同意帶 key 時才呼叫）：「已清除」算這台的修改，下次同步送出去 */
+export function markUserCleared(name: SecretName, now = new Date()): void {
+  setSecretStamp(name, editStamp(secretStamps()[name], now));
+}
+
+/** 這台同意把自己的 key 帶上去的那一次「提供分享」（sk:share 的時間）；拒絕的是 declined:時間 */
+export function shareAgreement(): string | null {
+  try {
+    return localStorage.getItem(SHARE_OK_KEY());
+  } catch {
+    return null;
+  }
+}
+
+export function setShareAgreement(value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(SHARE_OK_KEY());
+    else localStorage.setItem(SHARE_OK_KEY(), value);
+  } catch {
+    // 記不住：下次再問
+  }
+}
+
+/** 被移除、全部重置：跟著同步的 key 在這台的狀態一起清掉（之後重新加入時當成沒有意見、也重新問要不要帶） */
+export function clearSecretSyncState(): void {
+  try {
+    localStorage.removeItem(STAMPS_KEY());
+    localStorage.removeItem(SHARE_OK_KEY());
+  } catch {
+    // 清不掉：照樣不會送「已清除」（清掉的 key 不算修改）
   }
 }
 
@@ -261,7 +309,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 export function clearSettings(): void {
   localStorage.removeItem(STORAGE_KEY());
   localStorage.removeItem(LOCK_KEY());
-  localStorage.removeItem(STAMPS_KEY());
+  clearSecretSyncState();
 }
 
 // ---------------------------------------------------------------------------
