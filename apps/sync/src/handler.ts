@@ -85,6 +85,8 @@ export interface SyncRateLimits {
   spaceBytes?: number;
   /** 換金鑰的複製每天估算的寫入列數（整個服務一起）；沒有給時 dailyWrites 乘上 REKEY_WRITE_SHARE */
   rekeyWrites?: number;
+  /** 換金鑰的複製每台裝置、每個來源（每一層）每天的寫入列數；沒有給時 rekeyWrites 乘上 REKEY_ACTOR_SHARE（至少一批） */
+  rekeyActorWrites?: number;
 }
 
 const MINUTE = 60_000;
@@ -129,6 +131,11 @@ const REKEY_SLACK = { bytes: 1_000_000, records: 50 };
  * 用完不影響一般的送出、新空間與配對
  */
 export const REKEY_WRITE_SHARE = 0.25;
+/**
+ * 換金鑰的那一份，每台裝置（以簽章的公開金鑰計，換金鑰之後同一台沿用，跨好幾次換金鑰一起算）、
+ * 每個來源（每一層）每天最多用掉的比例：一個人不能用掉當天全部的換金鑰額度. 用完時停下來，隔天接著做
+ */
+export const REKEY_ACTOR_SHARE = 0.25;
 /** 同一個舊空間每天最多複製幾筆：舊空間的筆數加上寬容（中途斷掉重試一次還夠）. 重開換金鑰不會讓複製量加倍 */
 const rekeyCopyAllowance = (records: number) => records + Math.max(REKEY_SLACK.records, Math.ceil(records * 0.25));
 const REKEY_WRITES_KEY = "sync:rekey-writes";
@@ -328,6 +335,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const spaceWrites = deps.rateLimits?.spaceWrites ?? Math.floor(dailyWrites * SPACE_WRITE_SHARE);
   const spaceBytes = deps.rateLimits?.spaceBytes ?? SPACE_DAILY_BYTES;
   const rekeyWrites = deps.rateLimits?.rekeyWrites ?? Math.floor(dailyWrites * REKEY_WRITE_SHARE);
+  // 至少送得完一批（200 筆），不然永遠搬不動
+  const rekeyActorWrites = deps.rateLimits?.rekeyActorWrites ?? Math.max(Math.floor(rekeyWrites * REKEY_ACTOR_SHARE), WRITE_COST.pushBase + WRITE_COST.perRecord * MAX_PUSH);
   const untilMidnight = () => {
     const now = nowMs();
     return Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000));
@@ -336,20 +345,32 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     log("sync rekey copy limit");
     return new HttpError(503, "今天換金鑰的量已達上限，明天接著做", { state: "rekey_limit", retryAfter: untilMidnight() });
   };
-  /** 換金鑰的複製這兩條計數：整個服務的那一份（列數）與這個舊空間今天的（筆數） */
-  const rekeyEntries = (from: string, fromRecords: number, writes: number, records: number): RateEntry[] => [
-    { key: REKEY_WRITES_KEY, rule: per(rekeyWrites, DAY), weight: writes },
-    { key: `sync:rekey-copy:${from}`, rule: per(rekeyCopyAllowance(fromRecords), DAY), weight: records },
-  ];
+  /**
+   * 換金鑰的複製的計數，窄的在前：送出的那台裝置（列數）、來源的每一層（列數）、這個舊空間今天的（筆數）、
+   * 整個服務的那一份（列數）. 全部加上或全部不加（takeEntries）
+   */
+  const rekeyEntries = async (request: Request, signPub: string, from: string, fromRecords: number, writes: number, records: number): Promise<RateEntry[]> => {
+    const actor = per(rekeyActorWrites, DAY);
+    return [
+      { key: `sync:rekey-device:${await hashCode(`rekey-device:${signPub}`)}`, rule: actor, weight: writes },
+      ...(await tieredEntries("sync:rekey-source", requestSourceLevels(request), tiers({ day: actor }, { day: actor }, { day: actor }), writes, hashCode)),
+      { key: `sync:rekey-copy:${from}`, rule: per(rekeyCopyAllowance(fromRecords), DAY), weight: records },
+      { key: REKEY_WRITES_KEY, rule: per(rekeyWrites, DAY), weight: writes },
+    ];
+  };
 
-  /** 換金鑰的複製：扣自己的那一份與這個舊空間今天的；超過時 503（rekey_limit）. 回傳退回沒有寫入的（列數、筆數） */
-  async function spendRekeyCopy(from: string, records: number): Promise<(writes: number, records: number) => Promise<void>> {
+  /**
+   * 換金鑰的複製：扣這台、這個來源、這個舊空間今天的與整個服務的那一份；任何一條超過時 503（rekey_limit，隔天接著做）.
+   * 回傳退回沒有寫入的（列數、筆數）
+   */
+  async function spendRekeyCopy(request: Request, signPub: string, from: string, records: number): Promise<(writes: number, records: number) => Promise<void>> {
     const limiter = deps.rateLimiter;
     if (!limiter || records <= 0) return async () => undefined;
     const fromRecords = (await store.spaceUsage(from)).records;
-    const entries = rekeyEntries(from, fromRecords, WRITE_COST.pushBase + WRITE_COST.perRecord * records, records);
+    const entries = await rekeyEntries(request, signPub, from, fromRecords, WRITE_COST.pushBase + WRITE_COST.perRecord * records, records);
     if ((await takeEntries(limiter, entries, 1, nowMs())) !== null) throw rekeyLimited();
-    const [writesBack, recordsBack] = [refunder([entries[0]!]), refunder([entries[1]!])];
+    const counts = entries.filter((e) => e.key.startsWith("sync:rekey-copy:"));
+    const [writesBack, recordsBack] = [refunder(entries.filter((e) => !counts.includes(e))), refunder(counts)];
     return async (w, r) => {
       await writesBack(w);
       await recordsBack(r);
@@ -846,7 +867,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
             refundBytes = await takeRefundable(bytesEntries, "pushBytes");
           }
           if (valid.length > 0) {
-            if (copyFrom !== null) refundCopy = await spendRekeyCopy(copyFrom, valid.length);
+            if (copyFrom !== null) refundCopy = await spendRekeyCopy(request, caller.kind === "device" ? caller.device.signPub : "", copyFrom, valid.length);
             else refundWrites = await spendWrites(request, WRITE_COST.pushBase + WRITE_COST.perRecord * valid.length, false, { space });
           }
           result = await store.putMany(space, valid, incoming);

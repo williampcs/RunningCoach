@@ -328,13 +328,13 @@ export class SyncStore {
   /**
    * 送出之前先保留這次最多會用到的位元組：這個空間、整個服務、同一個網段建立的空間（maxNetworkBytes；null 不限，
    * 沒有記下網段的舊空間也不限）都還放得下時才保留（一個敘述，並行的送出不會一起超過）.
-   * 網段的總量不算換到一半的新空間（它是舊空間的一份副本，舊空間已經算了；換好之後舊空間的歸零、新的開始算）.
+   * 換到一半的新空間也算進網段的總量（換金鑰的複製本身不受網段的上限，量不超過舊空間）.
    * 寫完之後用 releaseBytes 還回去（每筆寫入時已經加上實際的大小）
    */
   async reserveBytes(space: string, bytes: number, maxSpaceBytes: number, maxTotalBytes: number, maxNetworkBytes: number | null = null): Promise<boolean> {
     const result = await this.driver.run(
       "UPDATE spaces SET bytes = bytes + ? WHERE id = ? AND bytes + ? <= ? AND (SELECT COALESCE(SUM(bytes), 0) FROM spaces) + ? <= ?" +
-        " AND (? IS NULL OR network IS NULL OR (SELECT COALESCE(SUM(s.bytes), 0) FROM spaces s WHERE s.network = spaces.network AND (s.rekey_from IS NULL OR EXISTS (SELECT 1 FROM moves m WHERE m.moved_to = s.id))) + ? <= ?)",
+        " AND (? IS NULL OR network IS NULL OR (SELECT COALESCE(SUM(s.bytes), 0) FROM spaces s WHERE s.network = spaces.network) + ? <= ?)",
       [bytes, space, bytes, maxSpaceBytes, bytes, maxTotalBytes, maxNetworkBytes, bytes, maxNetworkBytes],
     );
     return result.changes > 0;
@@ -351,7 +351,7 @@ export class SyncStore {
     const row = (
       await this.driver.all(
         "SELECT s.network AS network, (SELECT COALESCE(SUM(t.bytes), 0) FROM spaces t WHERE t.network = s.network" +
-          " AND (t.rekey_from IS NULL OR EXISTS (SELECT 1 FROM moves m WHERE m.moved_to = t.id))) AS bytes FROM spaces s WHERE s.id = ?",
+          ") AS bytes FROM spaces s WHERE s.id = ?",
         [space],
       )
     )[0];

@@ -16,6 +16,7 @@ import {
   maintain,
   MAX_SPACE_BYTES,
   NETWORK_RETENTION_MS,
+  REKEY_ACTOR_SHARE,
   REKEY_WRITE_SHARE,
   REKEY_CREATIONS_PER_DAY,
   SOURCE_WRITE_SHARE,
@@ -289,7 +290,8 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
 
   it("換金鑰在新的限制下仍能完成：很多筆、來源與空間每天的位元組與寫入都很小", async () => {
     // 開始同步時照寬鬆的上限；換金鑰前改成很小的上限：複製不受來源與空間的上限擋
-    const rateLimits: Partial<SyncRateLimits> = { pushBytes: {}, writes: {}, spaceWrites: 1_000_000, spaceBytes: 100_000_000 };
+    // （每台、每個來源每天的換金鑰份額另外測：這裡放寬）
+    const rateLimits: Partial<SyncRateLimits> = { pushBytes: {}, writes: {}, spaceWrites: 1_000_000, spaceBytes: 100_000_000, rekeyActorWrites: 1_000_000 };
     const api = apiOf(handlerWith({ rateLimits }));
     const a = await device(api, 1200);
     await a.engine.ensureSpace();
@@ -501,6 +503,8 @@ describe("來源與網段的代碼（有金鑰時 HMAC）、網段代碼保存 3
     await store.putMany(space(3), [item(1, 10)]);
     const [old, renewed] = await driver.all("SELECT network, network_at FROM spaces WHERE id IN (?, ?) ORDER BY id", [space(1), space(3)]);
     expect(renewed).toEqual(old);
+    // 換到一半的新空間也算進網段的總量
+    expect(await store.networkUsage(space(1))).toBe((await store.spaceUsage(space(1))).bytes + (await store.spaceUsage(space(2))).bytes + (await store.spaceUsage(space(3))).bytes);
     expect((await maintain(store)).networks).toBe(0);
     // 換到一半的新空間一直有進度（沒有 7 天沒進度被清掉）
     advance(6 * DAY);
@@ -768,14 +772,60 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     expect(await store.movedTo(from)).not.toBeNull();
   });
 
-  it("正常大小的換金鑰照樣完成（每天額度調小）", async () => {
-    // 每天 4,000 列：換金鑰的那一份 1,000 列，200 筆的複製（約 610 列）搬得完
-    const handler = handlerWith({ dailyWrites: 4000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
+  it("正常大小的換金鑰照樣一次完成（每天額度調小）", async () => {
+    expect(REKEY_ACTOR_SHARE).toBe(0.25);
+    // 每天 12,000 列：換金鑰的那一份 3,000 列、每台每個來源 750 列，200 筆的複製（約 620 列）一次搬得完
+    const handler = handlerWith({ dailyWrites: 12_000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
     const a = await setupDevice(handler, 200);
     const before = a.state.root;
     await a.engine.rekey();
     expect(a.state.root).not.toEqual(before);
     expect(await rekeyCount()).toBeGreaterThanOrEqual(3 * 200);
+    expect(await rekeyCount()).toBeLessThanOrEqual(750);
+  });
+
+  it("每台裝置每天只能用掉換金鑰那一份的一小部分，接連換好幾次金鑰也一起算；別的裝置與來源照常換", async () => {
+    // 換金鑰的那一份 4,000 列，每台、每個來源 1,000 列（約 320 筆）
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+    const ip = (value: string) => (request: Request) => {
+      const headers = new Headers(request.headers);
+      headers.set("cf-connecting-ip", value);
+      return handler(new Request(request, { headers }));
+    };
+    const a = await setupDevice(ip("198.51.100.10"), 250);
+    const from = (await deriveKeys(a.state.root)).space;
+    // 第一次：250 筆一次完成
+    await a.engine.rekey();
+    const second = (await deriveKeys(a.state.root)).space;
+    expect(second).not.toBe(from);
+    // 一分鐘後馬上再換（新空間、新的「每個舊空間」份額）：這台今天的份額用完，停下來
+    advance(61_000);
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 0, total: 250 });
+    expect(await rekeyCount()).toBeLessThanOrEqual(1000);
+    // 另一個網段的另一個人照常換金鑰
+    const other = await setupDevice(ip("203.0.113.20"), 250);
+    const before = other.state.root;
+    await other.engine.rekey();
+    expect(other.state.root).not.toEqual(before);
+    // A 隔天接著做完
+    advance(DAY);
+    await a.engine.resumeRekey();
+    expect(await store.movedTo(second)).not.toBeNull();
+  });
+
+  it("同一個網段的好幾台一起用：每個來源每天也只能用掉一小部分", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+    const ip = (value: string) => (request: Request) => {
+      const headers = new Headers(request.headers);
+      headers.set("cf-connecting-ip", value);
+      return handler(new Request(request, { headers }));
+    };
+    const a = await setupDevice(ip("198.51.100.30"), 250);
+    const b = await setupDevice(ip("198.51.100.31"), 250);
+    await a.engine.rekey();
+    // 同一個 /24 的另一台（另一個空間）：這個來源今天剩不到一批，停下來
+    await expect(b.engine.rekey()).rejects.toMatchObject({ total: 250 });
+    expect((await b.engine.pendingRekey())!.done).toBeLessThan(250);
     expect(await rekeyCount()).toBeLessThanOrEqual(1000);
   });
 });

@@ -274,7 +274,7 @@ erDiagram
   - `devices`：每台的公開金鑰、加密的名稱、加入與最後同步的時間、移除的時間與證明、換金鑰完成前就先移除時移除的那台簽的聲明（`removed_by`、`removal_statement`、`removal_signature`）、換金鑰後給它的新金鑰。
   - `moves`：換過金鑰的空間搬到哪個新空間。
   - `sig_nonces`：簽章用過的一次性亂數，十分鐘後過期。
-- `rate_limits`：依來源的頻率限制的計數（來源的每一層——IPv6 的 /64、/56、/48，IPv4 的位址與 /24——的代碼（有 `RATE_LIMIT_HASH_KEY` 時是 HMAC）、時間窗、次數或位元組），以及整個服務每天估算的寫入列數（`sync:daily-writes`）、每個來源與每個空間每天的寫入與位元組（`sync:writes`、`sync:space-writes`、`sync:space-bytes`）、每台每天開換金鑰新空間的次數（`sync:rekey-create`），時間窗過了就刪（規格 12.10「頻率限制與容量」「多層計數、人機驗證與免費方案的容量」「每個來源與每個空間的份額」）。
+- `rate_limits`：依來源的頻率限制的計數（來源的每一層——IPv6 的 /64、/56、/48，IPv4 的位址與 /24——的代碼（有 `RATE_LIMIT_HASH_KEY` 時是 HMAC）、時間窗、次數或位元組），以及整個服務每天估算的寫入列數（`sync:daily-writes`）、每個來源與每個空間每天的寫入與位元組（`sync:writes`、`sync:space-writes`、`sync:space-bytes`）、每台每天開換金鑰新空間的次數（`sync:rekey-create`）、換金鑰的複製（整個服務的 `sync:rekey-writes`、每台裝置的 `sync:rekey-device`、每個來源的 `sync:rekey-source`、每個舊空間的 `sync:rekey-copy`），時間窗過了就刪（規格 12.10「頻率限制與容量」「多層計數、人機驗證與免費方案的容量」「每個來源與每個空間的份額」）。
 - 上限對齊 Cloudflare 免費方案：總共 300 MB、每個空間 25 MB（每筆的內容加上 200 bytes 的固定額外）；每天的寫入估算到一半時停止新的空間與配對碼，到上限時停止送出。
 - 人機驗證（Turnstile，有設定時）：建立同步空間與開配對碼的請求帶 `x-turnstile`，Worker 送到 Turnstile 的 siteverify 確認（`apps/sync/src/turnstile.ts`；網頁版的方塊在 `apps/web/src/human-check.tsx`）。
 - 每小時的排程（`wrangler.toml` 的 crons）：清掉建立超過 24 小時、沒有紀錄也沒有裝置的空空間（換到一半的新空間不算），7 天沒有進度的換到一半的新空間，過期的配對碼、亂數與計數；用量到上限的 80% 時在 log 留警告。
