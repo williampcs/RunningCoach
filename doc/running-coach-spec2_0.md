@@ -892,7 +892,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：passkey、信封、復原碼只顯示一次（第二段）；Google／Apple 登入；把鑰匙交給我們保管。
   - 驗收：npm test（紀錄的加解密、最後改的為準、取消後刪掉、舊版略過、密碼鎖）；npm run typecheck；E2E（兩台：A 設 key → B 配對後自動有；B 改 key → A 跟著換並看到提示；取消勾選後 B 不再收到；密碼鎖的那台）；設計準則的檢查清單。
   - 注意：改掉 2026-11-13「API key 不跟同步」的決定（理由：連作者都記不清每樣東西怎麼回來，規格 12.47）。這是秘密進同步，做完的 PR 請安全 session 看一下。
-  - 狀態：開發中（開發 session「我的鑰匙與帳號」，分支 `dev/keys-overview`，[#58](https://github.com/williampcs/RunningCoach/pull/58)）：安全 session 審查後改了採用同步過來的 key 的規則，先預設不勾；待再看過後合併。新空間要不要預設勾由使用者決定。實作與驗證見 12.47「第二部分第一段的實作」。
+  - 狀態：已推上 v2（2026-11-20，[williampcs/RunningCoach#58](https://github.com/williampcs/RunningCoach/pull/58)＋[#59](https://github.com/williampcs/RunningCoach/pull/59)，開發 session「我的鑰匙與帳號」；安全 session 審查三輪：同意綁接收者、換接收者要確認、已清除的紀錄、每台第一次上傳前問、分享關掉清同意）。新舊空間都預設不帶 key；新空間之後要不要預設帶，由使用者決定。待使用者：staging 兩台試；使用須知要不要升版本（待決定）。
 
 - **Discord bot 的部署改成 VM 自己拉映像**（12.45 第 10 點；GitHub 建議公開 repo 不要用 self-hosted runner；2026-11-17 已先把 fork PR 的 workflow 改成一律要使用者核准）
   - 對應章節：KI-025（bot 的部署）、`.github/workflows/deploy.yml`、`doc/architecture.md` 的部署。
