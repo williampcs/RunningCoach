@@ -96,6 +96,9 @@ export interface OtherActivity {
   subjective_notes?: string | null;
   /** 教練的分析（騎後分析，activity_summaries，schema 16）；還沒分析時為 null */
   summary?: string | null;
+  /** 手動記的（id 是 manual:）才有：回報的是哪一堂課（planned_sessions.sync_id）與做到多少（schema 22，規格 12.48） */
+  session_id?: string | null;
+  completion?: string | null;
 }
 
 /** 跑步的運動設定，只留教練用得到的欄位；沒設定的是 null */
@@ -240,6 +243,9 @@ export interface Workout {
   /** 手動新增的（source 是 manual）才有：跨裝置不變的 id 與修改時間（schema 19） */
   sync_id?: string | null;
   updated_at?: string | null;
+  /** 回報沒有紀錄的課時記的才有：那堂課的 sync_id 與做到多少（schema 22，規格 12.48） */
+  session_id?: string | null;
+  completion?: string | null;
   /** getRecentWorkouts：併進這筆的重複紀錄數 */
   duplicate_count?: number;
   /** LEFT JOIN workout_summaries */

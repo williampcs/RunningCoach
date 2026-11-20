@@ -57,6 +57,8 @@ export interface SessionResult {
   workoutId: number | null;
   /** 配到的其他運動（騎車等）的 intervals_id；跑步與沒配到的沒有 */
   activityId?: string | null;
+  /** 配到的是選手手動記的回報（沒有紀錄的課，規格 12.48）：備註（沒有時是 null） */
+  manual?: { notes: string | null } | null;
 }
 
 export interface WeekMatch {
@@ -90,7 +92,8 @@ export function difficultyOf(kind: SessionKind, effort: number | null): Difficul
 }
 
 function actualText(w: Workout): string {
-  const parts = [`${w.distance_km ?? "?"} km`, `${Math.round(w.duration_min ?? 0)} 分鐘`];
+  // 回報課時記的跑步可以沒有距離
+  const parts = [...(w.distance_km != null || w.session_id == null ? [`${w.distance_km ?? "?"} km`] : []), `${Math.round(w.duration_min ?? 0)} 分鐘`];
   if (w.avg_hr != null) parts.push(`心率 ${w.avg_hr}`);
   if (w.perceived_effort != null) parts.push(`體感 ${w.perceived_effort}`);
   return parts.join("、");
@@ -208,7 +211,8 @@ export function judgeOther(session: PlannedSession, a: OtherActivity, ctx: Targe
   const short = session.status !== "fallback" && planned > 0 && minutes < planned * shortLimit;
   if (short) reasons.push(`比計畫短（約 ${Math.round((minutes / planned) * 100)}%）`);
   if (session.kind === "strength") {
-    return { outcome: short ? "partial" : "achieved", reasons, difficulty: null, actual: `${Math.round(minutes)} 分鐘`, workoutId: null, activityId: a.intervals_id };
+    const actual = `${Math.round(minutes)} 分鐘${a.perceived_effort != null ? `、體感 ${a.perceived_effort}` : ""}`;
+    return { outcome: short ? "partial" : "achieved", reasons, difficulty: null, actual, workoutId: null, activityId: a.intervals_id };
   }
 
   // 改用替代時當成耐力騎（輕鬆）來看
@@ -257,6 +261,22 @@ export function judgeOther(session: PlannedSession, a: OtherActivity, ctx: Targe
   return { outcome, reasons, difficulty, actual: otherActualText(a), workoutId: null, activityId: a.intervals_id };
 }
 
+/**
+ * 選手手動回報的（沒有紀錄的課，規格 12.48）：說了做到多少時以選手說的為準. 完成：照時間與體感判斷（短很多仍是部分達成）；
+ * 做了一部分：部分達成；有改：做了不一樣的課. 結果帶上備註
+ */
+export function withCompletion(result: SessionResult, record: { completion?: string | null; subjective_notes?: string | null; session_id?: string | null }): SessionResult {
+  if (!record.session_id) return result;
+  const manual = { notes: record.subjective_notes?.trim() || null };
+  if (record.completion === "partial" && result.outcome !== "fallback") {
+    return { ...result, outcome: "partial", reasons: ["選手回報做了一部分", ...result.reasons.filter((r) => !r.startsWith("比計畫短"))], manual };
+  }
+  if (record.completion === "changed" && result.outcome !== "fallback") {
+    return { ...result, outcome: "different", reasons: ["選手回報有改", ...result.reasons], manual };
+  }
+  return { ...result, manual };
+}
+
 const isRunSession = (s: PlannedSession) => !NON_RUN_KINDS.has(s.kind);
 /** 肌力的課配肌力訓練的類型；交叉訓練配其他的，寫了運動（sport）時只配那項運動 */
 function fits(s: PlannedSession, o: OtherActivity): boolean {
@@ -294,14 +314,28 @@ export function matchWeek(
   const closest = <T>(items: T[], minutes: (x: T) => number, target: number) =>
     [...items].sort((a, b) => Math.abs(minutes(a) - target) - Math.abs(minutes(b) - target))[0];
 
+  // 選手回報這堂課時手動記的（規格 12.48）：連到這堂課的那筆，不看日期與種類
+  for (const s of sessions) {
+    if (!s.sync_id || s.status === "skipped" || s.kind === "rest") continue;
+    const run = runs.find((r) => r.session_id === s.sync_id && !usedRuns.has(r.id));
+    const other = run ? undefined : weekOthers.find((o) => o.session_id === s.sync_id && !usedOthers.has(o.intervals_id));
+    if (run) {
+      usedRuns.add(run.id);
+      results.set(s.id, withCompletion(isRunSession(s) ? judgeRun(s, run, ctx) : { ...judgeRun({ ...s, kind: "easy" }, run, ctx), outcome: "different", reasons: [] }, run));
+    } else if (other) {
+      usedOthers.add(other.intervals_id);
+      results.set(s.id, withCompletion(isRunSession(s) ? { ...judgeOther({ ...s, kind: "cross" }, other, ctx), outcome: "different", reasons: [] } : judgeOther(s, other, ctx), other));
+    }
+  }
+
   // 有日期的課
-  for (const s of sessions.filter((x) => x.date && x.status !== "skipped")) {
+  for (const s of sessions.filter((x) => x.date && x.status !== "skipped" && !results.has(x.id))) {
     if (s.kind === "rest") continue;
     if (isRunSession(s)) {
       const w = closest(runs.filter((r) => r.date === s.date && !usedRuns.has(r.id)), (r) => r.duration_min ?? 0, planned(s));
       if (w) {
         usedRuns.add(w.id);
-        results.set(s.id, judgeRun(s, w, ctx));
+        results.set(s.id, withCompletion(judgeRun(s, w, ctx), w));
       }
     } else {
       const a = closest(
@@ -311,7 +345,7 @@ export function matchWeek(
       );
       if (a) {
         usedOthers.add(a.intervals_id);
-        results.set(s.id, judgeOther(s, a, ctx));
+        results.set(s.id, withCompletion(judgeOther(s, a, ctx), a));
       }
     }
   }

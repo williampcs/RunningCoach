@@ -43,6 +43,18 @@ export {
 } from "./activities";
 export { Db, manualPace, MEMORY_MAX_CHARS, MEMORY_MAX_ITEMS, REPLY_EXCERPT_CHARS, SCHEMA_VERSION, type InjuryInput, type ManualWorkoutInput, type RaceUpdate, type SaveResult, type SyncedSecretRecord, type TrialAccountRecord } from "./db";
 export { keepScore, maybeSameRun, overlapRatio, sameRun, timeRangeOf, type TimeRange } from "./dedupe";
+export {
+  COMPLETION_LABELS,
+  COMPLETIONS,
+  coverManualOthers,
+  isCompletion,
+  isManualOtherId,
+  MANUAL_OTHER_PREFIX,
+  MANUAL_TYPES,
+  type Completion,
+  type ManualActivity,
+  type ManualActivityInput,
+} from "./manual-activities";
 export { addDays, daysBetween, isoWeekLabel, isoWeekStart, localDate, localDayStartUtc, messageTimeLabel, shortDateLabel, weekdayName } from "./dates";
 export {
   FAKE_DEVICES,
@@ -211,7 +223,19 @@ export {
   type StepRow,
   type StructureSegment,
 } from "./plan";
-export { coachNoteOf, DEFAULT_PREFERENCES, PREFERENCE_OPTIONS, preferenceText, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+export {
+  coachNoteOf,
+  DEFAULT_PREFERENCES,
+  PREFERENCE_OPTIONS,
+  preferenceText,
+  reportSport,
+  UNREPORTED_DAYS,
+  type ActivePlan,
+  type SelfChangeRequest,
+  type SessionAction,
+  type SessionReportInput,
+  type UnreportedSession,
+} from "./planning";
 export { adherenceSummary, adherenceText, ATHLETE_ADJUST_NOTE, PAST_WEEKS_PAGE, pastPlanWeeks, recentAdherence, type AdherenceSummary, type ReasonCounts, type SelfChangeRecord, type OutcomeCounts, type PastSession, type PastWeek } from "./plan-history";
 export { clearPastPlans, seedPastPlans, TEST_PLAN_REASON, TEST_PLAN_WEEKS } from "./test-plans";
 export { STOPPED_MARK, stoppedReply } from "./stopped";

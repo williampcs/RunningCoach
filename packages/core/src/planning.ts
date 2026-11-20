@@ -21,6 +21,7 @@ import {
   QUALITY_KINDS,
   RIDE_KINDS,
   SESSION_KINDS,
+  sessionSport,
   sessionView,
   sortSessions,
   STATUS_LABELS,
@@ -37,6 +38,7 @@ import {
   type TargetContext,
 } from "./plan";
 import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
+import { COMPLETION_LABELS, MANUAL_MAX_KM, MANUAL_MAX_MINUTES, MANUAL_MAX_NOTES, type Completion, type ManualActivity } from "./manual-activities";
 import { weekAllocation } from "./allocation";
 import { analyzeRecovery } from "./recovery";
 import { raceOutcome } from "./races";
@@ -253,6 +255,8 @@ export function resultText(r: SessionResult | undefined): string {
   const parts = [`→ ${label}${r.reasons.length ? `：${r.reasons.join("、")}` : ""}`];
   if (r.actual) parts.push(`實際：${r.actual}`);
   if (r.difficulty) parts.push(DIFFICULTY_LABELS[r.difficulty]);
+  // 沒有手錶紀錄、選手手動回報的（規格 12.48）
+  if (r.manual) parts.push(`選手手動回報${r.manual.notes ? `，備註：${r.manual.notes}` : ""}`);
   return parts.join("｜");
 }
 
@@ -541,6 +545,8 @@ export async function changeSession(
       break;
     case "undone":
       await db.updatePlannedSession(id, { done_at: null });
+      // 回報時手動記的那筆一起刪（規格 12.48）
+      if (session.sync_id) for (const a of await db.getManualActivitiesForSession(session.sync_id)) await db.deleteManualActivity(a.sync_id);
       break;
   }
 
@@ -692,4 +698,125 @@ export async function planNoteFor(db: Db, today: string, workoutId: number): Pro
     `；程式的判斷：${OUTCOME_LABELS[r.outcome]}${r.reasons.length ? `（${r.reasons.join("、")}）` : ""}` +
     (r.difficulty ? `；${DIFFICULTY_LABELS[r.difficulty]}` : "")
   );
+}
+
+// ---------------------------------------------------------------------------
+// 沒有紀錄的課的回報（規格 12.48）：做到多少、花了多久、體感、備註 → 一筆手動記的活動，連到這堂課
+// ---------------------------------------------------------------------------
+
+/** 回報一堂課的內容 */
+export interface SessionReportInput {
+  completion: Completion;
+  duration_min: number;
+  /** 跑步、騎車、游泳可以填；沒有時是 null */
+  distance_km: number | null;
+  perceived_effort: number;
+  subjective_notes: string | null;
+}
+
+/** 這堂課回報時記成哪種運動：跑步的課是跑步、單車的課是騎車、交叉訓練看寫的運動（沒寫是其他）、肌力是肌力 */
+export function reportSport(s: Pick<PlannedSession, "kind" | "sport">): Sport {
+  return sessionSport(s) ?? "other";
+}
+
+/** 回報一堂課（新的或改原本的回報）的檢查與存檔；回傳給教練與畫面的一句話 */
+export async function reportSession(db: Db, today: string, id: number, input: SessionReportInput, options: PlanOptions = {}): Promise<string> {
+  const { session, plan, style } = await sessionInActivePlan(db, id);
+  if (session.kind === "rest") throw new Error("休息日不用回報");
+  if (session.status === "skipped") throw new Error("跳過的課，先恢復原本的課再回報");
+  if (session.date && session.date > today) throw new Error("還沒到的課不能回報");
+  if (!(input.duration_min >= 1) || input.duration_min > MANUAL_MAX_MINUTES) throw new Error("花了多久要填 1 分鐘以上（24 小時以內）");
+  if (!Number.isInteger(input.perceived_effort) || input.perceived_effort < 1 || input.perceived_effort > 10) throw new Error("體感要是 1–10");
+  if (input.distance_km !== null && !(input.distance_km > 0 && input.distance_km <= MANUAL_MAX_KM)) throw new Error(`距離要在 ${MANUAL_MAX_KM} km 以內`);
+  const notes = input.subjective_notes?.trim() || null;
+  if (notes && notes.length > MANUAL_MAX_NOTES) throw new Error(`備註最多 ${MANUAL_MAX_NOTES} 字`);
+  const syncId = await db.sessionSyncId(id);
+  if (!syncId) throw new Error(`找不到 session_id=${id} 的課`);
+  // 有手錶紀錄的照原本的方式（跑後回報）：這裡只收沒有紀錄的課
+  const ctx = await contextFor(db, today, plan.week_start, style, options);
+  const sessions = await db.getPlannedSessions(plan.id);
+  const result = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start, today, ctx).results.get(id);
+  if ((result?.workoutId != null || result?.activityId) && !result.manual) throw new Error("這堂課已經有手錶的紀錄，體感在「回報」的那一趟填");
+  const sport = reportSport(session);
+  const record = {
+    session_id: syncId,
+    sport,
+    date: session.date ?? today,
+    duration_min: Math.round(input.duration_min),
+    distance_km: sport === "strength" ? null : input.distance_km,
+    perceived_effort: input.perceived_effort,
+    subjective_notes: notes,
+    completion: input.completion,
+  };
+  const existing = (await db.getManualActivitiesForSession(syncId))[0];
+  if (existing) await db.updateManualActivity(existing.sync_id, record);
+  else await db.addManualActivity(record);
+  // 課上照舊記「選手回報了」（舊版與沒有這筆紀錄的裝置看到的是「做完了」）
+  if (!session.done_at) await db.updatePlannedSession(id, { done_at: new Date().toISOString() });
+  const after = await db.getPlannedSessions(plan.id);
+  await db.updatePlanContent(plan.id, planMarkdown(planMeta(plan, style), after, ctx));
+  return `已記下「${session.title}」的回報（session_id=${id}）：${COMPLETION_LABELS[input.completion]}、${record.duration_min} 分鐘、體感 ${input.perceived_effort}/10${notes ? `、備註：${notes}` : ""}。`;
+}
+
+/** 取消一堂課的回報：手動記的那筆刪掉，課回到還沒回報 */
+export async function unreportSession(db: Db, id: number): Promise<void> {
+  const session = await db.getPlannedSession(id);
+  if (!session) throw new Error(`找不到 session_id=${id} 的課`);
+  if (session.sync_id) for (const a of await db.getManualActivitiesForSession(session.sync_id)) await db.deleteManualActivity(a.sync_id);
+  if (session.done_at) await db.updatePlannedSession(id, { done_at: null });
+}
+
+/** 一堂課目前的回報（手動記的那筆）；沒有時是 null */
+export async function sessionReport(db: Db, id: number): Promise<ManualActivity | null> {
+  const session = await db.getPlannedSession(id);
+  if (!session?.sync_id) return null;
+  return (await db.getManualActivitiesForSession(session.sync_id))[0] ?? null;
+}
+
+/** 「回報」分頁列出的一堂課 */
+export interface UnreportedSession {
+  id: number;
+  title: string;
+  date: string | null;
+  sport: Sport;
+  kind: SessionKindName;
+  /** 課表預估的時間（分鐘）與距離（km），表單的預設；沒有時是 null */
+  minutes: number | null;
+  km: number | null;
+}
+type SessionKindName = PlannedSession["kind"];
+
+/** 回報分頁列出幾天內的課 */
+export const UNREPORTED_DAYS = 3;
+
+/**
+ * 今天與最近幾天（UNREPORTED_DAYS）還沒回報、也沒有手錶紀錄的課（「回報」分頁）. 沒有日期的課（彈性的菜單）不列：
+ * 它們什麼時候做由選手決定，從課表頁的卡片回報
+ */
+export async function unreportedSessions(db: Db, today: string, options: PlanOptions = {}): Promise<UnreportedSession[]> {
+  const since = addDays(today, -(UNREPORTED_DAYS - 1));
+  const plans = (await db.getWeeklyPlansSince(addDays(since, -6))).filter((p) => p.is_active && p.week_start);
+  const list: UnreportedSession[] = [];
+  for (const plan of plans) {
+    const style = (plan.style ?? "fixed") as PlanStyle;
+    const ctx = await contextFor(db, today, plan.week_start!, style, options);
+    const sessions = await db.getPlannedSessions(plan.id);
+    const match = matchWeek(sessions, ctx.workouts, ctx.others, plan.week_start!, today, ctx);
+    for (const s of sessions) {
+      if (!s.date || s.date < since || s.date > today || s.kind === "rest" || s.status === "skipped" || s.done_at) continue;
+      const r = match.results.get(s.id);
+      if (r && (r.workoutId != null || r.activityId)) continue;
+      const estimate = estimateSession(s, ctx);
+      list.push({
+        id: s.id,
+        title: s.title,
+        date: s.date,
+        sport: reportSport(s),
+        kind: s.kind,
+        minutes: estimate.minutes > 0 ? Math.round(estimate.minutes) : null,
+        km: estimate.km > 0 ? Math.round(estimate.km * 10) / 10 : null,
+      });
+    }
+  }
+  return list.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 }

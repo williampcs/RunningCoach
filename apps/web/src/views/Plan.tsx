@@ -14,6 +14,7 @@ import {
   selfChangeable,
   sportOfType,
   raceStatusText,
+  reportSport,
   STATUS_LABELS,
   EDITED_LABEL,
   weekdayName,
@@ -38,6 +39,7 @@ import { Markdown } from "../Markdown";
 import { PastWeeks } from "./PastWeeks";
 import { RacesCard } from "./Races";
 import { ChangeChooser, ReasonChips, selfChangeLine } from "./SelfChange";
+import { SessionReportForm } from "./SessionReport";
 
 type SessionChange = (s: TimelineSession, action: "move" | "skip" | "fallback" | "restore" | "done" | "undone", date?: string) => void;
 
@@ -107,7 +109,9 @@ function statusOf(s: TimelineSession): { label: string; cls: string } | null {
     r && !["skipped", "fallback"].includes(r.outcome)
       ? r.outcome === "missed" && !s.isRun
         ? "沒做"
-        : OUTCOME_LABELS[r.outcome]
+        : r.outcome === "different" && !s.isRun
+          ? "做了不一樣的"
+          : OUTCOME_LABELS[r.outcome]
       : STATUS_LABELS[s.status];
   if (label) return { label, cls: r?.outcome ?? s.status };
   // 傷病（規格 12.33）：之後才記下的傷讓這堂課現在不能做
@@ -244,6 +248,18 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
   }
   const reportable =
     featureEnabled("multisport") && s.kind === "strength" && s.id !== null && (!s.date || s.date <= today) && !(r?.outcome === "achieved" && !s.doneAt);
+  // 沒有紀錄的課的回報（功能開關 report，規格 12.48）：到了、沒跳過、沒有手錶紀錄的課都可以回報（做到多少、時間、體感、備註）
+  const reportOn = featureEnabled("report");
+  const [reporting, setReporting] = useState(false);
+  const recorded = r !== null && (r.workoutId !== null || !!r.activityId) && !r.manual;
+  const reported = !!r?.manual || !!s.doneAt;
+  const canReport = reportOn && s.id !== null && s.kind !== "rest" && s.status !== "skipped" && (!s.date || s.date <= today) && !recorded;
+  const reportButton = canReport && (
+    // 一張卡一顆實心按鈕：表單打開時「存起來」是實心的
+    <button className={reported || s.isRun || reporting ? "" : "primary"} aria-expanded={reporting} onClick={() => setReporting(!reporting)}>
+      {reported ? "修改回報" : "回報"}
+    </button>
+  );
 
   if (s.kind === "rest") {
     // 休息日只有一行，沒有按鈕
@@ -308,6 +324,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
               {r.difficulty && `。${DIFFICULTY_LABELS[r.difficulty]}`}
             </p>
           )}
+          {r?.manual?.notes && <p className="small session-result">備註：{r.manual.notes}</p>}
           {s.injuryHold && s.status === "planned" && !done && (
             <div className="notice warn inline injury-hold">
               <span>因為傷病，這堂課先不要做。</span>
@@ -347,9 +364,19 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
               )}
             </div>
           )}
-          {s.id !== null && !done && (
+          {s.id !== null && (!done || (reportOn && canReport)) && (
             <div className="session-actions">
-              {s.doneAt ? (
+              {reportOn && reported ? (
+                <>
+                  {reportButton}
+                  {/* 以前的「做完了」（沒有手動的紀錄）：照舊可以取消 */}
+                  {s.doneAt && !r?.manual && (
+                    <button className="text" onClick={() => onChange(s, "undone")}>
+                      取消「做完了」
+                    </button>
+                  )}
+                </>
+              ) : s.doneAt ? (
                 featureEnabled("multisport") && (
                   <button className="text" onClick={() => onChange(s, "undone")}>
                     取消「做完了」
@@ -357,7 +384,7 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                 )
               ) : s.status === "planned" ? (
                 <>
-                  {reportable && (
+                  {reportOn ? reportButton : reportable && (
                     <button className="primary" onClick={() => onChange(s, "done")}>
                       做完了
                     </button>
@@ -375,9 +402,19 @@ function SessionItem({ s, focus, onChange }: { s: TimelineSession; focus: boolea
                   </button>
                 </>
               ) : (
-                <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>
+                <>
+                  {reportOn && reportButton}
+                  <button onClick={() => onChange(s, "restore")}>恢復原本的課</button>
+                </>
               )}
             </div>
+          )}
+          {reporting && canReport && (
+            <SessionReportForm
+              session={{ id: s.id!, title: s.title, sport: reportSport(s), minutes: s.minutes > 0 ? s.minutes : null, km: s.km > 0 ? s.km : null }}
+              onDone={() => setReporting(false)}
+              onCancel={() => setReporting(false)}
+            />
           )}
           {changing && changeable && <ChangeChooser kind={self?.original.kind ?? s.kind} onPick={(r) => void selfChange(r)} />}
           {changeError && <p className="field-error">{changeError}</p>}

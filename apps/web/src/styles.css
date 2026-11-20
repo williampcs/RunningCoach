@@ -4148,3 +4148,34 @@ a.button {
 .passkey-report {
   width: 100%;
 }
+
+/* 沒有紀錄的課的回報（規格 12.48）：課卡與「回報」分頁的表單 */
+.session-report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.session-report .section {
+  margin: 0;
+}
+
+.unreported {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.unreported > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.unreported > li.open {
+  padding-bottom: var(--sp-3);
+}
+
+/* 紀錄頁的其他運動（肌力、游泳等）：點開的備註 */
+.other-detail {
+  padding: 0 0 var(--sp-3) calc(36px + var(--sp-3));
+}

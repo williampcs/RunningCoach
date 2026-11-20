@@ -13,13 +13,14 @@ import {
   type ReportTarget,
   type RunCard,
   type RunReport,
+  type UnreportedSession,
   type Workout,
 } from "@running-coach/core";
 
 import { errorText, useApp } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
 import { featureEnabled } from "../environment";
-import { Check, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleCheck, Hourglass, RefreshCw } from "lucide-react";
 import { EffortPicker, Icon, SportIcon, type SportKey } from "../ui";
 import { SyncNotice } from "./PhoneGuide";
 import { kmText, RunCardView, SummaryView } from "./RunCard";
@@ -27,6 +28,7 @@ import { ImportFiles } from "./ImportFiles";
 import { ManualRunForm } from "./ManualRun";
 import { CheckinSection } from "./Checkin";
 import { useSync } from "../use-sync";
+import { SessionReportForm } from "./SessionReport";
 
 /** 顯示與交給教練用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
 type RunData = Pick<
@@ -68,6 +70,56 @@ export function otherAnalysisRequest(a: OtherActivity, effort: number, notes: st
     "",
     "（體感已經存檔，不需要再呼叫 save_activity_feedback；這趟的數據在 get_recent_workouts 的其他運動，對照課表用 get_training_plan。）",
   ].join("\n");
+}
+
+/**
+ * 課表上還沒回報、也沒有手錶紀錄的課（功能開關 report，規格 12.48）：今天與最近幾天的，每堂一列，點了打開回報的表單.
+ * 沒有這樣的課時整塊不出現
+ */
+function UnreportedSessions() {
+  const { coach, revision } = useApp();
+  const today = coach.today();
+  const [list, setList] = useState<UnreportedSession[]>([]);
+  const [open, setOpen] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void coach.unreportedSessions().then((found) => alive && setList(found));
+    return () => {
+      alive = false;
+    };
+  }, [coach, revision]);
+  if (!list.length) return null;
+  return (
+    <section className="card report" id="report-sessions">
+      <h2 className="title">課表上的課做了嗎？</h2>
+      <p className="small muted">手錶沒記到的課（肌力、沒戴錶的那趟）在這裡回報做得怎樣。</p>
+      <ul className="unreported">
+        {list.map((s) => {
+          const sport: SportKey = s.sport === "run" || s.sport === "ride" || s.sport === "swim" || s.sport === "strength" ? s.sport : "other";
+          const expanded = open === s.id;
+          return (
+            <li key={s.id} className={expanded ? "open" : ""} data-session={s.id}>
+              <button type="button" className="list-row" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : s.id)}>
+                <span className="list-row-icon">
+                  <SportIcon sport={sport} />
+                </span>
+                <span className="list-row-text">
+                  <span className="list-row-title">{s.title}</span>
+                  <span className="list-row-sub">{[s.date ? dayLabel(s.date, today) : null, s.minutes ? `${s.minutes} 分` : null].filter(Boolean).join(" · ")}</span>
+                </span>
+                <span className="list-row-end">
+                  <Icon as={expanded ? ChevronDown : ChevronRight} size={20} />
+                </span>
+              </button>
+              {expanded && (
+                <SessionReportForm session={s} onDone={() => setOpen(null)} onCancel={() => setOpen(null)} />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 /** 今天、昨天、前天；更早的顯示日期 */
@@ -234,6 +286,7 @@ export function ReportView({
     return (
       <>
       <CheckinSection focus={focusCheckin} onFocusUsed={onFocusUsed} />
+      {featureEnabled("report") && <UnreportedSessions />}
       <section className="card report">
         <h2 className="title">記一趟跑步</h2>
         <ManualRunForm
@@ -261,6 +314,7 @@ export function ReportView({
   return (
     <>
       <CheckinSection focus={focusCheckin} onFocusUsed={onFocusUsed} />
+      {featureEnabled("report") && <UnreportedSessions />}
       {/* 標題就是問題；選一趟、點體感、一句話、存起來（規格 12.28） */}
       <section className="card report" id="report-run" ref={runRef}>
         <div className="card-head">

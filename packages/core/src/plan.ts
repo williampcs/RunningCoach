@@ -143,6 +143,8 @@ export interface PlannedSession extends SessionDraft {
   edited_at?: string | null;
   /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B）；沒改過或恢復了是 null */
   self_change?: SelfChange | null;
+  /** 跨裝置不變的 id（同步或回報時才補上）；回報的手動紀錄用它連到這堂課（規格 12.48） */
+  sync_id?: string | null;
 }
 
 /** 選手自己的快速改課：改短、換成輕鬆（規格 12.34 第 3 點 B）；改長、加量要請教練 */

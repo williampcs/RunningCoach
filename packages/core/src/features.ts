@@ -18,6 +18,8 @@ export const FEATURES = {
   onboarding: "設定精靈與先看看",
   /** 免費試用（邀請碼）：經作者的代理用 Claude Haiku 對話，每天有則數上限（規格 12.39）；還要建置時設定了代理的網址 */
   trial: "免費試用（邀請碼）",
+  /** 沒有紀錄的課也能回報（規格 12.48）：課卡與「回報」分頁的回報表單（做到多少、時間、體感、備註）、教練的 report_session；關著時照舊只有肌力的「做完了」 */
+  report: "回報沒有紀錄的課",
 } as const;
 
 export type Feature = keyof typeof FEATURES;

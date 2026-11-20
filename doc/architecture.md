@@ -168,6 +168,7 @@ sequenceDiagram
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
 | 手動記的跑步（沒有手錶也能用，規格 12.36） | 資料庫 | 會（整筆，`mw:`） |
+| 回報沒有紀錄的課時記的活動（規格 12.48）：跑步在 `workouts`、其他運動在 `other_activities`（`manual:`） | 資料庫 | 會（整筆，`ma:`） |
 | 匯入的活動檔（FIT、GPX、TCX、zip，規格 12.40）：只存摘要，檔案本身不存、不上傳 | 資料庫 | 會（跑步 `fw:`、其他運動 `fo:`，整筆的摘要） |
 | 多裝置同步的雲端副本 | Cloudflare D1，加密後的內容 | 這就是同步本身 |
 | 免費試用的憑證（規格 12.39） | localStorage 的設定（`proxy.token`，密碼鎖開著時加密；`proxy.account` 是帳號代號） | 不會：每台一個自己的憑證 |
@@ -203,6 +204,8 @@ erDiagram
   conversations ||--o| summaries : "covers_up_to_id：摘要整理到哪一則"
   conversations ||--o| conversations : "reply_to：回覆哪一則（存摘錄）"
   pending_subjective }o--o| workouts : "同步時依日期配對"
+  workouts }o--o| planned_sessions : "session_id = sync_id：回報那堂課時手動記的跑步"
+  other_activities }o--o| planned_sessions : "session_id = sync_id：回報那堂課時手動記的其他運動"
   activity_feedback |o--o| other_activities : "intervals_id：騎車等的體感"
   activity_summaries |o--o| other_activities : "intervals_id：騎後分析"
   races }o--o| other_activities : "result_activity = intervals_id：單車賽事當天那趟"
@@ -222,6 +225,7 @@ erDiagram
 - `workout_summaries`：教練對每一趟的分析，同一趟可能有多次（補填體感後重新分析），讀的時候取最新的。
 - `workout_distinct`：選手說「不是同一趟」的兩筆，之後不再提醒或合併。
 - `pending_subjective`：手錶還沒上傳時先暫存的跑後感受，同步時依日期合併進 `workouts`。
+- 沒有紀錄的課的回報（schema 22，規格 12.48，`manual-activities.ts`）：選手回報手錶沒記到的課時，「做了什麼」存成一筆手動的活動，帶那堂課的 `sync_id`（`session_id`）與做到多少（`completion`：`done`／`partial`／`changed`）。跑步存進 `workouts`（`source` 是 `manual`、有 `sync_id` 與 `session_id`，距離可以沒有），其他運動存進 `other_activities`（`intervals_id` 是 `manual:`＋sync_id、`updated_at`），體感與備註在 `activity_feedback`（和其他運動的回報同一處）。課上照舊記 `done_at`。比對（`matchWeek`）先找連到那堂課的紀錄、以選手說的做到多少為準；紀錄頁、累積、負荷（沒有心率時用時間 × 體感）、教練讀紀錄都經過原本的查詢。和裝置的同一趟：其他運動同一天、同一種運動的一筆就只留裝置的（`coverManualOthers`，只在讀取時合併、體感與回報的課帶過去）；跑步照手動跑步的規則由教練動態問。Intervals.icu 的「來源已刪除」不動 `manual:`。
 - 匯入的活動檔（規格 12.40「讀 FIT 檔」）：跑步存進 `workouts`（`source` 是 `file`，`sync_id` 是「運動＋開始時間到分鐘」的雜湊，同一個檔再匯或兩台各匯一次都是同一個），其他運動存進 `other_activities`（`intervals_id` 是 `file:`＋同一個雜湊）。`raw_json` 用和 Intervals.icu 一樣的欄位名稱（`source: "FILE"`、開始時間、經過與移動時間、距離、心率、爬升、`device_name`、分圈；知道心率區間時算好的 `icu_hr_zone_times` 與 `hr_zones_source`），只有摘要、沒有每秒的資料。和 Intervals.icu 的同一趟：跑步照原本的時間重疊規則合併（`Db.importFileActivity`）；其他運動匯入時有就不存，之後同步進來的同一趟刪掉檔案那筆、體感與分析搬過去（`dropCoveredFileOthers`）。Intervals.icu 的「來源已刪除」不動匯入的。
 - `other_activities`：跑步以外的運動（騎車、游泳、肌力），不算跑量；同步時整批更新、跟著來源的刪除（匯入的檔案 `file:` 除外）。多運動開著時，騎車也是一級的運動：配對單車的課、紀錄頁的騎車卡片、單車的檢查器規則都讀它。
 - `activity_feedback`：騎車等其他運動的體感與感受（運動回報，schema 13）。`other_activities` 每次同步整批更新，回報另外存才不會被蓋掉；用 `intervals_id` 對應，那趟還沒同步到這台也先存著。
@@ -263,6 +267,7 @@ erDiagram
 | `w:跑步 id`、`ws:跑步 id`、`wd:兩筆跑步 id` | 某一趟跑步上的體感、教練的分析、「不是同一趟」（跑步 id：`i`＋Intervals.icu 的活動 id、`s`＋Strava 的 id，手動新增的是 `m`＋sync_id、匯入的檔案是 `f`＋sync_id） |
 | `mw:sync_id` | 手動新增的一趟跑步，整筆（日期、距離、時間、平均心率、配速、體感與感受、修改時間；schema 19，舊版不認得，不套用也不刪）；體感在這裡，不另外送 `w:` |
 | `fw:sync_id`、`fo:雜湊` | 匯入的活動檔（規格 12.40）：跑步整筆（日期、距離、時間、心率、配速、爬升、卡路里、`raw_json` 的摘要、體感與感受、修改時間；跑步 id 是 `f`＋sync_id）、其他運動整筆（日期、類型、時間、距離、平均心率、`raw_json`；體感與分析照舊用 `af:`、`as:`，id 是 `file:雜湊`）。套用時這台已經有同一趟的：跑步標成重複、其他運動留 Intervals.icu 的。舊版不認得，不套用也不刪 |
+| `ma:sync_id` | 回報沒有紀錄的課時手動記的一筆活動（規格 12.48，schema 22）：整筆（運動、日期、時間、距離、體感、備註、那堂課的 `sync_id`、做到多少、修改時間）；跑步存在 `workouts`、其他運動存在 `other_activities`。其他運動的體感在這裡，不另外送 `af:`。這版看不懂的內容（例如新版才有的運動）先暫存、不當成刪除。舊版不認得，不套用也不刪 |
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 | `ta:帳號` | 免費試用的帳號（規格 12.44 第 1 步，schema 20 的 `trial_accounts`）：代理的網址、帳號的復原密鑰（用同步金鑰 HKDF 分出的另一把再加密一次，AAD 綁網址與帳號，`device-sync/trial-account.ts`）、修改時間；舊版不認得，不套用也不刪 |

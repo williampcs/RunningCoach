@@ -129,7 +129,7 @@ export function RunCardView({ card, today, showDate = true, children }: { card: 
       <DataSource text={card.garmin} />
       {card.plan && card.plan.reasons.length > 0 && <p className="small">{card.plan.reasons.join("、")}</p>}
       <dl className="stats">
-        <Stat label="距離" value={kmText(w.distance_km)} unit="km" />
+        <Stat label="距離" value={w.distance_km == null ? "—" : kmText(w.distance_km)} unit={w.distance_km == null ? undefined : "km"} />
         <Stat label="時間" {...minutesText(w.duration_min)} />
         <Stat label="配速" value={w.avg_pace?.replace("/km", "") ?? "?"} unit="/km" />
         <Stat label="心率" value={w.avg_hr ?? "—"} />
