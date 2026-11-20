@@ -283,11 +283,7 @@ let step = "start";
     await E.card.getByRole("button", { name: "還原" }).click();
     await E.card.getByText(/上次同步 \d/).waitFor({ timeout: 15000 });
     await E2E.settings(E.page, "訓練紀錄");
-    // A 的 Intervals.icu 的 key 跟著同步過來（規格 12.47，開始同步時預設勾）；再改一次，確認還原後存設定不會丟掉同步金鑰
-    check.eGotIntervalsKey = await E.page
-      .waitForFunction(() => [...document.querySelectorAll("input")].some((i) => i.value === "mock-intervals-key"), null, { timeout: 10000 })
-      .then(() => true, () => false);
-    await E.page.getByLabel("API key", { exact: true }).fill("mock-intervals-key-e");
+    await E.page.getByLabel("API key", { exact: true }).fill("mock-intervals-key");
     await E.page.getByRole("button", { name: "儲存設定" }).click();
     await E.page.getByText("設定已儲存在這個瀏覽器。").waitFor();
     await E.tab("設定");

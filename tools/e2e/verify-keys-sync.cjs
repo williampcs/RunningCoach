@@ -176,7 +176,9 @@ async function serve(outDir) {
     await A.sync();
     await A.card.getByRole("button", { name: "這是第一台：開始同步" }).click();
     const recovery = (await A.card.locator(".recovery-code").innerText()).trim();
-    check.startHasShareChecked = await shareBox(A).isChecked();
+    // 預設不勾（規格 12.47：先由使用者自己選）
+    check.startShareUncheckedByDefault = !(await shareBox(A).isChecked());
+    await shareBox(A).check();
     await A.card.screenshot({ path: `${E2E.OUT}/keys-A-start.png` });
     await A.card.getByLabel("我已經把復原碼存好了").check();
     await A.card.getByRole("button", { name: "開始同步" }).click();
@@ -222,6 +224,30 @@ async function serve(outDir) {
     await syncNow(A);
     check.aToastReplaced = await aToast;
     check.aGotBKey = await waitValue(() => aiKey(A), KEY_B);
+
+    // --- B 換了服務網址 → A 不默默換，問要用哪一份 ---
+    step = "換了服務網址";
+    await E2E.settings(B.page, "AI 教練");
+    await B.page.locator("#side-panel").getByLabel("服務網址").fill(`http://localhost:${MOCK_PORT}/v1`);
+    await B.page.getByRole("button", { name: "儲存設定" }).click();
+    await B.page.getByText("設定已儲存在這個瀏覽器。").first().waitFor();
+    await B.page.waitForTimeout(1500);
+    await syncNow(B);
+    const askToast = toast(A, /另一台的 key 和這台的不一樣/);
+    await syncNow(A);
+    check.aAskedAboutRecipient = await askToast;
+    await E2E.settings(A.page, "AI 教練");
+    const prompt = A.page.locator('#side-panel .secret-prompt[data-secret="llm"]');
+    check.promptShowsRecipient = await prompt.waitFor({ timeout: 5000 }).then(async () => (await prompt.innerText()).includes(`http://localhost:${MOCK_PORT}/v1`), () => false);
+    check.aKeptOwnUntilAsked = (await A.page.locator("#side-panel").getByLabel("服務網址").inputValue()) === `${MOCK}/v1`;
+    await A.page.screenshot({ path: `${E2E.OUT}/keys-A-prompt.png` });
+    await prompt.getByRole("button", { name: "改用另一台的" }).click();
+    check.aSwitchedAfterAccept = await waitValue(() => A.page.locator("#side-panel").getByLabel("服務網址").inputValue(), `http://localhost:${MOCK_PORT}/v1`);
+    // 換了網址：資料流向要重新確認
+    check.aConsentAskedAgain = !(await A.page.locator("#side-panel").getByLabel("我了解並同意以上的資料流向").isChecked());
+    await A.page.locator("#side-panel").getByLabel("我了解並同意以上的資料流向").check();
+    await A.page.getByRole("button", { name: "儲存設定" }).click();
+    await A.page.getByText("設定已儲存在這個瀏覽器。").first().waitFor();
 
     // --- 一覽頁 ---
     step = "一覽頁";

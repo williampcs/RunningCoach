@@ -168,11 +168,13 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState,
   const runTakeover = useCallback(async () => {
     autoFailed.current = false;
     await run(async (onProgress) => {
-      await engine!.takeover(onProgress);
+      const oldRoot = await engine!.takeover(onProgress);
+      // 跟著同步的 key（規格 12.47）：舊的同步金鑰加密的，用現在的重新加密
+      if (oldRoot) await secretSync.resealFrom(oldRoot);
       setTakeoverDone(true);
       return null;
     });
-  }, [run, engine]);
+  }, [run, engine, secretSync]);
 
   const resume = useCallback(async () => {
     autoFailed.current = false;

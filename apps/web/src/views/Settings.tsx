@@ -12,7 +12,7 @@ import { Disclosure, Icon, InfoTip, ListRow, stripEmoji } from "../ui";
 import { useSync } from "../use-sync";
 import { clearRemoved } from "./DeviceAlerts";
 import { DeviceSyncCard } from "./DeviceSync";
-import { KeysOverview } from "./KeysOverview";
+import { KeysOverview, SecretPrompts } from "./KeysOverview";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
@@ -65,7 +65,7 @@ const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
 /** 目前選擇下，資料會送到哪裡（收在 ⓘ 裡） */
 export function DataFlow({ draft, locked }: { draft: AppSettings; locked: boolean }) {
   if (draft.llmMode === "proxy") return <TrialDataFlow />;
-  const recipient = PROVIDER_RECIPIENT[draft.provider];
+  const recipient = draft.provider === "openai-compatible" && draft.baseURL.trim() ? draft.baseURL.trim() : PROVIDER_RECIPIENT[draft.provider];
   return (
     <ul>
       <li>你的對話、選手資料與訓練紀錄會從這個瀏覽器直接送到 {recipient}，不經過 Zone2Mate 的任何伺服器。</li>
@@ -131,6 +131,7 @@ function KeyProtection({ settings, locked, onChange }: { settings: AppSettings; 
             <li>對話與訓練紀錄不會加密。忘記密碼就只能重新填寫 key。</li>
             <li>建議替 Zone2Mate 另外建立一把專用的 key，並在供應商的後台設定每月金額上限；懷疑外洩時到後台撤銷再產生新的。</li>
             <li>匯出的資料庫不含 API key。</li>
+            <li>每台各自設：開著多裝置同步、選了帶 key 時，在這台填的 key 到了沒開密碼鎖的裝置上是明文。每台都開比較安全。</li>
           </ul>
         </InfoTip>
       </p>
@@ -221,11 +222,20 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
       setDraft((d) => ({ ...d, llmMode: settings.llmMode, proxy: settings.proxy, models: settings.models }));
     }
     // API key 與 Intervals.icu 的連線從另一台帶進來（同步，規格 12.47）：一樣跟著改
+    // 正在改的欄位（和改之前存的不一樣）不蓋掉
     if (prev.apiKey !== settings.apiKey || prev.provider !== settings.provider || prev.baseURL !== settings.baseURL) {
-      setDraft((d) => ({ ...d, llmMode: settings.llmMode, provider: settings.provider, apiKey: settings.apiKey, baseURL: settings.baseURL, models: settings.models }));
+      setDraft((d) =>
+        d.apiKey === prev.apiKey && d.provider === prev.provider && d.baseURL === prev.baseURL
+          ? { ...d, llmMode: settings.llmMode, provider: settings.provider, apiKey: settings.apiKey, baseURL: settings.baseURL, models: settings.models }
+          : d,
+      );
     }
     if (prev.intervals.apiKey !== settings.intervals.apiKey || prev.intervals.athleteId !== settings.intervals.athleteId) {
-      setDraft((d) => ({ ...d, intervals: { ...d.intervals, apiKey: settings.intervals.apiKey, athleteId: settings.intervals.athleteId } }));
+      setDraft((d) =>
+        d.intervals.apiKey === prev.intervals.apiKey && d.intervals.athleteId === prev.intervals.athleteId
+          ? { ...d, intervals: { ...d.intervals, apiKey: settings.intervals.apiKey, athleteId: settings.intervals.athleteId } }
+          : d,
+      );
     }
   }, [settings]);
   const [status, setStatus] = useState("");
@@ -409,6 +419,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   if (page === "ai") {
     return (
       <Subpage id="ai" onBack={back}>
+        <SecretPrompts only="llm" />
         <section className="card">
           <div className="row" role="radiogroup" aria-label="怎麼使用 AI">
             <label className="check">
@@ -535,6 +546,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     );
     return (
       <Subpage id="records" onBack={back}>
+        <SecretPrompts only="intervals" />
         <section className="card">
           <h2>你用什麼記錄跑步？</h2>
           <RecordWithPicker value={recordWith} onPicked={setRecordWith} />
@@ -547,7 +559,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
             <span>教練透過 Intervals.icu 讀取你手錶的紀錄。</span>
             <InfoTip label="怎麼取得 API key">
               <IntervalsGuide where="下面的「API key」" />
-              <p>key 只存在這個瀏覽器，活動資料由瀏覽器直接向 Intervals.icu 取得（<PrivacyLink />）。</p>
+              <p>key 存在這個瀏覽器（開著多裝置同步、選了帶 key 時加密後帶到其他裝置），活動資料由瀏覽器直接向 Intervals.icu 取得（<PrivacyLink />）。</p>
             </InfoTip>
           </p>
           <PhoneGuide />
@@ -601,6 +613,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   if (page === "keys") {
     return (
       <Subpage id="keys" onBack={back}>
+        <SecretPrompts />
         <KeysOverview onOpen={setPage} />
       </Subpage>
     );
@@ -743,6 +756,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   return (
     <>
       <MovedCard />
+      <SecretPrompts />
       {nextStep}
       <section className="card settings-list">
         <ul className="rows">

@@ -22,7 +22,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta|sk):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/.test(name) || /^sk:(llm|intervals|share)$/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -419,6 +419,8 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       }
       return "applied";
     case "sk":
+      // 跟著同步的 key：只認得 llm、intervals、share；其他名稱不存（isKnown 也不認得，不會當成刪除送出）
+      if (!isKnown(name)) return "applied";
       if (!data) await sql.run("DELETE FROM synced_secrets WHERE name=?", [id]);
       else if (typeof data.box === "string") {
         await sql.run(

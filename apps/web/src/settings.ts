@@ -1,4 +1,7 @@
-/** 使用者設定 — 存在這個瀏覽器的 localStorage，不會上傳. */
+/**
+ * 使用者設定 — 存在這個瀏覽器的 localStorage. 設定本身不上傳；開著多裝置同步、選了「帶到其他裝置」時，
+ * API key 與 Intervals.icu 的連線另外加密後跟著同步（規格 12.47，secret-sync.ts）.
+ */
 import {
   AnthropicProvider,
   TERMS_VERSION,
@@ -162,7 +165,10 @@ export interface LlmSecret {
 }
 export type IntervalsSecret = AppSettings["intervals"];
 
-/** 這台要帶到其他裝置的內容；沒有時是 null（還沒填、或用免費試用） */
+/** 這台不參與 llm 的同步：用免費試用（試用的憑證每台一個；不送這台的、也不拿別台的蓋掉） */
+export const secretSkipped = (s: AppSettings, name: SecretName) => name === "llm" && s.llmMode === "proxy";
+
+/** 這台要帶到其他裝置的內容；沒有（還沒填、清掉了）時是 null */
 export function secretOf(s: AppSettings, name: "llm"): LlmSecret | null;
 export function secretOf(s: AppSettings, name: "intervals"): IntervalsSecret | null;
 export function secretOf(s: AppSettings, name: SecretName): LlmSecret | IntervalsSecret | null;
@@ -189,29 +195,51 @@ export function sameSecret(a: unknown, b: unknown): boolean {
   return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 }
 
-/** 這台最後改的時間（ISO）；這個功能之前就填好的、沒改過的是 null（當成最舊的） */
-export function secretStamps(): Partial<Record<SecretName, string>> {
+/**
+ * 每一樣在這台的同步狀態（只有時間與旗標，沒有 key）：
+ * - at：這台現在這份的時間（這台改的時間，或帶進來的那份的時間，最多到帶進來時的「現在＋幾分鐘」）
+ * - seen：這台最後一次和雲端一致時，雲端那份的時間（原樣）；雲端之後換了才算「另一台改過」
+ * - edited：這台在那之後自己改過（還沒送上去）. 這台的修改不會被默默蓋掉
+ */
+export interface SecretStamp {
+  at: string;
+  seen: string | null;
+  edited: boolean;
+}
+
+export function secretStamps(): Partial<Record<SecretName, SecretStamp>> {
   try {
-    const value = JSON.parse(localStorage.getItem(STAMPS_KEY()) ?? "{}") as Record<string, unknown>;
-    return Object.fromEntries(SECRET_NAMES.filter((n) => typeof value[n] === "string").map((n) => [n, value[n] as string]));
+    const value = JSON.parse(localStorage.getItem(STAMPS_KEY()) ?? "{}") as Record<string, Partial<SecretStamp>>;
+    const out: Partial<Record<SecretName, SecretStamp>> = {};
+    for (const n of SECRET_NAMES) {
+      const v = value[n];
+      if (v && typeof v.at === "string") out[n] = { at: v.at, seen: typeof v.seen === "string" ? v.seen : null, edited: v.edited === true };
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
-/** 記下改的時間（從另一台帶進來的，記那台改的時間） */
-export function setSecretStamp(name: SecretName, at: string): void {
+export function setSecretStamp(name: SecretName, stamp: SecretStamp): void {
   try {
-    localStorage.setItem(STAMPS_KEY(), JSON.stringify({ ...secretStamps(), [name]: at }));
+    localStorage.setItem(STAMPS_KEY(), JSON.stringify({ ...secretStamps(), [name]: stamp }));
   } catch {
-    // 記不住就當成最舊的：兩台不同時以另一台的為準
+    // 記不住就當成不知道什麼時候改的：兩台不同時問使用者
   }
 }
 
-/** 存設定時：跟著同步的內容變了，記下這台改的時間 */
+/** 存設定時：跟著同步的內容變了，記下這台改的時間（至少比這台現在這份晚：這台的修改一定比它看過的新） */
 function stampChanges(prev: AppSettings, next: AppSettings, now = new Date()): void {
+  const stamps = secretStamps();
   for (const name of SECRET_NAMES) {
-    if (!sameSecret(secretOf(prev, name), secretOf(next, name))) setSecretStamp(name, now.toISOString());
+    // 換成免費試用不算清掉 key
+    if (secretSkipped(next, name)) continue;
+    if (sameSecret(secretOf(prev, name), secretOf(next, name))) continue;
+    const old = stamps[name];
+    const after = old ? Date.parse(old.at) + 1 : 0;
+    const at = new Date(Math.max(now.getTime(), Number.isFinite(after) ? after : 0)).toISOString();
+    setSecretStamp(name, { at, seen: old?.seen ?? null, edited: true });
   }
 }
 
@@ -300,7 +328,12 @@ export function suggestedModels(mode: AppSettings["llmMode"], provider: Provider
   return provider === "anthropic" ? { ...CLAUDE_MODELS } : { chat: "", summary: "", compress: "" };
 }
 
-export const consentKey = (s: AppSettings) => (s.llmMode === "proxy" ? "proxy" : `byok:${s.provider}`);
+/**
+ * 資料流向的同意綁在「送到誰」：自己的 key 綁供應商；其他相容服務再綁服務網址（換了網址要重新確認，
+ * 同步帶進來的設定也一樣，規格 12.47）
+ */
+export const consentKey = (s: AppSettings) =>
+  s.llmMode === "proxy" ? "proxy" : s.provider === "openai-compatible" ? `byok:openai-compatible:${s.baseURL.trim().replace(/\/+$/, "")}` : `byok:${s.provider}`;
 
 /** 已確認過這一版的使用須知（規格 12.32） */
 export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERSION;

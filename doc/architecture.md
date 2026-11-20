@@ -163,7 +163,7 @@ sequenceDiagram
 | 資料 | 存在哪裡 | 會同步到其他裝置嗎 |
 |---|---|---|
 | 對話、選手資料、賽事、課表、跑步紀錄、恢復資料、記住的事…… | 資料庫（SQLite，瀏覽器的 OPFS） | 只有 App 裡才有的部分會（見下面） |
-| API key、AI 的設定、Intervals.icu 的 key 或登入的 token（規格 12.37）、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key 與 token）；每樣 key 在這台最後改的時間在 `running-coach.secret-stamps.v1`（只有時間） | 設定本身不會；API key 與 Intervals.icu 的連線在開同步、勾了「帶到其他裝置」時另外同步（下一列） |
+| API key、AI 的設定、Intervals.icu 的 key 或登入的 token（規格 12.37）、時區、天氣的城市 | 瀏覽器的 localStorage（可以用密碼鎖加密 API key 與 token）；每樣 key 在這台的同步狀態在 `running-coach.secret-stamps.v1`（只有時間與旗標） | 設定本身不會；API key 與 Intervals.icu 的連線在開同步、勾了「帶到其他裝置」（預設不勾）時另外同步（下一列） |
 | 跟著同步的 API key 與 Intervals.icu 的連線（規格 12.47） | 資料庫的 `synced_secrets`（名稱 `llm`／`intervals`、用同步金鑰再加密一次的內容、那台改的時間；`share` 是這個同步空間要不要帶，on／off） | 會（`sk:llm`、`sk:intervals`、`sk:share`）；新的裝置同步後套進自己的設定（密碼鎖開著時用那台的密碼加密後才存） |
 | 教練動態「知道了」、收起等小狀態、確認過的使用須知版本、還沒收起的就醫提示 | localStorage | 不會 |
 | 從 Intervals.icu 來的跑步、恢復資料、其他運動 | 資料庫 | 不會：每台自己去 Intervals.icu 抓 |
@@ -266,7 +266,7 @@ erDiagram
 | `af:活動 id` | 騎車等其他運動的體感與感受（schema 13；舊版不認得，不套用也不刪） |
 | `as:活動 id` | 騎車的分析（schema 16；舊版不認得，不套用也不刪） |
 | `ta:帳號` | 免費試用的帳號（規格 12.44 第 1 步，schema 20 的 `trial_accounts`）：代理的網址、帳號的復原密鑰（用同步金鑰 HKDF 分出的另一把再加密一次，AAD 綁網址與帳號，`device-sync/trial-account.ts`）、修改時間；舊版不認得，不套用也不刪 |
-| `sk:llm`、`sk:intervals`、`sk:share` | API key 與 Intervals.icu 的連線（規格 12.47，schema 21 的 `synced_secrets`）：`llm` 是自己的 API key（供應商、key、服務網址、模型），`intervals` 是 Intervals.icu 的 API key、Athlete ID 或登入的 token 與帳號；內容用同步金鑰 HKDF 分出的另一把（info `synced-secret`）再加密一次，AAD 綁名稱（`device-sync/synced-secret.ts`）；`updated_at` 是那台改 key 的時間，兩台不同時以晚的為準（引擎的衝突也比它）。`share` 是 on／off（不加密的那一層，整筆照樣用同步金鑰加密）：off 時每台刪掉 `llm`、`intervals` 且不再送。免費試用的憑證不放進來。換金鑰時換的那台用新的金鑰重新加密；被移除的那台刪掉這些密文。網頁版的規則在 `apps/web/src/secret-sync.ts`、`use-secret-sync.ts`。舊版不認得，不套用也不刪 |
+| `sk:llm`、`sk:intervals`、`sk:share` | API key 與 Intervals.icu 的連線（規格 12.47，schema 21 的 `synced_secrets`）：`llm` 是自己的 API key（供應商、key、服務網址、模型），`intervals` 是 Intervals.icu 的 API key、Athlete ID 或登入的 token 與帳號；清掉時是「已清除」。內容用同步金鑰 HKDF 分出的另一把（info `synced-secret`）再加密一次，AAD 綁名稱（`device-sync/synced-secret.ts`）。`share` 是 on／off：沒有或 off 時不帶，off 時每台刪掉 `llm`、`intervals`。只認得這三個名稱。`updated_at` 是那台的時間，比較時最多算到這台的現在＋5 分鐘；誰為準、什麼時候問使用者、服務網址要 https、同意綁網址等規則在 `apps/web/src/secret-sync.ts`。免費試用的憑證不放進來。換金鑰（與用新的復原碼接手）時用新的金鑰重新加密；被移除的那台刪掉這些密文。舊版不認得，不套用也不刪 |
 
 每一筆用同步金鑰加密後才送出（AES-GCM）。伺服器的 D1：
 - `spaces`：同步空間與存取憑證的雜湊（換金鑰建立的新空間記下從哪個空間換來，`rekey_from`，換到一半時最後一次有進度的時間 `progress_at`、開始換金鑰的那台 `rekey_by`、以新的同步金鑰加密的接手資訊 `handoff`；建立者的網段的代碼，`network`，以秘密金鑰的 HMAC 計算、記下的時間 `network_at`，30 天後清掉；同一個網段建立的空間有總容量上限）。 每個空間另記最後一次有裝置連線的日期 `seen_on`（只到日，通過驗證的讀寫都算，一天最多寫一次；規格 12.10「不活躍的空間到期刪除」）。

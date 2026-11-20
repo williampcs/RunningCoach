@@ -4,8 +4,11 @@
  */
 import { Gift, KeyRound, Lock, QrCode, Sparkles, Watch, type LucideIcon } from "lucide-react";
 
+import { useState } from "react";
+
 import { useApp, type SettingsSection } from "../app-context";
-import { intervalsConnected, lockEnabled, type AppSettings } from "../settings";
+import type { PendingReason } from "../secret-sync";
+import { intervalsConnected, lockEnabled, SECRET_NAMES, type AppSettings, type IntervalsSecret, type SecretName } from "../settings";
 import { trialAvailable } from "../trial";
 import { trialActive } from "../trial-sync";
 import { Icon, ListRow } from "../ui";
@@ -71,7 +74,7 @@ export function keyItems(s: AppSettings, opts: { syncOn: boolean; share: boolean
       status: hasKey ? ["有", true] : s.llmMode === "proxy" ? ["用免費試用", false] : ["沒有", false],
       where: carried ? `${local}＋加密的同步` : local,
       newPhone: carried ? "開了同步就自動回來" : opts.syncOn ? "要重新填：同步設定裡沒有勾「帶到其他裝置」" : "要在新的那台重新填",
-      lost: "到 AI 服務的後台撤銷，再產生一把新的",
+      lost: "裝置弄丟或 key 外流：到 AI 服務的後台撤銷，換一把新的",
       section: "ai",
     },
     {
@@ -81,7 +84,7 @@ export function keyItems(s: AppSettings, opts: { syncOn: boolean; share: boolean
       status: intervalsConnected(s) ? ["已連接", true] : ["沒有", false],
       where: carried ? `${local}＋加密的同步` : local,
       newPhone: carried ? "開了同步就自動回來" : "要在新的那台重新連接",
-      lost: "到 Intervals.icu 重新登入，或重新產生 API key",
+      lost: "裝置弄丟：到 Intervals.icu 中斷連結，或重新產生 API key",
       section: "records",
     },
     {
@@ -91,7 +94,7 @@ export function keyItems(s: AppSettings, opts: { syncOn: boolean; share: boolean
       status: opts.locked ? ["開", true] : ["關", false],
       where: "密碼不存在任何地方，只用來加密這台的 key",
       newPhone: "每台各自設",
-      lost: carried ? "這台的 key 要重填；開著同步時從另一台帶回來" : "這台的 key 要重新填",
+      lost: carried ? "這台的 key 與同步金鑰會清掉：重新配對加入同步後，key 會從另一台帶回來" : "這台的 key 要重新填",
       section: "lock",
     },
   );
@@ -102,7 +105,7 @@ export function KeysOverview({ onOpen }: { onOpen: (section: SettingsSection) =>
   const { settings, deviceSync, secretSync, testMode } = useApp();
   const items = keyItems(settings, {
     syncOn: deviceSync.enabled && !testMode.enabled,
-    share: secretSync.share !== false,
+    share: secretSync.share === true,
     locked: lockEnabled(),
     trial: trialAvailable(),
   });
@@ -130,5 +133,55 @@ export function KeysOverview({ onOpen }: { onOpen: (section: SettingsSection) =>
         ))}
       </ul>
     </section>
+  );
+}
+
+const REASON_TEXT: Record<PendingReason, string> = {
+  recipient: "另一台換了 AI 服務或服務網址。改用的話，你的資料會送到那裡，要在這台重新確認資料流向。",
+  "both-changed": "兩台都改過，不知道要用哪一份。",
+  unknown: "這台的是之前填的，不知道哪一份比較新。",
+};
+
+/** 另一台的 key 和這台的不一樣、要使用者決定的（規格 12.47）；only：只顯示那一樣 */
+export function SecretPrompts({ only }: { only?: SecretName }) {
+  const { secretSync } = useApp();
+  const [busy, setBusy] = useState(false);
+  const names = SECRET_NAMES.filter((n) => secretSync.pending[n] && (!only || n === only));
+  if (!names.length) return null;
+  const run = async (job: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await job();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      {names.map((name) => {
+        const item = secretSync.pending[name]!;
+        const other =
+          name === "llm"
+            ? `另一台的 AI 服務：${item.recipient ?? ""}`
+            : `另一台的 Intervals.icu：${(item.value as IntervalsSecret).account?.name ?? ((item.value as IntervalsSecret).accessToken ? "用登入連接" : "用 API key 連接")}`;
+        return (
+          <div key={name} className="notice warn secret-prompt" data-secret={name}>
+            <span>
+              <strong>{name === "llm" ? "另一台的 API key 和這台的不一樣" : "另一台的 Intervals.icu 連線和這台的不一樣"}</strong>
+              <br />
+              {other}。{REASON_TEXT[item.reason]}
+            </span>
+            <div className="actions">
+              <button disabled={busy} onClick={() => void run(() => secretSync.accept(name))}>
+                改用另一台的
+              </button>
+              <button disabled={busy} onClick={() => void run(() => secretSync.keep(name))}>
+                保留這台的
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </>
   );
 }
