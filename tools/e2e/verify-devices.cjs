@@ -266,10 +266,10 @@ async function serve(outDir) {
     await A.card.locator(".new-code .recovery-code").waitFor({ timeout: 20000 });
     const newRecovery = (await A.card.locator(".new-code .recovery-code").innerText()).trim();
     check.newRecoveryDiffers = newRecovery !== recovery && /^([0-9A-HJKMNP-TV-Z]{4}-){13}[0-9A-HJKMNP-TV-Z]$/.test(newRecovery);
-    check.mustConfirmNewCodeSaved = await A.card.getByRole("button", { name: "完成" }).isDisabled();
+    check.mustConfirmNewCodeSaved = await A.card.getByRole("button", { name: "存好了，移除" }).isDisabled();
     await A.page.screenshot({ path: `${E2E.OUT}/devices-A-new-code.png` });
     await A.card.getByLabel("我已經把新的復原碼存好了").check();
-    await A.card.getByRole("button", { name: "完成" }).click();
+    await A.card.getByRole("button", { name: "存好了，移除" }).click();
     check.aListAfterRemove = await waitNames(A, ["Mac · Edge", "我的 iPhone"]);
     const removedAt = Date.now();
 

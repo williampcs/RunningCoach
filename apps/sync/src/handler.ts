@@ -3,7 +3,8 @@
  * - 同步空間：以同步金鑰導出的 id 與憑證存取；伺服器只存憑證的雜湊
  * - 配對：新裝置與舊裝置交換臨時公開金鑰與加密後的同步金鑰；以配對碼存取，十分鐘失效
  * - 裝置（規格 12.27）：空間有登記的裝置之後（裝置模式），每個請求要用那台自己的金鑰簽章，
- *   舊的憑證只能用來登記新裝置. 移除某台＝換金鑰：留下的裝置搬到新的空間，舊空間只回答「搬到哪裡」與「已被移除」.
+ *   舊的憑證只能用來登記新裝置. 移除某台：馬上標成已移除（之後拒絕它），再換金鑰（可以跨好幾天）：
+ *   留下的裝置搬到新的空間，舊空間只回答「搬到哪裡」與「已被移除」.
  *   沒有登記過裝置的空間照舊（舊版的用戶端）
  * 依來源限制建立空間、配對碼、配對的每一步與送出的頻率：同一個來源以好幾層計數（IPv6 的 /64、/56、/48，IPv4 的位址與 /24），
  * 每一層有自己的上限（IP 只以雜湊計數，時間窗過了就刪）；不記錄 IP、標頭或內容；回應不快取.
@@ -84,6 +85,8 @@ export interface SyncRateLimits {
   spaceBytes?: number;
   /** 換金鑰的複製每天估算的寫入列數（整個服務一起）；沒有給時 dailyWrites 乘上 REKEY_WRITE_SHARE */
   rekeyWrites?: number;
+  /** 換金鑰的複製每台裝置、每個來源（每一層）每天的寫入列數；沒有給時 rekeyWrites 乘上 REKEY_ACTOR_SHARE（至少一批） */
+  rekeyActorWrites?: number;
 }
 
 const MINUTE = 60_000;
@@ -128,11 +131,21 @@ const REKEY_SLACK = { bytes: 1_000_000, records: 50 };
  * 用完不影響一般的送出、新空間與配對
  */
 export const REKEY_WRITE_SHARE = 0.25;
+/**
+ * 換金鑰的那一份，每台裝置（以簽章的公開金鑰計，換金鑰之後同一台沿用，跨好幾次換金鑰一起算）、
+ * 每個來源（每一層）每天最多用掉的比例：一個人不能用掉當天全部的換金鑰額度. 用完時停下來，隔天接著做
+ */
+export const REKEY_ACTOR_SHARE = 0.25;
 /** 同一個舊空間每天最多複製幾筆：舊空間的筆數加上寬容（中途斷掉重試一次還夠）. 重開換金鑰不會讓複製量加倍 */
 const rekeyCopyAllowance = (records: number) => records + Math.max(REKEY_SLACK.records, Math.ceil(records * 0.25));
-/** 估算複製 records 筆要寫幾列（每次最多送 200 筆） */
-const rekeyCopyCost = (records: number) => WRITE_COST.perRecord * records + WRITE_COST.pushBase * Math.max(1, Math.ceil(records / 200));
 const REKEY_WRITES_KEY = "sync:rekey-writes";
+/**
+ * 換到一半的新空間多久沒有進度就放棄（清掉）：每天的額度用完時隔天接著做，所以要保留好幾天；
+ * 使用者一直沒有再打開換金鑰的那台時，不讓它一直佔著容量
+ */
+export const STALE_REKEY_MS = 7 * DAY;
+/** 鎖住的換金鑰（已經提早移除過裝置）最長鎖多久：從建立起算，超過之後舊空間裡另一台過了冷卻期的裝置可以取代 */
+export const MAX_REKEY_LOCK_MS = 30 * DAY;
 
 /** 依來源計數的種類 */
 type SourceKind = "createSpace" | "createPair" | "pairMiss" | "pairStep" | "push" | "pushBytes";
@@ -212,6 +225,9 @@ const BASE64URL = /^[A-Za-z0-9_-]+$/;
 /** 配對碼：Crockford base32，去掉容易看錯的 I、L、O、U */
 const SLOT_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const SLOT = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+
+/** 已經提早移除過裝置的換金鑰：只能完成（取消的話舊空間就一直不能加入新的裝置，用新的復原碼也接不了手） */
+const lockedRekey = () => new HttpError(409, "已經移除了裝置，這次換金鑰只能完成、不能取消", { state: "rekey_locked" });
 
 class HttpError extends Error {
   constructor(
@@ -324,44 +340,42 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   const spaceWrites = deps.rateLimits?.spaceWrites ?? Math.floor(dailyWrites * SPACE_WRITE_SHARE);
   const spaceBytes = deps.rateLimits?.spaceBytes ?? SPACE_DAILY_BYTES;
   const rekeyWrites = deps.rateLimits?.rekeyWrites ?? Math.floor(dailyWrites * REKEY_WRITE_SHARE);
+  // 至少送得完一批（200 筆），不然永遠搬不動
+  const rekeyActorWrites = deps.rateLimits?.rekeyActorWrites ?? Math.max(Math.floor(rekeyWrites * REKEY_ACTOR_SHARE), WRITE_COST.pushBase + WRITE_COST.perRecord * MAX_PUSH);
   const untilMidnight = () => {
     const now = nowMs();
     return Math.max(1, Math.ceil(((Math.floor(now / DAY) + 1) * DAY - now) / 1000));
   };
   const rekeyLimited = () => {
     log("sync rekey copy limit");
-    return new HttpError(503, "今天換金鑰的量已達上限，明天再試", { state: "rekey_limit", retryAfter: untilMidnight() });
+    return new HttpError(503, "今天換金鑰的量已達上限，明天接著做", { state: "rekey_limit", retryAfter: untilMidnight() });
   };
-  /** 換金鑰的複製這兩條計數：整個服務的那一份（列數）與這個舊空間今天的（筆數） */
-  const rekeyEntries = (from: string, fromRecords: number, writes: number, records: number): RateEntry[] => [
-    { key: REKEY_WRITES_KEY, rule: per(rekeyWrites, DAY), weight: writes },
-    { key: `sync:rekey-copy:${from}`, rule: per(rekeyCopyAllowance(fromRecords), DAY), weight: records },
-  ];
+  /**
+   * 換金鑰的複製的計數，窄的在前：送出的那台裝置（列數）、來源的每一層（列數）、這個舊空間今天的（筆數）、
+   * 整個服務的那一份（列數）. 全部加上或全部不加（takeEntries）
+   */
+  const rekeyEntries = async (request: Request, signPub: string, from: string, fromRecords: number, writes: number, records: number): Promise<RateEntry[]> => {
+    const actor = per(rekeyActorWrites, DAY);
+    return [
+      { key: `sync:rekey-device:${await hashCode(`rekey-device:${signPub}`)}`, rule: actor, weight: writes },
+      ...(await tieredEntries("sync:rekey-source", requestSourceLevels(request), tiers({ day: actor }, { day: actor }, { day: actor }), writes, hashCode)),
+      { key: `sync:rekey-copy:${from}`, rule: per(rekeyCopyAllowance(fromRecords), DAY), weight: records },
+      { key: REKEY_WRITES_KEY, rule: per(rekeyWrites, DAY), weight: writes },
+    ];
+  };
 
   /**
-   * 開始換金鑰（建立新空間）之前：整個空間的複製在免費方案的額度內搬得完嗎、今天還夠嗎. 不夠就先不建立，
-   * 不會複製到一半才失敗. 只讀
+   * 換金鑰的複製：扣這台、這個來源、這個舊空間今天的與整個服務的那一份；任何一條超過時 503（rekey_limit，隔天接著做）.
+   * 回傳退回沒有寫入的（列數、筆數）
    */
-  async function requireRekeyRoom(from: string): Promise<void> {
-    const limiter = deps.rateLimiter;
-    if (!limiter) return;
-    const records = (await store.spaceUsage(from)).records;
-    const cost = rekeyCopyCost(records);
-    if (cost > rekeyWrites) {
-      log("sync rekey too large");
-      throw new HttpError(503, "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰", { state: "rekey_too_large" });
-    }
-    if (limiter.firstOver && (await limiter.firstOver(rekeyEntries(from, records, cost, records))) >= 0) throw rekeyLimited();
-  }
-
-  /** 換金鑰的複製：扣自己的那一份與這個舊空間今天的；超過時 503（rekey_limit）. 回傳退回沒有寫入的（列數、筆數） */
-  async function spendRekeyCopy(from: string, records: number): Promise<(writes: number, records: number) => Promise<void>> {
+  async function spendRekeyCopy(request: Request, signPub: string, from: string, records: number): Promise<(writes: number, records: number) => Promise<void>> {
     const limiter = deps.rateLimiter;
     if (!limiter || records <= 0) return async () => undefined;
     const fromRecords = (await store.spaceUsage(from)).records;
-    const entries = rekeyEntries(from, fromRecords, WRITE_COST.pushBase + WRITE_COST.perRecord * records, records);
+    const entries = await rekeyEntries(request, signPub, from, fromRecords, WRITE_COST.pushBase + WRITE_COST.perRecord * records, records);
     if ((await takeEntries(limiter, entries, 1, nowMs())) !== null) throw rekeyLimited();
-    const [writesBack, recordsBack] = [refunder([entries[0]!]), refunder([entries[1]!])];
+    const counts = entries.filter((e) => e.key.startsWith("sync:rekey-copy:"));
+    const [writesBack, recordsBack] = [refunder(entries.filter((e) => !counts.includes(e))), refunder(counts)];
     return async (w, r) => {
       await writesBack(w);
       await recordsBack(r);
@@ -483,7 +497,8 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       await checkSignature(request, url, text, deviceId, device.signPub);
       const move = await store.move(space);
       const signed = move ? { signer: move.signer, statement: move.statement, signature: move.signature } : {};
-      if (device.removedAt !== null) throw new HttpError(410, "這台已從同步移除", { state: "removed", proof: device.proof, ...signed });
+      // 換金鑰完成之前就先移除的：附移除當時簽的聲明（換好之後的聲明不會列出它）
+      if (device.removedAt !== null) throw new HttpError(410, "這台已從同步移除", { state: "removed", proof: device.proof, ...signed, ...(device.removal ?? {}) });
       if (move !== null) throw new HttpError(410, "同步金鑰已經換了", { state: "moved", space: move.movedTo, box: device.box, ...signed });
       await store.touchDevice(space, deviceId);
       return { kind: "device", device };
@@ -512,13 +527,16 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
 
   async function deviceList(space: string, self: DeviceRow) {
     const devices = (await store.devices(space)).filter((d) => d.removedAt === null);
-    return { devices: devices.map(publicDevice), self: self.id, cooldownUntil: cooldownUntil(self), serverTime: nowMs() };
+    // 換到一半的新空間（用新的復原碼還原的裝置看到這個就接手）
+    const rekeyTarget = (await store.rekeyFrom(space)) !== null && (await store.movedInAt(space)) === null;
+    return { devices: devices.map(publicDevice), self: self.id, cooldownUntil: cooldownUntil(self), serverTime: nowMs(), ...(rekeyTarget ? { rekeyTarget: true } : {}) };
   }
 
   /**
    * 換金鑰建立新的空間時（?from=舊空間）：呼叫的是舊空間裡登記過、過了冷卻期的那台（用它的金鑰簽這個請求）→ 回傳那台的 id.
    * 這時新的空間不用人機驗證、不受整個服務的空間數限制，但同一個舊空間同時只有一個換到一半的新空間（一換一：
-   * 建立新的時刪掉之前沒完成的），每台每天最多開 REKEY_CREATIONS_PER_DAY 次. 條件不符時回傳 null，照一般的建立
+   * 已經有一個時回 409 rekey_pending，用戶端接著做那一個；?replace=1 才刪掉它重新開始），每台每天最多開
+   * REKEY_CREATIONS_PER_DAY 次. 條件不符時回傳 null，照一般的建立
    */
   async function rekeyCreation(request: Request, url: URL, from: string, space: string, text: string): Promise<string | null> {
     if (!SPACE.test(from) || from === space) throw new HttpError(400, "舊的同步空間 id 格式不對");
@@ -559,47 +577,95 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     }
     const active = (await store.devices(space)).filter((d) => d.removedAt === null);
     if (active.length >= MAX_DEVICES) throw new HttpError(413, `一個同步空間最多 ${MAX_DEVICES} 台`);
+    // 換金鑰還沒完成時不能加入新的裝置（檢查與寫入在同一個敘述，store.addDevice）：被移除的那台（或只拿到舊復原碼的人）
+    // 知道舊的同步金鑰，不能用一個新的裝置 id 再登記回來；換到一半時加入的也不會在使用者確認過的清單裡.
+    // 換到一半的新空間只有開始換金鑰的那台能登記
     await store.addDevice(space, { id, signPub, boxPub, label: label as string, legacy: now < (mode?.legacyUntil ?? 0) });
     const added = await store.device(space, id);
-    if (!added || added.signPub !== signPub) throw new HttpError(409, "裝置 id 已經被使用");
+    if (!added) throw new HttpError(409, "正在換新的同步金鑰，換好之後才能加入新的裝置", { state: "rekey_pending" });
+    if (added.signPub !== signPub) throw new HttpError(409, "裝置 id 已經被使用");
     return deviceList(space, added);
   }
 
   /**
-   * 換金鑰. 換金鑰的那台先建立新的空間（裝置模式）、在新空間登記自己、把重新加密的資料送過去，最後才呼叫這裡：
-   * 中途斷掉時什麼都沒換，下次重新來過. 檢查冷卻期、清單完整、簽過的聲明和這次的內容一致
+   * 換金鑰. 換金鑰的那台先建立新的空間（裝置模式）、在新空間登記自己、把重新加密的資料送過去（可以跨好幾天），最後才呼叫這裡：
+   * 中途斷掉時什麼都沒換，之後接著做. 檢查冷卻期、清單完整、簽過的聲明和這次的內容一致；
+   * seq：新空間已經有舊空間到這個序號的資料，舊空間之後又有新的寫入時回 409 rekey_behind（用戶端補送後再試）
    */
   async function rekey(space: string, caller: Caller, text: string) {
     if (caller.kind !== "device") throw new HttpError(403, "換金鑰要用登記過的裝置", { state: "devices_required" });
     requireCooldown(caller);
+    const body = parseJson(text);
+    const token = body.token;
+    if (typeof token !== "string" || !/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new HttpError(400, "新的憑證格式不對");
+    const newSpace = body.space;
+    if (typeof newSpace === "string" && SPACE.test(newSpace)) {
+      // 新的空間：要是這台先建立的（憑證對得上、還沒搬過）
+      const stored = await store.spaceToken(newSpace);
+      if (stored !== null && (stored !== (await sha256Hex(token)) || (await store.movedTo(newSpace)) !== null)) {
+        throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
+      }
+    }
+    return applyRekey(space, caller.device, body);
+  }
+
+  /**
+   * 接手完成換金鑰（規格 12.10「用新的復原碼接手」）：開始換金鑰的那台不見了時，用新的復原碼還原的裝置
+   * （登記在換到一半的新空間，登記時的憑證證明持有新的同步金鑰）送出開始的那台事先簽好的換金鑰.
+   * 只在已經提早移除過裝置（移除已經由開始的那台授權）時可以；聲明要是開始的那台簽的
+   */
+  async function completeFromNew(newSpace: string, caller: Caller, text: string) {
+    if (caller.kind !== "device") throw new HttpError(403, "要用登記過的裝置", { state: "devices_required" });
+    const from = await store.rekeyFrom(newSpace);
+    const by = await store.rekeyBy(newSpace);
+    if (from === null || by === null || (await store.movedInAt(newSpace)) !== null) throw new HttpError(409, "這個同步空間不是換到一半的新空間", { state: "rekey_conflict" });
+    if (!(await store.hasEarlyRemovals(from))) throw new HttpError(403, "只有已經移除過裝置的換金鑰可以接手", { state: "rekey_conflict" });
+    const signer = await store.device(from, by);
+    if (!signer || signer.removedAt !== null) throw new HttpError(409, "開始換金鑰的那台已經不在清單裡", { state: "rekey_conflict" });
+    const body = parseJson(text);
+    if (body.space !== newSpace) throw new HttpError(400, "新的同步空間 id 不對");
+    // 接手時一定要帶複製到的序號（不漏資料）
+    if (typeof body.seq !== "number") throw new HttpError(400, "seq 格式不對");
+    return applyRekey(from, signer, body);
+  }
+
+  /**
+   * 換金鑰的最後一步. signer：開始換金鑰、簽聲明的那台（舊空間裡登記過、過了冷卻期）. 檢查清單完整、簽過的聲明和這次的內容一致；
+   * seq：新空間已經有舊空間到這個序號的資料，舊空間之後又有新的寫入時回 409 rekey_behind（用戶端補送後再試）
+   */
+  async function applyRekey(space: string, signer: DeviceRow, body: Record<string, unknown>) {
+    if (nowMs() < cooldownUntil(signer)) throw new HttpError(403, "這台加入還不到 24 小時", { state: "cooldown", until: cooldownUntil(signer) });
     // 剛換過金鑰的空間一分鐘內不能再換（不讓一台一直換、把服務的空間佔滿）
     const movedIn = await store.movedInAt(space);
     if (movedIn !== null && nowMs() - movedIn < 60_000) throw new HttpError(429, "剛換過金鑰，請等一分鐘再試", { state: "too_soon" });
-    const body = parseJson(text);
     const newSpace = body.space;
-    const token = body.token;
     if (typeof newSpace !== "string" || !SPACE.test(newSpace) || newSpace === space) throw new HttpError(400, "新的同步空間 id 格式不對");
-    if (typeof token !== "string" || !/^[A-Za-z0-9_-]{40,64}$/.test(token)) throw new HttpError(400, "新的憑證格式不對");
     const keep = Array.isArray(body.keep) ? (body.keep as Record<string, unknown>[]) : null;
     const remove = Array.isArray(body.remove) ? (body.remove as Record<string, unknown>[]) : null;
-    if (!keep || !remove) throw new HttpError(400, "keep 與 remove 要是陣列");
-    const active = new Set((await store.devices(space)).filter((d) => d.removedAt === null).map((d) => d.id));
+    if (!keep || !remove || keep.length > MAX_DEVICES || remove.length > MAX_DEVICES) throw new HttpError(400, "keep 與 remove 要是陣列");
+    const all = await store.devices(space);
+    const active = new Set(all.filter((d) => d.removedAt === null).map((d) => d.id));
+    const removedEarly = new Set(all.filter((d) => d.removedAt !== null).map((d) => d.id));
     const seen = new Set<string>();
+    // 留下的：要是還在的裝置（事先簽好的清單裡、之後自己停止同步的那台已經不在，略過）；不能是已經移除的
     for (const k of keep) {
-      if (typeof k?.id !== "string" || !active.has(k.id) || seen.has(k.id)) throw new HttpError(400, "留下的裝置不對");
+      if (typeof k?.id !== "string" || removedEarly.has(k.id) || seen.has(k.id) || !DEVICE_ID.test(k.id)) throw new HttpError(400, "留下的裝置不對");
       if (!isKey(k.label, MAX_LABEL) || typeof k.box !== "string" || !/^[A-Za-z0-9_.-]{1,1000}$/.test(k.box)) throw new HttpError(400, "留下的裝置的資料格式不對");
       seen.add(k.id);
     }
+    // 移除的：事先簽好的清單裡、之後已經不在（自己停止同步、已經移除）的略過
+    const removeNow: { id: string; proof: string | null }[] = [];
     for (const r of remove) {
-      if (typeof r?.id !== "string" || !active.has(r.id) || seen.has(r.id)) throw new HttpError(400, "移除的裝置不對");
+      if (typeof r?.id !== "string" || seen.has(r.id) || !DEVICE_ID.test(r.id)) throw new HttpError(400, "移除的裝置不對");
       if (r.proof !== null && !isKey(r.proof, 100)) throw new HttpError(400, "移除的證明格式不對");
       seen.add(r.id);
+      if (active.has(r.id)) removeNow.push({ id: r.id, proof: r.proof === null ? null : String(r.proof) });
     }
-    // 每台都要說清楚是留下還是移除：清單是舊的（中間有新裝置加入）就重來，不會默默漏掉
-    if (seen.size !== active.size) throw new HttpError(409, "裝置清單已經變了，請重新整理再試", { state: "devices_changed" });
-    if (!seen.has(caller.device.id) || remove.some((r) => r.id === caller.device.id)) throw new HttpError(400, "換金鑰的這台要留下");
-    // 聲明要是這台簽的、內容和這次的一致（用戶端還會再檢查一次，這裡先擋掉亂送的）
-    const statement = await verifyStatement(caller.device.signPub, body.statement, body.signature);
+    // 每台還在的都要說清楚是留下還是移除：清單是舊的（中間有新裝置加入）就重來，不會默默漏掉
+    if ([...active].some((id) => !seen.has(id))) throw new HttpError(409, "裝置清單已經變了，請重新整理再試", { state: "devices_changed" });
+    if (!seen.has(signer.id) || remove.some((r) => r.id === signer.id)) throw new HttpError(400, "換金鑰的這台要留下");
+    // 聲明要是開始換金鑰的那台簽的、內容和這次的一致（用戶端還會再檢查一次，這裡先擋掉亂送的）
+    const statement = await verifyStatement(signer.signPub, body.statement, body.signature);
     const sameIds = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
     if (
       !statement ||
@@ -610,25 +676,121 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     ) {
       throw new HttpError(400, "換金鑰的聲明不對");
     }
-    // 新的空間：要是這台先建立的（憑證對得上、還沒搬過、裡面只有這台）
-    const stored = await store.spaceToken(newSpace);
-    if (stored === null) throw new HttpError(400, "新的同步空間還沒建立");
-    if (stored !== (await sha256Hex(token)) || (await store.movedTo(newSpace)) !== null) throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
-    if ((await store.devices(newSpace)).some((d) => d.id !== caller.device.id)) throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
+    // 新的空間：要是開始換金鑰的那台建立、還在換到一半的
+    if ((await store.spaceToken(newSpace)) === null) throw new HttpError(400, "新的同步空間還沒建立");
+    if ((await store.movedTo(newSpace)) !== null || (await store.rekeyBy(newSpace)) !== signer.id || (await store.rekeyFrom(newSpace)) !== space) {
+      throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
+    }
+    const copiedSeq = body.seq === undefined ? null : body.seq;
+    if (copiedSeq !== null && (typeof copiedSeq !== "number" || !Number.isSafeInteger(copiedSeq) || copiedSeq < 0)) throw new HttpError(400, "seq 格式不對");
+    const behind = () => new HttpError(409, "換金鑰的這段時間舊的空間又有新的資料，補送後再試", { state: "rekey_behind", seq: copiedSeq });
+    if (copiedSeq !== null && (await store.maxSeq(space)) > copiedSeq) throw behind();
     try {
       await store.rekey(space, {
         newSpace,
-        caller: caller.device.id,
+        caller: signer.id,
         keep: keep.map((k) => ({ id: String(k.id), label: String(k.label), box: String(k.box) })),
-        remove: remove.map((r) => ({ id: String(r.id), proof: r.proof === null ? null : String(r.proof) })),
+        remove: removeNow,
         statement: String(body.statement),
         signature: String(body.signature),
+        copiedSeq,
       });
     } catch {
+      // 檢查之後、交易之前舊空間又有寫入
+      if (copiedSeq !== null && (await store.maxSeq(space)) > copiedSeq && (await store.movedTo(space)) === null) throw behind();
       // 同時有另一台在換金鑰
       throw new HttpError(409, "換金鑰失敗：可能另一台剛換過，請重新整理再試", { state: "rekey_conflict" });
     }
     return { space: newSpace };
+  }
+
+  /** 換到一半的新空間（登記在裡面的裝置才能用）：回傳舊空間；不是時 409 */
+  /**
+   * from 換到一半的換金鑰是不是鎖住（只能完成）：已經提早移除過裝置、而且開始的那台還在舊空間裡.
+   * callerId：要取代或放棄的舊空間的另一台（過了冷卻期）；鎖住的換金鑰 STALE_REKEY_MS 沒有進度時，另一台可以取代或放棄
+   * （被凍結時的出口；之前那組新的復原碼就失效）
+   */
+  async function rekeyLocked(from: string, callerId: string | null = null): Promise<boolean> {
+    const pending = await store.pendingRekey(from);
+    if (pending === null || !(await store.hasEarlyRemovals(from))) return false;
+    const by = await store.rekeyBy(pending);
+    const starter = by === null ? null : await store.device(from, by);
+    if (!starter || starter.removedAt !== null) return false;
+    if (callerId !== null && callerId !== by) {
+      if ((await store.lastProgress(pending)) < nowMs() - STALE_REKEY_MS) return false;
+      // 一直有一點點進度、卻一直不完成的：建立超過 MAX_REKEY_LOCK_MS 之後也可以取代
+      const created = await store.spaceCreatedAt(pending);
+      if (created !== null && created < nowMs() - MAX_REKEY_LOCK_MS) return false;
+    }
+    return true;
+  }
+
+  async function pendingSource(newSpace: string, caller: Caller, takeover = false): Promise<string> {
+    if (caller.kind !== "device") throw new HttpError(403, "要用登記過的裝置", { state: "devices_required" });
+    const from = await store.rekeyFrom(newSpace);
+    if (from === null || (await store.movedInAt(newSpace)) !== null) throw new HttpError(409, "這個同步空間不是換到一半的新空間", { state: "rekey_conflict" });
+    // 接手（讀接手資訊、讀舊空間的資料）只在已經提早移除過裝置時可以：沒有移除過的，舊的復原碼本來就還能用
+    if (takeover && !(await store.hasEarlyRemovals(from))) throw new HttpError(403, "只有已經移除過裝置的換金鑰可以接手", { state: "rekey_conflict" });
+    return from;
+  }
+
+  /**
+   * 移除別台（馬上生效，規格 12.10）：換金鑰完成之前，伺服器先把它們標成已移除，之後拒絕它們的讀寫；
+   * 它們下次連線拿到移除的證明與這台簽的聲明（from 舊空間、to 換到一半的新空間、keep 只有這台、remove 是它們）.
+   * 條件和換金鑰一樣：舊空間裡登記過、過了冷卻期的裝置簽章；要先有換到一半的新空間（移除之後一定接著換金鑰）
+   */
+  async function removeEarly(space: string, caller: Caller, text: string) {
+    if (caller.kind !== "device") throw new HttpError(403, "移除別台要用登記過的裝置", { state: "devices_required" });
+    requireCooldown(caller);
+    const body = parseJson(text);
+    const newSpace = body.space;
+    const remove = Array.isArray(body.remove) ? (body.remove as Record<string, unknown>[]) : null;
+    if (typeof newSpace !== "string" || !SPACE.test(newSpace)) throw new HttpError(400, "新的同步空間 id 格式不對");
+    if (!remove || remove.length === 0 || remove.length > MAX_DEVICES) throw new HttpError(400, "remove 要是陣列");
+    if ((await store.rekeyFrom(newSpace)) !== space || (await store.movedInAt(newSpace)) !== null || (await store.pendingRekey(space)) !== newSpace) {
+      throw new HttpError(409, "換到一半的新空間不在了，請重新開始", { state: "rekey_conflict" });
+    }
+    if ((await store.rekeyBy(newSpace)) !== caller.device.id) throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
+    const active = new Set((await store.devices(space)).filter((d) => d.removedAt === null).map((d) => d.id));
+    const seen = new Set<string>();
+    for (const r of remove) {
+      if (typeof r?.id !== "string" || !active.has(r.id) || seen.has(r.id) || r.id === caller.device.id) throw new HttpError(400, "移除的裝置不對");
+      if (r.proof !== null && !isKey(r.proof, 100)) throw new HttpError(400, "移除的證明格式不對");
+      seen.add(r.id);
+    }
+    const statement = await verifyStatement(caller.device.signPub, body.statement, body.signature);
+    if (
+      !statement ||
+      statement.from !== space ||
+      statement.to !== newSpace ||
+      statement.keep.length !== 1 ||
+      statement.keep[0] !== caller.device.id ||
+      [...statement.remove].sort().join() !== [...seen].sort().join()
+    ) {
+      throw new HttpError(400, "移除的聲明不對");
+    }
+    const changed = await store.removeDevices(
+      space,
+      newSpace,
+      remove.map((r) => ({ id: String(r.id), proof: r.proof === null ? null : String(r.proof) })),
+      { signer: caller.device.id, statement: String(body.statement), signature: String(body.signature) },
+    );
+    // 同時有別的移除或換金鑰先生效（例如這台剛被移除）：這次沒有效果
+    if (changed === 0) throw new HttpError(409, "移除沒有生效：裝置清單剛剛變了，請重新整理再試", { state: "rekey_conflict" });
+    return deviceList(space, caller.device);
+  }
+
+  /**
+   * 放棄舊空間換到一半的換金鑰（在舊空間簽章：新空間還沒登記時也能放棄）. 開始換金鑰的那台，或過了冷卻期的裝置
+   */
+  async function abandonFromOld(space: string, caller: Caller) {
+    if (caller.kind !== "device") throw new HttpError(403, "要用登記過的裝置", { state: "devices_required" });
+    const pending = await store.pendingRekey(space);
+    if (pending === null) return { deleted: false };
+    if (await rekeyLocked(space, caller.device.id)) throw lockedRekey();
+    if ((await store.rekeyBy(pending)) !== caller.device.id) requireCooldown(caller);
+    await store.deleteSingleSpace(pending);
+    return { deleted: true };
   }
 
   async function route(request: Request): Promise<Response | Record<string, unknown>> {
@@ -660,24 +822,31 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         await requireSourceRoom(request, ["createSpace"]);
         // 換金鑰的簽章先檢查（時間不對時用戶端校正後重送，不重複計數）
         const rekeyDevice = from !== null ? await rekeyCreation(request, url, from, space, text) : null;
-        await limitSource(request, ["createSpace"], [], "narrow");
         const rekeyFrom = rekeyDevice !== null ? from : null;
+        // 已經有換到一半的：接著做那一個（不算這次的次數）
+        const pendingConflict = () => new HttpError(409, "另一台正在換金鑰", { state: "rekey_in_progress" });
+        if (rekeyFrom !== null && (await store.pendingRekey(rekeyFrom)) !== null) {
+          if (url.searchParams.get("replace") !== "1") throw pendingConflict();
+          if (await rekeyLocked(rekeyFrom, rekeyDevice)) throw lockedRekey();
+        }
+        await limitSource(request, ["createSpace"], [], "narrow");
         if (rekeyDevice !== null && deps.rateLimiter) {
           // 換金鑰的新空間：舊空間裡過了冷卻期的裝置簽過，不用人機驗證，也不受「新空間只能用到一半」的限制；每台每天有次數上限
           const rule = per(REKEY_CREATIONS_PER_DAY, DAY);
           if (!(await deps.rateLimiter.take(`sync:rekey-create:${rekeyDevice}`, rule))) throw rateLimited(windowLeft(rule), "rekey");
         }
-        // 整個空間的複製今天搬得完才建立（不會複製到一半才失敗）
-        if (rekeyFrom !== null) await requireRekeyRoom(rekeyFrom);
+        // 換金鑰的複製可以跨好幾天（每天的額度用完時隔天接著做），所以不用先確認今天搬得完
         if (rekeyFrom === null) await requireHuman(request, "create-space");
         await limitSource(request, ["createSpace"], [], "wide");
         const refund = await spendWrites(request, WRITE_COST.space, rekeyFrom === null);
         let created = false;
         try {
           if (rekeyFrom !== null) {
-            // 同一個舊空間只留一個換到一半的新空間：之前沒完成的（重試、放棄沒送到）刪掉
-            await store.abandonPendingRekeys(rekeyFrom, space);
-            created = await store.createSpace(space, hash, limits.spaces, rekeyFrom);
+            // 同一個舊空間只有一個換到一半的新空間：已經有一個時接著做那一個（409 rekey_pending）；
+            // 使用者選了重新開始（?replace=1）才刪掉它. 複製的額度算在舊空間上，重新開始不會讓複製量變多
+            if (url.searchParams.get("replace") === "1") await store.abandonPendingRekeys(rekeyFrom, space);
+            else if ((await store.pendingRekey(rekeyFrom)) !== null) throw pendingConflict();
+            created = await store.createSpace(space, hash, limits.spaces, rekeyFrom, null, rekeyDevice);
             if (!created && (await store.spaceToken(space)) === null) {
               throw new HttpError(409, "同時有另一個換金鑰在進行，請稍後再試", { state: "rekey_conflict" });
             }
@@ -714,9 +883,14 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         if (url.searchParams.get("abandon") === "1") {
           if (movedIn !== null) throw new HttpError(409, "換金鑰已經完成，不能放棄", { state: "rekey_done" });
           if (caller.kind !== "device" || (!fresh && (await store.rekeyFrom(space)) === null)) throw new HttpError(403, "這個同步空間不是換到一半的新空間");
+          const from = await store.rekeyFrom(space);
+          if (from !== null && (await rekeyLocked(from))) throw lockedRekey();
           await store.deleteSingleSpace(space);
           return { deleted: true };
         }
+        // 鎖住的換金鑰的新空間：一般的刪除也不行
+        const pendingFrom = movedIn === null ? await store.rekeyFrom(space) : null;
+        if (pendingFrom !== null && (await rekeyLocked(pendingFrom))) throw lockedRekey();
         // 刪除雲端的資料（連同換金鑰之前的舊空間）：剛換過金鑰的空間不走放棄的捷徑，換好 10 分鐘內也不能刪
         // （舊版的用戶端在換金鑰的結果不明時會送這個）
         if (movedIn !== null && nowMs() - movedIn < 10 * 60_000) throw new HttpError(429, "剛換過金鑰，請稍後再試", { state: "too_soon" });
@@ -739,12 +913,40 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         // 只能移除自己（停止這台的同步）；移除別台要換金鑰
         if (parts.length === 5 && method === "DELETE") {
           if (target !== caller.device.id) throw new HttpError(403, "移除別台要換金鑰");
+          // 開始了鎖住的換金鑰的那台：要先完成換金鑰（不然只剩新的復原碼接手）
+          const pending = await store.pendingRekey(space);
+          if (pending !== null && (await store.rekeyBy(pending)) === target && (await rekeyLocked(space))) {
+            throw new HttpError(409, "換金鑰還沒完成：這台要先完成換金鑰才能停止同步", { state: "rekey_locked" });
+          }
           await store.deleteDevice(space, target);
           return { deleted: true };
         }
         throw new HttpError(405, "不支援的方法");
       }
       if (parts[3] === "rekey" && parts.length === 4 && method === "POST") return rekey(space, caller, text);
+      if (parts[3] === "remove" && parts.length === 4 && method === "POST") return removeEarly(space, caller, text);
+      if (parts[3] === "rekey" && parts.length === 4 && method === "DELETE") return abandonFromOld(space, caller);
+      // 換到一半的新空間：接手資訊（以新的同步金鑰加密）、舊空間的資料（唯讀）、接手完成換金鑰
+      if (parts[3] === "handoff" && parts.length === 4 && method === "GET") {
+        await pendingSource(space, caller, true);
+        return { handoff: await store.handoff(space) };
+      }
+      if (parts[3] === "handoff" && parts.length === 4 && method === "PUT") {
+        await pendingSource(space, caller);
+        if (caller.kind !== "device" || (await store.rekeyBy(space)) !== caller.device.id) throw new HttpError(403, "只有開始換金鑰的那台能寫", { state: "rekey_conflict" });
+        const handoff = parseJson(text).handoff;
+        if (!isKey(handoff, 60_000)) throw new HttpError(400, "接手資訊格式不對");
+        await store.setHandoff(space, handoff);
+        return { ok: true };
+      }
+      if (parts[3] === "source" && parts.length === 4 && method === "GET") {
+        const from = await pendingSource(space, caller, true);
+        const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+        const limit = Math.min(MAX_PULL, Math.max(1, Number(url.searchParams.get("limit")) || MAX_PULL));
+        const items = await store.changes(from, since, limit);
+        return { items, more: items.length === limit };
+      }
+      if (parts[3] === "complete" && parts.length === 4 && method === "POST") return completeFromNew(space, caller, text);
       if (parts[3] === "changes" && parts.length === 4 && method === "GET") {
         const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
         const limit = Math.min(MAX_PULL, Math.max(1, Number(url.searchParams.get("limit")) || MAX_PULL));
@@ -763,8 +965,12 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         const incoming = valid.reduce((sum, item) => sum + sizeOf(item), 0);
         // 換金鑰的複製（還沒換完的新空間，量不超過舊空間）：不算來源與空間每天的位元組與寫入（只算整個服務的），
         // 整個服務的總量可以暫時多用一個空間的量（舊空間的資料換好就刪掉）
-        const copyFrom = await rekeyCopy(space, incoming, valid.length);
+        const copyFrom = await rekeyCopy(space, caller, valid);
         const copy = copyFrom !== null;
+        // 換到一半的新空間只收複製的資料（換好之前的修改在舊空間，由複製帶過來；不會被複製蓋掉）
+        if (!copy && (await store.rekeyFrom(space)) !== null && (await store.movedInAt(space)) === null) {
+          throw new HttpError(409, "換金鑰還沒完成，這個同步空間只收複製的資料", { state: "rekey_target" });
+        }
         // 先保留這次最多會用到的位元組（這個空間、整個服務、同一個網段建立的空間都放得下才保留），寫完再還回去.
         // 換金鑰的複製不受網段的上限（量不超過舊空間，舊空間的資料換好就刪掉）
         const networkCap = copy ? null : limits.networkBytes;
@@ -794,10 +1000,11 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
             refundBytes = await takeRefundable(bytesEntries, "pushBytes");
           }
           if (valid.length > 0) {
-            if (copyFrom !== null) refundCopy = await spendRekeyCopy(copyFrom, valid.length);
+            if (copyFrom !== null) refundCopy = await spendRekeyCopy(request, copyFrom.signPub, copyFrom.from, valid.length);
             else refundWrites = await spendWrites(request, WRITE_COST.pushBase + WRITE_COST.perRecord * valid.length, false, { space });
           }
           result = await store.putMany(space, valid, incoming);
+          if (copy && result.applied.length > 0) await store.touchRekeyProgress(space);
         } catch (e) {
           await store.releaseBytes(space, incoming).catch(() => undefined);
           await refundBytes();
@@ -838,15 +1045,33 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
   }
 
   /**
-   * 這次送出是換金鑰的複製嗎：還沒換完的新空間（換金鑰建立的、還沒有空間搬進來），送完之後的大小與筆數不超過舊空間（加一點寬容）.
-   * 是的話回傳舊空間. 新空間是舊空間裡過了冷卻期的裝置簽過才建立的、同一個舊空間同時只有一個；
+   * 這次送出是換金鑰的複製嗎：還沒換完的新空間（換金鑰建立的、還沒有空間搬進來）、送的是開始換金鑰的那台，
+   * 送完之後的大小與筆數不超過舊空間（加一點寬容；新空間已經有的那幾筆只算大小的差、不算筆數）.
+   * 是的話回傳舊空間與開始換金鑰的那台在舊空間的簽章公開金鑰（每台每天的換金鑰份額以它計）.
+   * 新空間是舊空間裡過了冷卻期的裝置簽過才建立的、同一個舊空間同時只有一個；
    * 複製扣自己的每日額度與這個舊空間每天的筆數（spendRekeyCopy），重開換金鑰不會讓複製量加倍
    */
-  async function rekeyCopy(space: string, incoming: number, records: number): Promise<string | null> {
+  async function rekeyCopy(space: string, caller: Caller, items: { id: string; blob: string }[]): Promise<{ from: string; signPub: string } | null> {
     const from = await store.rekeyFrom(space);
-    if (from === null || (await store.movedInAt(space)) !== null) return null;
+    if (from === null || caller.kind !== "device" || (await store.movedInAt(space)) !== null) return null;
+    // 登記在新空間的裝置（開始的那台，或用新的復原碼接手的）都可以送；換金鑰的份額照開始的那台算
+    const by = await store.rekeyBy(space);
+    if (by === null) return null;
+    const starter = await store.device(from, by);
+    if (!starter) return null;
+    const existing = await store.existingSizes(space, items.map((i) => i.id));
+    let added = 0;
+    let delta = 0;
+    for (const item of items) {
+      const old = existing.get(item.id);
+      if (old === undefined) {
+        added++;
+        delta += item.blob.length + RECORD_OVERHEAD;
+      } else delta += item.blob.length - old;
+    }
     const [source, mine] = [await store.spaceUsage(from), await store.spaceUsage(space)];
-    return mine.bytes + incoming <= source.bytes + REKEY_SLACK.bytes && mine.records + records <= source.records + REKEY_SLACK.records ? from : null;
+    const fits = mine.bytes + delta <= source.bytes + REKEY_SLACK.bytes && mine.records + added <= source.records + REKEY_SLACK.records;
+    return fits ? { from, signPub: starter.signPub } : null;
   }
 
   /** 先檢查整批的格式，有一筆不對就整批不寫 */
@@ -966,10 +1191,12 @@ function requireJson(request: Request): void {
 export async function maintain(
   store: SyncStore,
   options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
-): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number }> {
+): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number; staleRekeys: number }> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const log = options.log ?? (() => undefined);
   const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
+  // 換到一半、7 天沒有進度的新空間（舊空間照舊，先移除的裝置維持移除）
+  const staleRekeys = await store.purgeStaleRekeys(STALE_REKEY_MS);
   // 網段的代碼只保存 30 天（從記下的時間算；換金鑰的新空間沿用舊空間的時間，不會因此延長）
   const networks = await store.expireNetworks(NETWORK_RETENTION_MS);
   const { slots, nonces } = await store.purgeExpired();
@@ -980,6 +1207,8 @@ export async function maintain(
   if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
   if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
   if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
-  log(`maintenance: purged spaces=${spaces} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`);
-  return { spaces, slots, nonces, rates, networks };
+  log(
+    `maintenance: purged spaces=${spaces} staleRekeys=${staleRekeys} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`,
+  );
+  return { spaces, slots, nonces, rates, networks, staleRekeys };
 }

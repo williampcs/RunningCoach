@@ -223,9 +223,14 @@ describe("容量", () => {
     await create(1, "198.51.100.1", handler);
     await create(2, "198.51.100.1", handler);
     expect((await call("POST", `/v1/spaces/${space(1)}/changes`, { handler, body: { items: [item(1, 700)] } })).status).toBe(200);
-    // 換金鑰的新空間（直接寫進儲存，代表舊空間的裝置建立的）
-    await store.createSpace(space(3), await sha256(TOKEN), null, space(1));
-    expect((await call("POST", `/v1/spaces/${space(3)}/changes`, { handler, body: { items: [item(1, 700)] } })).status).toBe(200);
+    // 換金鑰的新空間（直接寫進儲存，代表舊空間的裝置建立的）；複製要由開始換金鑰的那台送
+    const starter = await newDeviceIdentity();
+    const pub = { id: starter.id, signPub: starter.signPub, boxPub: starter.boxPub, label: "x", legacy: false };
+    await store.addDevice(space(1), pub);
+    await store.createSpace(space(3), await sha256(TOKEN), null, space(1), null, starter.id);
+    await store.addDevice(space(3), pub);
+    const signed = new SyncApi("http://sync.test", (input, init) => handler(new Request(input as string, init)));
+    await signed.request("POST", `/v1/spaces/${space(3)}/changes`, { items: [item(1, 700)] }, { device: starter });
     expect(await call("POST", `/v1/spaces/${space(2)}/changes`, { handler, body: { items: [item(1, 700)] } })).toMatchObject({ status: 503 });
   });
 });

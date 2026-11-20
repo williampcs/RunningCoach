@@ -365,10 +365,11 @@ const until = async (fn, ms = 20000) => {
     await cRow.getByRole("button", { name: "移除" }).click();
     await A.card.getByRole("button", { name: "移除並換金鑰" }).click();
     await A.card.locator(".new-code .recovery-code").waitFor({ timeout: 20000 });
-    check.aWarnsTrialList = await A.card.locator(".notice.warn", { hasText: "裝置清單也移除" }).isVisible();
     await A.page.screenshot({ path: `${OUT}/trial-sync-A-rekey-1280-light.png`, fullPage: true });
     await A.card.getByLabel("我已經把新的復原碼存好了").check();
-    await A.card.getByRole("button", { name: "完成" }).click();
+    await A.card.getByRole("button", { name: "存好了，移除" }).click();
+    // 移除之後（新的復原碼移除之前就給了）提醒到試用的裝置清單也移除
+    check.aWarnsTrialList = await A.card.locator(".notice.warn", { hasText: "裝置清單也移除" }).waitFor({ timeout: 20000 }).then(() => true, () => false);
     await A.page.waitForTimeout(5000);
     await syncNow(A);
     const oldRejected = oldSecret

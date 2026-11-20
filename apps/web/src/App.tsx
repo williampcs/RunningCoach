@@ -29,6 +29,7 @@ import { TermsConfirm } from "./views/TermsConfirm";
 import { RedFlagBanner } from "./views/RedFlag";
 import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
+import { useRekey } from "./use-rekey";
 import { useTrialSync } from "./use-trial-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { DEMO, DEMO_DB_FILE } from "./demo";
@@ -475,6 +476,7 @@ export function App() {
     [coach, testMode],
   );
   const trialSync = useTrialSync(coach?.db ?? null, settings, deviceSync, applySettings, touch, toast);
+  const rekey = useRekey(deviceSync, trialSync);
 
   const activitiesReady = testMode.enabled || intervalsConnected(settings);
 
@@ -559,6 +561,7 @@ export function App() {
       },
       deviceSync,
       trialSync,
+      rekey,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
       devicesFocus,
@@ -569,7 +572,7 @@ export function App() {
       openSettings,
       toast,
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, rekey, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
 
   // 從 Intervals.icu 登入回來（規格 12.37）：精靈以外按的，打開設定的「訓練紀錄」，在那裡換 token
   useEffect(() => {

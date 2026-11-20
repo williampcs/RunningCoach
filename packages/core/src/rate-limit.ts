@@ -44,7 +44,15 @@ export async function takeEntries(limiter: RateLimiter, entries: RateEntry[], we
     const over = await limiter.firstOver(list);
     if (over >= 0) return wait(list[over]!.rule);
   }
-  for (const e of list) if (!(await limiter.take(e.key, e.rule, e.weight))) return wait(e.rule);
+  // 一條一條加；中途有一條超過時，前面已經加上的退回（並行時 firstOver 之後才被用完的情況），不會只扣一半
+  const taken: typeof list = [];
+  for (const e of list) {
+    if (!(await limiter.take(e.key, e.rule, e.weight))) {
+      for (const t of taken) await limiter.release?.(t.key, t.rule, t.weight).catch(() => undefined);
+      return wait(e.rule);
+    }
+    taken.push(e);
+  }
   return null;
 }
 

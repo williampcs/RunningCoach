@@ -112,4 +112,17 @@ describe("頻率限制", () => {
       expect(await takeEntries(limiter, [{ key: "wide", rule: big, weight: 0 }], 1, t)).toBeNull();
     }
   });
+
+  it("takeEntries：檢查之後才被用完（並行）時，前面已經加上的退回，不會只扣一半", async () => {
+    const t = 0;
+    for (const [, base] of await limiters(() => t)) {
+      const rule = { limit: 10, windowMs: 1000 };
+      // 模擬並行：只讀的檢查說都還夠，實際加到第二條時已經被別的請求用完
+      const limiter: RateLimiter = { ...base, take: base.take.bind(base), release: base.release?.bind(base), firstOver: async () => -1 };
+      expect(await base.take("second", rule, 10)).toBe(true);
+      expect(await takeEntries(limiter, [{ key: "first", rule, weight: 4 }, { key: "second", rule, weight: 1 }], 1, t)).toBe(1000);
+      // first 退回了：還能加滿 10
+      expect(await base.take("first", rule, 10)).toBe(true);
+    }
+  });
 });

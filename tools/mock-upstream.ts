@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
 import { createSyncHandler } from "../apps/sync/src/handler";
@@ -829,19 +830,42 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage,
   res.end();
 }
 
-// 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空
-const syncStore = new SyncStore(openNodeSqlite(":memory:"));
+// 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空.
+// MOCK_SYNC_REKEY_WRITES：換金鑰的複製每天的額度（列數，規格 12.10）；有給時開頻率限制，
+// POST /mock-sync/next-day（可帶 ?rekeyWrites=）把同步服務的時間往後推到下一個 UTC 日（E2E 測跨天的換金鑰）
+const syncDriver = openNodeSqlite(":memory:");
+let syncShift = 0;
+const syncClock = () => new Date(Date.now() + syncShift);
+const syncStore = new SyncStore(syncDriver, syncClock);
 await syncStore.init();
+const rekeyWritesEnv = Number(process.env.MOCK_SYNC_REKEY_WRITES);
+const syncLimiter = Number.isFinite(rekeyWritesEnv) && rekeyWritesEnv > 0 ? new SqlRateLimiter(syncDriver, () => syncClock().getTime()) : undefined;
+if (syncLimiter) await syncLimiter.init();
+let syncRekeyWrites = rekeyWritesEnv;
 // 冷卻期（規格 12.27）預設和正式的一樣 24 小時；E2E 用 MOCK_SYNC_COOLDOWN_MS 縮短
 const syncCooldown = Number(process.env.MOCK_SYNC_COOLDOWN_MS);
 // 人機驗證（規格 12.10）：MOCK_TURNSTILE=1 時照 Turnstile 官方的測試金鑰驗證（一定通過的 secret、不連網路）；
 // 網頁版用測試的 site key 建置，E2E 把 Turnstile 的腳本換成假的（tools/e2e/README.md）
-const syncHandle = createSyncHandler({
-  store: syncStore,
-  allowedOrigins: ["*"],
-  cooldownMs: Number.isFinite(syncCooldown) && syncCooldown >= 0 && process.env.MOCK_SYNC_COOLDOWN_MS ? syncCooldown : undefined,
-  turnstile: process.env.MOCK_TURNSTILE === "1" ? { secret: TEST_SECRET_PASS, fetch: fakeTurnstileFetch() } : undefined,
-});
+const makeSyncHandle = () =>
+  createSyncHandler({
+    store: syncStore,
+    allowedOrigins: ["*"],
+    cooldownMs: Number.isFinite(syncCooldown) && syncCooldown >= 0 && process.env.MOCK_SYNC_COOLDOWN_MS ? syncCooldown : undefined,
+    turnstile: process.env.MOCK_TURNSTILE === "1" ? { secret: TEST_SECRET_PASS, fetch: fakeTurnstileFetch() } : undefined,
+    ...(syncLimiter ? { rateLimiter: syncLimiter, dailyWrites: 10_000_000, rateLimits: { rekeyWrites: syncRekeyWrites } } : {}),
+  });
+let syncHandle = makeSyncHandle();
+
+function syncNextDay(req: IncomingMessage, res: ServerResponse) {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const now = syncClock().getTime();
+  syncShift += Math.floor(now / 86_400_000 + 1) * 86_400_000 + 60_000 - now;
+  const writes = Number(url.searchParams.get("rekeyWrites"));
+  if (Number.isFinite(writes) && writes > 0) syncRekeyWrites = writes;
+  syncHandle = makeSyncHandle();
+  res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
+  res.end(JSON.stringify({ shiftMs: syncShift }));
+}
 
 function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
   const chunks: Buffer[] = [];
@@ -918,6 +942,7 @@ function record(kind: "llm" | "weather", body: unknown) {
 }
 
 createServer((req, res) => {
+  if (req.url?.startsWith("/mock-sync/next-day") && req.method === "POST" && syncLimiter) return syncNextDay(req, res);
   if (req.url?.startsWith("/sync/")) return proxySync(req, res, req.url.slice("/sync".length));
   const send = (status: number, payload: unknown) => {
     res.writeHead(status, { "content-type": "application/json", ...CORS });

@@ -14,8 +14,10 @@ import {
   DEFAULT_LIMITS,
   DEFAULT_RATE_LIMITS,
   maintain,
+  MAX_REKEY_LOCK_MS,
   MAX_SPACE_BYTES,
   NETWORK_RETENTION_MS,
+  REKEY_ACTOR_SHARE,
   REKEY_WRITE_SHARE,
   REKEY_CREATIONS_PER_DAY,
   SOURCE_WRITE_SHARE,
@@ -245,7 +247,7 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
       async (ms) => advance(ms),
     );
 
-  it("同一台一直開新的：之前沒完成的被刪掉，最多一個；每天有次數上限；過了一天恢復", async () => {
+  it("同一台一直開新的：已經有一個時拒絕（rekey_in_progress），明確重新開始才刪掉之前的，最多一個；每天有次數上限；過了一天恢復", async () => {
     const api = apiOf(handlerWith());
     const a = await device(api);
     await a.engine.ensureSpace();
@@ -254,16 +256,25 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
     const from = (await deriveKeys(a.state.root)).space;
     const auth = { device: a.identity, token: TOKEN };
     for (let i = 0; i < REKEY_CREATIONS_PER_DAY; i++) {
-      await api.request("PUT", `/v1/spaces/${space(500 + i)}?create=1&devices=1&from=${from}`, undefined, auth);
+      if (i > 0) {
+        await expect(api.request("PUT", `/v1/spaces/${space(700 + i)}?create=1&devices=1&from=${from}`, undefined, auth)).rejects.toMatchObject({
+          status: 409,
+          state: "rekey_in_progress",
+        });
+      }
+      await api.request("PUT", `/v1/spaces/${space(500 + i)}?create=1&devices=1&from=${from}${i > 0 ? "&replace=1" : ""}`, undefined, auth);
       const pending = await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from]);
       expect(pending.map((r) => r.id)).toEqual([space(500 + i)]);
     }
-    await expect(api.request("PUT", `/v1/spaces/${space(600)}?create=1&devices=1&from=${from}`, undefined, auth)).rejects.toMatchObject({ status: 429 });
+    await expect(api.request("PUT", `/v1/spaces/${space(600)}?create=1&devices=1&from=${from}&replace=1`, undefined, auth)).rejects.toMatchObject({ status: 429 });
     advance(DAY);
-    await api.request("PUT", `/v1/spaces/${space(601)}?create=1&devices=1&from=${from}`, undefined, auth);
-    // 留下一個沒完成的新空間之後，換金鑰照樣完成（重試的情況）
+    await api.request("PUT", `/v1/spaces/${space(601)}?create=1&devices=1&from=${from}&replace=1`, undefined, auth);
+    // 留下一個這台不知道的新空間（另一台開始的、或這台的紀錄不見了）：不自動取代，說「另一台正在換金鑰」
     const before = a.state.root;
-    await a.engine.rekey();
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 409, state: "rekey_in_progress" });
+    expect(await store.spaceToken(space(601))).not.toBeNull();
+    // 使用者選了改由這台重新開始：取代它、照樣完成
+    await a.engine.rekey([], undefined, undefined, { replace: true });
     expect(a.state.root).not.toEqual(before);
     expect(await store.spaceToken(space(601))).toBeNull();
     expect((await store.totals()).spaces).toBe(1);
@@ -283,7 +294,8 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
 
   it("換金鑰在新的限制下仍能完成：很多筆、來源與空間每天的位元組與寫入都很小", async () => {
     // 開始同步時照寬鬆的上限；換金鑰前改成很小的上限：複製不受來源與空間的上限擋
-    const rateLimits: Partial<SyncRateLimits> = { pushBytes: {}, writes: {}, spaceWrites: 1_000_000, spaceBytes: 100_000_000 };
+    // （每台、每個來源每天的換金鑰份額另外測：這裡放寬）
+    const rateLimits: Partial<SyncRateLimits> = { pushBytes: {}, writes: {}, spaceWrites: 1_000_000, spaceBytes: 100_000_000, rekeyActorWrites: 1_000_000 };
     const api = apiOf(handlerWith({ rateLimits }));
     const a = await device(api, 1200);
     await a.engine.ensureSpace();
@@ -308,17 +320,23 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
     expect(rekeyCount).toBeGreaterThan(3 * 1200);
   });
 
-  it("換金鑰的新空間送超過舊空間的量：超過的照一般的送出計算（不是繞過的路）", async () => {
-    const handler = handlerWith({ rateLimits: { pushBytes: { unknown: { day: { limit: 50_000, windowMs: DAY } } } } });
+  it("換到一半的新空間只收複製的資料：不是開始換金鑰的那台的複製、或超過舊空間的量，一律拒絕（不是繞過的路）", async () => {
+    const handler = handlerWith();
     await store.createSpace(space(1), await sha256(TOKEN));
     await store.putMany(space(1), [item(1, 1000)]);
     await driver.run("UPDATE spaces SET bytes=? WHERE id=?", [1000 + RECORD_OVERHEAD, space(1)]);
-    await store.createSpace(space(2), await sha256(TOKEN), null, space(1));
-    // 舊空間的量以內（加上寬容）：不算來源的位元組
-    expect((await push(2, [item(1, 1000)], "", handler)).status).toBe(200);
-    // 超過：照一般的計算，被來源的上限擋
+    const starter = await newDeviceIdentity();
+    const pub = { id: starter.id, signPub: starter.signPub, boxPub: starter.boxPub, label: "x", legacy: false };
+    await store.addDevice(space(1), pub);
+    await store.createSpace(space(2), await sha256(TOKEN), null, space(1), null, starter.id);
+    await store.addDevice(space(2), pub);
+    // 只有憑證（不是登記過的裝置）：不是複製
+    expect(await push(2, [item(1, 1000)], "", handler)).toMatchObject({ status: 409, body: { state: "rekey_target" } });
+    // 開始的那台送：舊空間的量以內可以，超過的拒絕
+    const signed = new SyncApi("http://sync.test", (input, init) => handler(new Request(input as string, init)));
+    await signed.request("POST", `/v1/spaces/${space(2)}/changes`, { items: [item(1, 1000)] }, { device: starter });
     const many = Array.from({ length: 60 }, (_, i) => item(10 + i, 1000));
-    expect(await push(2, many, "", handler)).toMatchObject({ status: 429 });
+    await expect(signed.request("POST", `/v1/spaces/${space(2)}/changes`, { items: many }, { device: starter })).rejects.toMatchObject({ status: 409, state: "rekey_target" });
   });
 });
 
@@ -495,8 +513,13 @@ describe("來源與網段的代碼（有金鑰時 HMAC）、網段代碼保存 3
     await store.putMany(space(3), [item(1, 10)]);
     const [old, renewed] = await driver.all("SELECT network, network_at FROM spaces WHERE id IN (?, ?) ORDER BY id", [space(1), space(3)]);
     expect(renewed).toEqual(old);
+    // 換到一半的新空間也算進網段的總量
+    expect(await store.networkUsage(space(1))).toBe((await store.spaceUsage(space(1))).bytes + (await store.spaceUsage(space(2))).bytes + (await store.spaceUsage(space(3))).bytes);
     expect((await maintain(store)).networks).toBe(0);
-    advance(10 * DAY + HOUR);
+    // 換到一半的新空間一直有進度（沒有 7 天沒進度被清掉）
+    advance(6 * DAY);
+    await store.touchRekeyProgress(space(3));
+    advance(4 * DAY + HOUR);
     expect((await maintain(store)).networks).toBe(3);
     expect(await driver.all("SELECT id FROM spaces WHERE network IS NOT NULL")).toHaveLength(0);
     // 不再算進上限：同一個網段之前建立的空間照常送；新建立的從頭算
@@ -534,10 +557,33 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     await engine.ensureSpace();
     await engine.sync();
     advance(25 * HOUR);
-    return { engine, state, api, identity };
+    return { engine, state, api, identity, db };
   }
 
-  it("一般的寫入最多用到扣掉換金鑰那一份的量；換金鑰的那一份用完不影響一般的送出與新空間", async () => {
+  /** 同一組同步金鑰的另一台（配對加入） */
+  async function joinDevice(handler: (r: Request) => Promise<Response>, root: Uint8Array) {
+    const api = new SyncApi("http://sync.test", (input, init) => handler(new Request(input as string, init)), async (ms) => advance(ms));
+    const db = new Db(openNodeSqlite(":memory:"), { now: () => now, today: () => now.toISOString().slice(0, 10) });
+    await db.init();
+    const identity = await newDeviceIdentity();
+    const state: { root: Uint8Array } = { root: Uint8Array.from(root) };
+    const engine = new SyncEngine(db, api, state.root, () => now, {
+      identity,
+      label: () => ({ name: "B", platform: "t" }),
+      onRootChanged: async (r) => void (state.root = r),
+    });
+    await engine.sync();
+    return { engine, state, api, identity, db };
+  }
+
+  const copiedToday = async (from: string) =>
+    Number(
+      (await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE ? AND slot=?", [`sync:rekey-copy:${from}%`, Math.floor(now.getTime() / DAY)]))[0]!.n,
+    );
+  const pendingOf = (from: string) => driver.all("SELECT id FROM spaces WHERE rekey_from=? AND id NOT IN (SELECT moved_to FROM moves)", [from]);
+  const nextUtcDay = () => advance((Math.floor(now.getTime() / DAY) + 1) * DAY - now.getTime() + 60_000);
+
+  it("一般的寫入最多用到扣掉換金鑰那一份的量；換金鑰的那一份用完：新空間照樣建立、複製停下來明天接著做，一般的送出與新空間照常", async () => {
     expect(REKEY_WRITE_SHARE).toBe(0.25);
     // 每天 400 列：換金鑰 100、一般 300、新空間與配對 200
     const handler = handlerWith({ dailyWrites: 400, rateLimits: { writes: {}, spaceWrites: 10_000 } });
@@ -545,9 +591,11 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     const from = (await deriveKeys(a.state.root)).space;
     // 換金鑰的那一份用完（直接把計數加滿）
     await limiter.take("sync:rekey-writes", { limit: 100, windowMs: DAY }, 100);
-    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit", message: expect.stringContaining("今天換金鑰的量已達上限") });
-    // 新空間沒有建立、舊的照常
-    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
+    await expect(a.engine.rekey()).rejects.toMatchObject({ name: "Error", done: 0, total: 20, message: expect.stringContaining("明天會自動接著做") });
+    expect(await a.engine.pendingRekey()).toMatchObject({ done: 0, total: 20 });
+    expect((await a.engine.pendingRekey())!.resumeAt).toBeGreaterThan(now.getTime());
+    // 新空間留著（明天接著做）、舊的照常
+    expect(await pendingOf(from)).toHaveLength(1);
     await a.engine.sync();
     // 一般的送出、新空間照常
     expect((await create(50, "198.51.100.50", handler)).status).toBe(200);
@@ -556,83 +604,561 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     const used = await writesToday();
     await limiter.take("sync:daily-writes", { limit: 300, windowMs: DAY }, 300 - used);
     expect(await push(50, [item(2, 10)], "198.51.100.50", handler)).toMatchObject({ status: 503, body: { state: "daily_limit" } });
+    // 隔天接著做完
+    nextUtcDay();
+    const before = a.state.root;
+    expect(await a.engine.resumeRekey()).not.toBeNull();
+    expect(a.state.root).not.toEqual(before);
+    expect(await store.movedTo(from)).not.toBeNull();
   });
 
-  it("重複開換金鑰：同一個舊空間一天複製的量不超過一份（加寬容），超過時新空間被清掉、舊的照常", async () => {
-    let failCopies = 0;
-    let newSpace = "";
+  it("大空間跨好幾天完成：每天從斷掉的地方接著送（不重來），這段時間新增與改過的紀錄也帶過去，資料一筆不少", async () => {
+    // 這一份每天 500 列：一批 100 筆估 310 列，一天只送得完一批
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const from = (await deriveKeys(a.state.root)).space;
+    const steps: string[] = [];
+    // 第一天：100／300
+    await expect(a.engine.rekey([], undefined, (p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).rejects.toMatchObject({ done: 100, total: 300 });
+    expect(await copiedToday(from)).toBe(100);
+    const pendingSpace = (await a.engine.pendingRekey())!.space;
+    // 換到一半的這段時間：B 照常同步，新增 5 筆、改 1 筆（舊空間）
+    for (let i = 0; i < 5; i++) await b.db.saveCheckin({ date: `2026-10-0${i + 1}`, energy: 5, soreness: 1, sleep: 5, notes: `新的 ${i}` });
+    await b.db.saveCheckin({ date: "2022-01-01", energy: 1, soreness: 5, sleep: 1, notes: "改過" });
+    await b.engine.sync();
+    // 第二天：從 100 接著送（改過的那筆要重送），只送一批
+    nextUtcDay();
+    await expect(a.engine.resumeRekey((p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).rejects.toMatchObject({ done: 199, total: 305 });
+    expect(await copiedToday(from)).toBe(100);
+    expect((await a.engine.pendingRekey())!.space).toBe(pendingSpace);
+    // 第三天：送完（含換到一半時新增與改過的），換金鑰完成
+    nextUtcDay();
+    expect(await a.engine.resumeRekey((p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).not.toBeNull();
+    expect((await deriveKeys(a.state.root)).space).toBe(pendingSpace);
+    expect(steps[0]).toBe("0/300");
+    expect(steps).toContain("99/305");
+    expect(steps).toContain("199/305");
+    expect(steps.at(-1)).toBe("305/305");
+    expect(await copiedToday(from)).toBeLessThanOrEqual(110);
+    // 新空間一筆不少；B 換過去後看得到全部，包括改過的那筆
+    expect((await store.spaceUsage(pendingSpace)).records).toBe(305);
+    await b.engine.sync();
+    expect(b.state.root).toEqual(a.state.root);
+    for (let i = 0; i < 300; i += 37) expect(await b.db.getCheckin(new Date(Date.UTC(2022, 0, 1) + i * DAY).toISOString().slice(0, 10))).not.toBeNull();
+    expect(await b.db.getCheckin(new Date(Date.UTC(2022, 0, 1) + 299 * DAY).toISOString().slice(0, 10))).not.toBeNull();
+    for (let i = 0; i < 5; i++) expect((await a.db.getCheckin(`2026-10-0${i + 1}`))?.notes).toBe(`新的 ${i}`);
+    await a.engine.sync();
+    expect((await a.db.getCheckin("2022-01-01"))?.notes).toBe("改過");
+    expect(await pendingOf(from)).toHaveLength(0);
+  });
+
+  it("複製之後、換金鑰之前舊空間又有寫入：伺服器拒絕（rekey_behind），用戶端補送後完成，不漏資料", async () => {
+    const handler = handlerWith();
+    let b: Awaited<ReturnType<typeof joinDevice>> | null = null;
+    let once = true;
+    const a = await setupDevice(handler, 30, (request) => {
+      const url = new URL(request.url);
+      if (once && b && request.method === "POST" && url.pathname.endsWith("/rekey")) {
+        once = false;
+        // 就在送出換金鑰之前，B 寫了一筆到舊空間
+        return (async () => {
+          await b!.db.saveCheckin({ date: "2026-10-10", energy: 5, soreness: 1, sleep: 5, notes: "最後一刻" });
+          await b!.engine.sync();
+          return handler(request);
+        })();
+      }
+      return null;
+    });
+    b = await joinDevice(handler, a.state.root);
+    await a.engine.rekey();
+    const newSpace = (await deriveKeys(a.state.root)).space;
+    expect((await store.spaceUsage(newSpace)).records).toBe(31);
+  });
+
+  it("重開換金鑰不會讓複製量變多：接著做同一個；取消後重新開始也受同一個舊空間每天的上限；隔天恢復", async () => {
+    let failRekey = 0;
     const handler = handlerWith();
     const a = await setupDevice(handler, 400, (request) => {
       const url = new URL(request.url);
-      if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
-      // 每次複製送完前兩批（400 筆）之後，最後一步失敗：一直重開
-      if (failCopies > 0 && request.method === "POST" && url.pathname.endsWith("/rekey")) {
-        failCopies--;
+      if (failRekey > 0 && request.method === "POST" && url.pathname.endsWith("/rekey")) {
+        failRekey--;
         return Promise.resolve(Response.json({ error: "x" }, { status: 409, headers: { "content-type": "application/json" } }));
       }
       return null;
     });
     const from = (await deriveKeys(a.state.root)).space;
-    failCopies = 3;
-    // 第一次：整份複製完，最後一步失敗 → 放棄
+    failRekey = 2;
+    // 第一次：整份複製完，最後一步失敗；新空間留著
     await expect(a.engine.rekey()).rejects.toMatchObject({ status: 409 });
-    expect(await store.spaceToken(newSpace)).toBeNull();
+    expect(await copiedToday(from)).toBe(400);
+    // 第二次：接著做同一個，不重送
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 409 });
+    expect(await copiedToday(from)).toBe(400);
+    expect(await pendingOf(from)).toHaveLength(1);
+    // 取消後重新開始：今天這個舊空間只剩寬容的 100 筆，送完就停（明天接著做）
+    await a.engine.cancelRekey();
+    expect(await pendingOf(from)).toHaveLength(0);
     advance(2 * 60_000);
-    // 第二次：今天這個舊空間已經複製過一份（400 筆，寬容 100 筆），開始前就擋下，不會複製到一半
-    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit" });
-    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
-    const copied = Number((await driver.all("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE ? ", [`sync:rekey-copy:${from}%`]))[0]!.n);
-    expect(copied).toBeLessThanOrEqual(400 + 100);
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100, total: 400 });
+    expect(await copiedToday(from)).toBeLessThanOrEqual(400 + 100);
+    expect(await pendingOf(from)).toHaveLength(1);
     // 舊的照常
     await a.engine.sync();
-    expect((await store.spaceUsage(from)).records).toBeGreaterThanOrEqual(400);
-    // 隔天恢復
-    failCopies = 0;
-    advance(DAY);
+    // 隔天接著做完
+    nextUtcDay();
     const before = a.state.root;
-    await a.engine.rekey();
+    await a.engine.resumeRekey();
     expect(a.state.root).not.toEqual(before);
+    expect(await copiedToday(from)).toBe(300);
   });
 
-  it("複製到一半碰到上限（另一台同時在用）：503 rekey_limit，用戶端放棄新空間，舊的照常", async () => {
-    // 400 筆的複製估 1,220 列，這一份 1,300 列：本來搬得完
-    const handler = handlerWith({ rateLimits: { rekeyWrites: 1300 } });
-    let newSpace = "";
-    let pushes = 0;
-    const a = await setupDevice(handler, 400, (request) => {
+  it("移除馬上生效：換金鑰還沒完成，被移除的那台就被拒絕、驗得過「已移除」；用舊的同步金鑰登記新的裝置也不行；完成後仍然被拒", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    expect(await a.engine.pendingRekey()).toMatchObject({ removed: [b.identity.id] });
+    // B 下一次同步：已移除（有 A 簽的聲明與用舊金鑰算的證明）
+    await expect(b.engine.sync()).rejects.toMatchObject({ name: "Error", message: "這台已從同步移除" });
+    // 拿著舊的同步金鑰（復原碼）用新的裝置 id 登記：換金鑰完成之前不行
+    const c = await joinDevice(handler, a.state.root).catch((e: unknown) => e);
+    expect(c).toMatchObject({ status: 409, state: "rekey_pending" });
+    expect((await store.devices(from)).filter((d) => d.removedAt === null).map((d) => d.id)).toEqual([a.identity.id]);
+    // A 照常同步，清單裡沒有 B
+    expect((await a.engine.sync()).devices!.devices.map((d) => d.id)).toEqual([a.identity.id]);
+    nextUtcDay();
+    await expect(a.engine.resumeRekey()).rejects.toMatchObject({ done: 200 });
+    nextUtcDay();
+    await a.engine.resumeRekey();
+    // 完成後：B 仍然是已移除；新空間只有 A
+    await expect(b.engine.sync()).rejects.toMatchObject({ message: "這台已從同步移除" });
+    const to = (await deriveKeys(a.state.root)).space;
+    expect((await store.devices(to)).map((d) => d.id)).toEqual([a.identity.id]);
+  });
+
+  it("移除要過了冷卻期的裝置、要先有換到一半的新空間、聲明要對", async () => {
+    const handler = handlerWith();
+    const a = await setupDevice(handler, 5);
+    const b = await joinDevice(handler, a.state.root);
+    const from = (await deriveKeys(a.state.root)).space;
+    const auth = { device: b.identity };
+    // B 還在冷卻期
+    await expect(b.api.request("POST", `/v1/spaces/${from}/remove`, { space: space(9), remove: [{ id: a.identity.id, proof: null }], statement: "x", signature: "y" }, auth)).rejects.toMatchObject({
+      state: "cooldown",
+    });
+    // A：沒有換到一半的新空間
+    await expect(a.api.request("POST", `/v1/spaces/${from}/remove`, { space: space(9), remove: [{ id: b.identity.id, proof: null }], statement: "x", signature: "y" }, { device: a.identity })).rejects.toMatchObject({
+      status: 409,
+      state: "rekey_conflict",
+    });
+    expect((await store.device(from, b.identity.id))!.removedAt).toBeNull();
+  });
+
+  it("放棄很久（7 天沒有進度）的新空間被清掉；空空間的清理不動還在進行的；之後重新開始照樣完成", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+    // 換到一半、還沒有任何紀錄的新空間（例如第一天額度一開始就用完）：空空間的清理也不動
+    await store.createSpace(space(77), await sha256(TOKEN), null, space(76));
+    advance(2 * DAY);
+    expect(await maintain(store)).toMatchObject({ spaces: 0, staleRekeys: 0 });
+    expect(await store.spaceToken(space(77))).not.toBeNull();
+    expect(await pendingOf(from)).toHaveLength(1);
+    advance(6 * DAY);
+    expect(await maintain(store)).toMatchObject({ staleRekeys: 2 });
+    expect(await pendingOf(from)).toHaveLength(0);
+    expect(await store.spaceToken(space(77))).toBeNull();
+    // 這台接著做時發現不在了：清掉這台的紀錄；再按一次重新開始，照樣完成（每天一批）
+    await expect(a.engine.resumeRekey()).rejects.toMatchObject({ status: 404 });
+    expect(await a.engine.pendingRekey()).toBeNull();
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+    for (let day = 0; day < 2; day++) {
+      nextUtcDay();
+      await a.engine.resumeRekey().catch(() => undefined);
+    }
+    expect(await store.movedTo(from)).not.toBeNull();
+  });
+
+  it("兩台同時互相移除：只有先到的生效；換到一半的新空間不在時移除也不生效", async () => {
+    await store.createSpace(space(1), await sha256(TOKEN));
+    for (const id of ["A".repeat(22), "B".repeat(22)]) await store.addDevice(space(1), { id, signPub: "p", boxPub: "b", label: "l", legacy: false });
+    await store.createSpace(space(2), await sha256(TOKEN), null, space(1), null, "A".repeat(22));
+    const removal = (signer: string) => ({ signer, statement: `s-${signer}`, signature: "g" });
+    // 不是這個舊空間換到一半的新空間：不生效
+    expect(await store.removeDevices(space(1), space(9), [{ id: "B".repeat(22), proof: null }], removal("A".repeat(22)))).toBe(0);
+    // A 先到：B 被移除；B 同時送的移除 A（檢查都過了）不生效，因為 B 已經被移除
+    expect(await store.removeDevices(space(1), space(2), [{ id: "B".repeat(22), proof: null }], removal("A".repeat(22)))).toBe(1);
+    expect(await store.removeDevices(space(1), space(2), [{ id: "A".repeat(22), proof: null }], removal("B".repeat(22)))).toBe(0);
+    expect((await store.device(space(1), "A".repeat(22)))!.removedAt).toBeNull();
+  });
+
+  it("登記的檢查與寫入在同一個敘述：換到一半、有先移除的不能登記；換到一半的新空間可以（登記要有新空間的憑證）", async () => {
+    const dev = (id: string) => ({ id, signPub: "p", boxPub: "b", label: "l", legacy: false });
+    await store.createSpace(space(1), await sha256(TOKEN));
+    expect(await store.addDevice(space(1), dev("A".repeat(22)))).toBe(true);
+    await store.createSpace(space(2), await sha256(TOKEN), null, space(1), null, "A".repeat(22));
+    expect(await store.addDevice(space(1), dev("C".repeat(22)))).toBe(false);
+    expect(await store.addDevice(space(2), dev("A".repeat(22)))).toBe(true);
+    expect(await store.addDevice(space(2), dev("C".repeat(22)))).toBe(true);
+    // 換到一半的放棄了，但有先移除、還沒換金鑰的：一樣不能登記
+    await store.addDevice(space(3), dev("x".repeat(22)));
+    await store.createSpace(space(4), await sha256(TOKEN));
+    await store.addDevice(space(4), dev("A".repeat(22)));
+    await store.addDevice(space(4), dev("B".repeat(22)));
+    await store.createSpace(space(5), await sha256(TOKEN), null, space(4), null, "A".repeat(22));
+    await store.removeDevices(space(4), space(5), [{ id: "B".repeat(22), proof: null }], { signer: "A".repeat(22), statement: "s", signature: "g" });
+    await store.deleteSingleSpace(space(5));
+    expect(await store.addDevice(space(4), dev("C".repeat(22)))).toBe(false);
+  });
+
+  it("開始之後清單裡出現沒確認過的裝置：不給它新的金鑰，放棄這次、請使用者重新確認", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+    // 繞過登記的檢查塞進一台（代表檢查之前就登記成功的）
+    const x = await newDeviceIdentity();
+    await driver.run("INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) VALUES (?, ?, ?, ?, 'x', 0, 0, 0)", [from, x.id, x.signPub, x.boxPub]);
+    nextUtcDay();
+    await expect(a.engine.resumeRekey()).rejects.toMatchObject({ status: 409, state: "devices_changed" });
+    expect(await pendingOf(from)).toHaveLength(0);
+    expect(await a.engine.pendingRekey()).toBeNull();
+    expect(await store.movedTo(from)).toBeNull();
+  });
+
+  it("換到一半的新空間裡別台（持有新的同步金鑰）送的複製：份額照開始換金鑰的那台算，不會多一份", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+    const newSpace = String((await pendingOf(from))[0]!.id);
+    const other = await newDeviceIdentity();
+    await driver.run("INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) VALUES (?, ?, ?, ?, 'x', 0, 0, 0)", [newSpace, other.id, other.signPub, other.boxPub]);
+    const deviceBuckets = async () => (await driver.all("SELECT key, SUM(count) AS n FROM rate_limits WHERE key LIKE 'sync:rekey-device%' GROUP BY key")).map((r) => [String(r.key), Number(r.n)]);
+    const before = await deviceBuckets();
+    expect(before).toHaveLength(1);
+    await a.api.request("POST", `/v1/spaces/${newSpace}/changes`, { items: [item(900, 10)] }, { device: other }).catch(() => undefined);
+    const after = await deviceBuckets();
+    // 同一個桶（開始的那台），沒有另外開一個
+    expect(after).toHaveLength(1);
+    expect(after[0]![0]).toBe(before[0]![0]);
+  });
+
+  it("在新空間登記之前就放棄：在舊空間簽章放棄，伺服器上的也清掉，之後可以加入新的裝置", async () => {
+    let failRegister = true;
+    let from = "";
+    const handler = handlerWith();
+    const a = await setupDevice(handler, 20, (request) => {
       const url = new URL(request.url);
-      if (request.method === "PUT" && url.searchParams.get("from")) newSpace = url.pathname.split("/")[3]!;
-      if (newSpace && request.method === "POST" && url.pathname === `/v1/spaces/${newSpace}/changes` && ++pushes === 2) {
-        // 第一批送完後，別的換金鑰把這一份用掉
-        return limiter.take("sync:rekey-writes", { limit: 1300, windowMs: DAY }, 1300 - 610).then(() => handler(request));
+      if (failRegister && request.method === "POST" && url.pathname.endsWith("/devices") && url.searchParams.size === 0) {
+        const target = url.pathname.split("/")[3];
+        if (from && target !== from) return Promise.reject(new Error("斷線"));
+      }
+      return null;
+    });
+    from = (await deriveKeys(a.state.root)).space;
+    await expect(a.engine.rekey()).rejects.toThrow(/連不上/);
+    expect(await pendingOf(from)).toHaveLength(1);
+    await a.engine.cancelRekey();
+    expect(await pendingOf(from)).toHaveLength(0);
+    expect(await a.engine.pendingRekey()).toBeNull();
+    failRegister = false;
+    const b = await joinDevice(handler, a.state.root);
+    expect((await b.engine.sync()).devices!.devices).toHaveLength(2);
+  });
+
+  it("續傳時改過很多筆（超過寬容的筆數）：仍然算換金鑰的複製（只算新的筆數與大小的差）", async () => {
+    let failRekey = 1;
+    const handler = handlerWith();
+    const a = await setupDevice(handler, 300, (request) => {
+      if (failRekey > 0 && request.method === "POST" && new URL(request.url).pathname.endsWith("/rekey")) {
+        failRekey--;
+        return Promise.resolve(Response.json({ error: "x" }, { status: 409, headers: { "content-type": "application/json" } }));
       }
       return null;
     });
     const from = (await deriveKeys(a.state.root)).space;
-    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_limit" });
-    expect(await store.spaceToken(newSpace)).toBeNull();
-    expect(await store.movedTo(from)).toBeNull();
+    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 409 });
+    const newSpace = String((await pendingOf(from))[0]!.id);
+    // 複製之後舊空間改了 60 筆（超過寬容的 50 筆；同一個舊空間一天的上限 375 筆之內）
+    for (let i = 0; i < 60; i++) {
+      await a.db.saveCheckin({ date: new Date(Date.UTC(2022, 0, 1) + i * DAY).toISOString().slice(0, 10), energy: 1, soreness: 1, sleep: 1, notes: `改過 ${i}` });
+    }
     await a.engine.sync();
-    expect((await store.spaceUsage(from)).records).toBeGreaterThanOrEqual(400);
+    await a.engine.rekey();
+    expect(await store.movedTo(from)).toBe(newSpace);
+    expect(await copiedToday(from)).toBe(360);
+    expect(await driver.all("SELECT key FROM rate_limits WHERE key LIKE ?", [`sync:space-writes:${newSpace}%`])).toHaveLength(0);
   });
 
-  it("資料多到一份額度搬不完：一開始就說明（rekey_too_large），不建立新空間", async () => {
+  it("換金鑰完成之後才到的送出不寫進已經搬走的舊空間", async () => {
+    await store.createSpace(space(1), await sha256(TOKEN));
+    await store.createSpace(space(2), await sha256(TOKEN), null, space(1));
+    await store.rekey(space(1), { newSpace: space(2), caller: "x", keep: [], remove: [], statement: "s", signature: "g" });
+    const result = await store.putMany(space(1), [item(1, 10)]);
+    expect(result.applied).toHaveLength(0);
+    expect((await store.changes(space(1), 0, 10)).length).toBe(0);
+  });
+
+  it("開始換金鑰的那台搬到一半不見了：用移除時拿到的新復原碼還原的裝置接手完成，資料一筆不少；舊的復原碼不行；份額照開始的那台算", async () => {
     const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
     const a = await setupDevice(handler, 300);
-    const from = (await deriveKeys(a.state.root)).space;
-    await expect(a.engine.rekey()).rejects.toMatchObject({ status: 503, state: "rekey_too_large", message: expect.stringContaining("一天搬不完") });
-    expect(await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [from])).toHaveLength(0);
-    expect(await rekeyCount()).toBe(0);
+    const b = await joinDevice(handler, a.state.root);
+    const oldRoot = Uint8Array.from(a.state.root);
+    const from = (await deriveKeys(oldRoot)).space;
+    // 移除之前先拿到新的復原碼
+    const newRoot = await a.engine.prepareRekey([b.identity.id]);
+    expect((await a.engine.pendingRekey())!.codeGiven).toBe(true);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100, total: 300 });
+    // A 不見了（本機清掉）；只拿舊的復原碼的加不進來
+    expect(await joinDevice(handler, oldRoot).catch((e: unknown) => e)).toMatchObject({ status: 409, state: "rekey_pending" });
+    // 用新的復原碼還原：登記在換到一半的新空間，看得到要接手
+    const c = await joinDevice(handler, newRoot);
+    const view = await c.engine.sync();
+    expect(view.devices!.rekeyTarget).toBe(true);
+    // 今天開始的那台的份額已經用完：接手也一樣停下來（不會多一份）
+    await expect(c.engine.takeover()).rejects.toMatchObject({ done: 100, total: 300 });
+    nextUtcDay();
+    await expect(c.engine.takeover()).rejects.toMatchObject({ done: 200, total: 300 });
+    expect(await c.engine.takeoverStatus()).toMatchObject({ done: 200, total: 300 });
+    nextUtcDay();
+    await c.engine.takeover();
+    const to = (await deriveKeys(newRoot)).space;
+    expect(await store.movedTo(from)).toBe(to);
+    expect((await store.spaceUsage(to)).records).toBe(300);
+    expect(await c.engine.takeoverStatus()).toBeNull();
+    expect((await c.engine.sync()).devices!.rekeyTarget).toBe(false);
+    for (let i = 0; i < 300; i += 61) expect(await c.db.getCheckin(new Date(Date.UTC(2022, 0, 1) + i * DAY).toISOString().slice(0, 10))).not.toBeNull();
+    // 每台的份額只有開始的那台一個桶
+    expect(await driver.all("SELECT DISTINCT key FROM rate_limits WHERE key LIKE 'sync:rekey-device%'")).toHaveLength(1);
+    // 被移除的 B 仍然被拒；A 回來時跟著搬到新空間
+    await expect(b.engine.sync()).rejects.toMatchObject({ message: "這台已從同步移除" });
+    await a.engine.sync();
+    expect(a.state.root).toEqual(newRoot);
   });
 
-  it("正常大小的換金鑰照樣完成（每天額度調小）", async () => {
-    // 每天 4,000 列：換金鑰的那一份 1,000 列，200 筆的複製（約 610 列）搬得完
-    const handler = handlerWith({ dailyWrites: 4000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
+  it("已經提早移除過的換金鑰：不能取消、不能被取代、不會被 7 天沒進度的排程清掉", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const from = (await deriveKeys(a.state.root)).space;
+    await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    await expect(a.engine.cancelRekey()).rejects.toThrow(/只能完成/);
+    await expect(a.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: a.identity })).rejects.toMatchObject({ status: 409, state: "rekey_locked" });
+    const newSpace = String((await pendingOf(from))[0]!.id);
+    await expect(a.api.request("DELETE", `/v1/spaces/${newSpace}?abandon=1`, undefined, { device: a.identity })).rejects.toMatchObject({ status: 409, state: "rekey_locked" });
+    await expect(a.api.request("PUT", `/v1/spaces/${space(999)}?create=1&devices=1&from=${from}&replace=1`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
+      status: 409,
+      state: "rekey_locked",
+    });
+    advance(10 * DAY);
+    expect(await maintain(store)).toMatchObject({ staleRekeys: 0 });
+    expect(await pendingOf(from)).toHaveLength(1);
+  });
+
+  it("沒有提早移除過的換金鑰不能用新的復原碼接手完成", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const newRoot = await a.engine.prepareRekey([]);
+    const c = await joinDevice(handler, newRoot);
+    await expect(c.engine.takeover()).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("接手期間在用新的復原碼還原的那台改資料：先不送出（新空間只收複製），換好之後送出，內容正確、照常同步", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const newRoot = await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    const c = await joinDevice(handler, newRoot);
+    await c.db.saveCheckin({ date: "2022-01-01", energy: 5, soreness: 1, sleep: 5, notes: "C 改的" });
+    // C 同步：只取回、不送出，不會出錯
+    expect((await c.engine.sync()).sent).toBe(0);
+    const to = (await deriveKeys(newRoot)).space;
+    for (let day = 0; day < 3; day++) {
+      nextUtcDay();
+      await c.engine.takeover().catch(() => undefined);
+    }
+    expect(await store.movedTo((await deriveKeys(a.state.root)).space)).toBe(to);
+    // 換好之後 C 的修改送出（接手完成時的同步就送了）；之後照常同步
+    await c.engine.sync();
+    expect((await c.engine.sync()).sent).toBe(0);
+    await a.engine.sync();
+    expect((await a.db.getCheckin("2022-01-01"))?.notes).toBe("C 改的");
+    expect((await c.db.getCheckin("2022-01-01"))?.notes).toBe("C 改的");
+  });
+
+  it("鎖住的換金鑰的出口：開始的那台不能自己停止同步；開始的那台不在了就解除鎖定；7 天沒有進度時另一台可以取代", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const d = await joinDevice(handler, a.state.root);
+    advance(25 * HOUR);
+    const from = (await deriveKeys(a.state.root)).space;
+    await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    // 開始的那台不能自己停止同步
+    await expect(a.engine.leave()).rejects.toThrow(/先完成換金鑰/);
+    await expect(a.api.request("DELETE", `/v1/spaces/${from}/devices/${a.identity.id}`, undefined, { device: a.identity })).rejects.toMatchObject({ status: 409, state: "rekey_locked" });
+    // 另一台（過了冷卻期）：還有進度時不能取代
+    await expect(d.engine.rekey([a.identity.id], undefined, undefined, { replace: true })).rejects.toMatchObject({ status: 409, state: "rekey_locked" });
+    // 7 天沒有進度：另一台可以取代（之前那組新的復原碼失效），並移除開始的那台
+    advance(8 * DAY);
+    await d.engine.prepareRekey([a.identity.id], undefined, { replace: true });
+    await d.engine.rekey([a.identity.id]).catch(() => undefined);
+    await expect(a.engine.sync()).rejects.toMatchObject({ message: "這台已從同步移除" });
+    expect((await pendingOf(from)).map((r) => String(r.id))).toEqual([(await d.engine.pendingRekey())!.space]);
+  });
+
+  it("鎖住的換金鑰一直有一點點進度卻不完成：建立 30 天之後另一台可以取代", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const d = await joinDevice(handler, a.state.root);
+    advance(25 * HOUR);
+    const from = (await deriveKeys(a.state.root)).space;
+    await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    const pending = String((await pendingOf(from))[0]!.id);
+    // 每 5 天有一點進度：7 天沒進度的出口一直不成立
+    for (let day = 5; day < 30; day += 5) {
+      advance(5 * DAY);
+      await store.touchRekeyProgress(pending);
+      await expect(d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity })).rejects.toMatchObject({ state: "rekey_locked" });
+    }
+    advance(6 * DAY);
+    await store.touchRekeyProgress(pending);
+    expect(MAX_REKEY_LOCK_MS).toBe(30 * DAY);
+    await d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity });
+    expect(await pendingOf(from)).toHaveLength(0);
+  });
+
+  it("開始的那台不在舊空間了（被移除或離開）：解除鎖定，可以放棄、被 7 天的排程清掉", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const d = await joinDevice(handler, a.state.root);
+    advance(25 * HOUR);
+    const from = (await deriveKeys(a.state.root)).space;
+    await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    await expect(d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity })).rejects.toMatchObject({ state: "rekey_locked" });
+    // 開始的那台的紀錄不見了（例如舊版的用戶端自己離開）
+    await driver.run("DELETE FROM devices WHERE space=? AND id=?", [from, a.identity.id]);
+    await d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity });
+    expect(await pendingOf(from)).toHaveLength(0);
+    // 排程：開始的那台不在的鎖住的也清
+    await d.engine.prepareRekey([], undefined, {});
+    await driver.run("UPDATE spaces SET rekey_by=? WHERE id=?", ["gone".padEnd(22, "x"), String((await pendingOf(from))[0]!.id)]);
+    advance(8 * DAY);
+    expect((await maintain(store)).staleRekeys).toBe(1);
+  });
+
+  it("事先簽好的最後一步：清單裡之後不在的略過；移除之後重寫接手資訊失敗時，接著做時先重寫", async () => {
+    let failHandoff = 0;
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300, (request) => {
+      if (failHandoff > 0 && request.method === "PUT" && new URL(request.url).pathname.endsWith("/handoff")) {
+        failHandoff--;
+        return Promise.reject(new Error("斷線"));
+      }
+      return null;
+    });
+    const b = await joinDevice(handler, a.state.root);
+    const from = (await deriveKeys(a.state.root)).space;
+    // 解不開名稱的一台（事先簽好的最後一步裡是移除），之後自己離開
+    const x = await newDeviceIdentity();
+    await driver.run("INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) VALUES (?, ?, ?, ?, 'x', 0, 0, 0)", [from, x.id, x.signPub, x.boxPub]);
+    const newRoot = await a.engine.prepareRekey([b.identity.id], undefined);
+    failHandoff = 1;
+    await expect(a.engine.rekey([b.identity.id])).rejects.toThrow(/連不上/);
+    expect((await store.device(from, b.identity.id))!.removedAt).not.toBeNull();
+    nextUtcDay();
+    await expect(a.engine.resumeRekey()).rejects.toMatchObject({ done: 100 });
+    await driver.run("DELETE FROM devices WHERE space=? AND id=?", [from, x.id]);
+    // A 不見了：C 用新的復原碼接手，事先簽好的（照移除之後的清單）照樣完成
+    const c = await joinDevice(handler, newRoot);
+    for (let day = 0; day < 3; day++) {
+      nextUtcDay();
+      await c.engine.takeover().catch(() => undefined);
+    }
+    const to = (await deriveKeys(newRoot)).space;
+    expect(await store.movedTo(from)).toBe(to);
+    // 換好之後接手資訊清掉；沒帶序號的接手被拒（另外驗）
+    expect(await store.handoff(to)).toBeNull();
+    expect(Number((await driver.all("SELECT COUNT(*) AS n FROM spaces WHERE id=? AND handoff IS NOT NULL", [to]))[0]!.n)).toBe(0);
+  });
+
+  it("鎖住的換金鑰：新空間一般的刪除也不行；接手沒帶序號被拒", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const newRoot = await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    const to = (await deriveKeys(newRoot)).space;
+    await expect(a.api.request("DELETE", `/v1/spaces/${to}`, undefined, { device: a.identity })).rejects.toMatchObject({ status: 409, state: "rekey_locked" });
+    const c = await joinDevice(handler, newRoot);
+    await expect(c.api.request("POST", `/v1/spaces/${to}/complete`, { space: to, keep: [], remove: [], statement: "s", signature: "g" }, { device: c.identity })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("正常大小的換金鑰照樣一次完成（每天額度調小）", async () => {
+    expect(REKEY_ACTOR_SHARE).toBe(0.25);
+    // 每天 12,000 列：換金鑰的那一份 3,000 列、每台每個來源 750 列，200 筆的複製（約 620 列）一次搬得完
+    const handler = handlerWith({ dailyWrites: 12_000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
     const a = await setupDevice(handler, 200);
     const before = a.state.root;
     await a.engine.rekey();
     expect(a.state.root).not.toEqual(before);
     expect(await rekeyCount()).toBeGreaterThanOrEqual(3 * 200);
+    expect(await rekeyCount()).toBeLessThanOrEqual(750);
+  });
+
+  it("每台裝置每天只能用掉換金鑰那一份的一小部分，接連換好幾次金鑰也一起算；別的裝置與來源照常換", async () => {
+    // 換金鑰的那一份 4,000 列，每台、每個來源 1,000 列（約 320 筆）
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+    const ip = (value: string) => (request: Request) => {
+      const headers = new Headers(request.headers);
+      headers.set("cf-connecting-ip", value);
+      return handler(new Request(request, { headers }));
+    };
+    const a = await setupDevice(ip("198.51.100.10"), 250);
+    const from = (await deriveKeys(a.state.root)).space;
+    // 第一次：250 筆一次完成
+    await a.engine.rekey();
+    const second = (await deriveKeys(a.state.root)).space;
+    expect(second).not.toBe(from);
+    // 一分鐘後馬上再換（新空間、新的「每個舊空間」份額）：這台今天的份額用完，停下來
+    advance(61_000);
+    await expect(a.engine.rekey()).rejects.toMatchObject({ done: 0, total: 250 });
+    expect(await rekeyCount()).toBeLessThanOrEqual(1000);
+    // 另一個網段的另一個人照常換金鑰
+    const other = await setupDevice(ip("203.0.113.20"), 250);
+    const before = other.state.root;
+    await other.engine.rekey();
+    expect(other.state.root).not.toEqual(before);
+    // A 隔天接著做完
+    advance(DAY);
+    await a.engine.resumeRekey();
+    expect(await store.movedTo(second)).not.toBeNull();
+  });
+
+  it("同一個網段的好幾台一起用：每個來源每天也只能用掉一小部分", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+    const ip = (value: string) => (request: Request) => {
+      const headers = new Headers(request.headers);
+      headers.set("cf-connecting-ip", value);
+      return handler(new Request(request, { headers }));
+    };
+    const a = await setupDevice(ip("198.51.100.30"), 250);
+    const b = await setupDevice(ip("198.51.100.31"), 250);
+    await a.engine.rekey();
+    // 同一個 /24 的另一台（另一個空間）：這個來源今天剩不到一批，停下來
+    await expect(b.engine.rekey()).rejects.toMatchObject({ total: 250 });
+    expect((await b.engine.pendingRekey())!.done).toBeLessThan(250);
     expect(await rekeyCount()).toBeLessThanOrEqual(1000);
   });
 });

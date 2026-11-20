@@ -6,6 +6,7 @@ import type { BrowserDb } from "./db/driver";
 import type { DeviceSyncState } from "./device-sync";
 import type { AppSettings } from "./settings";
 import type { TestMode } from "./test-mode";
+import type { RekeyState } from "./use-rekey";
 import type { TrialSyncState } from "./use-trial-sync";
 
 export interface AppState {
@@ -38,6 +39,8 @@ export interface AppState {
   deviceSync: DeviceSyncState;
   /** 免費試用的帳號掛進加密的同步（規格 12.44 第 1 步） */
   trialSync: TrialSyncState;
+  /** 換金鑰與移除別台（可以跨天完成，規格 12.10） */
+  rekey: RekeyState;
   /** 從配對連結（#pair=配對碼）打開時的配對碼；設定頁的同步區塊用完後清掉 */
   pairFromLink: string | null;
   clearPairFromLink(): void;

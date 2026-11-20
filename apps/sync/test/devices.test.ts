@@ -429,7 +429,7 @@ describe("伺服器不受信任", () => {
     expect(error).not.toBeInstanceOf(SyncRemovedError);
   });
 
-  it("換金鑰在送出之前斷掉：什麼都沒換，舊的照常同步，剛建立的新空間刪掉", async () => {
+  it("換金鑰在送出之前斷掉：什麼都沒換，舊的照常同步；換到一半的新空間留著，下次接著做（補上這段時間的變更）", async () => {
     const root = newRootKey();
     const a = await device("A", root);
     await a.engine.ensureSpace();
@@ -454,15 +454,23 @@ describe("伺服器不受信任", () => {
     await expect(broken.rekey()).rejects.toThrow(/連不上/);
     const oldSpace = (await deriveKeys(root)).space;
     expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM records WHERE space=?", [oldSpace]))[0]!.n)).toBeGreaterThan(0);
-    expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM spaces"))[0]!.n)).toBe(1);
+    // 新空間留著（換到一半），只有一個
+    expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM spaces WHERE rekey_from=?", [oldSpace]))[0]!.n)).toBe(1);
+    expect(await a.engine.pendingRekey()).toMatchObject({ removed: [] });
     await b.db.setProfileKey("pref_intensity", "hard");
     await b.engine.sync();
     await a.engine.sync();
     expect((await a.db.getProfile()).pref_intensity).toBe("hard");
-    // 重新來過就成功
+    // 再來一次：接著做同一個新空間，不另外建立
+    const pendingSpace = (await a.engine.pendingRekey())!.space;
     await a.engine.rekey();
+    expect((await deriveKeys(a.root)).space).toBe(pendingSpace);
+    expect(await a.engine.pendingRekey()).toBeNull();
     await b.engine.sync();
     expect(b.root).toEqual(a.root);
+    // B 在換到一半時改的也帶過去了
+    expect((await b.db.getProfile()).pref_intensity).toBe("hard");
+    expect(Number((await serverDriver.all("SELECT COUNT(*) AS n FROM spaces"))[0]!.n)).toBe(2);
   });
 
   it("換金鑰時只移除使用者選的；清單和使用者看到的不同就停止", async () => {
