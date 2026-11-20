@@ -17,6 +17,8 @@ import { TRIAL_MODEL } from "./trial";
 const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
 /** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
 const LOCK_KEY = () => storageKey(SCOPED_KEYS.lock);
+/** API key 與 Intervals.icu 的連線在這台最後改的時間（規格 12.47）：只有時間，沒有 key */
+const STAMPS_KEY = () => storageKey(SCOPED_KEYS.secretStamps);
 
 /** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
 let lockSession: LockSession | null = null;
@@ -37,7 +39,7 @@ export interface AppSettings {
   proxy: { url: string; token: string; account?: string | null };
   /**
    * Intervals.icu：API key（Basic），或用 Intervals.icu 登入拿到的 token（Bearer，規格 12.37）與那個帳號.
-   * token 和 API key 一樣只存在這台（密碼鎖開著時加密），不同步
+   * token 和 API key 一樣存在這台（密碼鎖開著時加密）；同步開著、選了「帶到其他裝置」時另外加密後跟著同步（規格 12.47，secret-sync.ts）
    */
   intervals: { apiKey: string; athleteId: string; accessToken: string; account: { id: string | null; name: string | null } | null };
   /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
@@ -144,15 +146,86 @@ export function loadSettings(): AppSettings {
   return lockEnabled() ? withSecrets(plain, unlockedSecrets ?? NO_SECRETS) : plain;
 }
 
+// ---------------------------------------------------------------------------
+// 跟著同步的 key（規格 12.47）：哪些欄位算一樣、這台什麼時候改的
+// ---------------------------------------------------------------------------
+
+export type SecretName = "llm" | "intervals";
+export const SECRET_NAMES: SecretName[] = ["llm", "intervals"];
+
+/** AI 的 API key（自己的 key 才有；免費試用的憑證不跟同步，每台一個） */
+export interface LlmSecret {
+  provider: ProviderKind;
+  apiKey: string;
+  baseURL: string;
+  models: Record<Purpose, string>;
+}
+export type IntervalsSecret = AppSettings["intervals"];
+
+/** 這台要帶到其他裝置的內容；沒有時是 null（還沒填、或用免費試用） */
+export function secretOf(s: AppSettings, name: "llm"): LlmSecret | null;
+export function secretOf(s: AppSettings, name: "intervals"): IntervalsSecret | null;
+export function secretOf(s: AppSettings, name: SecretName): LlmSecret | IntervalsSecret | null;
+export function secretOf(s: AppSettings, name: SecretName): LlmSecret | IntervalsSecret | null {
+  if (name === "llm") {
+    if (s.llmMode !== "byok" || !s.apiKey.trim()) return null;
+    return { provider: s.provider, apiKey: s.apiKey, baseURL: s.baseURL, models: { ...s.models } };
+  }
+  if (!intervalsConnected(s)) return null;
+  const { apiKey, athleteId, accessToken, account } = s.intervals;
+  return { apiKey, athleteId, accessToken, account: account ? { id: account.id, name: account.name } : null };
+}
+
+/** 兩份內容一樣嗎（欄位順序不算） */
+export function sameSecret(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.keys(v as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+        )
+      : v;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/** 這台最後改的時間（ISO）；這個功能之前就填好的、沒改過的是 null（當成最舊的） */
+export function secretStamps(): Partial<Record<SecretName, string>> {
+  try {
+    const value = JSON.parse(localStorage.getItem(STAMPS_KEY()) ?? "{}") as Record<string, unknown>;
+    return Object.fromEntries(SECRET_NAMES.filter((n) => typeof value[n] === "string").map((n) => [n, value[n] as string]));
+  } catch {
+    return {};
+  }
+}
+
+/** 記下改的時間（從另一台帶進來的，記那台改的時間） */
+export function setSecretStamp(name: SecretName, at: string): void {
+  try {
+    localStorage.setItem(STAMPS_KEY(), JSON.stringify({ ...secretStamps(), [name]: at }));
+  } catch {
+    // 記不住就當成最舊的：兩台不同時以另一台的為準
+  }
+}
+
+/** 存設定時：跟著同步的內容變了，記下這台改的時間 */
+function stampChanges(prev: AppSettings, next: AppSettings, now = new Date()): void {
+  for (const name of SECRET_NAMES) {
+    if (!sameSecret(secretOf(prev, name), secretOf(next, name))) setSecretStamp(name, now.toISOString());
+  }
+}
+
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (lockEnabled()) {
     if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
+    stampChanges(withSecrets(loadPlainSettings(), unlockedSecrets ?? NO_SECRETS), settings);
     const sealed = await sealSecrets(lockSession, secretsOf(settings));
     localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
     localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
     unlockedSecrets = secretsOf(settings);
     return;
   }
+  stampChanges(loadPlainSettings(), settings);
   localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
 }
 
@@ -160,6 +233,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 export function clearSettings(): void {
   localStorage.removeItem(STORAGE_KEY());
   localStorage.removeItem(LOCK_KEY());
+  localStorage.removeItem(STAMPS_KEY());
 }
 
 // ---------------------------------------------------------------------------

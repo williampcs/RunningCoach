@@ -8,6 +8,7 @@ import type { AppSettings } from "./settings";
 import type { TestMode } from "./test-mode";
 import type { RekeyState } from "./use-rekey";
 import type { TrialSyncState } from "./use-trial-sync";
+import type { SecretSyncState } from "./use-secret-sync";
 
 export interface AppState {
   coach: Coach;
@@ -39,6 +40,8 @@ export interface AppState {
   deviceSync: DeviceSyncState;
   /** 免費試用的帳號掛進加密的同步（規格 12.44 第 1 步） */
   trialSync: TrialSyncState;
+  /** API key 與 Intervals.icu 的連線跟著加密的同步（規格 12.47） */
+  secretSync: SecretSyncState;
   /** 換金鑰與移除別台（可以跨天完成，規格 12.10） */
   rekey: RekeyState;
   /** 從配對連結（#pair=配對碼）打開時的配對碼；設定頁的同步區塊用完後清掉 */
@@ -54,7 +57,7 @@ export interface AppState {
 }
 
 /** 設定的各項（第一層清單的每一列） */
-export type SettingsSection = "ai" | "records" | "weather" | "sync" | "lock" | "data" | "testmode" | "reset" | "status";
+export type SettingsSection = "ai" | "records" | "weather" | "sync" | "keys" | "lock" | "data" | "testmode" | "reset" | "status";
 
 /** 紀錄頁要打開的一趟：跑步是 workout id，騎車等其他運動是 intervals_id；date 決定要列到多久以前 */
 export type HistoryFocus = { workoutId: number; date: string } | { activityId: string; date: string };

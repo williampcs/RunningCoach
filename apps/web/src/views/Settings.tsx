@@ -12,6 +12,7 @@ import { Disclosure, Icon, InfoTip, ListRow, stripEmoji } from "../ui";
 import { useSync } from "../use-sync";
 import { clearRemoved } from "./DeviceAlerts";
 import { DeviceSyncCard } from "./DeviceSync";
+import { KeysOverview } from "./KeysOverview";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
 import { WeatherCard } from "./WeatherSettings";
@@ -53,6 +54,7 @@ const SECTIONS: Record<SettingsSection, { title: string; icon: LucideIcon }> = {
   records: { title: "訓練紀錄", icon: Watch },
   weather: { title: "天氣", icon: CloudSun },
   sync: { title: "多裝置同步", icon: Smartphone },
+  keys: { title: "我的鑰匙與帳號", icon: KeyRound },
   lock: { title: "密碼鎖", icon: Lock },
   data: { title: "資料", icon: Database },
   testmode: { title: "測試模式", icon: FlaskConical },
@@ -215,8 +217,16 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
   useEffect(() => {
     const prev = shown.current;
     shown.current = settings;
-    if (prev.proxy.token === settings.proxy.token && prev.llmMode === settings.llmMode && prev.proxy.account === settings.proxy.account) return;
-    setDraft((d) => ({ ...d, llmMode: settings.llmMode, proxy: settings.proxy, models: settings.models }));
+    if (prev.proxy.token !== settings.proxy.token || prev.llmMode !== settings.llmMode || prev.proxy.account !== settings.proxy.account) {
+      setDraft((d) => ({ ...d, llmMode: settings.llmMode, proxy: settings.proxy, models: settings.models }));
+    }
+    // API key 與 Intervals.icu 的連線從另一台帶進來（同步，規格 12.47）：一樣跟著改
+    if (prev.apiKey !== settings.apiKey || prev.provider !== settings.provider || prev.baseURL !== settings.baseURL) {
+      setDraft((d) => ({ ...d, llmMode: settings.llmMode, provider: settings.provider, apiKey: settings.apiKey, baseURL: settings.baseURL, models: settings.models }));
+    }
+    if (prev.intervals.apiKey !== settings.intervals.apiKey || prev.intervals.athleteId !== settings.intervals.athleteId) {
+      setDraft((d) => ({ ...d, intervals: { ...d.intervals, apiKey: settings.intervals.apiKey, athleteId: settings.intervals.athleteId } }));
+    }
   }, [settings]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -588,6 +598,14 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     );
   }
 
+  if (page === "keys") {
+    return (
+      <Subpage id="keys" onBack={back}>
+        <KeysOverview onOpen={setPage} />
+      </Subpage>
+    );
+  }
+
   if (page === "lock") {
     return (
       <Subpage id="lock" onBack={back}>
@@ -698,6 +716,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     records: recordWith ? RECORD_WITH_LABELS[recordWith].replace(/，.*/, "") : "Intervals.icu",
     weather: settings.weather?.label ?? "還沒設定",
     sync: "電腦、手機之間",
+    keys: "存在哪、換手機怎麼回來",
     lock: "保護 API key",
     data: "匯出、匯入",
     testmode: "假資料，正式資料不受影響",
@@ -719,7 +738,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
     data: protection ? [PROTECTION_STATUS[protection], protection === "persisted"] : db.persistent ? undefined : ["未持久化", false],
     testmode: testMode.enabled ? ["使用中", false] : ["關", false],
   };
-  const order: SettingsSection[] = ["ai", "records", "weather", "sync", "lock", "data", ...(featureEnabled("testmode") ? (["testmode"] as const) : []), "reset", "status"];
+  const order: SettingsSection[] = ["ai", "records", "weather", "sync", "keys", "lock", "data", ...(featureEnabled("testmode") ? (["testmode"] as const) : []), "reset", "status"];
 
   return (
     <>

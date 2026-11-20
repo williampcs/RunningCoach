@@ -93,7 +93,7 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
         "<li>每個請求的一次性亂數，用來擋下重送的請求，十分鐘後刪除。</li>"
       : "",
     "<!--DEVICES_NOTE-->": build.devices
-      ? "<li>移除某台裝置時，被移除的那台之後連不上同步，下次打開時會清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）；它在移除前已經下載的資料我們收不回來。</li>"
+      ? "<li>移除某台裝置時，被移除的那台之後連不上同步，下次打開時會清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台，由那台的人決定清除或匯出）；它在移除前已經下載的資料我們收不回來。</li>"
       : "",
     "<!--ONBOARDING_STORED-->": build.onboarding
       ? "<li><strong>「先看看」的範例</strong>：第一次打開時可以先用範例的資料逛一圈。範例的資料只在這個分頁的記憶體裡，不寫進上面的資料庫、不讀你存的 key、不同步、不連任何外部服務；離開（按「開始設定」或關掉分頁）就清掉。設定精靈走到哪一步記在 localStorage。</li>"

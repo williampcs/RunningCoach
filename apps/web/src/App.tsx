@@ -31,6 +31,8 @@ import { useRedFlagAlert } from "./red-flag-alert";
 import { useDeviceSync } from "./device-sync";
 import { useRekey } from "./use-rekey";
 import { useTrialSync } from "./use-trial-sync";
+import { useSecretSync } from "./use-secret-sync";
+import { forgetSyncedSecrets } from "./secret-sync";
 import { openBrowserDb, type BrowserDb } from "./db/driver";
 import { DEMO, DEMO_DB_FILE } from "./demo";
 import { wizardStart, type WizardStep } from "./wizard";
@@ -416,9 +418,13 @@ export function App() {
   }, []);
   // 這台已從同步移除（聲明與證明都對得上，規格 12.27）：清掉同步金鑰、API key 與這台的裝置金鑰；
   // 訓練資料、選手資料、對話留著，由使用者決定要清除、匯出，或用這台的資料重新開始同步
+  const coachRef = useRef(coach);
+  coachRef.current = coach;
   const onRemoved = useCallback(() => {
     void (async () => {
       const current = settingsRef.current;
+      // 同步裡加密的 API key 與 Intervals.icu 的連線（規格 12.47）也刪掉：解得開的同步金鑰下面就清掉了
+      if (coachRef.current) await forgetSyncedSecrets(coachRef.current.db).catch(() => undefined);
       const next: AppSettings = {
         ...current,
         apiKey: "",
@@ -476,7 +482,9 @@ export function App() {
     [coach, testMode],
   );
   const trialSync = useTrialSync(coach?.db ?? null, settings, deviceSync, applySettings, touch, toast);
-  const rekey = useRekey(deviceSync, trialSync);
+  // API key 與 Intervals.icu 的連線跟著加密的同步（規格 12.47）
+  const secretSync = useSecretSync(coach?.db ?? null, settings, deviceSync, applySettings, touch, toast);
+  const rekey = useRekey(deviceSync, trialSync, secretSync);
 
   const activitiesReady = testMode.enabled || intervalsConnected(settings);
 
@@ -561,6 +569,7 @@ export function App() {
       },
       deviceSync,
       trialSync,
+      secretSync,
       rekey,
       pairFromLink,
       clearPairFromLink: () => setPairFromLink(null),
@@ -572,7 +581,7 @@ export function App() {
       openSettings,
       toast,
     };
-  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, rekey, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
+  }, [db, coach, settings, testMode, problem, revision, touch, activitiesReady, deviceSync, trialSync, secretSync, rekey, pairFromLink, openPanel, showTab, devicesFocus, openSettings, toast]);
 
   // 從 Intervals.icu 登入回來（規格 12.37）：精靈以外按的，打開設定的「訓練紀錄」，在那裡換 token
   useEffect(() => {

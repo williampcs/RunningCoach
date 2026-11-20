@@ -11,6 +11,7 @@ import { SyncApiError, SyncRekeyPausedError, type PendingRekey, type RekeyProgre
 
 import type { DeviceSyncState } from "./device-sync";
 import type { TrialSyncState } from "./use-trial-sync";
+import type { SecretSyncState } from "./use-secret-sync";
 
 export interface RekeyState {
   /** 這台開始、還沒完成的換金鑰；沒有的話 null */
@@ -46,7 +47,7 @@ export interface RekeyState {
 /** 接著做的時間到了之後，頁面一直開著時最多等這麼久再檢查一次（setTimeout 的上限也在這附近） */
 const MAX_TIMER_MS = 6 * 3600_000;
 
-export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState): RekeyState {
+export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState, secretSync: SecretSyncState): RekeyState {
   const engine = deviceSync.devicesMode ? deviceSync.engine : null;
   const [pending, setPending] = useState<PendingRekey | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,10 +85,13 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
       try {
         // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
         const rotateTrial = await trialSync.beforeRekey();
+        // API key 與 Intervals.icu 的連線（規格 12.47）：換好之後用新的同步金鑰重新加密
+        const resealSecrets = await secretSync.beforeRekey();
         const codeGiven = (await engine.pendingRekey().catch(() => null))?.codeGiven === true;
         const root = await job(setProgress);
         if (root) {
           await rotateTrial(root);
+          await resealSecrets(root);
           if (codeGiven) setFinishedQuietly(true);
           else setFinished(root);
           void deviceSync.run();
@@ -108,7 +112,7 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
         await refresh();
       }
     },
-    [engine, trialSync, deviceSync, refresh],
+    [engine, trialSync, secretSync, deviceSync, refresh],
   );
 
   const begin = useCallback(

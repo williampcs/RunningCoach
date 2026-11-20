@@ -35,4 +35,5 @@ export {
   type DeviceLabel,
 } from "./device";
 export { normalizeProxyUrl, openTrialSecret, sealTrialSecret } from "./trial-account";
+export { openSyncedSecret, sealSyncedSecret } from "./synced-secret";
 export { isKnown as isKnownSyncName } from "./entities";
