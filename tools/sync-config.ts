@@ -7,6 +7,8 @@
  *   DATABASE_ID     D1 資料庫的 id（必填）
  *   WEB_URLS        允許連線的網頁網址，以空白或逗號分隔（必填，至少一個；只取來源）
  *   INTERVALS_CLIENT_ID  用 Intervals.icu 登入的 client_id（選填，規格 12.37；client_secret 由 workflow 另外用 wrangler secret 寫入）
+ *   DAILY_WRITE_BUDGET   整個服務每天估算最多寫入幾列（選填，規格 12.10；沒有時用程式裡的預設）
+ *   TURNSTILE_SITE_KEY   網頁版的人機驗證 site key（選填，規格 12.10）：有的話 Worker 才驗證（secret key 由 workflow 另外用 wrangler secret 寫入）
  *
  * 允許的來源設錯，那個網址的同步就會失敗：網址不是 https、沒有任何網址、wrangler.toml 的格式和預期不同時
  * 直接失敗、不部署，正式的同步服務維持上一次的設定.
@@ -20,6 +22,9 @@ export interface SyncDeployConfig {
   databaseId: string;
   webUrls: string;
   intervalsClientId?: string;
+  dailyWriteBudget?: string;
+  /** 網頁版有 Turnstile 的 site key：Worker 驗證人機驗證的 token */
+  turnstile?: boolean;
 }
 
 /** 網址轉成去掉重複的來源（https://host）；有任何一個不是 https 的網址就失敗 */
@@ -49,6 +54,7 @@ export function fillWranglerToml(toml: string, config: SyncDeployConfig): string
   }
   const origins = allowedOrigins(config.webUrls).join(",");
   if (config.intervalsClientId && !/^[A-Za-z0-9._-]{1,200}$/.test(config.intervalsClientId)) throw new Error("Intervals.icu 的 client_id 格式不對");
+  if (config.dailyWriteBudget && !/^[1-9][0-9]{2,6}$/.test(config.dailyWriteBudget)) throw new Error("DAILY_WRITE_BUDGET 要是 100 到 9999999 的整數");
   const replace = (text: string, pattern: RegExp, line: string | undefined): string => {
     if (line === undefined) return text;
     const matches = text.match(new RegExp(pattern.source, "gm"));
@@ -61,6 +67,8 @@ export function fillWranglerToml(toml: string, config: SyncDeployConfig): string
   out = replace(out, /^database_id = ""$/, `database_id = "${config.databaseId}"`);
   out = replace(out, /^ALLOWED_ORIGINS = ""$/, `ALLOWED_ORIGINS = "${origins}"`);
   out = replace(out, /^INTERVALS_CLIENT_ID = ""$/, config.intervalsClientId && `INTERVALS_CLIENT_ID = "${config.intervalsClientId}"`);
+  out = replace(out, /^DAILY_WRITE_BUDGET = ""$/, config.dailyWriteBudget && `DAILY_WRITE_BUDGET = "${config.dailyWriteBudget}"`);
+  out = replace(out, /^TURNSTILE = ""$/, config.turnstile ? `TURNSTILE = "on"` : undefined);
   return out;
 }
 
@@ -74,6 +82,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       databaseId: env.DATABASE_ID ?? "",
       webUrls: env.WEB_URLS ?? "",
       intervalsClientId: env.INTERVALS_CLIENT_ID?.trim() || undefined,
+      dailyWriteBudget: env.DAILY_WRITE_BUDGET?.trim() || undefined,
+      turnstile: Boolean(env.TURNSTILE_SITE_KEY?.trim()),
     };
     writeFileSync(path, fillWranglerToml(readFileSync(path, "utf8"), config));
     // 只印公開的網址；D1 的 id 不印（Actions 的紀錄在公開的 repo 看得到）
@@ -81,6 +91,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.log(`允許的網頁來源：${allowedOrigins(config.webUrls).join(" ")}`);
     // client_id 是公開的（網頁的授權網址裡也有），只印有沒有設定
     console.log(`Intervals.icu 登入：${config.intervalsClientId ? "有設定 client_id" : "沒有設定"}`);
+    console.log(`每天的寫入上限：${config.dailyWriteBudget ?? "預設"}`);
+    console.log(`人機驗證：${config.turnstile ? "開啟（要有 Worker 的 TURNSTILE_SECRET_KEY）" : "沒有設定"}`);
   } catch (e) {
     console.error(`::error::${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);

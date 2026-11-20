@@ -47,8 +47,20 @@ const ERROR_TEXT: Record<number, string> = {
   409: "配對碼已經被使用、順序不對或已經過期",
   410: "同步金鑰已經換了，或這台已從同步移除",
   413: "同步的資料超過上限",
+  415: "同步服務不接受這個請求（格式不對）",
   429: "剛換過金鑰，請等一分鐘再試",
   503: "同步服務暫時無法使用（可能已滿），請稍後再試",
+};
+
+/** 依伺服器回的狀態顯示的說明（比狀態碼的通用說明清楚） */
+const STATE_TEXT: Record<string, string> = {
+  rate_limited: "同步太頻繁了，請稍後再試",
+  human_check: "人機驗證沒有通過或已經過期，請再試一次",
+  human_check_unavailable: "人機驗證暫時無法使用，請稍後再試",
+  daily_limit: "今天的同步量已達上限，明天會自動恢復；資料都還在這台",
+  network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
+  rekey_limit: "今天換金鑰的量已達上限，明天再試；資料都還在這台，原本的同步照常",
+  rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
 
 export class SyncApiError extends Error {
@@ -98,10 +110,11 @@ export class SyncApi {
     this.base = trimTrailingSlashes(baseUrl);
   }
 
-  async request<T>(method: string, path: string, body?: unknown, auth?: SyncAuth): Promise<T> {
+  /** headers：另外帶的標頭（例：人機驗證的 token，x-turnstile） */
+  async request<T>(method: string, path: string, body?: unknown, auth?: SyncAuth, headers?: Record<string, string>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.send<T>(method, path, body, auth);
+        return await this.send<T>(method, path, body, auth, headers);
       } catch (e) {
         // 這台的時鐘不準：以伺服器的時間校正後再送一次
         if (attempt === 0 && e instanceof SyncApiError && e.state === "clock" && typeof e.detail.serverTime === "number") {
@@ -113,9 +126,9 @@ export class SyncApi {
     }
   }
 
-  private async send<T>(method: string, path: string, body: unknown, auth: SyncAuth | undefined): Promise<T> {
+  private async send<T>(method: string, path: string, body: unknown, auth: SyncAuth | undefined, extra: Record<string, string> = {}): Promise<T> {
     const text = body === undefined ? "" : JSON.stringify(body);
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...extra };
     const token = typeof auth === "string" ? auth : auth?.token;
     if (token) headers.authorization = `Bearer ${token}`;
     if (auth && typeof auth !== "string") Object.assign(headers, await signRequest(auth.device, method, path, text, Date.now() + this.clockOffset));
@@ -137,7 +150,7 @@ export class SyncApi {
     // 錯誤訊息用這裡寫好的，不顯示伺服器傳來的文字（伺服器不受信任）
     if (!response.ok) {
       const { error: _ignored, ...detail } = json;
-      const message = detail.state === "rate_limited" ? "同步太頻繁了，請稍後再試" : ERROR_TEXT[response.status];
+      const message = (typeof detail.state === "string" ? STATE_TEXT[detail.state] : undefined) ?? ERROR_TEXT[response.status];
       throw new SyncApiError(response.status, message ?? `同步服務發生錯誤（${response.status}）`, detail);
     }
     return json as T;
@@ -247,15 +260,17 @@ export class SyncEngine {
   /**
    * 「開始同步」的第一台：建立同步空間；已存在時回傳 false.
    * 之後的同步只確認憑證，空間不存在（在別台刪除了）時不會再建立.
-   * 裝置模式時新的空間一開始就只接受登記過的裝置，並登記這台
+   * 裝置模式時新的空間一開始就只接受登記過的裝置，並登記這台.
+   * humanToken：人機驗證（Turnstile）拿到的 token；同步服務有開人機驗證時，建立新的空間要有它
    */
-  async ensureSpace(): Promise<boolean> {
+  async ensureSpace(humanToken?: string): Promise<boolean> {
     const keys = await this.keys;
     const { created } = await this.api.request<{ created: boolean }>(
       "PUT",
       `/v1/spaces/${keys.space}?create=1${this.device ? "&devices=1" : ""}`,
       undefined,
       keys.token,
+      humanToken ? { "x-turnstile": humanToken } : undefined,
     );
     if (this.device) await this.register(keys);
     this.spaceReady = true;

@@ -36,6 +36,14 @@ const LINKS_ONLY: Record<string, string> = {
 };
 
 describe("隱私說明頁（規格 12.20）", () => {
+  it("照實寫同步服務為了防止濫用記下的網段代碼（秘密金鑰、30 天）與請求次數，不記錄 IP 位址本身（12.10）", () => {
+    expect(page).not.toContain("同步服務的程式不記錄 IP 位址");
+    expect(page).toContain("不記錄 IP 位址本身");
+    expect(page).toContain("無法還原成 IP 位址，保存 30 天");
+    const trial = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, trialProxyUrl: "https://running-coach-proxy.example.workers.dev" });
+    expect(trial).toContain("無法還原成 IP 位址）計算每分鐘的次數");
+  });
+
   it("網頁版預設會連的外部網址都寫在頁面上", () => {
     const defaults = [
       new Anthropic({ apiKey: "x", dangerouslyAllowBrowser: true }).baseURL,
@@ -54,7 +62,9 @@ describe("隱私說明頁（規格 12.20）", () => {
     const lines = [...sourceLines(join(root, "apps/web/src")), ...sourceLines(join(root, "packages/core/src"))];
     const hosts = new Set(lines.flatMap((line) => [...line.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map((m) => m[1]!)));
     expect(hosts.size).toBeGreaterThan(3);
-    const unlisted = [...hosts].filter((h) => !page.includes(h) && !(h in LINKS_ONLY));
+    // 只在有設定時才連的（人機驗證）寫在那種建置的頁面上
+    const configured = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, humanCheck: true });
+    const unlisted = [...hosts].filter((h) => !configured.includes(h) && !(h in LINKS_ONLY));
     expect(unlisted).toEqual([]);
   });
 
@@ -99,5 +109,15 @@ describe("隱私說明頁（規格 12.20）", () => {
     expect(trial).not.toContain("目前沒有帳號");
     expect(page).not.toContain("免費試用");
     expect(page).toContain("目前沒有帳號");
+  });
+
+  it("有人機驗證（Turnstile 的 site key 與同步服務）的建置才寫開始同步與配對時用 Cloudflare 的人機驗證（規格 12.10）", () => {
+    const human = renderPrivacyPage({ staging: false, syncUrl: SYNC_URL, humanCheck: true });
+    expect(human).toContain("人機驗證（Turnstile）");
+    expect(human).toContain("challenges.cloudflare.com");
+    expect(human).toContain("不送你的 IP");
+    expect(human).toContain("2026-11-18：開始同步與配對新裝置時");
+    expect(page).not.toContain("Turnstile");
+    expect(human).not.toMatch(/<!--[A-Z_]+-->/);
   });
 });

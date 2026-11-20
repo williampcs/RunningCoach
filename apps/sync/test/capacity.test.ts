@@ -6,7 +6,7 @@ import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
 import { createSyncHandler, maintain, type ServiceLimits, type SyncDeps, type SyncRateLimits } from "../src/handler";
-import { SyncStore } from "../src/store";
+import { RECORD_OVERHEAD, SyncStore } from "../src/store";
 
 const HOUR = 3600_000;
 const TOKEN = "t".repeat(43);
@@ -48,8 +48,8 @@ async function call(method: string, path: string, opts: { ip?: string; body?: un
 const item = (id: number, size: number) => ({ id: `record${String(id).padStart(10, "0")}`, base: 0, blob: "b".repeat(size) });
 
 describe("依來源 IP 的頻率限制（跨請求有效）", () => {
-  it("建立空間：每小時 10 個、每天 30 個；不同的 IP 分開算；過了時間窗恢復", async () => {
-    for (let i = 0; i < 10; i++) expect((await call("PUT", `/v1/spaces/${space(i)}?create=1`, { ip: "198.51.100.1" })).status).toBe(200);
+  it("建立空間：每個 IPv4 位址每小時 5 個、每天 10 個；不同的 IP 分開算；過了時間窗恢復", async () => {
+    for (let i = 0; i < 5; i++) expect((await call("PUT", `/v1/spaces/${space(i)}?create=1`, { ip: "198.51.100.1" })).status).toBe(200);
     const limited = await call("PUT", `/v1/spaces/${space(10)}?create=1`, { ip: "198.51.100.1" });
     expect(limited).toMatchObject({ status: 429, body: { state: "rate_limited" } });
     // 別的 IP 不受影響
@@ -58,11 +58,9 @@ describe("依來源 IP 的頻率限制（跨請求有效）", () => {
     for (let i = 0; i < 20; i++) expect((await call("PUT", `/v1/spaces/${space(0)}?create=1`, { ip: "198.51.100.1" })).status).toBe(200);
     advance(HOUR);
     expect((await call("PUT", `/v1/spaces/${space(12)}?create=1`, { ip: "198.51.100.1" })).status).toBe(200);
-    // 每天 30 個
-    for (let h = 0; h < 3; h++) {
-      for (let i = 0; i < 10; i++) await call("PUT", `/v1/spaces/${space(100 + h * 10 + i)}?create=1`, { ip: "198.51.100.1" });
-      advance(HOUR);
-    }
+    // 每天 10 個
+    for (let i = 0; i < 4; i++) await call("PUT", `/v1/spaces/${space(100 + i)}?create=1`, { ip: "198.51.100.1" });
+    advance(HOUR);
     expect((await call("PUT", `/v1/spaces/${space(200)}?create=1`, { ip: "198.51.100.1" })).status).toBe(429);
     // 計數只存 IP 的雜湊
     expect(JSON.stringify(await driver.all("SELECT key FROM rate_limits"))).not.toContain("198.51.100");
@@ -74,18 +72,21 @@ describe("依來源 IP 的頻率限制（跨請求有效）", () => {
     expect((await call("POST", "/v1/pair", { ip: "203.0.113.6", body: { pub: "PUB", commitment: "C" } })).status).toBe(200);
   });
 
-  it("送出：每分鐘的次數與每小時的位元組", async () => {
-    const handler = freshHandler({ rateLimits: { push: { minute: { limit: 3, windowMs: 60_000 } }, pushBytes: { hour: { limit: 1000, windowMs: HOUR } } } });
+  it("送出：每分鐘的次數與位元組（覆寫的上限；位元組含每筆的固定額外）", async () => {
+    const handler = freshHandler({ rateLimits: { push: { "v4/32": { minute: { limit: 3, windowMs: 60_000 } } }, pushBytes: { "v4/32": { hour: { limit: 1500, windowMs: HOUR } } } } });
     await call("PUT", `/v1/spaces/${space(1)}?create=1`, { ip: "192.0.2.1", handler });
     const push = (id: number, size: number, ip = "192.0.2.1") => call("POST", `/v1/spaces/${space(1)}/changes`, { ip, handler, body: { items: [item(id, size)] } });
     expect((await push(1, 400)).status).toBe(200);
     expect((await push(2, 400)).status).toBe(200);
-    // 位元組超過：不寫入，也不扣掉
+    // 位元組超過：不寫入、位元組不扣（次數照算）
     expect((await push(3, 400)).status).toBe(429);
-    expect((await push(4, 100)).status).toBe(429); // 次數（第 4 次）
+    expect((await push(4, 10)).status).toBe(429); // 次數（第 4 次）
     advance(60_000);
     expect((await push(5, 100)).status).toBe(200);
-    expect((await call("GET", `/v1/spaces/${space(1)}/changes`, { handler })).body.items).toHaveLength(3);
+    expect((await push(6, 10)).status).toBe(429); // 位元組
+    // 別的來源不受影響
+    expect((await push(7, 10, "192.0.2.2")).status).toBe(200);
+    expect((await call("GET", `/v1/spaces/${space(1)}/changes`, { handler })).body.items).toHaveLength(4);
   });
 
   it("沒有給計數時不限制（本機的模擬服務）", async () => {
@@ -95,8 +96,10 @@ describe("依來源 IP 的頻率限制（跨請求有效）", () => {
 });
 
 describe("容量", () => {
-  const limits: Partial<ServiceLimits> = { spaces: 3, bytes: 1000, pairSlots: 3 };
-  const handler = () => freshHandler({ limits });
+  const limits: Partial<ServiceLimits> = { spaces: 3, bytes: 1000 + 6 * 200, pairSlots: 3 };
+  // 這裡測容量，來源的限制放寬
+  const loose = { hour: { limit: 1000, windowMs: HOUR } };
+  const handler = () => freshHandler({ limits, rateLimits: { createSpace: { unknown: loose }, createPair: { unknown: loose } } });
 
   it("沒有紀錄也沒有裝置、建立超過 24 小時的空間被清掉；有資料、有裝置、還沒滿 24 小時的不清", async () => {
     await call("PUT", `/v1/spaces/${space(1)}?create=1`, { handler: handler() });
@@ -145,10 +148,10 @@ describe("容量", () => {
     const pushes = await Promise.all(
       ok.flatMap((i) => [0, 1].map((k) => call("POST", `/v1/spaces/${space(i)}/changes`, { handler: handler(), body: { items: [item(k, 300)] } }))),
     );
-    // 每筆 300、上限 1000：六個並行的送出只有三個寫得進去
-    expect(pushes.filter((r) => r.status === 200)).toHaveLength(3);
-    expect(pushes.filter((r) => r.status === 503)).toHaveLength(3);
-    expect((await store.totals()).bytes).toBe(900);
+    // 每筆 300（加上每筆的固定額外 200）、上限 2200：六個並行的送出只有四個寫得進去
+    expect(pushes.filter((r) => r.status === 200)).toHaveLength(4);
+    expect(pushes.filter((r) => r.status === 503)).toHaveLength(2);
+    expect((await store.totals()).bytes).toBe(4 * 500);
 
     const slots = await Promise.all(Array.from({ length: 8 }, () => call("POST", "/v1/pair", { handler: handler(), body: { pub: "PUB", commitment: "C" } })));
     expect(slots.filter((r) => r.status === 200)).toHaveLength(3);
@@ -221,12 +224,13 @@ describe("換金鑰不受整個服務的空間數擋（一換一）", () => {
     await expect(api.request("PUT", `/v1/spaces/${space(79)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
       status: 503,
     });
-    // 過了冷卻期：可以，但同一個舊空間同時只能有一個換到一半的
+    // 過了冷卻期：可以，但同一個舊空間同時只有一個換到一半的：再開一個時，之前沒完成的被刪掉（重試不會失敗、也不會越積越多）
     advance(25 * HOUR);
     await api.request("PUT", `/v1/spaces/${space(80)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN });
-    await expect(api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
-      status: 503,
-    });
+    await api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN });
+    expect(await store.spaceToken(space(80))).toBeNull();
+    expect(await store.spaceToken(space(81))).not.toBeNull();
+    expect((await store.totals()).spaces).toBe(3);
   });
 });
 
@@ -265,7 +269,8 @@ describe("每個請求的 D1 查詢次數固定（Workers 每次呼叫有查詢�
     // 序號只會變大、不重複
     const seqs = res.body.applied.map((a: { seq: number }) => a.seq);
     expect(new Set(seqs).size).toBe(200);
-    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * 100);
+    // 每筆的內容加上固定額外
+    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * (100 + RECORD_OVERHEAD));
     // 更新一部分（一筆的 base 是舊的、一筆重複）
     const update = [
       { ...item(0, 50), base: seqs[0] },
@@ -276,7 +281,8 @@ describe("每個請求的 D1 查詢次數固定（Workers 每次呼叫有查詢�
     expect(second.body.applied).toHaveLength(1);
     expect(second.body.applied[0].seq).toBeGreaterThan(Math.max(...seqs));
     expect(second.body.conflicts.sort()).toEqual([item(0, 1).id, item(1, 1).id].sort());
-    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * 100 - 50);
+    // 更新已經有的那筆只算內容的差
+    expect((await store.spaceUsage(space(1))).bytes).toBe(200 * (100 + RECORD_OVERHEAD) - 50);
   });
 
   it("換金鑰把 450 筆重送一次：每個請求都在查詢數的上限內", async () => {
@@ -460,7 +466,7 @@ describe("換金鑰的結果不明、被頻率限制、並行", () => {
     // 開始同步時照預設的上限；換金鑰前改成每分鐘只能送 3 次（450 筆要送 5 次）
     const rateLimits: Partial<SyncRateLimits> = {};
     const t = await setup({ records: 450, deps: { rateLimits } });
-    rateLimits.push = { minute: { limit: 3, windowMs: 60_000 } };
+    rateLimits.push = { unknown: { minute: { limit: 3, windowMs: 60_000 } } };
     const steps: string[] = [];
     const before = t.state.root;
     await t.engine.rekey([], undefined, (p) => steps.push(p.step === "wait" ? `wait:${p.seconds}` : p.step));
@@ -477,12 +483,15 @@ describe("換金鑰的結果不明、被頻率限制、並行", () => {
     const results = await Promise.allSettled(
       [90, 91, 92, 93].map((n) => t.api.request("PUT", `/v1/spaces/${space(n)}?create=1&devices=1&from=${t.oldSpace}`, undefined, auth)),
     );
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((r) => r.status === "rejected" && (r.reason as { status: number }).status === 503)).toHaveLength(3);
+    // 最後留下的只有一個換到一半的新空間
+    expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+    for (const r of results) if (r.status === "rejected") expect(r.reason).toMatchObject({ status: 409 });
+    const pending = await driver.all("SELECT id FROM spaces WHERE rekey_from=?", [t.oldSpace]);
+    expect(pending).toHaveLength(1);
   });
 
   it("IPv6：同一個 /64 的不同位址算同一個來源", async () => {
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 5; i++) {
       expect((await call("PUT", `/v1/spaces/${space(300 + i)}?create=1`, { ip: `2001:db8:aa:bb::${(i + 1).toString(16)}` })).status).toBe(200);
     }
     expect((await call("PUT", `/v1/spaces/${space(320)}?create=1`, { ip: "2001:db8:aa:bb:ffff:ffff:ffff:ffff" })).status).toBe(429);

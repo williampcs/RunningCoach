@@ -33,6 +33,7 @@ import { openNodeSqlite } from "@running-coach/sqlite-node";
 import { createSyncHandler } from "../apps/sync/src/handler";
 import { handleIntervalsToken, isIntervalsTokenPath } from "../apps/sync/src/intervals-token";
 import { SyncStore } from "../apps/sync/src/store";
+import { fakeTurnstileFetch, TEST_SECRET_PASS } from "../apps/sync/src/turnstile-testing";
 
 import { fakeRunFit, zipOne } from "./lib/fit-fixture";
 
@@ -833,10 +834,13 @@ const syncStore = new SyncStore(openNodeSqlite(":memory:"));
 await syncStore.init();
 // 冷卻期（規格 12.27）預設和正式的一樣 24 小時；E2E 用 MOCK_SYNC_COOLDOWN_MS 縮短
 const syncCooldown = Number(process.env.MOCK_SYNC_COOLDOWN_MS);
+// 人機驗證（規格 12.10）：MOCK_TURNSTILE=1 時照 Turnstile 官方的測試金鑰驗證（一定通過的 secret、不連網路）；
+// 網頁版用測試的 site key 建置，E2E 把 Turnstile 的腳本換成假的（tools/e2e/README.md）
 const syncHandle = createSyncHandler({
   store: syncStore,
   allowedOrigins: ["*"],
   cooldownMs: Number.isFinite(syncCooldown) && syncCooldown >= 0 && process.env.MOCK_SYNC_COOLDOWN_MS ? syncCooldown : undefined,
+  turnstile: process.env.MOCK_TURNSTILE === "1" ? { secret: TEST_SECRET_PASS, fetch: fakeTurnstileFetch() } : undefined,
 });
 
 function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {

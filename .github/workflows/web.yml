@@ -8,6 +8,8 @@
 # WEB_URL 是正式的網址（app.zone2mate.com）：從其他網址（舊的 pages.dev）打開時顯示搬家的提示（規格 12.19）。
 # staging 由 staging.yml 在 push 到 v2 時部署到另一個 Pages 專案。
 # 免費試用（規格 12.39）：Variables 的 PROXY_URL（代理的網址）＋WEB_FEATURES 加上 trial 才出現；改了要手動執行一次。
+# 人機驗證（規格 12.10）：Variables 的 TURNSTILE_SITE_KEY（Turnstile 的 site key，公開的）；secret key 在 Secrets 的 TURNSTILE_SECRET_KEY，
+# 由 sync.yml 寫成同步服務的 secret。改了要手動執行一次這裡與「Deploy sync service」。
 name: Deploy web app
 
 on:
@@ -72,6 +74,8 @@ jobs:
           VITE_INTERVALS_CLIENT_ID: ${{ vars.INTERVALS_CLIENT_ID }}
           # 免費試用（規格 12.39）：代理的網址；還要 WEB_FEATURES 開 trial 才出現
           VITE_PROXY_URL: ${{ vars.PROXY_URL }}
+          # 人機驗證（規格 12.10）：開始同步與開配對碼之前顯示；沒有設定時不顯示（同步服務也不驗證）
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

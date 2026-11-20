@@ -14,6 +14,8 @@ interface Env {
   ALLOWED_ORIGINS?: string;
   /** 覆寫預設政策的 JSON */
   PROXY_POLICY?: string;
+  /** 來源 IP 的代碼用的金鑰（Worker 的 secret，部署時寫入） */
+  RATE_LIMIT_HASH_KEY?: string;
 }
 
 function d1Driver(db: D1Database): SqlDriver {
@@ -78,6 +80,7 @@ export default {
         .filter(Boolean),
       waitUntil: (promise) => ctx.waitUntil(promise),
       log: (line) => console.log(line),
+      hashKey: env.RATE_LIMIT_HASH_KEY,
     });
     return handle(request);
   },

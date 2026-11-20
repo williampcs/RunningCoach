@@ -18,6 +18,10 @@ crons = ["17 * * * *"]
 ALLOWED_ORIGINS = ""
 # 用 Intervals.icu 登入（規格 12.37）：部署時由 Variables 填入；client_secret 是 Worker 的 secret（wrangler secret put），不寫在這裡
 INTERVALS_CLIENT_ID = ""
+# 整個服務每天估算最多寫入幾列（規格 12.10；Cloudflare 免費方案整個帳號每天 10 萬列）：部署時填入，空的用程式裡的預設 40000
+DAILY_WRITE_BUDGET = ""
+# 人機驗證（Turnstile）：網頁版有 site key 時部署填成 "on"，Worker 才驗證；secret key 是 Worker 的 secret（TURNSTILE_SECRET_KEY，部署時寫入），不寫在這裡
+TURNSTILE = ""
 
 [[d1_databases]]
 binding = "DB"

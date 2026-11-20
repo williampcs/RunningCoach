@@ -23,6 +23,8 @@ export interface PrivacyBuild {
   intervalsLogin?: boolean;
   /** 這次建置提供免費試用（功能開關 trial 與 VITE_PROXY_URL，規格 12.39）：代理的網址 */
   trialProxyUrl?: string;
+  /** 這次建置有人機驗證（VITE_TURNSTILE_SITE_KEY 與同步服務，規格 12.10）：開始同步與配對時用 Cloudflare Turnstile */
+  humanCheck?: boolean;
 }
 
 const read = (name: string) => readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
@@ -66,7 +68,7 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
               <li>每個月的請求數、token 數與金額。</li>
             </ul>
           </li>
-          <li><strong>不存什麼</strong>：對話、選手資料、訓練紀錄等任何內容都只在記憶體中轉送，不寫進資料庫或紀錄；不存 email、名字或 IP 位址。代理的紀錄只有帳號代號、模型、狀態碼與 token 數。</li>
+          <li><strong>不存什麼</strong>：對話、選手資料、訓練紀錄等任何內容都只在記憶體中轉送，不寫進資料庫或紀錄；不存 email、名字或 IP 位址本身。為了防止濫用，輸入邀請碼、連結碼與取回試用憑證時，以你所在網路位址的代碼（用秘密金鑰計算，無法還原成 IP 位址）計算每分鐘的次數，一分鐘後失效。代理的紀錄只有帳號代號、模型、狀態碼與 token 數。</li>
           <li><strong>存多久</strong>：每天的次數 90 天、每月的用量 13 個月，到期自動刪除；所有試用的人這個月合計的金額另外記（用來控管總預算，不分是誰的）。</li>
           <li><strong>誰看得到</strong>：Zone2Mate 的作者（看用量、停用帳號）；看不到你的對話。</li>
           <li>試用憑證只存在這台裝置的瀏覽器（密碼鎖開著時加密），不會同步；要在另一台用，在設定按「在另一台使用」拿一個連結碼，在那台輸入（同一個帳號、同一份額度）。</li>
@@ -78,7 +80,7 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
       ? "<li><strong>移除某一台</strong>：設定 →「AI 教練」的裝置清單按「移除」，那台的登入馬上失效。</li><li><strong>刪除試用帳號</strong>：設定 →「AI 教練」→「刪除試用帳號」，馬上刪掉代理那邊的帳號、所有裝置的登入、每天的次數與每月的用量（這個月合計的金額不分是誰的，不會刪）；也可以寫信請我們刪除。</li>"
       : "",
     "<!--TRIAL_CHANGE-->": trialHost
-      ? "<li>2026-11-13：開著多裝置同步時，免費試用的帳號跟著加密的同步到新的裝置（代理多存帳號的復原密鑰的雜湊；復原密鑰在加密的同步裡，我們解不開）。</li><li>2026-11-10：免費試用（邀請碼）：對話經過我們的代理轉送到 Anthropic，不保存內容，只記次數與用量；可以在另一台裝置使用、移除某一台、自己刪除試用帳號。</li>"
+      ? "<li>2026-11-18：寫清楚免費試用的代理以網路位址的代碼（用秘密金鑰計算、無法還原成 IP 位址）計算輸入邀請碼等的每分鐘次數，一分鐘後失效；不記錄 IP 位址本身。</li><li>2026-11-13：開著多裝置同步時，免費試用的帳號跟著加密的同步到新的裝置（代理多存帳號的復原密鑰的雜湊；復原密鑰在加密的同步裡，我們解不開）。</li><li>2026-11-10：免費試用（邀請碼）：對話經過我們的代理轉送到 Anthropic，不保存內容，只記次數與用量；可以在另一台裝置使用、移除某一台、自己刪除試用帳號。</li>"
       : "",
     "<!--HEAD-->": build.staging ? '<meta name="robots" content="noindex" />' : "",
     "<!--STAGING-->": build.staging
@@ -105,6 +107,10 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
     "<!--INTERVALS_LOGIN-->": build.intervalsLogin
       ? "<li><strong>用 Intervals.icu 登入（選用）</strong>：按「用 Intervals.icu 登入」時，你在 Intervals.icu 按同意後，它給的一次性授權碼會經過我們的同步服務轉送一次，換成只能讀你自己資料的 token（要用到只有我們有的 App 密碼，所以要經過伺服器）；同步服務不保存授權碼與 token、不留紀錄。token 只存在這台裝置的瀏覽器（密碼鎖開著時加密），不會同步；之後由瀏覽器直接帶著 token 向 Intervals.icu 讀資料。權限只有讀：活動、恢復資料、運動設定。按「中斷連結」會請 Intervals.icu 取消授權並刪掉這台的 token；也可以在 Intervals.icu 的設定頁移除 Zone2Mate。</li>"
       : "",
+    "<!--HUMAN_CHECK-->": build.humanCheck
+      ? '<li>開始同步與配對新裝置時，先用 Cloudflare 的人機驗證（Turnstile）確認不是機器人：網頁會從 <code>challenges.cloudflare.com</code> 載入它的方塊，Cloudflare 依它的<a href="https://www.cloudflare.com/turnstile-privacy-policy/">Turnstile 隱私說明</a>處理連線與瀏覽器的資訊；同步服務只把驗證結果的代碼送去 Cloudflare 確認，不送你的 IP，也不留紀錄。</li>'
+      : "",
+    "<!--HUMAN_CHECK_CHANGE-->": build.humanCheck ? "<li>2026-11-18：開始同步與配對新裝置時，先用 Cloudflare 的人機驗證（Turnstile）。</li>" : "",
     "<!--INTERVALS_LOGIN_CHANGE-->": build.intervalsLogin
       ? "<li>2026-11-02：可以用 Intervals.icu 登入（授權碼經過同步服務轉送一次換成 token，不保存；token 只存在你的裝置）。</li>"
       : "",

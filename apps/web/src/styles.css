@@ -3461,6 +3461,22 @@ button.back-button {
   padding: var(--sp-2);
 }
 
+/* 人機驗證（Turnstile）：方塊載入前先留好高度，畫面不跳 */
+.human-check {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.human-check p {
+  margin: 0;
+}
+
+.human-check-box {
+  min-height: 65px;
+  max-width: 400px;
+}
+
 .pair-code,
 .pair-confirm,
 .recovery-code {

@@ -62,6 +62,16 @@ describe("fillWranglerToml", () => {
     expect(() => fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com", intervalsClientId: 'x"; evil' })).toThrow(/client_id/);
   });
 
+  it("fills in the daily write budget and turns on the human check only when set (規格 12.10)", () => {
+    const without = fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com" });
+    expect(without).toContain('DAILY_WRITE_BUDGET = ""');
+    expect(without).toContain('TURNSTILE = ""');
+    const filled = fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com", dailyWriteBudget: "10000", turnstile: true });
+    expect(filled).toContain('DAILY_WRITE_BUDGET = "10000"');
+    expect(filled).toContain('TURNSTILE = "on"');
+    expect(() => fillWranglerToml(TOML, { databaseId: ID, webUrls: "https://app.zone2mate.com", dailyWriteBudget: "lots" })).toThrow(/DAILY_WRITE_BUDGET/);
+  });
+
   it("refuses a malformed database id or name", () => {
     expect(() => fillWranglerToml(TOML, { databaseId: "", webUrls: "https://app.zone2mate.com" })).toThrow(/id/);
     expect(() => fillWranglerToml(TOML, { databaseId: 'x"; evil', webUrls: "https://app.zone2mate.com" })).toThrow(/id/);
