@@ -8,7 +8,7 @@
  */
 import type { Db } from "../db";
 import { nowIso } from "../dates";
-import { deriveKeys, newRootKey, open, recordId, seal, type SyncKeys } from "./crypto";
+import { deriveKeys, fromBase64url, newRootKey, open, recordId, seal, toBase64url, type SyncKeys } from "./crypto";
 import {
   boxHash,
   openLabel,
@@ -59,7 +59,8 @@ const STATE_TEXT: Record<string, string> = {
   human_check_unavailable: "人機驗證暫時無法使用，請稍後再試",
   daily_limit: "今天的同步量已達上限，明天會自動恢復；資料都還在這台",
   network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
-  rekey_limit: "今天換金鑰的量已達上限，明天再試；資料都還在這台，原本的同步照常",
+  rekey_limit: "今天換金鑰的額度用完了，明天會自動接著做；資料都還在這台，原本的同步照常",
+  rekey_pending: "正在換新的同步金鑰，換好之後才能加入新的裝置；請稍後再試",
   rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
 
@@ -176,6 +177,34 @@ export class SyncRekeyUnknownError extends Error {
     super("換金鑰的結果還不確定（同步服務沒有回應）。資料都還在：請稍後重新整理，已經換好的話這台會自動改用新的金鑰，到「顯示復原碼」看新的復原碼；沒有換成的話再試一次。");
   }
 }
+
+/** 換金鑰的每日額度用完（規格 12.10）：做到一半的保留著，resumeAt（毫秒）之後接著做 */
+export class SyncRekeyPausedError extends Error {
+  constructor(
+    readonly done: number,
+    readonly total: number,
+    readonly resumeAt: number,
+  ) {
+    super(`今天換金鑰的額度用完了：已完成 ${done}／${total} 筆，明天會自動接著做`);
+  }
+}
+
+/** 換到一半的換金鑰（畫面顯示用）：新空間、已經複製的筆數、先移除的裝置、今天的額度用完時幾點之後接著做（0 表示現在就可以） */
+export interface PendingRekey {
+  space: string;
+  resumeAt: number;
+  done: number;
+  total: number;
+  removed: string[];
+}
+
+/** 存在這台的同步狀態裡（sync_meta）：新的同步金鑰只在這台 */
+interface StoredRekey extends PendingRekey {
+  root: string;
+  from: string;
+}
+
+const REKEY_META = "rekey_pending";
 
 /** 裝置清單的一台（規格 12.27） */
 export interface SyncDevice {
@@ -394,13 +423,15 @@ export class SyncEngine {
   }
 
   /**
-   * 換金鑰（規格 12.27），同時移除 remove 列出的裝置（只換金鑰時是空的）. expected 是使用者確認時看到的裝置 id：
-   * 現在的清單和它不同（中間有裝置加入或被換掉）就停止，請使用者重新確認.
-   * 1. 先同步，取回雲端所有的紀錄（解密後放在記憶體）
-   * 2. 產生新的同步金鑰，建立新的空間、登記這台、把剛才的紀錄用新金鑰重新加密送過去（版本號不變）
-   * 3. 給留下的每台加密一份新金鑰、移除的附證明，簽一份聲明，送出換金鑰：伺服器在一個交易裡搬過留下的裝置、
-   *    刪掉舊空間的紀錄（冷卻期由伺服器檢查）. 在這之前斷掉的話什麼都沒換，重新來過就好
-   * 4. 這台改用新的金鑰，再同步一次
+   * 換金鑰（規格 12.27、12.10「換金鑰可以跨天完成」），同時移除 remove 列出的裝置（只換金鑰時是空的）.
+   * expected 是使用者確認時看到的裝置 id：現在的清單和它不同（中間有裝置加入或被換掉）就停止，請使用者重新確認.
+   * 1. 先同步；產生新的同步金鑰，建立新的空間（換到一半的新空間存在這台，之後接著做）
+   * 2. 有要移除的：馬上請伺服器把它們標成已移除（之後拒絕它們；它們下次連線拿到這台簽的聲明與證明）
+   * 3. 把舊空間的紀錄用新金鑰重新加密送到新空間（版本號不變）. 換金鑰的每日額度用完時停下（SyncRekeyPausedError），
+   *    隔天從斷掉的地方接著送（resumeRekey）；比對新空間已經有的紀錄與版本，不重送
+   * 4. 給留下的每台加密一份新金鑰，簽一份聲明，送出換金鑰（附上已經複製到舊空間的哪個序號）：伺服器在一個交易裡
+   *    搬過留下的裝置、刪掉舊空間的紀錄；這段時間舊空間又有新的寫入時伺服器拒絕，補送後再試
+   * 5. 這台改用新的金鑰，再同步一次
    * 解不開裝置紀錄的（伺服器塞的、或不是用這組同步金鑰登記的）不給新金鑰，也不算它的移除證明.
    * 回傳新的同步金鑰（已經用 onRootChanged 存起來），App 顯示新的復原碼
    */
@@ -419,83 +450,203 @@ export class SyncEngine {
       throw new SyncApiError(409, "裝置清單剛剛變了，請重新確認後再試", { state: "devices_changed" });
     }
     if (remove.some((id) => !ids.includes(id) || id === identity.id)) throw new Error("要移除的裝置不在清單裡");
-    onProgress?.({ step: "fetch" });
-    const { remote } = await this.fetchRemote(keys, 0);
 
-    const newRoot = newRootKey();
-    const newKeys = await deriveKeys(newRoot);
-    // 新的空間：先建立、登記這台、把資料送過去（還沒有別台知道它）. 帶上舊空間並用這台的金鑰簽：
-    // 伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制
-    await this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}`, undefined, { device: identity, token: newKeys.token });
-    // 之後任何一步失敗：放棄剛建立的新空間（只有這台知道它；伺服器只刪這一個，換金鑰已經完成的拒絕），舊的照舊，可以重試
-    const abandon = async (e: unknown): Promise<never> => {
-      await this.api.request("DELETE", `/v1/spaces/${newKeys.space}?abandon=1`, undefined, this.auth(newKeys)).catch(() => undefined);
-      throw this.cooldownOf(e) ?? e;
-    };
-    let rekeySent = false;
-    let copied: Awaited<ReturnType<SyncEngine["copyInto"]>>;
+    // 已經有換到一半的（這台開始的）：接著做那一個，不重新開始
+    let pending = await this.loadPending(keys);
+    if (!pending) {
+      const root = newRootKey();
+      const newKeys = await deriveKeys(root);
+      // 帶上舊空間並用這台的金鑰簽：伺服器確認是舊空間裡的裝置在換金鑰（一換一），不受整個服務的空間數限制.
+      // 伺服器上已經有一個這台不知道的（另一台開始的、或這台的紀錄不見了）：使用者這次明確要換，取代它
+      const create = (replace: boolean) =>
+        this.api.request("PUT", `/v1/spaces/${newKeys.space}?create=1&devices=1&from=${keys.space}${replace ? "&replace=1" : ""}`, undefined, {
+          device: identity,
+          token: newKeys.token,
+        });
+      await create(false).catch((e: unknown) => {
+        if (e instanceof SyncApiError && e.state === "rekey_pending") return create(true);
+        throw e;
+      });
+      pending = { root, keys: newKeys, stored: { root: toBase64url(root), space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [] } };
+      await this.savePending(pending.stored);
+    }
+    if (remove.length) await this.removeNow(keys, pending, raw, remove);
+    return this.finishRekey(keys, pending, onProgress);
+  }
+
+  /** 換到一半的換金鑰（這台開始的、還沒完成）；沒有的話 null */
+  async pendingRekey(): Promise<PendingRekey | null> {
+    const pending = await this.loadPending(await this.keys);
+    if (!pending) return null;
+    const { space, resumeAt, done, total, removed } = pending.stored;
+    return { space, resumeAt, done, total, removed };
+  }
+
+  /** 接著做換到一半的換金鑰（隔天、或關掉頁面再打開時）；沒有換到一半的時回傳 null */
+  async resumeRekey(onProgress?: (step: RekeyProgress) => void): Promise<Uint8Array | null> {
+    if (!this.device) return null;
+    const keys = await this.keys;
+    const pending = await this.loadPending(keys);
+    if (!pending) return null;
+    await this.sync();
+    // 同步時跟著別台換到新的空間（另一台換好了）：這台換到一半的已經沒有用
+    if ((await this.keys).space !== keys.space) return null;
+    return this.finishRekey(keys, pending, onProgress);
+  }
+
+  /** 放棄換到一半的換金鑰：刪掉新的空間（已經移除的裝置維持移除，換好金鑰之前不能加入新的裝置） */
+  async cancelRekey(): Promise<void> {
+    const pending = await this.loadPending(await this.keys);
+    if (!pending) return;
+    await this.api.request("DELETE", `/v1/spaces/${pending.keys.space}?abandon=1`, undefined, this.auth(pending.keys)).catch((e: unknown) => {
+      // 已經不在了（被清掉、被另一台取代）也算放棄了
+      if (!(e instanceof SyncApiError && (e.status === 404 || e.status === 403))) throw e;
+    });
+    await this.clearPending();
+  }
+
+  private async loadPending(keys: SyncKeys): Promise<{ root: Uint8Array; keys: SyncKeys; stored: StoredRekey } | null> {
+    const text = await this.db.syncTransaction((sql) => getMeta(sql, REKEY_META));
+    if (!text) return null;
     try {
-      const selfLabel = (await openLabel(keys, self, self.label)) ?? this.device.label();
+      const stored = JSON.parse(text) as StoredRekey;
+      // 從別的空間開始的（之後換過金鑰、或重新開始同步）：不適用
+      if (stored.from !== keys.space || typeof stored.root !== "string") return null;
+      const root = fromBase64url(stored.root);
+      const newKeys = await deriveKeys(root);
+      if (newKeys.space !== stored.space) return null;
+      return { root, keys: newKeys, stored: { ...stored, removed: Array.isArray(stored.removed) ? stored.removed : [] } };
+    } catch {
+      return null;
+    }
+  }
+
+  private savePending(stored: StoredRekey): Promise<void> {
+    return this.db.syncTransaction((sql) => setMeta(sql, REKEY_META, JSON.stringify(stored)));
+  }
+
+  private clearPending(): Promise<void> {
+    return this.db.syncTransaction(async (sql) => {
+      await sql.run("DELETE FROM sync_meta WHERE k=?", [REKEY_META]);
+    });
+  }
+
+  /**
+   * 移除馬上生效：伺服器把這幾台標成已移除，之後拒絕它們. 附上用舊同步金鑰算的證明與這台簽的聲明
+   * （從舊空間換到這個新空間、留下這台、移除它們），它們收到時驗得過才清掉自己的同步金鑰
+   */
+  private async removeNow(keys: SyncKeys, pending: { keys: SyncKeys; stored: StoredRekey }, raw: RawDevices, remove: string[]): Promise<void> {
+    const identity = this.device!.identity;
+    const targets = raw.devices.filter((d) => remove.includes(d.id));
+    const signed = await signStatement(identity, { v: 1, from: keys.space, to: pending.keys.space, keep: [identity.id], remove: targets.map((d) => d.id), boxes: {} });
+    const body = { space: pending.keys.space, remove: await Promise.all(targets.map(async (d) => ({ id: d.id, proof: await removalProof(keys, d.id) }))), ...signed };
+    try {
+      this.rawDevices = await this.api.request<RawDevices>("POST", `/v1/spaces/${keys.space}/remove`, body, this.auth(keys));
+    } catch (e) {
+      await this.dropIfGone(e);
+      throw this.cooldownOf(e) ?? e;
+    }
+    pending.stored.removed = [...new Set([...pending.stored.removed, ...targets.map((d) => d.id)])];
+    await this.savePending(pending.stored);
+  }
+
+  /** 換到一半的新空間已經不在（放棄太久被清掉、被另一台取代）：這台的紀錄也清掉，下次重新開始 */
+  private async dropIfGone(e: unknown): Promise<void> {
+    if (e instanceof SyncApiError && (e.state === "rekey_conflict" || (e.status === 404 && !e.state))) await this.clearPending();
+  }
+
+  /** 換金鑰的 3～5 步：接著複製、補上這段時間的變更、送出換金鑰、改用新的金鑰 */
+  private async finishRekey(
+    keys: SyncKeys,
+    pending: { root: Uint8Array; keys: SyncKeys; stored: StoredRekey },
+    onProgress?: (step: RekeyProgress) => void,
+  ): Promise<Uint8Array> {
+    const { identity } = this.device!;
+    const newKeys = pending.keys;
+    let rekeySent = false;
+    let copied: Map<string, { env: Envelope; seq: number }>;
+    try {
+      const raw0 = this.rawDevices ?? (await this.fetchDevices(keys));
+      const self0 = raw0.devices.find((d) => d.id === identity.id);
+      const selfLabel = (self0 && (await openLabel(keys, self0, self0.label))) ?? this.device!.label();
+      // 在新空間登記這台（已經登記過時伺服器照樣回清單）
       await this.api.request(
         "POST",
         `/v1/spaces/${newKeys.space}/devices`,
         { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
         { device: identity, token: newKeys.token },
       );
-      copied = await this.copyInto(
-        newKeys,
-        remote,
-        (done) => onProgress?.({ step: "copy", done, total: remote.size }),
-        (seconds) => onProgress?.({ step: "wait", seconds }),
-      );
-
-      const keep: { id: string; label: string; box: string }[] = [];
-      const removed: { id: string; proof: string | null }[] = [];
-      for (const d of raw.devices) {
-        if (d.id === identity.id) {
-          keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, newRoot, newKeys.space, identity) });
-          continue;
+      onProgress?.({ step: "fetch" });
+      const old = await this.fetchRemote(keys, 0);
+      // 新空間已經有的（之前幾天送過的）：版本一樣的不重送
+      copied = (await this.fetchRemote(newKeys, 0)).remote;
+      let since = old.since;
+      for (let round = 0; ; round++) {
+        await this.copyMissing(newKeys, old.remote, copied, pending.stored, onProgress);
+        const raw = await this.fetchDevices(keys);
+        const keep: { id: string; label: string; box: string }[] = [];
+        const removed: { id: string; proof: string | null }[] = [];
+        for (const d of raw.devices) {
+          if (d.id === identity.id) {
+            keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, pending.root, newKeys.space, identity) });
+            continue;
+          }
+          const label = await openLabel(keys, d, d.label);
+          if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, pending.root, newKeys.space, d) });
+          else removed.push({ id: d.id, proof: null });
         }
-        if (remove.includes(d.id)) {
-          removed.push({ id: d.id, proof: await removalProof(keys, d.id) });
-          continue;
+        const boxes: Record<string, string> = {};
+        for (const k of keep) boxes[k.id] = await boxHash(k.box);
+        const signed = await signStatement(identity, { v: 1, from: keys.space, to: newKeys.space, keep: keep.map((k) => k.id), remove: removed.map((r) => r.id), boxes });
+        onProgress?.({ step: "rekey" });
+        rekeySent = true;
+        try {
+          await this.api.request(
+            "POST",
+            `/v1/spaces/${keys.space}/rekey`,
+            { space: newKeys.space, token: newKeys.token, keep, remove: removed, seq: since, ...signed },
+            this.auth(keys),
+          );
+          break;
+        } catch (e) {
+          // 這段時間舊空間又有新的寫入（別台照常在同步）：補送之後再試
+          if (!(e instanceof SyncApiError && e.state === "rekey_behind") || round >= 5) throw e;
+          rekeySent = false;
+          const more = await this.fetchRemote(keys, since);
+          for (const [name, item] of more.remote) old.remote.set(name, item);
+          since = more.since;
         }
-        const label = await openLabel(keys, d, d.label);
-        if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, d) });
-        else removed.push({ id: d.id, proof: null });
       }
-      const boxes: Record<string, string> = {};
-      for (const k of keep) boxes[k.id] = await boxHash(k.box);
-      const signed = await signStatement(identity, {
-        v: 1,
-        from: keys.space,
-        to: newKeys.space,
-        keep: keep.map((k) => k.id),
-        remove: removed.map((r) => r.id),
-        boxes,
-      });
-      onProgress?.({ step: "rekey" });
-      rekeySent = true;
-      await this.api.request(
-        "POST",
-        `/v1/spaces/${keys.space}/rekey`,
-        { space: newKeys.space, token: newKeys.token, keep, remove: removed, ...signed },
-        this.auth(keys),
-      );
     } catch (e) {
-      // 送出換金鑰之後連不上或伺服器出錯：伺服器可能已經換好了. 先問舊空間，不確定時什麼都不刪
-      if (!(rekeySent && e instanceof SyncApiError && (e.status === 0 || e.status >= 500))) return abandon(e);
+      if (e instanceof SyncApiError && e.state === "rekey_limit") {
+        // 今天換金鑰的額度用完：停下來，隔天（UTC 日界）接著做
+        const seconds = typeof e.detail.retryAfter === "number" && e.detail.retryAfter > 0 ? e.detail.retryAfter : 3600;
+        pending.stored.resumeAt = this.now().getTime() + seconds * 1000;
+        await this.savePending(pending.stored);
+        throw new SyncRekeyPausedError(pending.stored.done, pending.stored.total, pending.stored.resumeAt);
+      }
+      // 送出換金鑰之後連不上或伺服器出錯：伺服器可能已經換好了. 先問舊空間，不確定時什麼都不動
+      if (!(rekeySent && e instanceof SyncApiError && (e.status === 0 || e.status >= 500))) {
+        await this.dropIfGone(e);
+        throw this.cooldownOf(e) ?? e;
+      }
       const outcome = await this.rekeyOutcome(keys, newKeys.space);
       if (outcome === "unknown") throw new SyncRekeyUnknownError();
-      if (outcome === "not_done") return abandon(e);
+      if (outcome === "not_done") throw e;
+      copied = (await this.fetchRemote(newKeys, 0)).remote;
     }
     onProgress?.({ step: "switch" });
-    await this.switchTo(newRoot, newKeys);
+    // 這台對舊空間的同步狀態：版本和新空間的一樣的才記成已同步（別台這段時間的變更這台還沒取回的，之後照常取回）
+    const before = await this.db.syncTransaction((sql) => loadState(sql));
+    await this.switchTo(pending.root, newKeys);
     await this.db.syncTransaction(async (sql) => {
-      for (const c of copied) await saveState(sql, c.name, c.hash, c.seq, c.v);
+      for (const [name, { env, seq }] of copied) {
+        const mine = before.get(name);
+        if (mine && mine.v === env.v) await saveState(sql, name, mine.hash, seq, env.v);
+      }
     });
     await this.sync();
-    return newRoot;
+    return pending.root;
   }
 
   /** 改用新的同步金鑰：存起來、清掉這台對舊空間的同步狀態（暫存的別台資料留著） */
@@ -540,35 +691,53 @@ export class SyncEngine {
     }
   }
 
-  private async copyInto(
+  /**
+   * 把舊空間有、新空間還沒有（或版本比較舊）的紀錄用新的金鑰重新加密送過去（版本號不變），copied 跟著更新.
+   * 資料多的時候會碰到自己的頻率限制：等時間窗過了接著送，不整個重來；換金鑰的每日額度用完時丟 rekey_limit
+   */
+  private async copyMissing(
     keys: SyncKeys,
     remote: Map<string, { env: Envelope; seq: number }>,
-    onCopied?: (done: number) => void,
-    onWait?: (seconds: number) => void,
-  ): Promise<{ name: string; hash: string; seq: number; v: number }[]> {
-    const copied: { name: string; hash: string; seq: number; v: number }[] = [];
-    const all = [...remote.values()].sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
-    for (let i = 0; i < all.length; i += PUSH_BATCH) {
-      const batch = all.slice(i, i + PUSH_BATCH);
+    copied: Map<string, { env: Envelope; seq: number }>,
+    progress: StoredRekey,
+    onProgress?: (step: RekeyProgress) => void,
+  ): Promise<void> {
+    const todo = [...remote.values()]
+      .filter(({ env }) => copied.get(env.k)?.env.v !== env.v)
+      .sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
+    const total = remote.size;
+    let done = total - todo.length;
+    const report = async () => {
+      progress.done = done;
+      progress.total = total;
+      progress.resumeAt = 0;
+      await this.savePending(progress);
+      onProgress?.({ step: "copy", done, total });
+    };
+    await report();
+    for (let i = 0; i < todo.length; i += PUSH_BATCH) {
+      const batch = todo.slice(i, i + PUSH_BATCH);
       const items = await Promise.all(
         batch.map(async ({ env }) => {
           const id = await recordId(keys, env.k);
-          return { id, base: 0, blob: await seal(keys, id, env) };
+          return { id, base: copied.get(env.k)?.seq ?? 0, blob: await seal(keys, id, env) };
         }),
       );
-      // 資料多的時候會碰到自己的頻率限制：等時間窗過了接著送，不整個重來
       const response = await this.patiently(
         () => this.api.request<{ applied: { id: string; seq: number }[]; conflicts: string[] }>("POST", `/v1/spaces/${keys.space}/changes`, { items }, this.auth(keys)),
-        onWait,
+        (seconds) => onProgress?.({ step: "wait", seconds }),
       );
       const seqById = new Map(response.applied.map((a) => [a.id, a.seq]));
       for (const [index, { env }] of batch.entries()) {
         const seq = seqById.get(items[index]!.id);
-        if (seq !== undefined) copied.push({ name: env.k, hash: env.d ? await hashOf(env.d) : DELETED, seq, v: env.v });
+        if (seq === undefined) continue;
+        copied.set(env.k, { env, seq });
+        done++;
       }
-      onCopied?.(Math.min(i + PUSH_BATCH, all.length));
+      // 只有這台寫新的空間，不應該有衝突；有的話停下來，下次重新比對
+      if (response.conflicts.length) throw new Error("換金鑰時新的空間的資料對不上，請再試一次");
+      await report();
     }
-    return copied;
   }
 
   /**

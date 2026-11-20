@@ -224,10 +224,16 @@ describe("換金鑰不受整個服務的空間數擋（一換一）", () => {
     await expect(api.request("PUT", `/v1/spaces/${space(79)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
       status: 503,
     });
-    // 過了冷卻期：可以，但同一個舊空間同時只有一個換到一半的：再開一個時，之前沒完成的被刪掉（重試不會失敗、也不會越積越多）
+    // 過了冷卻期：可以，但同一個舊空間同時只有一個換到一半的：再開一個時回 rekey_pending（接著做那一個）；
+    // 明確重新開始（replace=1）時之前沒完成的被刪掉（不會越積越多）
     advance(25 * HOUR);
     await api.request("PUT", `/v1/spaces/${space(80)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN });
-    await api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN });
+    await expect(api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}`, undefined, { device: a.identity, token: TOKEN })).rejects.toMatchObject({
+      status: 409,
+      state: "rekey_pending",
+    });
+    expect(await store.spaceToken(space(81))).toBeNull();
+    await api.request("PUT", `/v1/spaces/${space(81)}?create=1&devices=1&from=${oldSpace}&replace=1`, undefined, { device: a.identity, token: TOKEN });
     expect(await store.spaceToken(space(80))).toBeNull();
     expect(await store.spaceToken(space(81))).not.toBeNull();
     expect((await store.totals()).spaces).toBe(3);
@@ -307,7 +313,7 @@ describe("每個請求的 D1 查詢次數固定（Workers 每次呼叫有查詢�
 });
 
 describe("換金鑰中途失敗", () => {
-  it("複製到新空間時失敗：刪掉剛建立的新空間、舊的照舊、可以重試；進度回報到哪一步", async () => {
+  it("複製到新空間時失敗：換到一半的新空間留著、舊的照舊、再試時接著做同一個；進度回報到哪一步", async () => {
     const handle = freshHandler({ limits: { spaces: 1 } });
     let failCopy = true;
     let newSpace: string | null = null;
@@ -334,16 +340,17 @@ describe("換金鑰中途失敗", () => {
     advance(25 * HOUR);
     const steps: string[] = [];
     await expect(engine.rekey([], undefined, (p) => steps.push(p.step))).rejects.toMatchObject({ status: 0, message: "同步服務 30 秒沒有回應，請稍後再試" });
-    expect(steps).toEqual(["fetch"]);
-    expect(await store.spaceToken(newSpace!)).toBeNull();
-    expect((await store.totals()).spaces).toBe(1);
-    // 舊的照常同步；再試一次就成功
+    expect(steps).toEqual(["fetch", "copy"]);
+    const kept = newSpace!;
+    expect(await store.spaceToken(kept)).not.toBeNull();
+    // 舊的照常同步；再試一次就成功，用的是同一個新空間
     await engine.sync();
     failCopy = false;
     const before = root;
     await engine.rekey([], undefined, (p) => steps.push(p.step));
     expect(root).not.toEqual(before);
-    expect(steps.slice(1)).toEqual(["fetch", "copy", "rekey", "switch"]);
+    expect((await deriveKeys(root)).space).toBe(kept);
+    expect([...new Set(steps.slice(2))]).toEqual(["fetch", "copy", "rekey", "switch"]);
   });
 });
 
@@ -402,7 +409,7 @@ describe("換金鑰的結果不明、被頻率限制、並行", () => {
     expect((await t.engine.sync()).devices!.devices).toHaveLength(1);
   });
 
-  it("最後一步伺服器出錯、沒有換成：放棄新空間，舊的照舊", async () => {
+  it("最後一步伺服器出錯、沒有換成：舊的照舊，新空間留著下次接著做", async () => {
     let oldSpace = "";
     let newSpace = "";
     const t = await setup({
@@ -415,7 +422,8 @@ describe("換金鑰的結果不明、被頻率限制、並行", () => {
     const before = t.state.root;
     await expect(t.engine.rekey()).rejects.toMatchObject({ status: 502 });
     expect(t.state.root).toEqual(before);
-    expect(await store.spaceToken(newSpace)).toBeNull();
+    expect(await store.spaceToken(newSpace)).not.toBeNull();
+    expect(await t.engine.pendingRekey()).toMatchObject({ space: newSpace });
     expect(await recordsIn(oldSpace)).toBeGreaterThanOrEqual(3);
   });
 

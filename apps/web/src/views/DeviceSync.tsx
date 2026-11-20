@@ -617,9 +617,47 @@ function DeviceList({
           只換金鑰
         </button>
         <InfoTip label="移除與換金鑰">
-          移除某台時會換一把新的同步金鑰與復原碼：留下的裝置下次同步自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。懷疑復原碼外流時按「只換金鑰」。已經被下載的資料收不回來。
+          移除某台時，那台馬上不能再同步；接著換一把新的同步金鑰與復原碼（資料多時要好幾天，每天自動接著做）：留下的裝置換好後自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。懷疑復原碼外流時按「只換金鑰」。已經被下載的資料收不回來。
         </InfoTip>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 換金鑰的狀態（規格 12.10）：剛移除的那台已經不能同步；進行中的進度；今天的額度用完時「明天會自動接著做」
+ */
+function RekeyStatus({ onCancel }: { onCancel: () => void }) {
+  const { rekey } = useApp();
+  const { pending, busy, progress, removed } = rekey;
+  if (!busy && !pending && !removed) return null;
+  const removedText = removed ? `已經移除「${deviceName(removed)}」：那台已經不能再同步。` : pending?.removed.length ? "移除的裝置已經不能再同步。" : null;
+  const waiting = pending && !busy && pending.resumeAt > Date.now();
+  return (
+    <div className="notice info rekey-status" role="status">
+      {removedText && <p>{removedText}</p>}
+      {busy && <p>{progress ? rekeyProgressText(progress) : "換金鑰中…"}</p>}
+      {waiting && (
+        <p>
+          正在用新的金鑰重新加密資料：今天完成 {pending.done}／{pending.total} 筆，明天會自動接著做。
+        </p>
+      )}
+      {pending && !busy && !waiting && <p>換金鑰還沒完成（已完成 {pending.done}／{pending.total} 筆）。</p>}
+      {pending && !busy && (
+        <>
+          <p className="small muted">資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。換好時這裡會出現新的復原碼。</p>
+          <div className="actions">
+            {!waiting && (
+              <button onClick={() => void rekey.resume()}>
+                接著換金鑰
+              </button>
+            )}
+            <button className="text" onClick={onCancel}>
+              放棄換金鑰
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -627,9 +665,9 @@ function DeviceList({
 /** 換金鑰的進度 */
 function rekeyProgressText(p: RekeyProgress): string {
   if (p.step === "fetch") return "換金鑰中：取回雲端的資料…";
-  if (p.step === "copy") return `換金鑰中：用新的金鑰重新加密（${p.done}／${p.total} 筆）…`;
+  if (p.step === "copy") return `正在用新的金鑰重新加密資料：${p.done}／${p.total} 筆…`;
   if (p.step === "wait") return `換金鑰中：資料比較多，同步服務請我們等一下（約 ${p.seconds < 90 ? `${p.seconds} 秒` : `${Math.ceil(p.seconds / 60)} 分鐘`}），之後會自動接著做…`;
-  if (p.step === "rekey") return "換金鑰中：移除與換金鑰…";
+  if (p.step === "rekey") return "換金鑰中：送出換金鑰…";
   return "換金鑰中：改用新的金鑰…";
 }
 
@@ -643,7 +681,7 @@ function rekeyError(e: unknown, what: string): string {
 
 /** 設定頁的多裝置同步（規格 12.10） */
 export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
-  const { settings, updateSettings, deviceSync, trialSync, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
+  const { settings, updateSettings, deviceSync, rekey: rekeying, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
     "idle" | "verify" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
   >("idle");
@@ -655,8 +693,6 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const [saved, setSaved] = useState(false);
   const [restoreText, setRestoreText] = useState("");
   const [busy, setBusy] = useState(false);
-  /** 換金鑰進行到哪裡（資料多時要一段時間） */
-  const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
   const card = useRef<HTMLElement>(null);
 
@@ -784,39 +820,52 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
     }
   }
 
-  /** 移除某台並換金鑰，或只換金鑰（規格 12.27）；成功後顯示新的復原碼 */
+  /**
+   * 移除某台並換金鑰，或只換金鑰（規格 12.27）. 移除馬上生效；換金鑰資料多時可以跨好幾天（規格 12.10），
+   * 換好時（可能是之後自動接著做完的）顯示新的復原碼
+   */
   async function rekey(remove: SyncDevice | null) {
-    setBusy(true);
     setMode("idle");
     setMessage(null);
-    try {
-      // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
-      const rotateTrial = await trialSync.beforeRekey();
-      // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
-      const root = await deviceSync.engine!.rekey(
-        remove ? [remove.id] : [],
-        deviceSync.devices?.devices.map((d) => d.id),
-        (p) => setProgress(rekeyProgressText(p)),
-      );
-      await rotateTrial(root);
-      setCode(await recoveryCode(root));
+    // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
+    await rekeying.start(
+      remove,
+      deviceSync.devices?.devices.map((d) => d.id),
+    );
+    // 移除的那台在免費試用裡有自己的憑證：同步的移除管不到，提醒到試用的裝置清單也移除
+    if (remove && settings.llmMode === "proxy" && settings.proxy.token.trim()) {
+      setMessage({ kind: "warn", text: "那台如果也用免費試用，請到「AI 教練」的裝置清單也移除它。" });
+    }
+    setTarget(null);
+  }
+
+  // 換金鑰完成（剛剛按的，或之後自動接著做完的）：顯示新的復原碼
+  useEffect(() => {
+    const root = rekeying.finished;
+    if (!root) return;
+    rekeying.clearFinished();
+    void recoveryCode(root).then((text) => {
+      setCode(text);
       setSaved(false);
       setMode("newCode");
-      // 移除的那台在免費試用裡有自己的憑證：同步的移除管不到，提醒到試用的裝置清單也移除
-      if (remove && settings.llmMode === "proxy" && settings.proxy.token.trim()) {
-        setMessage({ kind: "warn", text: "那台如果也用免費試用，請到「AI 教練」的裝置清單也移除它。" });
-      }
-      void deviceSync.run();
-    } catch (e) {
-      setMode("idle");
-      setMessage({ kind: "error", text: rekeyError(e, remove ? "移除" : "換金鑰") });
-      // 清單變了：重新取一次，讓使用者看到現在有哪些裝置再決定
-      void deviceSync.run();
-    } finally {
-      setBusy(false);
-      setProgress(null);
-      setTarget(null);
-    }
+    });
+  }, [rekeying]);
+
+  // 換金鑰失敗：照原因說明
+  useEffect(() => {
+    if (!rekeying.error) return;
+    setMessage({ kind: "error", text: rekeyError(rekeying.error, rekeying.removed ? "移除" : "換金鑰") });
+    rekeying.clearError();
+  }, [rekeying]);
+
+  async function cancelRekey() {
+    if (
+      !confirm(
+        "放棄這次的換金鑰？已經移除的裝置維持移除；舊的同步金鑰與復原碼繼續用。要再換金鑰時從頭開始；換好之前不能加入新的裝置。",
+      )
+    )
+      return;
+    await rekeying.cancel();
   }
 
   async function showCode() {
@@ -1061,11 +1110,12 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           </div>
         ) : (
           <>
-            {busy && <p className="muted small">{progress ?? (target ? "移除並換金鑰中…" : "處理中…")}</p>}
+            {busy && <p className="muted small">處理中…</p>}
+            <RekeyStatus onCancel={() => void cancelRekey()} />
             {deviceSync.devicesMode && deviceSync.devices && (
               <DeviceList
                 devices={deviceSync.devices}
-                busy={busy || deviceSync.busy}
+                busy={busy || deviceSync.busy || rekeying.busy}
                 onRemove={(d) => {
                   setMessage(null);
                   setTarget(d);
