@@ -31,6 +31,20 @@ const DEBOUNCE_MS = 4_000;
 /** 這台看過哪些裝置（提醒新裝置加入用）；只存裝置 id */
 export const SEEN_KEY = "zone2mate.sync.seen-devices";
 
+/** 雲端的備份存多久（規格 12.10「不活躍的空間到期刪除」）：開始同步、顯示復原碼、同步設定都寫 */
+export const EXPIRY_TEXT = "所有裝置 12 個月都沒有同步，雲端的備份會刪除；這台的資料不受影響。";
+const EXPIRY_MS = 365 * 24 * 3600_000;
+
+/**
+ * 雲端的備份不見了，是不是過期刪除的：這台最後一次同步成功超過 12 個月（或沒有紀錄）.
+ * 這台 12 個月內同步過的話，伺服器那時記下了連線，不會是過期，而是在另一台刪除的
+ */
+export function expiredSince(lastAt: string | null, now = Date.now()): boolean {
+  if (!lastAt) return true;
+  const at = Date.parse(lastAt);
+  return !Number.isFinite(at) || now - at >= EXPIRY_MS;
+}
+
 export interface DeviceSyncState {
   /** 有同步服務、而且不在測試模式 */
   available: boolean;

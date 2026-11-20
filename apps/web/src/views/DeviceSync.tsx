@@ -33,6 +33,7 @@ import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "..
 import { checkPassword, lockEnabled } from "../settings";
 import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
 import { PrivacyLink } from "./PrivacyLink";
+import { EXPIRY_TEXT, expiredSince } from "../device-sync";
 
 interface Slot {
   newPub: string;
@@ -511,6 +512,11 @@ function cooldownLeft(devices: SyncDevices | null): number {
   return devices ? Math.max(0, devices.cooldownUntil - devices.serverTime) : 0;
 }
 
+/** 雲端的備份的保存期限 */
+function ExpiryNote() {
+  return <p className="small muted expiry-note">{EXPIRY_TEXT}</p>;
+}
+
 /**
  * 裝置清單（規格 12.27）：每台的名稱、加入與最後同步的時間、「這台」；改名、移除、換金鑰.
  * 最後同步的時間是伺服器記的，不靠各台自己寫
@@ -606,6 +612,7 @@ function DeviceList({
           </li>
         ))}
       </ul>
+      <ExpiryNote />
       {error && <div className="notice error">{error}</div>}
       {wait > 0 && (
         <p className="small notice info cooldown-note">
@@ -796,7 +803,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
       await deviceSync.api!.request("GET", `/v1/spaces/${keys.space}/changes?since=0&limit=1`, undefined, keys.token).catch((e: unknown) => {
         if (e instanceof SyncApiError && e.state === "devices_required") return;
         if (e instanceof SyncApiError && e.status === 410) throw new Error("這組復原碼已經換掉了（另一台換過金鑰）。請用新的復原碼，或用配對加入。");
-        throw new Error(e instanceof SyncApiError && e.status === 404 ? "雲端找不到這組復原碼的資料（可能已經刪除）。" : errorText(e));
+        throw new Error(e instanceof SyncApiError && e.status === 404 ? "雲端找不到這組復原碼的資料（可能已經刪除，或所有裝置 12 個月都沒有同步而過期）。" : errorText(e));
       });
       await saveKey(root);
       setMode("idle");
@@ -825,7 +832,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
     setMessage({ kind: "ok", text: "這台已停止同步。" });
   }
 
-  /** 雲端已經在別台刪除：用這台重新開始（新的金鑰與復原碼），這台的資料會送上去 */
+  /** 雲端的備份不在了（過期或在別台刪除）：用這台重新開始（新的金鑰與復原碼），這台的資料會送上去 */
   async function restartHere() {
     await deviceSync.engine?.forget();
     await saveKey(null);
@@ -950,6 +957,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           這是你的<strong>復原碼</strong>。所有裝置都不見時，只能靠它取回同步的資料；連我們也沒有辦法幫你找回。請截圖、印出來，或存進密碼管理器。
         </p>
         <code className="recovery-code">{code}</code>
+        <ExpiryNote />
         <label className="check">
           <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
           我已經把復原碼存好了
@@ -1013,17 +1021,23 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   } else if (deviceSync.enabled && deviceSync.gone) {
     body = (
       <>
-        <div className="notice warn">
-          <span>
-            <strong>雲端的同步資料已經在另一台刪除。</strong>這台的資料都還在，只是不再同步；舊的復原碼也不能用了。
-          </span>
+        <div className="notice warn sync-gone">
+          {expiredSince(deviceSync.lastAt) ? (
+            <span>
+              <strong>雲端的備份過期了。</strong>所有裝置 12 個月都沒有同步，雲端的備份已經刪除。這台的資料都還在，只是不再同步；舊的復原碼也不能用了。
+            </span>
+          ) : (
+            <span>
+              <strong>雲端的備份已經不在了</strong>（可能在另一台刪除了）。這台的資料都還在，只是不再同步；舊的復原碼也不能用了。
+            </span>
+          )}
         </div>
         <p className="small">
-          要繼續同步的話，用這台重新開始：會產生新的同步金鑰與復原碼，這台的資料送上去之後，其他裝置再用配對加入（加入前先在那台停止同步）。
+          要繼續同步的話，用這台的資料重新建立：會產生新的雲端備份與復原碼，這台的資料送上去之後，其他裝置要重新配對加入（加入前先在那台停止同步）。
         </p>
         <div className="row wrap">
           <button className="primary" disabled={busy} onClick={() => void restartHere()}>
-            用這台重新開始同步
+            用這台的資料重新建立
           </button>
           <button onClick={() => void stopHere(false)}>停止這台的同步</button>
         </div>
@@ -1051,6 +1065,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
                 資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。同步服務存了什麼見
                 <PrivacyLink />。
               </li>
+              <li>{EXPIRY_TEXT}</li>
             </ul>
           </InfoTip>
         </p>
@@ -1184,6 +1199,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
             </p>
             <code className="recovery-code">{code}</code>
             <AutoHideNote {...codeAutoHide} />
+            <ExpiryNote />
             {deviceSync.devicesMode ? (
               <p className="muted small">懷疑復原碼外流：按裝置清單下面的「只換金鑰」，舊的復原碼就失效，其他裝置自動換過去（已經被同步走的資料收不回來）。</p>
             ) : (
@@ -1206,6 +1222,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           <>
             {busy && <p className="muted small">處理中…</p>}
             <RekeyStatus onCancel={() => void cancelRekey()} />
+            {!(deviceSync.devicesMode && deviceSync.devices) && <ExpiryNote />}
             {deviceSync.devicesMode && deviceSync.devices && (
               <DeviceList
                 devices={deviceSync.devices}
