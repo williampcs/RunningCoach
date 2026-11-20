@@ -629,7 +629,7 @@ function DeviceList({
  */
 function RekeyStatus({ onCancel }: { onCancel: () => void }) {
   const { rekey } = useApp();
-  const { pending, busy, progress, removed, otherInProgress } = rekey;
+  const { pending, busy, progress, removed, otherInProgress, takeover } = rekey;
   if (otherInProgress && !busy && !pending) {
     return (
       <div className="notice info rekey-status" role="status">
@@ -641,31 +641,43 @@ function RekeyStatus({ onCancel }: { onCancel: () => void }) {
       </div>
     );
   }
-  if (!busy && !pending && !removed) return null;
+  if (!busy && !pending && !removed && !takeover) return null;
   const removedText = removed ? `已經移除「${deviceName(removed)}」：那台已經不能再同步。` : pending?.removed.length ? "移除的裝置已經不能再同步。" : null;
-  const waiting = pending && !busy && pending.resumeAt > Date.now();
+  const counts = pending ?? takeover;
+  const waiting = counts && !busy && counts.resumeAt > Date.now();
+  // 給了新的復原碼、還沒確認存好（還沒移除）
+  const notStarted = pending && !busy && pending.codeGiven && pending.removed.length === 0;
+  const locked = pending && pending.removed.length > 0;
   return (
     <div className="notice info rekey-status" role="status">
       {removedText && <p>{removedText}</p>}
       {busy && <p>{progress ? rekeyProgressText(progress) : "換金鑰中…"}</p>}
-      {waiting && (
+      {notStarted && <p>移除還沒開始：新的復原碼還沒確認存好。</p>}
+      {!notStarted && waiting && (
         <p>
-          正在用新的金鑰重新加密資料：今天完成 {pending.done}／{pending.total} 筆，明天會自動接著做。
+          正在用新的金鑰重新加密資料：今天完成 {counts.done}／{counts.total} 筆，明天會自動接著做。
         </p>
       )}
-      {pending && !busy && !waiting && <p>換金鑰還沒完成（已完成 {pending.done}／{pending.total} 筆）。</p>}
+      {!notStarted && counts && !busy && !waiting && <p>換金鑰還沒完成（已完成 {counts.done}／{counts.total} 筆）。</p>}
+      {takeover && !busy && <p className="small muted">這台用新的復原碼接手換金鑰；換好之前不能加入新的裝置。</p>}
       {pending && !busy && (
         <>
-          <p className="small muted">資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。換好時這裡會出現新的復原碼。</p>
+          <p className="small muted">
+            {locked
+              ? "資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。已經移除了裝置，這次換金鑰只能完成。"
+              : "資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。"}
+          </p>
           <div className="actions">
-            {!waiting && (
+            {!waiting && !notStarted && (
               <button onClick={() => void rekey.resume()}>
                 接著換金鑰
               </button>
             )}
-            <button className="text" onClick={onCancel}>
-              放棄換金鑰
-            </button>
+            {!locked && (
+              <button className="text" onClick={onCancel}>
+                放棄換金鑰
+              </button>
+            )}
           </div>
         </>
       )}
@@ -694,7 +706,7 @@ function rekeyError(e: unknown, what: string): string {
 export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const { settings, updateSettings, deviceSync, rekey: rekeying, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
   const [mode, setMode] = useState<
-    "idle" | "verify" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode"
+    "idle" | "verify" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode" | "removeCode"
   >("idle");
   /** 要移除的那台（規格 12.27） */
   const [target, setTarget] = useState<SyncDevice | null>(null);
@@ -839,16 +851,53 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
     setMode("idle");
     setMessage(null);
     // 使用者確認時看到的清單：換金鑰時的清單和它不同就停止，請使用者重新確認
+    const expected = deviceSync.devices?.devices.map((d) => d.id);
+    if (remove) {
+      // 移除之前先給新的復原碼：存好之後才移除（這台換到一半不見了，用它還原的裝置可以接手完成）
+      const root = await rekeying.prepare(remove, expected);
+      if (!root) {
+        setTarget(null);
+        return;
+      }
+      setCode(await recoveryCode(root));
+      setSaved(false);
+      setMode("removeCode");
+      return;
+    }
+    await rekeying.start(null, expected);
+  }
+
+  /** 新的復原碼存好了：移除並接著換金鑰 */
+  async function removeAfterCode(remove: SyncDevice) {
+    setMode("idle");
+    setCode(null);
+    setTarget(null);
     await rekeying.start(
       remove,
       deviceSync.devices?.devices.map((d) => d.id),
     );
-    // 移除的那台在免費試用裡有自己的憑證：同步的移除管不到，提醒到試用的裝置清單也移除
-    if (remove && settings.llmMode === "proxy" && settings.proxy.token.trim()) {
-      setMessage({ kind: "warn", text: "那台如果也用免費試用，請到「AI 教練」的裝置清單也移除它。" });
+    // 移除的那台在免費試用裡有自己的憑證：同步的移除管不到，提醒到試用的裝置清單也移除（換金鑰完成的說明一起寫）
+    if (settings.llmMode === "proxy" && settings.proxy.token.trim()) {
+      setMessage((current) => ({
+        kind: "warn",
+        text: `${current?.kind === "ok" ? current.text : ""}那台如果也用免費試用，請到「AI 教練」的裝置清單也移除它。`,
+      }));
     }
-    setTarget(null);
   }
+
+  // 換金鑰完成、新的復原碼移除時已經給過；或這台用新的復原碼接手做完
+  useEffect(() => {
+    if (rekeying.finishedQuietly) {
+      rekeying.clearFinished();
+      const done = "換金鑰完成。新的復原碼就是移除時存好的那一組，舊的已經失效。";
+      // 免費試用的提醒（removeAfterCode 設的）保留在後面
+      setMessage((current) => (current?.kind === "warn" ? { kind: "warn", text: `${done}${current.text}` } : { kind: "ok", text: done }));
+    }
+    if (rekeying.takeoverDone) {
+      rekeying.clearTakeoverDone();
+      setMessage({ kind: "ok", text: "換金鑰完成：這台接手做完了，留下的裝置下次同步會自動換過去。" });
+    }
+  }, [rekeying]);
 
   // 換金鑰完成（剛剛按的，或之後自動接著做完的）：顯示新的復原碼
   useEffect(() => {
@@ -1034,7 +1083,36 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
             </button>
           </div>
         )}
-        {mode === "newCode" ? (
+        {mode === "removeCode" && target ? (
+          <div className="pairing new-code remove-code">
+            <div className="notice info">
+              <span>
+                移除「{deviceName(target)}」之前，先存好<strong>新的復原碼</strong>。移除之後舊的復原碼就不能加入新的裝置；這台換金鑰換到一半如果不見了，用這組新的復原碼還原的裝置會接手做完。
+              </span>
+            </div>
+            <code className="recovery-code">{code}</code>
+            <label className="check">
+              <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
+              我已經把新的復原碼存好了
+            </label>
+            <div className="row">
+              <button className="primary" disabled={!saved} onClick={() => void removeAfterCode(target)}>
+                存好了，移除
+              </button>
+              <button
+                className="text"
+                onClick={() => {
+                  setMode("idle");
+                  setCode(null);
+                  setTarget(null);
+                  void rekeying.cancel();
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        ) : mode === "newCode" ? (
           <div className="pairing new-code">
             <div className="notice ok">
               <span>

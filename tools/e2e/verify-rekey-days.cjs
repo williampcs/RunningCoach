@@ -1,8 +1,9 @@
 // 驗證換金鑰可以跨天完成、移除馬上生效（規格 12.10「換金鑰可以跨天完成」，功能開關 devices）：
 // - A 開始同步、B 用復原碼還原；過了冷卻期 A 移除 B，而今天換金鑰的額度不夠（模擬上游 MOCK_SYNC_REKEY_WRITES=1）
 // - 移除馬上生效：A 看到「那台已經不能再同步」、B 重新整理就顯示已移除；換金鑰停下來：「今天完成 n／N 筆，明天會自動接著做」
-// - 換好之前用舊的復原碼加入新的裝置（C）不行；A 重新整理後狀態還在
-// - 隔天（模擬上游的時間推到下一個 UTC 日、額度放寬；A 的時鐘往後撥）A 自動接著做完，出現新的復原碼；B 仍然是已移除
+// - 換好之前用舊的復原碼加入新的裝置（C）不行，畫面說要用新的復原碼；A 重新整理後狀態還在
+// - 移除之前先給新的復原碼（存好才移除）；移除之後不能取消
+// - A 不見了；隔天（模擬上游推到下一個 UTC 日、額度放寬）D 用新的復原碼還原，自動接手做完、拿到資料；B 仍然是已移除
 // - 截圖（rekey-days-*）
 // 這個腳本自己開一份模擬上游（8796 埠，冷卻期 20 秒）並建置一份開著 devices 的網頁版（4178 埠）
 const { spawn, execFileSync } = require("child_process");
@@ -184,11 +185,22 @@ async function serve(outDir) {
     await syncNow(A);
     await rows(A).filter({ hasText: "iPhone · Safari" }).getByRole("button", { name: "移除" }).click();
     await A.card.getByRole("button", { name: "移除並換金鑰" }).click();
+    // 移除之前先給新的復原碼，存好才移除
+    await A.card.locator(".remove-code .recovery-code").waitFor({ timeout: 20000 });
+    const newRecovery = (await A.card.locator(".remove-code .recovery-code").innerText()).trim();
+    check.newCodeBeforeRemoval = newRecovery !== recovery && /^([0-9A-HJKMNP-TV-Z]{4}-){13}[0-9A-HJKMNP-TV-Z]$/.test(newRecovery);
+    check.mustSaveBeforeRemoval = await A.card.getByRole("button", { name: "存好了，移除" }).isDisabled();
+    // 還沒存好之前 B 照常同步（還沒移除）
+    await syncNow(B);
+    check.notRemovedBeforeSaved = (await B.page.locator(".removed-banner").count()) === 0 && !(await B.card.locator(".notice.error").count());
+    await A.page.screenshot({ path: `${E2E.OUT}/rekey-days-A-code-first-desktop-light.png` });
+    await A.card.getByLabel("我已經把新的復原碼存好了").check();
+    await A.card.getByRole("button", { name: "存好了，移除" }).click();
     const status = A.card.locator(".rekey-status");
     check.aShowsRemovedNow = await status.getByText(/已經移除「iPhone · Safari」：那台已經不能再同步。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
     check.aShowsPaused = await status.getByText(/正在用新的金鑰重新加密資料：今天完成 \d+／\d+ 筆，明天會自動接著做。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
     check.aListWithoutB = await waitNames(A, ["Mac · Edge"]);
-    check.noNewCodeYet = (await A.card.locator(".new-code").count()) === 0;
+    check.cannotCancelAfterRemoval = (await A.card.getByRole("button", { name: "放棄換金鑰" }).count()) === 0;
     await A.card.locator(".rekey-status").scrollIntoViewIfNeeded();
     await A.page.screenshot({ path: `${E2E.OUT}/rekey-days-A-paused-desktop-light.png` });
 
@@ -202,37 +214,38 @@ async function serve(outDir) {
     await C.card.getByRole("button", { name: "用復原碼還原" }).click();
     await C.card.getByLabel("復原碼").fill(recovery);
     await C.card.getByRole("button", { name: "還原" }).click();
-    check.cCannotJoinDuringRekey = await C.card.getByText(/正在換新的同步金鑰，換好之後才能加入新的裝置/).waitFor({ timeout: 15000 }).then(() => true, () => false);
-    await C.page.screenshot({ path: `${E2E.OUT}/rekey-days-C-blocked-desktop-dark.png` });
+    check.cToldToUseNewCode = await C.card.getByText(/請用移除裝置時拿到的新復原碼還原/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    await C.page.screenshot({ path: `${E2E.OUT}/rekey-days-C-old-code-desktop-dark.png` });
 
     step = "A 重新整理";
     await A.page.reload();
     await A.page.locator("nav.tabbar button").first().waitFor();
     await A.tab("設定");
     check.aPausedAfterReload = await A.card.locator(".rekey-status").getByText(/明天會自動接著做/).waitFor({ timeout: 15000 }).then(() => true, () => false);
-    check.aCanCancel = await A.card.getByRole("button", { name: "放棄換金鑰" }).isVisible();
     await A.page.emulateMedia({ colorScheme: "dark" });
     await A.page.screenshot({ path: `${E2E.OUT}/rekey-days-A-paused-desktop-dark.png` });
-    await A.page.emulateMedia({ colorScheme: "light" });
 
-    step = "隔天自動接著做";
+    step = "A 不見了，D 用新的復原碼接手";
+    await A.context.close();
     await fetch(`${MOCK}/mock-sync/next-day?rekeyWrites=1000000`, { method: "POST" });
-    await A.page.clock.fastForward(26 * 3600_000);
-    await A.card.locator(".new-code .recovery-code").waitFor({ timeout: 30000 });
-    const newRecovery = (await A.card.locator(".new-code .recovery-code").innerText()).trim();
-    check.newRecoveryDiffers = newRecovery !== recovery;
-    await A.card.getByLabel("我已經把新的復原碼存好了").check();
-    await A.card.getByRole("button", { name: "完成" }).click();
-    check.statusGone = await A.card.locator(".rekey-status").waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
-    await syncNow(A);
-    check.aStillSyncing = !(await A.card.locator(".notice.error").count());
-    await E2E.profile(A.page, "練什麼、怎麼練");
-    check.aDataKept = (await profileIntensity(A).inputValue()) === "challenge";
+    const D = await device("D", { mobile: true, ua: UA.iphone, scheme: "dark" });
+    await setup(D);
+    await D.card.getByRole("button", { name: "用復原碼還原" }).click();
+    await D.card.getByLabel("復原碼").fill(newRecovery);
+    await D.card.getByRole("button", { name: "還原" }).click();
+    check.dTakesOver = await D.card.getByText(/換金鑰完成：這台接手做完了/).waitFor({ timeout: 30000 }).then(() => true, () => false);
+    await D.page.screenshot({ path: `${E2E.OUT}/rekey-days-D-takeover-mobile-dark.png` });
+    await syncNow(D);
+    check.dStillSyncing = !(await D.card.locator(".notice.error").count());
+    check.dListsA = await waitNames(D, ["Mac · Edge", "iPhone · Safari"]);
+    await E2E.profile(D.page, "練什麼、怎麼練");
+    await D.page.waitForTimeout(500);
+    check.dGotData = (await profileIntensity(D).inputValue()) === "challenge";
+    check.noHorizontalScroll = await D.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
     step = "B 仍然是已移除";
     await B.page.reload();
     check.bStillRemoved = await B.page.locator(".removed-banner").waitFor({ timeout: 20000 }).then(() => true, () => false);
-    check.noHorizontalScroll = await B.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
   } catch (e) {
     problems.push(`FAILED at [${step}]: ${e.message.split("\n")[0]}`);
     for (const ctx of browser.contexts()) for (const p of ctx.pages()) {

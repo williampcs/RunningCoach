@@ -2,7 +2,8 @@
  * 換金鑰與移除別台（規格 12.27、12.10「換金鑰可以跨天完成」）. 放在 App 這一層：
  * - 移除馬上生效（伺服器先拒絕那台），換金鑰接著做；換金鑰的每日額度用完時停下，隔天自動接著做
  * - 打開 App（或頁面一直開著到了接著做的時間）時，有換到一半的就接著做，不用打開設定頁
- * - 完成時把新的同步金鑰留給設定頁的同步區塊顯示新的復原碼
+ * - 完成時把新的同步金鑰留給設定頁的同步區塊顯示新的復原碼（移除時已經給過的不再給）
+ * - 移除別台時先給新的復原碼（prepare），存好之後才移除；這台換到一半不見了，用新的復原碼還原的裝置自動接手完成（takeover）
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -22,6 +23,14 @@ export interface RekeyState {
   removed: SyncDevice | null;
   /** 換好了：新的同步金鑰（設定頁顯示新的復原碼後清掉） */
   finished: Uint8Array | null;
+  /** 換好了，新的復原碼移除時已經給過（不再顯示第二組） */
+  finishedQuietly: boolean;
+  /** 用新的復原碼還原、接手換金鑰的進度（這台接手時）；沒有的話 null */
+  takeover: { done: number; total: number; resumeAt: number } | null;
+  /** 這台接手的換金鑰完成了 */
+  takeoverDone: boolean;
+  /** 移除之前：建立新空間、回傳新的同步金鑰（顯示新的復原碼）；失敗時 null（看 error） */
+  prepare(remove: SyncDevice, expected: string[] | undefined): Promise<Uint8Array | null>;
   /** 另一台正在換金鑰（這台開始時伺服器上已經有一個換到一半的）：使用者可以選改由這台重新開始 */
   otherInProgress: boolean;
   start(remove: SyncDevice | null, expected: string[] | undefined): Promise<void>;
@@ -30,6 +39,7 @@ export interface RekeyState {
   resume(): Promise<void>;
   cancel(): Promise<void>;
   clearFinished(): void;
+  clearTakeoverDone(): void;
   clearError(): void;
 }
 
@@ -44,6 +54,10 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
   const [error, setError] = useState<unknown>(null);
   const [removed, setRemoved] = useState<SyncDevice | null>(null);
   const [finished, setFinished] = useState<Uint8Array | null>(null);
+  const [finishedQuietly, setFinishedQuietly] = useState(false);
+  const [takeover, setTakeover] = useState<{ done: number; total: number; resumeAt: number } | null>(null);
+  const [takeoverDone, setTakeoverDone] = useState(false);
+  const rekeyTarget = deviceSync.devices?.rekeyTarget === true;
   const [tick, setTick] = useState(0);
   const [otherInProgress, setOtherInProgress] = useState(false);
   const lastStart = useRef<{ remove: SyncDevice | null; expected: string[] | undefined } | null>(null);
@@ -53,6 +67,7 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
 
   const refresh = useCallback(async () => {
     setPending(engine ? await engine.pendingRekey().catch(() => null) : null);
+    setTakeover(engine ? await engine.takeoverStatus().catch(() => null) : null);
   }, [engine]);
 
   useEffect(() => {
@@ -69,10 +84,12 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
       try {
         // 免費試用的帳號（規格 12.44）：換之前記下現在的復原密鑰，換好之後換一把新的（被移除的那台知道的舊的就不能用）
         const rotateTrial = await trialSync.beforeRekey();
+        const codeGiven = (await engine.pendingRekey().catch(() => null))?.codeGiven === true;
         const root = await job(setProgress);
         if (root) {
           await rotateTrial(root);
-          setFinished(root);
+          if (codeGiven) setFinishedQuietly(true);
+          else setFinished(root);
           void deviceSync.run();
         }
       } catch (e) {
@@ -121,6 +138,38 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
     if (last) await begin(last.remove, last.expected, true);
   }, [begin]);
 
+  const prepare = useCallback(
+    async (remove: SyncDevice, expected: string[] | undefined) => {
+      if (!engine || running.current) return null;
+      running.current = true;
+      setBusy(true);
+      setError(null);
+      setOtherInProgress(false);
+      lastStart.current = { remove, expected };
+      try {
+        return await engine.prepareRekey([remove.id], expected);
+      } catch (e) {
+        if (e instanceof SyncApiError && e.state === "rekey_in_progress") setOtherInProgress(true);
+        else setError(e);
+        return null;
+      } finally {
+        running.current = false;
+        setBusy(false);
+        await refresh();
+      }
+    },
+    [engine, refresh],
+  );
+
+  const runTakeover = useCallback(async () => {
+    autoFailed.current = false;
+    await run(async (onProgress) => {
+      await engine!.takeover(onProgress);
+      setTakeoverDone(true);
+      return null;
+    });
+  }, [run, engine]);
+
   const resume = useCallback(async () => {
     autoFailed.current = false;
     await run((onProgress) => engine!.resumeRekey(onProgress));
@@ -138,9 +187,23 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
     await refresh();
   }, [engine, refresh]);
 
-  // 有換到一半的：時間到了就接著做（打開 App 時、頁面一直開著到了隔天）
+  // 用新的復原碼還原、同步空間是換到一半的新空間：自動接手（額度用完時等到隔天）
+  useEffect(() => {
+    if (!engine || !rekeyTarget || busy || autoFailed.current) return;
+    const wait = (takeover?.resumeAt ?? 0) - Date.now();
+    if (wait <= 0) {
+      void runTakeover();
+      return;
+    }
+    const timer = wait + 5_000 <= MAX_TIMER_MS ? setTimeout(() => void runTakeover(), wait + 5_000) : setTimeout(() => setTick((n) => n + 1), MAX_TIMER_MS);
+    return () => clearTimeout(timer);
+  }, [engine, rekeyTarget, takeover, busy, runTakeover, tick]);
+
+  // 有換到一半的：時間到了就接著做（打開 App 時、頁面一直開著到了隔天）.
+  // 給了新的復原碼、還沒確認存好（還沒移除）的不自動做：等使用者重新開始或放棄
   useEffect(() => {
     if (!engine || !pending || busy || autoFailed.current) return;
+    if (pending.codeGiven && pending.removed.length === 0) return;
     const wait = pending.resumeAt - Date.now();
     if (wait <= 0) {
       void resume();
@@ -159,14 +222,22 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState)
       error,
       removed,
       finished,
+      finishedQuietly,
+      takeover: rekeyTarget ? takeover : null,
+      takeoverDone,
+      prepare,
       otherInProgress,
       start,
       replaceOther,
       resume,
       cancel,
-      clearFinished: () => setFinished(null),
+      clearFinished: () => {
+        setFinished(null);
+        setFinishedQuietly(false);
+      },
+      clearTakeoverDone: () => setTakeoverDone(false),
       clearError: () => setError(null),
     }),
-    [pending, busy, progress, error, removed, finished, otherInProgress, start, replaceOther, resume, cancel],
+    [pending, busy, progress, error, removed, finished, finishedQuietly, rekeyTarget, takeover, takeoverDone, prepare, otherInProgress, start, replaceOther, resume, cancel],
   );
 }

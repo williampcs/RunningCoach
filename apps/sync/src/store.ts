@@ -15,7 +15,8 @@ const SCHEMA = `
     network     TEXT,
     network_at  INTEGER,
     progress_at INTEGER,
-    rekey_by    TEXT
+    rekey_by    TEXT,
+    handoff     TEXT
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -171,6 +172,7 @@ export class SyncStore {
       ["spaces", "network_at", "INTEGER"],
       ["spaces", "progress_at", "INTEGER"],
       ["spaces", "rekey_by", "TEXT"],
+      ["spaces", "handoff", "TEXT"],
       ["devices", "removed_by", "TEXT"],
       ["devices", "removal_statement", "TEXT"],
       ["devices", "removal_signature", "TEXT"],
@@ -255,6 +257,18 @@ export class SyncStore {
     return row?.rekey_by === null || row?.rekey_by === undefined ? null : String(row.rekey_by);
   }
 
+  /** 換到一半的新空間的接手資訊（以新的同步金鑰加密，伺服器看不到）；只有換到一半時能寫 */
+  async setHandoff(space: string, handoff: string): Promise<boolean> {
+    return (
+      (await this.driver.run("UPDATE spaces SET handoff=? WHERE id=? AND rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves)", [handoff, space])).changes > 0
+    );
+  }
+
+  async handoff(space: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT handoff FROM spaces WHERE id=? AND rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves)", [space]))[0];
+    return row?.handoff === null || row?.handoff === undefined ? null : String(row.handoff);
+  }
+
   /** 這幾筆 id 在這個空間已經有的內容長度（換金鑰的複製算新增的筆數與大小的差） */
   async existingSizes(space: string, ids: string[]): Promise<Map<string, number>> {
     if (!ids.length) return new Map();
@@ -294,7 +308,9 @@ export class SyncStore {
     const cutoff = this.now().getTime() - olderThanMs;
     const rows = await this.driver.all(
       "SELECT id FROM spaces WHERE rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves)" +
-        " AND ((progress_at IS NULL AND created_at < ?) OR progress_at < ?)",
+        " AND ((progress_at IS NULL AND created_at < ?) OR progress_at < ?)" +
+        // 已經提早移除過裝置的不清（只能完成：清掉的話接手資訊沒了，舊空間又不能加入新的裝置）
+        " AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.space = spaces.rekey_from AND d.removed_at IS NOT NULL)",
       [new Date(cutoff).toISOString(), cutoff],
     );
     for (const r of rows) await this.deleteOne(String(r.id));
@@ -515,8 +531,8 @@ export class SyncStore {
 
   /** 回傳是否新增（同一個 id 已經存在時不動） */
   /**
-   * 回傳是否新增（同一個 id 已經存在時不動）. 檢查與寫入在同一個敘述：這個空間有換到一半的換金鑰、或有先移除還沒換金鑰的裝置時不新增；
-   * 這個空間是換到一半的新空間時，只有開始換金鑰的那台（rekey_by）能登記
+   * 回傳是否新增（同一個 id 已經存在時不動）. 檢查與寫入在同一個敘述：這個空間有換到一半的換金鑰、或有先移除還沒換金鑰的裝置時不新增.
+   * 換到一半的新空間可以登記（登記要用新空間的憑證，也就是持有新的同步金鑰：開始的那台，或用新的復原碼接手的）
    */
   async addDevice(space: string, d: { id: string; signPub: string; boxPub: string; label: string; legacy: boolean }): Promise<boolean> {
     const now = this.now().getTime();
@@ -524,9 +540,8 @@ export class SyncStore {
       "INSERT INTO devices (space, id, sign_pub, box_pub, label, joined_at, last_seen_at, legacy) SELECT ?, ?, ?, ?, ?, ?, ?, ?" +
         " WHERE NOT EXISTS (SELECT 1 FROM spaces p WHERE p.rekey_from = ? AND p.id NOT IN (SELECT moved_to FROM moves))" +
         " AND NOT EXISTS (SELECT 1 FROM devices r WHERE r.space = ? AND r.removed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM moves m WHERE m.space = ?))" +
-        " AND NOT EXISTS (SELECT 1 FROM spaces n WHERE n.id = ? AND n.rekey_from IS NOT NULL AND n.id NOT IN (SELECT moved_to FROM moves) AND COALESCE(n.rekey_by, '') <> ?)" +
         " ON CONFLICT(space, id) DO NOTHING",
-      [space, d.id, d.signPub, d.boxPub, d.label, now, now, d.legacy ? 1 : 0, space, space, space, space, d.id],
+      [space, d.id, d.signPub, d.boxPub, d.label, now, now, d.legacy ? 1 : 0, space, space, space],
     );
     return result.changes > 0;
   }
@@ -571,7 +586,8 @@ export class SyncStore {
           " AND (? IS NULL OR (SELECT COALESCE(MAX(seq), 0) FROM records WHERE space=?) <= ?)), ?, ?, ?, ?)",
         params: [space, plan.newSpace, plan.copiedSeq ?? null, space, plan.copiedSeq ?? null, now, plan.caller, plan.statement, plan.signature],
       },
-      { sql: "DELETE FROM devices WHERE space=?", params: [plan.newSpace] },
+      // 新空間裡已經登記的：留下的那幾台換成舊空間的那一列（加入時間不變）；用新的復原碼接手的那台照舊留著
+      { sql: "DELETE FROM devices WHERE space=? AND id IN (SELECT value FROM json_each(?))", params: [plan.newSpace, JSON.stringify(plan.keep.map((k) => k.id))] },
       ...plan.keep.flatMap((k) => [
         {
           sql:

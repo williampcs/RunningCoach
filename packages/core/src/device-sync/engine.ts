@@ -60,7 +60,8 @@ const STATE_TEXT: Record<string, string> = {
   daily_limit: "今天的同步量已達上限，明天會自動恢復；資料都還在這台",
   network_full: "這個網路建立的同步空間已達總容量上限，新的資料暫時送不上去；資料都還在這台",
   rekey_limit: "今天換金鑰的額度用完了，明天會自動接著做；資料都還在這台，原本的同步照常",
-  rekey_pending: "正在換新的同步金鑰，換好之後才能加入新的裝置；請稍後再試",
+  rekey_pending: "這個同步正在換新的金鑰：請用移除裝置時拿到的新復原碼還原，或等換好之後再加入",
+  rekey_locked: "已經移除了裝置，這次換金鑰只能完成、不能取消",
   rekey_in_progress: "另一台正在換金鑰。要改由這台重新開始，按「改由這台換」（另一台的換金鑰會取消）",
   rekey_too_large: "資料太多，目前的服務方案一天搬不完，暫時無法換金鑰（移除裝置）；原本的同步照常",
 };
@@ -192,6 +193,8 @@ export class SyncRekeyPausedError extends Error {
 
 /** 換到一半的換金鑰（畫面顯示用）：新空間、已經複製的筆數、先移除的裝置、今天的額度用完時幾點之後接著做（0 表示現在就可以） */
 export interface PendingRekey {
+  /** 移除之前已經給過新的復原碼（完成時不再給第二組） */
+  codeGiven?: boolean;
   space: string;
   resumeAt: number;
   done: number;
@@ -206,6 +209,19 @@ interface StoredRekey extends PendingRekey {
   /** 開始時（使用者確認過的）裝置清單 */
   expected?: string[];
 }
+
+/** 換金鑰的最後一步（留下的、解不開而移除的、聲明） */
+interface RekeyPlanBody {
+  keep: { id: string; label: string; box: string }[];
+  remove: { id: string; proof: string | null }[];
+  statement: string;
+  signature: string;
+}
+
+/** 接手資訊在新空間的 id（加密時的附加資料） */
+const HANDOFF_ID = "rekey-handoff";
+/** 用新的復原碼接手時的進度（這台的 sync_meta） */
+const TAKEOVER_META = "rekey_takeover";
 
 const REKEY_META = "rekey_pending";
 
@@ -227,6 +243,8 @@ export interface SyncDevices {
   /** 這台可以移除別台、換金鑰的時間（毫秒）；0 表示沒有限制 */
   cooldownUntil: number;
   serverTime: number;
+  /** 這個同步空間是換到一半的新空間（用新的復原碼還原的：可以接手完成換金鑰） */
+  rekeyTarget: boolean;
 }
 
 interface RawDevice {
@@ -244,6 +262,7 @@ interface RawDevices {
   self: string;
   cooldownUntil: number;
   serverTime: number;
+  rekeyTarget?: boolean;
 }
 
 /** 裝置模式（功能開關 devices）：這台自己的金鑰、第一次登記的名稱、同步金鑰換了時存起來 */
@@ -269,6 +288,8 @@ export interface SyncResult {
 
 export class SyncEngine {
   private keys: Promise<SyncKeys>;
+  /** 現在的同步金鑰（接手資訊要帶舊的） */
+  private root: Uint8Array;
   private spaceReady = false;
   private running: Promise<SyncResult> | null = null;
   /** 上次取得的裝置清單（含公開金鑰；改名、換金鑰用） */
@@ -281,6 +302,7 @@ export class SyncEngine {
     private readonly now: () => Date = () => new Date(),
     private readonly device: SyncDeviceOptions | null = null,
   ) {
+    this.root = root;
     this.keys = deriveKeys(root);
   }
 
@@ -412,7 +434,7 @@ export class SyncEngine {
         self: d.id === this.device?.identity.id,
       })),
     );
-    return { devices, cooldownUntil: raw.cooldownUntil, serverTime: raw.serverTime };
+    return { devices, cooldownUntil: raw.cooldownUntil, serverTime: raw.serverTime, rekeyTarget: raw.rekeyTarget === true };
   }
 
   /** 改名（任何一台都可以替任何一台改） */
@@ -445,6 +467,29 @@ export class SyncEngine {
     /** replace：伺服器上已經有一個這台不知道的換到一半的（另一台開始的、或這台的紀錄不見了）時，使用者明確選了改由這台重新開始 */
     opts: { replace?: boolean } = {},
   ): Promise<Uint8Array> {
+    const { keys, raw, pending } = await this.startRekey(remove, expected, opts);
+    if (remove.length) {
+      await this.removeNow(keys, pending, raw, remove);
+      // 移除之後清單變了：接手資訊照新的清單再寫一次
+      await this.publishHandoff(keys, pending, await this.fetchDevices(keys));
+    }
+    return this.finishRekey(keys, pending, onProgress);
+  }
+
+  /**
+   * 移除別台之前（規格 12.10「用新的復原碼接手」）：先建立換到一半的新空間、在新空間登記這台、寫好接手資訊，
+   * 回傳新的同步金鑰，App 先顯示新的復原碼，使用者存好之後才呼叫 rekey(remove) 移除並接著換.
+   * 這台在換好之前不見了，用新的復原碼還原的裝置可以接手完成
+   */
+  async prepareRekey(remove: string[], expected?: string[], opts: { replace?: boolean } = {}): Promise<Uint8Array> {
+    const { pending } = await this.startRekey(remove, expected, opts);
+    pending.stored.codeGiven = true;
+    await this.savePending(pending.stored);
+    return pending.root;
+  }
+
+  /** 換金鑰的開頭（rekey 與 prepareRekey 共用）：檢查清單；沒有換到一半的就建立新空間、登記這台、寫接手資訊 */
+  private async startRekey(remove: string[], expected: string[] | undefined, opts: { replace?: boolean }) {
     if (!this.device) throw new Error("換金鑰要開啟裝置清單");
     const { identity } = this.device;
     await this.sync();
@@ -478,17 +523,65 @@ export class SyncEngine {
         stored: { root: toBase64url(root), space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [], expected: ids },
       };
       await this.savePending(pending.stored);
+      await this.registerInNew(keys, pending.keys, raw);
+      await this.publishHandoff(keys, pending, raw, remove);
     }
-    if (remove.length) await this.removeNow(keys, pending, raw, remove);
-    return this.finishRekey(keys, pending, onProgress);
+    return { keys, raw, pending };
+  }
+
+  /** 在新空間登記這台（已經登記過時伺服器照樣回清單） */
+  private async registerInNew(keys: SyncKeys, newKeys: SyncKeys, raw: RawDevices): Promise<void> {
+    const { identity } = this.device!;
+    const self = raw.devices.find((d) => d.id === identity.id);
+    const label = (self && (await openLabel(keys, self, self.label))) ?? this.device!.label();
+    await this.api.request(
+      "POST",
+      `/v1/spaces/${newKeys.space}/devices`,
+      { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, label) },
+      { device: identity, token: newKeys.token },
+    );
+  }
+
+  /**
+   * 換金鑰的最後一步要送的（留下的每台的新金鑰、解不開的移除、這台簽的聲明）. remove：這次要移除的（還在清單裡時排除）
+   */
+  private async rekeyPlan(keys: SyncKeys, newRoot: Uint8Array, newKeys: SyncKeys, raw: RawDevices, remove: string[] = []): Promise<RekeyPlanBody> {
+    const { identity } = this.device!;
+    const keep: { id: string; label: string; box: string }[] = [];
+    const removed: { id: string; proof: string | null }[] = [];
+    for (const d of raw.devices) {
+      if (remove.includes(d.id)) continue;
+      if (d.id === identity.id) {
+        const label = (await openLabel(keys, d, d.label)) ?? this.device!.label();
+        keep.push({ id: d.id, label: await sealLabel(newKeys, identity, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, identity) });
+        continue;
+      }
+      const label = await openLabel(keys, d, d.label);
+      if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, newRoot, newKeys.space, d) });
+      else removed.push({ id: d.id, proof: null });
+    }
+    const boxes: Record<string, string> = {};
+    for (const k of keep) boxes[k.id] = await boxHash(k.box);
+    const signed = await signStatement(identity, { v: 1, from: keys.space, to: newKeys.space, keep: keep.map((k) => k.id), remove: removed.map((r) => r.id), boxes });
+    return { keep, remove: removed, ...signed };
+  }
+
+  /**
+   * 接手資訊：舊的同步金鑰與事先簽好的最後一步，用新的同步金鑰加密存在新空間（伺服器看不到）.
+   * 用新的復原碼還原的裝置讀它，接著搬舊空間的資料、送出最後一步
+   */
+  private async publishHandoff(keys: SyncKeys, pending: { root: Uint8Array; keys: SyncKeys }, raw: RawDevices, remove: string[] = []): Promise<void> {
+    const plan = await this.rekeyPlan(keys, pending.root, pending.keys, raw, remove);
+    const handoff = await seal(pending.keys, HANDOFF_ID, { v: 1, root: toBase64url(this.root), from: keys.space, plan });
+    await this.api.request("PUT", `/v1/spaces/${pending.keys.space}/handoff`, { handoff }, this.auth(pending.keys));
   }
 
   /** 換到一半的換金鑰（這台開始的、還沒完成）；沒有的話 null */
   async pendingRekey(): Promise<PendingRekey | null> {
     const pending = await this.loadPending(await this.keys);
     if (!pending) return null;
-    const { space, resumeAt, done, total, removed } = pending.stored;
-    return { space, resumeAt, done, total, removed };
+    const { space, resumeAt, done, total, removed, codeGiven } = pending.stored;
+    return { space, resumeAt, done, total, removed, codeGiven };
   }
 
   /** 接著做換到一半的換金鑰（隔天、或關掉頁面再打開時）；沒有換到一半的時回傳 null */
@@ -508,12 +601,78 @@ export class SyncEngine {
     const keys = await this.keys;
     const pending = await this.loadPending(keys);
     if (!pending) return;
+    if (pending.stored.removed.length) throw new Error("已經移除了裝置，這次換金鑰只能完成、不能取消。");
     // 在舊空間簽章（這台還沒登記到新空間時也放得掉）
     await this.api.request("DELETE", `/v1/spaces/${keys.space}/rekey`, undefined, this.auth(keys)).catch((e: unknown) => {
       // 舊空間已經不在：也就沒有換到一半的了
       if (!(e instanceof SyncApiError && e.status === 404)) throw e;
     });
     await this.clearPending();
+  }
+
+  /** 用新的復原碼接手換金鑰的進度（這台接手過、還沒完成時）；沒有的話 null */
+  async takeoverStatus(): Promise<{ done: number; total: number; resumeAt: number } | null> {
+    const text = await this.db.syncTransaction((sql) => getMeta(sql, TAKEOVER_META));
+    if (!text) return null;
+    try {
+      const value = JSON.parse(text) as { space?: string; done: number; total: number; resumeAt: number };
+      return value.space === (await this.keys).space ? { done: value.done, total: value.total, resumeAt: value.resumeAt } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 用新的復原碼接手（規格 12.10）：這台是用移除時拿到的新復原碼還原的，同步空間是換到一半的新空間.
+   * 讀接手資訊（舊的同步金鑰與開始的那台事先簽好的最後一步，以新的同步金鑰加密），經由新空間讀舊空間的資料、
+   * 用新的金鑰重新加密送過來（額度照開始的那台算），最後送出事先簽好的換金鑰. 額度用完時丟 SyncRekeyPausedError
+   */
+  async takeover(onProgress?: (step: RekeyProgress) => void): Promise<void> {
+    if (!this.device) throw new Error("接手換金鑰要開啟裝置清單");
+    const keys = await this.keys;
+    const raw = await this.fetchDevices(keys);
+    if (!raw.rekeyTarget) return;
+    const { handoff } = await this.api.request<{ handoff: string | null }>("GET", `/v1/spaces/${keys.space}/handoff`, undefined, this.auth(keys));
+    if (!handoff) throw new Error("找不到接手換金鑰需要的資料；請在開始換金鑰的那台接著做。");
+    const info = (await open(keys, HANDOFF_ID, handoff)) as { v: number; root: string; from: string; plan: RekeyPlanBody };
+    const oldKeys = await deriveKeys(fromBase64url(info.root));
+    if (info.v !== 1 || oldKeys.space !== info.from) throw new Error("接手換金鑰的資料對不上，停止。");
+    const progress = { space: keys.space, done: 0, total: 0, resumeAt: 0 };
+    const save = () => this.db.syncTransaction((sql) => setMeta(sql, TAKEOVER_META, JSON.stringify(progress)));
+    const via = { path: `/v1/spaces/${keys.space}/source`, auth: this.auth(keys) };
+    try {
+      onProgress?.({ step: "fetch" });
+      const old = await this.fetchRemote(oldKeys, 0, via);
+      const copied = (await this.fetchRemote(keys, 0)).remote;
+      let since = old.since;
+      for (let round = 0; ; round++) {
+        await this.copyMissing(keys, old.remote, copied, progress, save, onProgress);
+        onProgress?.({ step: "rekey" });
+        try {
+          await this.api.request("POST", `/v1/spaces/${keys.space}/complete`, { space: keys.space, seq: since, ...info.plan }, this.auth(keys));
+          break;
+        } catch (e) {
+          if (!(e instanceof SyncApiError && e.state === "rekey_behind") || round >= 5) throw e;
+          const more = await this.fetchRemote(oldKeys, since, via);
+          for (const [name, item] of more.remote) old.remote.set(name, item);
+          since = more.since;
+        }
+      }
+    } catch (e) {
+      if (e instanceof SyncApiError && e.state === "rekey_limit") {
+        const seconds = typeof e.detail.retryAfter === "number" && e.detail.retryAfter > 0 ? e.detail.retryAfter : 3600;
+        progress.resumeAt = this.now().getTime() + seconds * 1000;
+        await save();
+        throw new SyncRekeyPausedError(progress.done, progress.total, progress.resumeAt);
+      }
+      throw e;
+    }
+    onProgress?.({ step: "switch" });
+    await this.db.syncTransaction(async (sql) => {
+      await sql.run("DELETE FROM sync_meta WHERE k=?", [TAKEOVER_META]);
+    });
+    this.rawDevices = null;
+    await this.sync();
   }
 
   private async loadPending(keys: SyncKeys): Promise<{ root: Uint8Array; keys: SyncKeys; stored: StoredRekey } | null> {
@@ -580,54 +739,28 @@ export class SyncEngine {
     pending: { root: Uint8Array; keys: SyncKeys; stored: StoredRekey },
     onProgress?: (step: RekeyProgress) => void,
   ): Promise<Uint8Array> {
-    const { identity } = this.device!;
     const newKeys = pending.keys;
     let rekeySent = false;
     let copied: Map<string, { env: Envelope; seq: number }>;
+    const save = () => this.savePending(pending.stored);
     try {
       const raw0 = await this.fetchDevices(keys);
       await this.checkExpected(raw0, pending.stored);
-      const self0 = raw0.devices.find((d) => d.id === identity.id);
-      const selfLabel = (self0 && (await openLabel(keys, self0, self0.label))) ?? this.device!.label();
-      // 在新空間登記這台（已經登記過時伺服器照樣回清單）
-      await this.api.request(
-        "POST",
-        `/v1/spaces/${newKeys.space}/devices`,
-        { id: identity.id, signPub: identity.signPub, boxPub: identity.boxPub, label: await sealLabel(newKeys, identity, selfLabel) },
-        { device: identity, token: newKeys.token },
-      );
+      await this.registerInNew(keys, newKeys, raw0);
       onProgress?.({ step: "fetch" });
       const old = await this.fetchRemote(keys, 0);
       // 新空間已經有的（之前幾天送過的）：版本一樣的不重送
       copied = (await this.fetchRemote(newKeys, 0)).remote;
       let since = old.since;
       for (let round = 0; ; round++) {
-        await this.copyMissing(newKeys, old.remote, copied, pending.stored, onProgress);
+        await this.copyMissing(newKeys, old.remote, copied, pending.stored, save, onProgress);
         const raw = await this.fetchDevices(keys);
         await this.checkExpected(raw, pending.stored);
-        const keep: { id: string; label: string; box: string }[] = [];
-        const removed: { id: string; proof: string | null }[] = [];
-        for (const d of raw.devices) {
-          if (d.id === identity.id) {
-            keep.push({ id: d.id, label: await sealLabel(newKeys, identity, selfLabel), box: await sealRekeyBox(keys, pending.root, newKeys.space, identity) });
-            continue;
-          }
-          const label = await openLabel(keys, d, d.label);
-          if (label) keep.push({ id: d.id, label: await sealLabel(newKeys, d, label), box: await sealRekeyBox(keys, pending.root, newKeys.space, d) });
-          else removed.push({ id: d.id, proof: null });
-        }
-        const boxes: Record<string, string> = {};
-        for (const k of keep) boxes[k.id] = await boxHash(k.box);
-        const signed = await signStatement(identity, { v: 1, from: keys.space, to: newKeys.space, keep: keep.map((k) => k.id), remove: removed.map((r) => r.id), boxes });
+        const plan = await this.rekeyPlan(keys, pending.root, newKeys, raw);
         onProgress?.({ step: "rekey" });
         rekeySent = true;
         try {
-          await this.api.request(
-            "POST",
-            `/v1/spaces/${keys.space}/rekey`,
-            { space: newKeys.space, token: newKeys.token, keep, remove: removed, seq: since, ...signed },
-            this.auth(keys),
-          );
+          await this.api.request("POST", `/v1/spaces/${keys.space}/rekey`, { space: newKeys.space, token: newKeys.token, seq: since, ...plan }, this.auth(keys));
           break;
         } catch (e) {
           // 這段時間舊空間又有新的寫入（別台照常在同步）：補送之後再試
@@ -673,6 +806,7 @@ export class SyncEngine {
   /** 改用新的同步金鑰：存起來、清掉這台對舊空間的同步狀態（暫存的別台資料留著） */
   private async switchTo(root: Uint8Array, keys: SyncKeys): Promise<void> {
     await this.device!.onRootChanged(root);
+    this.root = root;
     this.keys = Promise.resolve(keys);
     this.spaceReady = false;
     this.rawDevices = null;
@@ -720,7 +854,8 @@ export class SyncEngine {
     keys: SyncKeys,
     remote: Map<string, { env: Envelope; seq: number }>,
     copied: Map<string, { env: Envelope; seq: number }>,
-    progress: StoredRekey,
+    progress: { done: number; total: number; resumeAt: number },
+    save: () => Promise<void>,
     onProgress?: (step: RekeyProgress) => void,
   ): Promise<void> {
     const todo = [...remote.values()]
@@ -732,7 +867,7 @@ export class SyncEngine {
       progress.done = done;
       progress.total = total;
       progress.resumeAt = 0;
-      await this.savePending(progress);
+      await save();
       onProgress?.({ step: "copy", done, total });
     };
     await report();
@@ -877,15 +1012,20 @@ export class SyncEngine {
   }
 
   /** 取回 since 之後的紀錄並解密（依序號；同一筆只留最後一版）；回傳最後的序號 */
-  private async fetchRemote(keys: SyncKeys, from: number): Promise<{ remote: Map<string, { env: Envelope; seq: number }>; since: number }> {
+  /** via：從哪裡取（預設是這個空間；接手時是換到一半的新空間轉讀的舊空間）；keys 是解密用的 */
+  private async fetchRemote(
+    keys: SyncKeys,
+    from: number,
+    via: { path: string; auth: SyncAuth } | null = null,
+  ): Promise<{ remote: Map<string, { env: Envelope; seq: number }>; since: number }> {
     let since = from;
     const remote = new Map<string, { env: Envelope; seq: number }>();
     for (;;) {
       const page = await this.api.request<{ items: { id: string; seq: number; blob: string }[]; more: boolean }>(
         "GET",
-        `/v1/spaces/${keys.space}/changes?since=${since}`,
+        `${via?.path ?? `/v1/spaces/${keys.space}/changes`}?since=${since}`,
         undefined,
-        this.auth(keys),
+        via?.auth ?? this.auth(keys),
       );
       for (const item of page.items) {
         const env = (await open(keys, item.id, item.blob)) as Envelope;
