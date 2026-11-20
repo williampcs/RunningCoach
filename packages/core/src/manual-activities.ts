@@ -51,6 +51,11 @@ export interface ManualActivity extends ManualActivityInput {
   updated_at: string;
 }
 
+/** 範圍（回報的檢查與同步套用共用）：時間（分）、距離（km）、備註的字數 */
+export const MANUAL_MAX_MINUTES = 24 * 60;
+export const MANUAL_MAX_KM = 500;
+export const MANUAL_MAX_NOTES = 2000;
+
 /** 手動記的活動用的類型（和 Intervals.icu 的類型同一套，sportOfType 認得） */
 export const MANUAL_TYPES: Record<string, string> = { run: "Run", ride: "Ride", swim: "Swim", strength: "WeightTraining", other: "Other" };
 /** other_activities 裡手動記的 id 的開頭 */

@@ -905,7 +905,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     - 照共同規則開 PR 到 v2。
     - 這是 App 也會用到的共用程式，不違反「網頁版只修錯」。
     - 同步多一種紀錄，PR 也請安全 session 看一下。
-  - 狀態：開發中（開發 session「沒有紀錄的課也能回報」），PR 到 v2 待協調 session 檢查（npm test 991 項、typecheck、E2E `verify-session-report` 與 `verify-plan`、`verify-self-change`、`verify-no-watch`、`verify-checkin`、`verify-multisport`、`verify-history`、`verify-help` 都過）。實作、驗證、沒做的與資料放哪裡的理由見 12.48；在功能開關 `report` 後面（staging 全開，正式版要在 `WEB_FEATURES` 加 `report`）。
+  - 狀態：開發中（開發 session「沒有紀錄的課也能回報」），PR 到 v2 待協調 session 檢查（npm test 992 項、typecheck、E2E `verify-session-report` 與 `verify-plan`、`verify-self-change`、`verify-no-watch`、`verify-checkin`、`verify-multisport`、`verify-history`、`verify-help` 都過）。實作、驗證、沒做的與資料放哪裡的理由見 12.48；在功能開關 `report` 後面（staging 全開，正式版要在 `WEB_FEATURES` 加 `report`）。
 
 - **同步的容量第一段：不活躍的空間到期刪除**（`doc/strategy-map.md` 的模塊簡報「同步的容量」第一段，協調接手；規格 12.47、12.10、12.20；2026-11-20 使用者對細談的三點：「全部照建議」）
   - 要做什麼：
@@ -5986,6 +5986,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 新的種類 `ma:<sync_id>`，整筆一起送（運動、日期、時間、距離、體感、備註、那堂課、做到多少、修改時間）。跑步那種不再送 `mw:`，其他運動的體感不另外送 `af:`。
 - 舊版不認得 `ma:`：照原本的規則不套用也不刪（`isKnown` 之外的種類）。這版看不懂的內容（例如之後新版才有的運動）先暫存，不當成這台刪掉送出刪除。
 - 伺服器不多存東西：一樣是加密後的一筆紀錄。
+- 範圍（安全 session 的建議）：時間 1–1440 分、體感 1–10 的整數、距離 0–500 km、備註 2000 字以內、日期不晚於明天。回報與 `report_session` 超出時回錯誤；同步收到超出的那一筆不採用（先暫存，不寫進資料庫、也不當成刪除），不夾到範圍內：夾過的值不是選手填的，而且會和送出那台的內容不一樣、來回互送。
 
 *比對與教練*
 - `matchWeek` 先找連到那堂課的紀錄（不看日期與種類），之後照原本的日期與種類配。選手說的做到多少為準：完成 → 照時間與體感判斷（短很多仍是部分達成）；做了一部分 → 部分達成；有改 → 做了不一樣的課（跑步以外的課卡寫「做了不一樣的」）。結果帶上備註（`SessionResult.manual`），課卡顯示「備註：…」，`get_training_plan` 寫「選手手動回報，備註：…」。肌力的「實際」加上體感。
@@ -6004,7 +6005,7 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 - 使用說明加「回報沒有紀錄的課」（`report` 開著時才有）；隱私說明的同步內容加上這種紀錄。
 
 *驗證*
-- `npm test`：`packages/core/test/session-report.test.ts`（12 項：存取、比對與做到多少、紀錄與負荷、教練看到的、改與取消、跑步記成 `ma:` 不是 `mw:` 與看板問合併、只有沒有紀錄的課能回報、回報分頁的清單、去重與回復、兩台同步的新增／改／刪與內容一致、看不懂的內容暫存、`report_session` 與 `save_activity_feedback` 的指引、schema 21 升級）；原本的測試全過（schema 的版號、功能開關的清單跟著改）。
+- `npm test`：`packages/core/test/session-report.test.ts`（13 項：存取、比對與做到多少、紀錄與負荷、教練看到的、改與取消、跑步記成 `ma:` 不是 `mw:` 與看板問合併、只有沒有紀錄的課能回報、回報分頁的清單、去重與回復、兩台同步的新增／改／刪與內容一致、看不懂的內容暫存、`report_session` 與 `save_activity_feedback` 的指引、schema 21 升級、離譜的值〔時間 1e300、距離 1e9〕回錯誤與同步不採用）；原本的測試全過（schema 的版號、功能開關的清單跟著改）。
 - `npm run typecheck`。
 - E2E `verify-session-report.cjs`（新的）：「回報」分頁列出今天的肌力 → 課卡回報（預設 20 分、肌力沒有距離、做了一部分、25 分、體感 6、備註）→ 課卡「部分達成」、「實際：25 分鐘、體感 6」、「備註：…」、「修改回報」→ 回報分頁不再列 → 紀錄頁「肌力訓練」標「手動」、點開有備註 → 開始同步、另一台用復原碼還原後課卡與紀錄頁都看得到 → 修改回報帶出原本的值、取消回報 → 對話「肌力做完了，體感 5，棒式少做一組」教練記下、課卡看得到；開關關著的建置沒有那張卡；設計準則（emoji、每張卡一顆實心按鈕、按鈕高度、左右捲動），手機淺色與電腦深色的截圖。`verify-plan`、`verify-self-change`、`verify-no-watch`、`verify-checkin`、`verify-multisport`、`verify-history`、`verify-help` 照過。
 

@@ -15,7 +15,7 @@
  * 跑步存在 workouts、其他運動存在 other_activities（manual-activities.ts）. 舊版不認得，不套用也不刪；這種的其他運動體感不另外送 af:.
  */
 import { dropCoveredFileOthers, markFileRunDuplicate } from "../activity-files/store";
-import { deleteManualActivity, isCompletion, listManualActivities, writeManualActivity } from "../manual-activities";
+import { deleteManualActivity, isCompletion, listManualActivities, MANUAL_MAX_KM, MANUAL_MAX_MINUTES, MANUAL_MAX_NOTES, writeManualActivity } from "../manual-activities";
 import type { SqlDriver, SqlValue } from "../types";
 
 export type Sql = Pick<SqlDriver, "all" | "run">;
@@ -441,7 +441,20 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       const minutes = typeof data.duration_min === "number" ? data.duration_min : NaN;
       const effort = typeof data.perceived_effort === "number" ? data.perceived_effort : NaN;
       const session = typeof data.session === "string" && data.session ? data.session : null;
-      if (!MANUAL_ACTIVITY_SPORTS.has(sport) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !(minutes > 0) || !(effort >= 1 && effort <= 10)) return "pending";
+      // 範圍不對的（負荷、圖表、比對會算壞）也不採用：時間 1–1440 分、體感 1–10 的整數、距離 0–500 km、備註 2000 字以內、日期不晚於明天
+      const distance = data.distance_km;
+      const notes = data.subjective_notes;
+      const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+      if (
+        !MANUAL_ACTIVITY_SPORTS.has(sport) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        date > tomorrow ||
+        !(minutes >= 1 && minutes <= MANUAL_MAX_MINUTES) ||
+        !(Number.isInteger(effort) && effort >= 1 && effort <= 10) ||
+        (distance != null && !(typeof distance === "number" && distance >= 0 && distance <= MANUAL_MAX_KM)) ||
+        (notes != null && !(typeof notes === "string" && notes.length <= MANUAL_MAX_NOTES))
+      )
+        return "pending";
       if (sport === "run" && !session) return "pending";
       await writeManualActivity(
         sql,

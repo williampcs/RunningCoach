@@ -224,6 +224,44 @@ describe("沒有紀錄的課的回報（規格 12.48）", () => {
     expect((await scripted.coach.db.getActivities(7))[0]).toMatchObject({ sport: "strength", source: "manual", perceived_effort: 5, subjective_notes: "棒式少做一組" });
   });
 
+  it("範圍：離譜的值回錯誤（工具也是）、同步不採用；負荷、比對、紀錄不受影響", async () => {
+    const { coach, driver, strength } = await withPlan();
+    await expect(coach.reportSession(strength.id, report({ duration_min: 1e300 }))).rejects.toThrow("花了多久");
+    await expect(coach.reportSession(strength.id, report({ duration_min: 0.5 }))).rejects.toThrow("花了多久");
+    await expect(coach.reportSession(strength.id, report({ distance_km: 1e9 }))).rejects.toThrow("距離");
+    await expect(coach.reportSession(strength.id, report({ perceived_effort: 0 }))).rejects.toThrow("體感");
+    await expect(coach.reportSession(strength.id, report({ perceived_effort: 5.5 }))).rejects.toThrow("體感");
+    await expect(coach.reportSession(strength.id, report({ subjective_notes: "長".repeat(2001) }))).rejects.toThrow("備註");
+    // 教練的工具走同一個檢查：回錯誤、不存
+    const scripted = await makeCoach([toolTurn("report_session", { session_id: 1, completion: "done", perceived_effort: 99, duration_min: 1e300 }), turn({ text: "好" })], { settings: FLAGS });
+    await scripted.coach.db.saveStructuredPlan(
+      { weekLabel: "W41", weekStart: WEEK, style: "fixed", reason: "r", outline: null, notes: null, content: "" },
+      [{ date: "2026-10-08", kind: "strength", title: "輕度肌力", steps: [{ duration_min: 30 }], purpose: "", success: "", fallback: null }],
+    );
+    await scripted.coach.chat("肌力做完了");
+    expect(scripted.provider.calls[1]!.toolResults![0]!.content).toMatch(/失敗|錯誤|必須|要/);
+    expect(await scripted.coach.db.getActivities(7)).toHaveLength(0);
+
+    // 同步：範圍外的不採用（暫存），不寫進資料庫
+    const snap = await snapshot(driver);
+    const base = { sport: "strength", date: "2026-10-08", duration_min: 30, perceived_effort: 5, session: "s1" };
+    for (const bad of <Record<string, number | string>[]>[
+      { duration_min: 1e300 },
+      { duration_min: 0.2 },
+      { distance_km: 1e9 },
+      { perceived_effort: 5.5 },
+      { perceived_effort: 0 },
+      { subjective_notes: "長".repeat(2001) },
+      { date: "2099-01-01" },
+    ]) {
+      expect(await applyEntity(driver, "ma:bad", { ...base, ...bad }, snap)).toBe("pending");
+    }
+    expect(await applyEntity(driver, "ma:ok", base, snap)).toBe("applied");
+    const list = await coach.db.getActivities(7);
+    expect(list.map((r) => r.duration_min)).toEqual([30]);
+    expect((await coach.activePlan())!.sessions.every((x) => !x.result?.actual?.includes("e+"))).toBe(true);
+  });
+
   it("schema 21 的資料庫升級：補上 22 的欄位，原有的內容不變", async () => {
     const driver = openNodeSqlite(":memory:");
     const clock = { now: () => new Date("2026-10-10T04:00:00Z"), today: () => TODAY };

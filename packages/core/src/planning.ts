@@ -38,7 +38,7 @@ import {
   type TargetContext,
 } from "./plan";
 import { DIFFICULTY_LABELS, matchWeek, OUTCOME_LABELS, type SessionResult, type WeekMatch } from "./plan-match";
-import { COMPLETION_LABELS, type Completion, type ManualActivity } from "./manual-activities";
+import { COMPLETION_LABELS, MANUAL_MAX_KM, MANUAL_MAX_MINUTES, MANUAL_MAX_NOTES, type Completion, type ManualActivity } from "./manual-activities";
 import { weekAllocation } from "./allocation";
 import { analyzeRecovery } from "./recovery";
 import { raceOutcome } from "./races";
@@ -725,10 +725,11 @@ export async function reportSession(db: Db, today: string, id: number, input: Se
   if (session.kind === "rest") throw new Error("休息日不用回報");
   if (session.status === "skipped") throw new Error("跳過的課，先恢復原本的課再回報");
   if (session.date && session.date > today) throw new Error("還沒到的課不能回報");
-  if (!(input.duration_min > 0) || input.duration_min > 24 * 60) throw new Error("花了多久要填 1 分鐘以上（24 小時以內）");
+  if (!(input.duration_min >= 1) || input.duration_min > MANUAL_MAX_MINUTES) throw new Error("花了多久要填 1 分鐘以上（24 小時以內）");
   if (!Number.isInteger(input.perceived_effort) || input.perceived_effort < 1 || input.perceived_effort > 10) throw new Error("體感要是 1–10");
-  if (input.distance_km !== null && !(input.distance_km > 0 && input.distance_km < 1000)) throw new Error("距離的格式不對");
-  const notes = input.subjective_notes?.trim().slice(0, 500) || null;
+  if (input.distance_km !== null && !(input.distance_km > 0 && input.distance_km <= MANUAL_MAX_KM)) throw new Error(`距離要在 ${MANUAL_MAX_KM} km 以內`);
+  const notes = input.subjective_notes?.trim() || null;
+  if (notes && notes.length > MANUAL_MAX_NOTES) throw new Error(`備註最多 ${MANUAL_MAX_NOTES} 字`);
   const syncId = await db.sessionSyncId(id);
   if (!syncId) throw new Error(`找不到 session_id=${id} 的課`);
   // 有手錶紀錄的照原本的方式（跑後回報）：這裡只收沒有紀錄的課
