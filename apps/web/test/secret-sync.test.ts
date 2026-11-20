@@ -19,7 +19,9 @@ import {
   MAX_SKEW_MS,
   reconcileSecrets,
   setShare,
+  shareConsent,
   shareEnabled,
+  shareState,
   syncedSecrets,
   withSecret,
   type ReconcileResult,
@@ -576,6 +578,36 @@ describe("API key 與 Intervals.icu 的連線跟著加密的同步", () => {
     const asked = await reconcileSecrets(c.db, c.root, c.settings, c.stamps, { now });
     expect(asked.pending.llm?.reason).toBe("both-changed");
     expect(c.settings.apiKey).toBe("");
+  });
+
+  it("同意不能被重放：同意 → 關掉 → 有人把舊時間的 on 寫回來，這台要重新問", async () => {
+    const a = await deviceA();
+    const b = await device(a.root);
+    await b.engine.sync();
+    // B 同意了這一次（時間 T）
+    const t = (await shareState(b.db)).at!;
+    let agreement: string | null = t;
+    expect(shareConsent(await shareState(b.db), agreement)).toEqual({ agreed: true, clear: false });
+    // A 關掉；B 看到關著就清掉同意
+    later();
+    await setShare(a.db, false, now);
+    await a.engine.sync();
+    await b.engine.sync();
+    const off = shareConsent(await shareState(b.db), agreement);
+    expect(off).toEqual({ agreed: false, clear: true });
+    if (off.clear) agreement = null;
+    // 看過 T 的一台把 on 寫回來，時間還是 T
+    later();
+    await a.db.saveSyncedSecret({ name: "share", box: "on", updated_at: t });
+    await a.engine.sync();
+    await b.engine.sync();
+    const replay = await shareState(b.db);
+    expect(replay).toEqual({ on: true, at: t });
+    expect(shareConsent(replay, agreement).agreed).toBe(false);
+    // 沒同意：B 的修改不送
+    later();
+    change(b, { ...withKey(KEY_B) });
+    expect((await reconcile(b, { uploadAllowed: shareConsent(replay, agreement).agreed })).wrote).toBe(false);
   });
 
   it("不認得的 sk: 名稱：不存進資料庫", async () => {

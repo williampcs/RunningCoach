@@ -15,6 +15,7 @@ import {
   pageIsLocal,
   reconcileSecrets,
   setShare as saveShare,
+  shareConsent,
   shareState,
   withSecret,
   type PendingSecret,
@@ -88,7 +89,13 @@ export function useSecretSync(
         const state = await shareState(db);
         setShareState(state.on);
         setShareAt(state.at);
-        const agreed = state.on && state.at !== null && shareAgreement() === state.at;
+        const consent = shareConsent(state, shareAgreement());
+        // 分享關著：清掉這台的同意（之後再打開要重新問，舊時間的 on 也一樣）
+        if (consent.clear) {
+          setShareAgreement(null);
+          setAgreement(null);
+        }
+        const agreed = consent.agreed;
         const result = await reconcileSecrets(db, root, s, undefined, { allowLocalHttp: pageIsLocal(), uploadAllowed: agreed });
         const names = SECRET_NAMES.filter((n) => result.adopt[n]);
         let saved = s;
@@ -117,6 +124,10 @@ export function useSecretSync(
       .then((state) => {
         setShareState(state.on);
         setShareAt(state.at);
+        if (shareConsent(state, shareAgreement()).clear) {
+          setShareAgreement(null);
+          setAgreement(null);
+        }
       })
       .catch(() => undefined);
   }, [db, deviceSync.lastAt]);
@@ -149,8 +160,8 @@ export function useSecretSync(
       await saveShare(db, on, at);
       setShareState(on);
       setShareAt(at.toISOString());
-      // 在這台打開：這台同意帶上去
-      if (on) agree(at.toISOString());
+      // 在這台打開：這台同意帶上去；關掉：清掉這台的同意
+      agree(on ? at.toISOString() : null);
       await check();
       touch();
     },

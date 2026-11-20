@@ -62,6 +62,14 @@ export async function shareState(db: Db): Promise<{ on: boolean; at: string | nu
   return { on: row?.box === "on", at: row?.updated_at ?? null };
 }
 
+/**
+ * 這台同意帶上去了嗎；看到分享關著時，這台存的同意要清掉（之後就算有人把舊時間的 on 寫回來，也要重新問）
+ */
+export function shareConsent(state: { on: boolean; at: string | null }, agreement: string | null): { agreed: boolean; clear: boolean } {
+  if (!state.on) return { agreed: false, clear: agreement !== null };
+  return { agreed: state.at !== null && agreement === state.at, clear: false };
+}
+
 /** 改要不要帶 key（每台都照它）；關掉時刪掉 sk:llm、sk:intervals（下次同步別台也刪掉） */
 export async function setShare(db: Db, on: boolean, now = new Date()): Promise<void> {
   await db.saveSyncedSecret({ name: SHARE, box: on ? "on" : "off", updated_at: now.toISOString() });
