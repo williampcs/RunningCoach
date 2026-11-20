@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { checkRedFlags } from "../red-flag-alert";
-import { daysBetween, type Accumulation, type DataSourceLabel, type RideAccumulation, type RideCard, type RunCard, type WeekVolume, type Workout } from "@running-coach/core";
+import { activityLabel, daysBetween, sportOfType, type Accumulation, type OtherActivity, type DataSourceLabel, type RideAccumulation, type RideCard, type RunCard, type WeekVolume, type Workout } from "@running-coach/core";
 
 import { errorText, useApp, type HistoryFocus } from "../app-context";
 import { AutoGrowTextarea } from "../AutoGrowTextarea";
@@ -44,6 +44,9 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   // 多運動：騎車也列出來（規格 12.24 的第 3 階段）
   const multisport = featureEnabled("multisport");
   const [rides, setRides] = useState<RideCard[]>([]);
+  // 肌力、游泳等其他運動（含沒有紀錄的課的回報，規格 12.48）
+  const [others, setOthers] = useState<OtherActivity[]>([]);
+  const [openOthers, setOpenOthers] = useState<Set<string>>(new Set());
   const [rideTotals, setRideTotals] = useState<RideAccumulation | null>(null);
   const [weeks, setWeeks] = useState<WeekVolume[] | null>(null);
   const [weekSources, setWeekSources] = useState<DataSourceLabel[]>([]);
@@ -86,6 +89,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
     void coach.accumulation().then((a) => alive && setTotals(a));
     if (multisport) {
       void coach.rideCards(days).then((c) => alive && setRides(c));
+      void coach.otherActivityList(days).then((list) => alive && setOthers(list));
       void coach.rideAccumulation().then((a) => alive && setRideTotals(a));
       void coach.weeklyVolume(WEEKLY_WEEKS).then((w) => alive && setWeeks(w));
       // 每週的圖用到的紀錄（跑步與騎車）的來源（KI-048）
@@ -203,6 +207,49 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
     );
   }
 
+  /** 肌力、游泳等的一列：點開看備註；手動回報的在課表那堂課修改 */
+  function otherRow(a: OtherActivity) {
+    const expanded = openOthers.has(a.intervals_id);
+    const sport = sportOfType(a.type);
+    const manual = a.intervals_id.startsWith("manual:");
+    const toggleOther = () =>
+      setOpenOthers((current) => {
+        const next = new Set(current);
+        if (next.has(a.intervals_id)) next.delete(a.intervals_id);
+        else next.add(a.intervals_id);
+        return next;
+      });
+    return (
+      <li key={`other-${a.intervals_id}`} className={`other${expanded ? " open" : ""}`} data-sport={sport} data-other={a.intervals_id}>
+        <button className="run-row" aria-expanded={expanded} onClick={toggleOther}>
+          <span className="list-row-icon">
+            <SportIcon sport={sport === "swim" || sport === "strength" ? sport : "other"} />
+          </span>
+          <span className="run-main">
+            <strong>{activityLabel(a.type)}</strong>
+            <span className="muted small run-date">{[dayText(a.date, today), `${Math.round(a.duration_min ?? 0)} 分鐘`, a.perceived_effort != null ? `體感 ${a.perceived_effort}` : null].filter(Boolean).join(" · ")}</span>
+          </span>
+          <span className="run-tags">
+            {a.perceived_effort == null && <span className="badge">未填體感</span>}
+            {manual && <span className="badge">手動</span>}
+          </span>
+        </button>
+        {expanded && (
+          <div className="other-detail stack small">
+            {a.subjective_notes ? <p>備註：{a.subjective_notes}</p> : <p className="muted">沒有備註。</p>}
+            {manual && <p className="muted">從課表回報的；要修改到課表的那堂課。</p>}
+          </div>
+        )}
+      </li>
+    );
+  }
+
+  /** 跑步以外的（騎車、其他運動），依日期插在跑步之間 */
+  const extras: { date: string; node: () => ReactNode }[] = [
+    ...rides.map((card) => ({ date: card.activity.date, node: () => rideRow(card) })),
+    ...others.map((a) => ({ date: a.date, node: () => otherRow(a) })),
+  ].sort((x, y) => y.date.localeCompare(x.date));
+
   const toggle = (id: number) =>
     setOpen((current) => {
       const next = new Set(current);
@@ -230,6 +277,8 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
   function actions(w: Workout) {
     // 手動記的：整筆可以改與刪（體感也在同一張表單）
     if (w.source === "manual") {
+      // 從課表回報的（規格 12.48）：在那堂課改
+      if (w.session_id) return <p className="small muted">從課表回報的；要修改到課表的那堂課。</p>;
       if (editingManual === w.id) {
         return <ManualRunForm editing={w} onSaved={() => setEditingManual(null)} onCancel={() => setEditingManual(null)} />;
       }
@@ -356,7 +405,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
       <section className="card">
         <div className="card-head">
           <h2>
-            最近 {days} 天的{multisport && rides.length ? (cards?.length ? "跑步與騎車" : "騎車") : "跑步"}
+            最近 {days} 天的{multisport && extras.length ? (cards?.length ? (others.length ? "運動" : "跑步與騎車") : others.length ? "運動" : "騎車") : "跑步"}
           </h2>
           {/* 還沒有紀錄、沒連接 Intervals.icu 時，下面已經有「記第一筆」 */}
           {!adding && !importing && !(totals?.runs === 0 && !activitiesReady) && (
@@ -389,7 +438,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
         {message && <div className={`notice ${message.kind}`}>{message.text}</div>}
         {cards === null && <p className="muted small">讀取中…</p>}
         {cards?.length === 0 &&
-          !rides.length &&
+          !extras.length &&
           (totals?.runs === 0 ? (
             <>
               <p className="muted">還沒有跑步紀錄。</p>
@@ -418,9 +467,9 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
             const expanded = open.has(w.id) || editing?.id === w.id || editingManual === w.id;
             // 騎車依日期插在跑步之間（新的在前）
             const newer = index === 0 ? "9999" : cards[index - 1]!.workout.date;
-            const before = rides.filter((r) => r.activity.date > w.date && r.activity.date <= newer);
+            const before = extras.filter((x) => x.date > w.date && x.date <= newer);
             return [
-              ...before.map(rideRow),
+              ...before.map((x) => x.node()),
               <li key={w.id} className={expanded ? "open" : ""} data-workout={w.id}>
                 <button className="run-row" aria-expanded={expanded} onClick={() => toggle(w.id)}>
                   <span className="list-row-icon">
@@ -428,7 +477,12 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
                   </span>
                   {/* 點開時數字與橫條在卡片上，列上只留課與標記 */}
                   <span className="run-main">
-                    {expanded ? <strong>{card.plan ? `${card.plan.kindLabel}：${card.plan.title}` : "跑步"}</strong> : <strong>{kmText(w.distance_km)} km</strong>}
+                    {expanded ? (
+                      <strong>{card.plan ? `${card.plan.kindLabel}：${card.plan.title}` : "跑步"}</strong>
+                    ) : (
+                      // 回報課時記的跑步可以沒有距離：寫時間
+                      <strong>{w.distance_km == null ? `${Math.round(w.duration_min ?? 0)} 分鐘` : `${kmText(w.distance_km)} km`}</strong>
+                    )}
                     <span className="muted small run-date">{[dayText(w.date, today), !expanded ? w.avg_pace : null, !expanded ? card.garmin : null].filter(Boolean).join(" · ")}</span>
                   </span>
                   <span className="run-tags">
@@ -449,7 +503,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
             ];
           })}
           {/* 比最舊的跑步還早的騎車（或沒有跑步時的全部） */}
-          {rides.filter((r) => !cards?.length || r.activity.date <= cards.at(-1)!.workout.date).map(rideRow)}
+          {extras.filter((x) => !cards?.length || x.date <= cards.at(-1)!.workout.date).map((x) => x.node())}
         </ul>
       </section>
     </>

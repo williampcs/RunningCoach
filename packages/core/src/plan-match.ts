@@ -211,7 +211,8 @@ export function judgeOther(session: PlannedSession, a: OtherActivity, ctx: Targe
   const short = session.status !== "fallback" && planned > 0 && minutes < planned * shortLimit;
   if (short) reasons.push(`比計畫短（約 ${Math.round((minutes / planned) * 100)}%）`);
   if (session.kind === "strength") {
-    return { outcome: short ? "partial" : "achieved", reasons, difficulty: null, actual: `${Math.round(minutes)} 分鐘`, workoutId: null, activityId: a.intervals_id };
+    const actual = `${Math.round(minutes)} 分鐘${a.perceived_effort != null ? `、體感 ${a.perceived_effort}` : ""}`;
+    return { outcome: short ? "partial" : "achieved", reasons, difficulty: null, actual, workoutId: null, activityId: a.intervals_id };
   }
 
   // 改用替代時當成耐力騎（輕鬆）來看

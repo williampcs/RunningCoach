@@ -564,6 +564,11 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     if (lastText.includes("尚未儲存") && lastText.includes("跑步與騎車")) {
       return [toolUse("save_training_plan", cyclingPlan(false, true))];
     }
+    // 沒有紀錄的課的回報（規格 12.48）：看完課表後把今天的肌力記成「做了一部分」
+    const strength = lastText.match(/\[session_id=(\d+)\][^\n]*今天的肌力/);
+    if (/肌力做完了/.test(asked) && strength && !lastText.includes("已記下「")) {
+      return [toolUse("report_session", { session_id: Number(strength[1]), completion: "partial", perceived_effort: 5, subjective_notes: "棒式少做一組" })];
+    }
     if (lastText.includes("✅ 是今天的活動")) {
       return [toolUse("save_workout", { perceived_effort: 7, subjective_notes: "腿有點重" })];
     }
@@ -597,6 +602,7 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     return [toolUse("save_activity_feedback", { perceived_effort: 4, subjective_notes: "（模擬）輕鬆", sport: "ride" })];
   }
   if (/改成 400 m × 8/.test(lastText)) return [toolUse("get_training_plan")];
+  if (/肌力做完了/.test(lastText)) return [toolUse("get_training_plan")];
   // 工具呼叫前先寫一句英文（staging 試用的回饋，規格 12.38）：參數寫 2.5 秒，介面不能把那句當成回覆顯示
   // 想很久才回（介面的「還在處理，有點久」）：思考 6 秒
   if (/想久一點/.test(lastText)) return [{ type: "text", text: "（模擬回覆）想好了。這週照原本的課表練，週四的閾值課照常，週日的長跑維持輕鬆的配速，有不舒服再跟我說。", thinkMs: 6000 }];

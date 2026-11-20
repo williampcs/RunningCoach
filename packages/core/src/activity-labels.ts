@@ -36,6 +36,8 @@ export function otherActivitiesText(
     if (a.training_load != null) parts.push(`負荷 ${a.training_load}`);
     if (a.avg_hr != null) parts.push(`心率 ${a.avg_hr}`);
     if (a.perceived_effort != null) parts.push(`體感 ${a.perceived_effort}/10${a.subjective_notes ? `（${a.subjective_notes}）` : ""}`);
+    // 回報沒有紀錄的課時手動記的（規格 12.48）
+    if (a.intervals_id.startsWith("manual:")) parts.push("選手手動回報");
     lines.push(`- ${a.date} ${activityLabel(a.type)}：${parts.filter(Boolean).join("｜")}`);
     // 騎後分析（規格 12.31）：只帶第一行的結論
     const headline = a.summary?.trim().split("\n")[0];

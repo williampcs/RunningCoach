@@ -65,7 +65,7 @@ describe("沒有紀錄的課的回報（規格 12.48）", () => {
     // 再回報一次是改原本的那筆（不是多一筆）
     await coach.reportSession(strength.id, report({ completion: "done", duration_min: 32, perceived_effort: 4 }));
     expect(await coach.db.getActivities(7)).toHaveLength(1);
-    expect((await coach.activePlan())!.sessions.find((s) => s.id === strength.id)!.result).toMatchObject({ outcome: "achieved", actual: "32 分鐘", manual: { notes: null } });
+    expect((await coach.activePlan())!.sessions.find((s) => s.id === strength.id)!.result).toMatchObject({ outcome: "achieved", actual: "32 分鐘、體感 4", manual: { notes: null } });
 
     // 取消回報：紀錄刪掉，課回到沒做
     await coach.unreportSession(strength.id);

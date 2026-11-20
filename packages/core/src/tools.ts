@@ -986,9 +986,11 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const lines = [workouts.length ? `最近 ${days} 天的訓練紀錄（共 ${workouts.length} 筆）：` : `最近 ${days} 天沒有跑步。`];
         for (const w of workouts) {
           const subj = w.perceived_effort ? `｜體感 ${w.perceived_effort}/10` : "";
+          // 回報課時手動記的跑步（規格 12.48）可以沒有距離：寫時間與備註
+          const notes = w.session_id && w.subjective_notes ? `｜選手手動回報：${w.subjective_notes}` : w.session_id ? "｜選手手動回報" : "";
           lines.push(
-            `\n【${w.date}】${w.distance_km}km｜${w.avg_pace ?? "?"}｜` +
-              `${heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}${subj}`,
+            `\n【${w.date}】${w.distance_km == null ? `${Math.round(w.duration_min ?? 0)} 分鐘` : `${w.distance_km}km`}｜${w.avg_pace ?? "?"}｜` +
+              `${heartRateText(w.avg_hr, w.max_hr) ? `心率 ${heartRateText(w.avg_hr, w.max_hr)}` : "沒有心率"}${subj}${notes}`,
           );
           const summary = w.summary && (w.date >= fullFrom ? w.summary : w.summary.trim().split("\n")[0]);
           if (summary) lines.push(`  AI摘要：${summary}`);

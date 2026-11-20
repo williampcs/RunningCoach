@@ -723,6 +723,11 @@ export class Coach {
     return weeklyVolumeOf(this.db, this.today(), weeks);
   }
 
+  /** 最近 N 天騎車以外的其他運動（肌力、游泳等；紀錄頁），新的在前 */
+  async otherActivityList(days = 30): Promise<OtherActivity[]> {
+    return (await this.db.getOtherActivities(days)).filter((a) => sportOfType(a.type) !== "ride");
+  }
+
   rideCards(days = 30): Promise<RideCard[]> {
     return rideCards(this.db, this.today(), days);
   }
