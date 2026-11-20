@@ -216,7 +216,7 @@
 - **先驗證再開工**（要用作者的 Mac 與 iPhone）：
   - 瀏覽器的資料庫（OPFS）在 iOS App 的 WebView 裡穩不穩，不行就換原生的 SQLite 外掛（核心的資料層可以換）。
   - 作者自己的手錶或 iPhone 寫進 Apple 健康的資料有哪些：分圈、心率的密度夠不夠跑後分析用。
-  - WebView 裡能不能用 passkey 與 PRF（第二段要用），不行就用原生的外掛。
+  - WebView 裡能不能用 passkey 與 PRF（第二段要用），不行就用原生的外掛。瀏覽器裡已確認（2026-11-20，協調 session 回報，規格 12.44）：同一把 passkey（Proton Pass，在 iPhone Safari 建立）在 iPhone Safari、Mac Edge、Windows 算出的 PRF 相同，跨裝置可用；但 Mac 上用 Proton Pass 擴充建的那把，iPhone 的 Proton Pass 找不到。還沒測：iCloud 鑰匙圈、App 的 WebView。
   - App Store 對健康資料存到雲端的規定（HealthKit 的資料不能放 iCloud；放進我們加密的同步要怎麼說明），送審前要確認。
 - **怎樣算完成**：作者用兩週，跑完紀錄自己出現、教練的分析與課表正常；朋友三步就能開始；記下每則的花費；隱私說明有 App 的部分。
 - **使用者要做的**：申請 Apple 開發者帳號；建置與實機測試要在使用者的 Mac（雲端的 session 可以寫程式，Xcode 與 iPhone 要在使用者那邊，可以用 Remote Control 讓雲端的 session 接上那台 Mac）。
