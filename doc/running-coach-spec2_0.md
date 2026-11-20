@@ -905,7 +905,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
     - 照共同規則開 PR 到 v2。
     - 這是 App 也會用到的共用程式，不違反「網頁版只修錯」。
     - 同步多一種紀錄，PR 也請安全 session 看一下。
-  - 狀態：開發中（開發 session「沒有紀錄的課也能回報」），PR 到 v2 待協調 session 檢查（npm test 992 項、typecheck、E2E `verify-session-report` 與 `verify-plan`、`verify-self-change`、`verify-no-watch`、`verify-checkin`、`verify-multisport`、`verify-history`、`verify-help` 都過）。實作、驗證、沒做的與資料放哪裡的理由見 12.48；在功能開關 `report` 後面（staging 全開，正式版要在 `WEB_FEATURES` 加 `report`）。
+  - 狀態：已推上 v2（2026-11-20，[williampcs/RunningCoach#60](https://github.com/williampcs/RunningCoach/pull/60)，開發 session「沒有紀錄的課也能回報」；功能開關 `report`；安全 session 看過，補了數值的範圍檢查）。實作見 12.48。待使用者在 staging 試；正式版要上線時 `WEB_FEATURES` 加 `report`。
 
 - **同步的容量第一段：不活躍的空間到期刪除**（`doc/strategy-map.md` 的模塊簡報「同步的容量」第一段，協調接手；規格 12.47、12.10、12.20；2026-11-20 使用者對細談的三點：「全部照建議」）
   - 要做什麼：
