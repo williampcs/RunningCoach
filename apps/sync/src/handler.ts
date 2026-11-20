@@ -144,6 +144,8 @@ const REKEY_WRITES_KEY = "sync:rekey-writes";
  * 使用者一直沒有再打開換金鑰的那台時，不讓它一直佔著容量
  */
 export const STALE_REKEY_MS = 7 * DAY;
+/** 鎖住的換金鑰（已經提早移除過裝置）最長鎖多久：從建立起算，超過之後舊空間裡另一台過了冷卻期的裝置可以取代 */
+export const MAX_REKEY_LOCK_MS = 30 * DAY;
 
 /** 依來源計數的種類 */
 type SourceKind = "createSpace" | "createPair" | "pairMiss" | "pairStep" | "push" | "pushBytes";
@@ -714,7 +716,12 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     const by = await store.rekeyBy(pending);
     const starter = by === null ? null : await store.device(from, by);
     if (!starter || starter.removedAt !== null) return false;
-    if (callerId !== null && callerId !== by && (await store.lastProgress(pending)) < nowMs() - STALE_REKEY_MS) return false;
+    if (callerId !== null && callerId !== by) {
+      if ((await store.lastProgress(pending)) < nowMs() - STALE_REKEY_MS) return false;
+      // 一直有一點點進度、卻一直不完成的：建立超過 MAX_REKEY_LOCK_MS 之後也可以取代
+      const created = await store.spaceCreatedAt(pending);
+      if (created !== null && created < nowMs() - MAX_REKEY_LOCK_MS) return false;
+    }
     return true;
   }
 

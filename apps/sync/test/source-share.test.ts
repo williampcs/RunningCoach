@@ -14,6 +14,7 @@ import {
   DEFAULT_LIMITS,
   DEFAULT_RATE_LIMITS,
   maintain,
+  MAX_REKEY_LOCK_MS,
   MAX_SPACE_BYTES,
   NETWORK_RETENTION_MS,
   REKEY_ACTOR_SHARE,
@@ -1011,6 +1012,29 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     await d.engine.rekey([a.identity.id]).catch(() => undefined);
     await expect(a.engine.sync()).rejects.toMatchObject({ message: "這台已從同步移除" });
     expect((await pendingOf(from)).map((r) => String(r.id))).toEqual([(await d.engine.pendingRekey())!.space]);
+  });
+
+  it("鎖住的換金鑰一直有一點點進度卻不完成：建立 30 天之後另一台可以取代", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+    const a = await setupDevice(handler, 300);
+    const b = await joinDevice(handler, a.state.root);
+    const d = await joinDevice(handler, a.state.root);
+    advance(25 * HOUR);
+    const from = (await deriveKeys(a.state.root)).space;
+    await a.engine.prepareRekey([b.identity.id]);
+    await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+    const pending = String((await pendingOf(from))[0]!.id);
+    // 每 5 天有一點進度：7 天沒進度的出口一直不成立
+    for (let day = 5; day < 30; day += 5) {
+      advance(5 * DAY);
+      await store.touchRekeyProgress(pending);
+      await expect(d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity })).rejects.toMatchObject({ state: "rekey_locked" });
+    }
+    advance(6 * DAY);
+    await store.touchRekeyProgress(pending);
+    expect(MAX_REKEY_LOCK_MS).toBe(30 * DAY);
+    await d.api.request("DELETE", `/v1/spaces/${from}/rekey`, undefined, { device: d.identity });
+    expect(await pendingOf(from)).toHaveLength(0);
   });
 
   it("開始的那台不在舊空間了（被移除或離開）：解除鎖定，可以放棄、被 7 天的排程清掉", async () => {
