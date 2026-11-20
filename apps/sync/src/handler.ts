@@ -175,6 +175,11 @@ const WRITES_KEY = "sync:daily-writes";
 export const EMPTY_SPACE_TTL_MS = DAY;
 /** 所有裝置都沒有連線多久之後，空間（雲端的備份）刪掉：12 個月（規格 12.10「不活躍的空間到期刪除」） */
 export const INACTIVE_SPACE_TTL_MS = 365 * DAY;
+/**
+ * 每小時的維護最多刪幾個不活躍的空間：每個要好幾個查詢（每次呼叫最多 50 個 D1 查詢）；
+ * 現有的空間從上線那天一起起算，一年後同一天大量到期時分好幾個小時刪完
+ */
+export const INACTIVE_PER_RUN = 3;
 
 export interface ServiceLimits {
   spaces: number;
@@ -1196,25 +1201,43 @@ function requireJson(request: Request): void {
  */
 export async function maintain(
   store: SyncStore,
-  options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
+  options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void; inactivePerRun?: number } = {},
 ): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number; staleRekeys: number; inactive: number }> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const log = options.log ?? (() => undefined);
-  const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
-  // 所有裝置 12 個月都沒有連線的空間（換金鑰做到一半的，兩邊都沒有連線才算）
-  const inactive = await store.expireInactiveSpaces(INACTIVE_SPACE_TTL_MS);
+  // 每一項各自執行：一項失敗（例如查詢數用完）只記 log，其他項照常
+  const step = async (name: string, run: () => Promise<number>): Promise<number> => {
+    try {
+      return await run();
+    } catch (e) {
+      log(`WARNING maintenance step failed: ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    }
+  };
+  const spaces = await step("emptySpaces", () => store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS));
   // 換到一半、7 天沒有進度的新空間（舊空間照舊，先移除的裝置維持移除）
-  const staleRekeys = await store.purgeStaleRekeys(STALE_REKEY_MS);
+  const staleRekeys = await step("staleRekeys", () => store.purgeStaleRekeys(STALE_REKEY_MS));
   // 網段的代碼只保存 30 天（從記下的時間算；換金鑰的新空間沿用舊空間的時間，不會因此延長）
-  const networks = await store.expireNetworks(NETWORK_RETENTION_MS);
-  const { slots, nonces } = await store.purgeExpired();
-  const rates = (await options.purgeRates?.()) ?? 0;
-  const totals = await store.totals();
-  const activeSlots = await store.activeSlots();
-  const near = (used: number, max: number) => used >= max * 0.8;
-  if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
-  if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
-  if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
+  const networks = await step("networks", () => store.expireNetworks(NETWORK_RETENTION_MS));
+  let slots = 0;
+  let nonces = 0;
+  await step("expired", async () => {
+    ({ slots, nonces } = await store.purgeExpired());
+    return 0;
+  });
+  const rates = await step("rates", async () => (await options.purgeRates?.()) ?? 0);
+  // 所有裝置 12 個月都沒有連線的空間（換金鑰做到一半的，兩邊都沒有連線才算）：排在最後、每次有上限，剩下的下個小時再刪
+  const inactive = await step("inactive", () => store.expireInactiveSpaces(INACTIVE_SPACE_TTL_MS, options.inactivePerRun ?? INACTIVE_PER_RUN));
+  let totals = { spaces: -1, bytes: -1 };
+  await step("usage", async () => {
+    totals = await store.totals();
+    const activeSlots = await store.activeSlots();
+    const near = (used: number, max: number) => used >= max * 0.8;
+    if (near(totals.spaces, limits.spaces)) log(`WARNING sync spaces near limit: ${totals.spaces}/${limits.spaces}`);
+    if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
+    if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
+    return 0;
+  });
   log(
     `maintenance: purged spaces=${spaces} inactive=${inactive} staleRekeys=${staleRekeys} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`,
   );

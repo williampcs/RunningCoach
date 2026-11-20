@@ -228,9 +228,10 @@ export class SyncStore {
    * 刪掉 olderThanMs 都沒有任何裝置連線的空間（連同紀錄、裝置、配對的模式、換金鑰之前的舊空間）.
    * 只看最新的空間（還沒換金鑰的；換過的舊空間跟著它刪）. 有換到一半的新空間時，兩邊（舊空間與換到一半的新空間）
    * 都超過期限才刪，一起刪：換金鑰做到一半、或已經先移除裝置而鎖住的，只要任一邊有連線就不動.
-   * 換到一半的新空間本身不在這裡單獨刪（purgeStaleRekeys 依進度清）. 回傳刪掉幾個（最新的空間的數量）
+   * 換到一半的新空間本身不在這裡單獨刪（purgeStaleRekeys 依進度清）. 回傳刪掉幾個（最新的空間的數量）.
+   * limit：這次最多刪幾個（每個要好幾個查詢，每次呼叫的查詢數有上限；剩下的下次再刪）
    */
-  async expireInactiveSpaces(olderThanMs: number): Promise<number> {
+  async expireInactiveSpaces(olderThanMs: number, limit = Number.MAX_SAFE_INTEGER): Promise<number> {
     const cutoff = new Date(this.now().getTime() - olderThanMs).toISOString().slice(0, 10);
     const rows = await this.driver.all(
       "SELECT id FROM spaces WHERE seen_on IS NOT NULL AND seen_on < ?" +
@@ -239,19 +240,34 @@ export class SyncStore {
         " AND NOT (rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves))" +
         // 換到一半的新空間最近有連線（換金鑰的那台在複製、或用新的復原碼接手的）：舊空間也不刪
         " AND NOT EXISTS (SELECT 1 FROM spaces p WHERE p.rekey_from = spaces.id AND p.id NOT IN (SELECT moved_to FROM moves)" +
-        " AND (p.seen_on IS NULL OR p.seen_on >= ?))",
-      [cutoff, cutoff],
+        " AND (p.seen_on IS NULL OR p.seen_on >= ?))" +
+        " ORDER BY seen_on, id LIMIT ?",
+      [cutoff, cutoff, limit],
     );
     let expired = 0;
     for (const r of rows) {
       const space = String(r.id);
-      // 再確認一次（並行的連線剛好在這之間進來時不刪）
-      const seen = await this.seenOn(space);
+      // 再確認一次（並行的連線剛好在這之間進來時不刪），連同換到一半的新空間一起讀（一個查詢）
+      const check = (
+        await this.driver.all(
+          "SELECT (SELECT seen_on FROM spaces WHERE id=?) AS seen," +
+            " (SELECT json_group_array(json_object('id', id, 'seen', seen_on)) FROM spaces WHERE rekey_from=? AND id NOT IN (SELECT moved_to FROM moves)) AS pending",
+          [space, space],
+        )
+      )[0];
+      const seen = check?.seen === null || check?.seen === undefined ? null : String(check.seen);
       if (seen === null || seen >= cutoff) continue;
-      const pending = await this.driver.all("SELECT id, seen_on FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)", [space]);
-      if (pending.some((p) => p.seen_on === null || p.seen_on === undefined || String(p.seen_on) >= cutoff)) continue;
-      for (const p of pending) await this.deleteOne(String(p.id));
-      await this.deleteSpace(space);
+      const pending = JSON.parse(String(check?.pending ?? "[]")) as { id: string; seen: string | null }[];
+      if (pending.some((p) => p.seen === null || p.seen >= cutoff)) continue;
+      // 換金鑰之前的舊空間：從最舊的刪起，最新的最後刪（中途失敗時留下的仍然接在最新的空間後面，下次接著刪）
+      const chain = [space];
+      for (let hop = 0; hop < 50; hop++) {
+        const before = (await this.driver.all("SELECT space FROM moves WHERE moved_to=?", [chain[chain.length - 1]!]))[0];
+        if (!before) break;
+        chain.push(String(before.space));
+      }
+      for (const p of pending) await this.deleteOne(p.id);
+      for (const id of chain.reverse()) await this.deleteOne(id);
       expired++;
     }
     return expired;

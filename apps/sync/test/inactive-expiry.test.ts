@@ -5,9 +5,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Db, newDeviceIdentity, newRootKey, SyncApi, SyncEngine } from "@running-coach/core";
+import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
-import { createSyncHandler, INACTIVE_SPACE_TTL_MS, maintain } from "../src/handler";
+import { createSyncHandler, INACTIVE_PER_RUN, INACTIVE_SPACE_TTL_MS, maintain, NETWORK_RETENTION_MS } from "../src/handler";
 import { SyncStore } from "../src/store";
 
 const HOUR = 3600_000;
@@ -250,5 +251,117 @@ describe("已經存在的空間與寫入的次數", () => {
     const res = await handler(new Request(`http://sync.test/v1/spaces/${space(1)}/changes?since=0`, { headers: { authorization: `Bearer ${"u".repeat(43)}` } }));
     expect(res.status).toBe(403);
     expect(await store.seenOn(space(1))).toBe(before);
+  });
+});
+
+describe("很多空間同一天到期（現有的空間從上線那天一起起算）", () => {
+  /** 每次呼叫最多 50 個查詢（D1 免費方案），超過就丟錯 */
+  const MAX_QUERIES = 50;
+
+  async function manySpaces(n: number) {
+    const hash = await sha256(TOKEN);
+    for (let i = 1; i <= n; i++) {
+      await store.createSpace(space(i), hash, null, null, `net${i % 3}`);
+      await store.addDevice(space(i), { id: String(i).padStart(22, "A"), signPub: "p", boxPub: "b", label: "l", legacy: false });
+      await driver.run("INSERT INTO records (space, id, seq, blob) VALUES (?, 'r', 1, 'x')", [space(i)]);
+    }
+  }
+
+  function limited() {
+    let queries = 0;
+    const count = <T>(fn: () => T): T => {
+      if (++queries > MAX_QUERIES) throw new Error("Too many API requests by single worker invocation");
+      return fn();
+    };
+    const d = {
+      exec: (sql: string) => count(() => driver.exec(sql)),
+      run: (sql: string, params?: any[]) => count(() => driver.run(sql, params)),
+      all: (sql: string, params?: any[]) => count(() => driver.all(sql, params)),
+    };
+    return { store: new SyncStore(d, () => now), limiter: new SqlRateLimiter(d, () => now.getTime()), reset: () => (queries = 0), used: () => queries };
+  }
+
+  it("一次 maintain 只刪上限內的空間，在查詢數上限內；網段代碼、配對碼等其他清理照常；剩下的之後每小時接著刪", async () => {
+    await manySpaces(30);
+    await store.createSlot("AAAAAAAA", "p", "c", 60_000);
+    advance(INACTIVE_SPACE_TTL_MS + DAY);
+    expect(NETWORK_RETENTION_MS).toBeLessThan(INACTIVE_SPACE_TTL_MS);
+    const l = limited();
+    await l.limiter.init();
+    const logs: string[] = [];
+    l.reset();
+    const result = await maintain(l.store, { purgeRates: () => l.limiter.purge(), log: (line) => logs.push(line) });
+    expect(l.used()).toBeLessThanOrEqual(MAX_QUERIES);
+    expect(result.inactive).toBe(INACTIVE_PER_RUN);
+    expect(result.slots).toBe(1);
+    // 網段的代碼照樣清掉（隱私說明的「保存 30 天」）
+    expect(Number((await driver.all("SELECT COUNT(*) AS c FROM spaces WHERE network IS NOT NULL"))[0]!.c)).toBe(0);
+    expect(logs.some((line) => line.startsWith("WARNING maintenance step failed"))).toBe(false);
+    expect((await store.totals()).spaces).toBe(30 - INACTIVE_PER_RUN);
+    for (let hour = 0; hour < 10; hour++) {
+      advance(HOUR);
+      l.reset();
+      await maintain(l.store, { purgeRates: () => l.limiter.purge() });
+      expect(l.used()).toBeLessThanOrEqual(MAX_QUERIES);
+    }
+    expect((await store.totals()).spaces).toBe(0);
+  });
+
+  it("一項失敗（例如查詢數用完）只記 log，其他項照常完成", async () => {
+    await manySpaces(3);
+    advance(INACTIVE_SPACE_TTL_MS + DAY);
+    const broken = Object.assign(Object.create(store), {
+      expireInactiveSpaces: async () => {
+        throw new Error("Too many API requests by single worker invocation");
+      },
+      purgeStaleRekeys: async () => {
+        throw new Error("boom");
+      },
+    }) as SyncStore;
+    const logs: string[] = [];
+    const result = await maintain(broken, { log: (line) => logs.push(line) });
+    expect(result.inactive).toBe(0);
+    expect(result.networks).toBe(3);
+    expect(logs.filter((line) => line.startsWith("WARNING maintenance step failed"))).toHaveLength(2);
+    expect(logs.some((line) => line.startsWith("maintenance: purged"))).toBe(true);
+  });
+
+  it("刪到一半查詢數用完：沒有留下接不上的舊空間，下次接著刪完", async () => {
+    const hash = await sha256(TOKEN);
+    // space(1) → space(2) → space(3)：換過兩次金鑰
+    await store.createSpace(space(1), hash);
+    await store.createSpace(space(2), hash, null, space(1), null, "A".repeat(22));
+    await store.rekey(space(1), { newSpace: space(2), caller: "A".repeat(22), keep: [], remove: [], statement: "s", signature: "g" });
+    await store.createSpace(space(3), hash, null, space(2), null, "A".repeat(22));
+    await store.rekey(space(2), { newSpace: space(3), caller: "A".repeat(22), keep: [], remove: [], statement: "s", signature: "g" });
+    advance(INACTIVE_SPACE_TTL_MS + DAY);
+    for (let budget = 6; budget < 40; budget++) {
+      let left = budget;
+      const d = {
+        exec: (sql: string) => (left-- > 0 ? driver.exec(sql) : Promise.reject(new Error("Too many API requests"))),
+        run: (sql: string, params?: any[]) => (left-- > 0 ? driver.run(sql, params) : Promise.reject(new Error("Too many API requests"))),
+        all: (sql: string, params?: any[]) => (left-- > 0 ? driver.all(sql, params) : Promise.reject(new Error("Too many API requests"))),
+        // 像 D1 的 batch：一個呼叫、整批一個交易
+        batch: async (statements: { sql: string; params: any[] }[]) => {
+          if (left-- <= 0) throw new Error("Too many API requests");
+          await driver.exec("BEGIN");
+          try {
+            for (const st of statements) await driver.run(st.sql, st.params);
+            await driver.exec("COMMIT");
+          } catch (e) {
+            await driver.exec("ROLLBACK");
+            throw e;
+          }
+        },
+      };
+      await new SyncStore(d, () => now).expireInactiveSpaces(INACTIVE_SPACE_TTL_MS).catch(() => undefined);
+      // 還在的舊空間一定接在還在的空間後面
+      const orphans = await driver.all("SELECT space FROM moves WHERE moved_to NOT IN (SELECT id FROM spaces)");
+      expect(orphans).toEqual([]);
+      if (!(await exists(3))) break;
+    }
+    expect(await exists(1)).toBe(false);
+    expect(await exists(2)).toBe(false);
+    expect(await exists(3)).toBe(false);
   });
 });
