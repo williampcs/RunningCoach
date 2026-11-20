@@ -329,6 +329,7 @@
 | 2.0-draft | 2026-11-20 | 模塊簡報「使用者要保管的東西：一個保險箱、一把鑰匙」（`strategy-map.md`）：API key 進同步、passkey 主、復原碼改成信封後只顯示一次（12.47） |
 | 2.0-draft | 2026-11-20 | 路線把朋友試用和 iOS App 合成一站「自己和朋友用 App」；模塊簡報「iOS App：自己和朋友用」（`strategy-map.md`、12.46） |
 | 2.0-draft | 2026-11-20 | 工作單（協調接手架構的兩份簡報）：「同步的容量第一段：不活躍的空間到期刪除」、「我的鑰匙與帳號＋API key 與 Intervals.icu 的連線跟著加密的同步」；細談的六點使用者「全部照建議」（9.4） |
+| 2.0-draft | 2026-11-20 | passkey 測試頁的實機結果：iPhone 用 Proton Pass 建的 passkey 在 Mac 的 Edge 與 Windows 都拿得到同一個 PRF；Mac 建的那把在 iPhone 找不到（12.44） |
 
 ---
 
@@ -5593,6 +5594,8 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 
 **passkey 測試頁的實機結果**（使用者貼回的「複製結果」，只記結果）
 - 2026-11-16 macOS · Edge 155，passkey 存在 Proton Pass 的瀏覽器擴充：能力 prf、hybridTransport 都有；建立成功、PRF 啟用；算兩次都拿到 PRF、指紋相同。→ 第三方密碼管理工具（Proton Pass）在 Mac 的 Edge 可行。
+- 2026-11-20 iPhone · Safari＋Proton Pass：在 iPhone 選 Proton Pass 裡 Mac 建的那把，Face ID 後顯示「找不到包含通行密鑰的登入」（那一筆在 Proton Pass 裡找得到）→ 使用者刪掉，改在 iPhone 用 Proton Pass 建一把：建立與算都成功。
+- 2026-11-20 同一把（iPhone 建、存在 Proton Pass）在 macOS · Edge 155 算兩次：拿到 PRF、兩次相同（指紋 426646de）；使用者說在 Windows 電腦上也成功。→ Proton Pass 的 passkey 跨 iPhone、Mac、Windows 都拿得到同一個 PRF 值，換裝置可以解開。待確認：iPhone 上算出的指紋是否也是 426646de；Mac 建的那把在 iPhone 找不到的原因（可能是 Proton Pass 在 iOS 的限制）。
 
 ### 12.45 每天用代理掃 bug 與漏洞（2026-11-16，討論中）
 
