@@ -173,6 +173,8 @@ const WRITES_KEY = "sync:daily-writes";
 
 /** 沒有紀錄也沒有登記裝置的空間，建立多久之後清掉 */
 export const EMPTY_SPACE_TTL_MS = DAY;
+/** 所有裝置都沒有連線多久之後，空間（雲端的備份）刪掉：12 個月（規格 12.10「不活躍的空間到期刪除」） */
+export const INACTIVE_SPACE_TTL_MS = 365 * DAY;
 
 export interface ServiceLimits {
   spaces: number;
@@ -501,11 +503,13 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       if (device.removedAt !== null) throw new HttpError(410, "這台已從同步移除", { state: "removed", proof: device.proof, ...signed, ...(device.removal ?? {}) });
       if (move !== null) throw new HttpError(410, "同步金鑰已經換了", { state: "moved", space: move.movedTo, box: device.box, ...signed });
       await store.touchDevice(space, deviceId);
+      await store.touchSpace(space);
       return { kind: "device", device };
     }
     await checkToken(request, space);
     if ((await store.movedTo(space)) !== null) throw new HttpError(410, "這組同步金鑰已經換掉了", { state: "rekeyed" });
     if (await store.spaceMode(space)) throw new HttpError(403, "這個同步空間要用登記過的裝置", { state: "devices_required" });
+    await store.touchSpace(space);
     return { kind: "token" };
   }
 
@@ -584,6 +588,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     const added = await store.device(space, id);
     if (!added) throw new HttpError(409, "正在換新的同步金鑰，換好之後才能加入新的裝置", { state: "rekey_pending" });
     if (added.signPub !== signPub) throw new HttpError(409, "裝置 id 已經被使用");
+    await store.touchSpace(space);
     return deviceList(space, added);
   }
 
@@ -814,6 +819,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         if (stored !== null) {
           if (stored !== hash) throw new HttpError(403, "憑證不符");
           if ((await store.movedTo(space)) !== null) throw new HttpError(410, "這組同步金鑰已經換掉了", { state: "rekeyed" });
+          await store.touchSpace(space);
           return { created: false };
         }
         if (url.searchParams.get("create") !== "1") throw new HttpError(404, "同步空間不存在");
@@ -1191,10 +1197,12 @@ function requireJson(request: Request): void {
 export async function maintain(
   store: SyncStore,
   options: { limits?: Partial<ServiceLimits>; purgeRates?: () => Promise<number>; log?: (line: string) => void } = {},
-): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number; staleRekeys: number }> {
+): Promise<{ spaces: number; slots: number; nonces: number; rates: number; networks: number; staleRekeys: number; inactive: number }> {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const log = options.log ?? (() => undefined);
   const spaces = await store.purgeEmptySpaces(EMPTY_SPACE_TTL_MS);
+  // 所有裝置 12 個月都沒有連線的空間（換金鑰做到一半的，兩邊都沒有連線才算）
+  const inactive = await store.expireInactiveSpaces(INACTIVE_SPACE_TTL_MS);
   // 換到一半、7 天沒有進度的新空間（舊空間照舊，先移除的裝置維持移除）
   const staleRekeys = await store.purgeStaleRekeys(STALE_REKEY_MS);
   // 網段的代碼只保存 30 天（從記下的時間算；換金鑰的新空間沿用舊空間的時間，不會因此延長）
@@ -1208,7 +1216,7 @@ export async function maintain(
   if (near(totals.bytes, limits.bytes)) log(`WARNING sync bytes near limit: ${totals.bytes}/${limits.bytes}`);
   if (near(activeSlots, limits.pairSlots)) log(`WARNING sync pair slots near limit: ${activeSlots}/${limits.pairSlots}`);
   log(
-    `maintenance: purged spaces=${spaces} staleRekeys=${staleRekeys} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`,
+    `maintenance: purged spaces=${spaces} inactive=${inactive} staleRekeys=${staleRekeys} slots=${slots} nonces=${nonces} rates=${rates} networks=${networks}; spaces=${totals.spaces} bytes=${totals.bytes}`,
   );
-  return { spaces, slots, nonces, rates, networks, staleRekeys };
+  return { spaces, slots, nonces, rates, networks, staleRekeys, inactive };
 }

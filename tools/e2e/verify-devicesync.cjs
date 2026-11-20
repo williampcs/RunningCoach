@@ -352,12 +352,12 @@ let step = "start";
     await A.card.getByRole("button", { name: "刪除雲端的資料" }).click();
     check.deleteRemote = await A.card.locator(".notice.ok", { hasText: "雲端的同步資料已刪除" }).waitFor({ timeout: 5000 }).then(() => true, () => false);
     await B.card.getByRole("button", { name: "立即同步裝置" }).click();
-    check.otherDeviceSeesGone = await B.card.locator(".notice.warn", { hasText: "雲端的同步資料已經在另一台刪除" }).waitFor({ timeout: 5000 }).then(() => true, () => false);
+    check.otherDeviceSeesGone = await B.card.locator(".notice.warn", { hasText: "雲端的備份已經不在了" }).waitFor({ timeout: 5000 }).then(() => true, () => false);
     check.goneNoErrorNotice = (await B.card.locator(".notice.error").count()) === 0;
 
     // B 用這台重新開始：新的復原碼，B 的資料送上去
     step = "停止與刪除：B 重新開始";
-    await B.card.getByRole("button", { name: "用這台重新開始同步" }).click();
+    await B.card.getByRole("button", { name: "用這台的資料重新建立" }).click();
     const newRecovery = (await B.card.locator(".recovery-code").innerText({ timeout: 10000 })).trim();
     check.newRecoveryCode = newRecovery !== recovery;
     await B.card.getByLabel("我已經把復原碼存好了").check();

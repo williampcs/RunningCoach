@@ -31,7 +31,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite } from "@running-coach/sqlite-node";
 
-import { createSyncHandler } from "../apps/sync/src/handler";
+import { createSyncHandler, maintain } from "../apps/sync/src/handler";
 import { handleIntervalsToken, isIntervalsTokenPath } from "../apps/sync/src/intervals-token";
 import { SyncStore } from "../apps/sync/src/store";
 import { fakeTurnstileFetch, TEST_SECRET_PASS } from "../apps/sync/src/turnstile-testing";
@@ -832,7 +832,8 @@ async function streamOpenAI(res: ServerResponse, content: Block[], usage: Usage,
 
 // 多裝置同步服務：和正式的同一份程式，資料只在記憶體裡，重新啟動就清空.
 // MOCK_SYNC_REKEY_WRITES：換金鑰的複製每天的額度（列數，規格 12.10）；有給時開頻率限制，
-// POST /mock-sync/next-day（可帶 ?rekeyWrites=）把同步服務的時間往後推到下一個 UTC 日（E2E 測跨天的換金鑰）
+// POST /mock-sync/next-day（可帶 ?rekeyWrites=）把同步服務的時間往後推到下一個 UTC 日（E2E 測跨天的換金鑰）；
+// POST /mock-sync/shift?days=N 往後推 N 天並跑一次定時維護
 const syncDriver = openNodeSqlite(":memory:");
 let syncShift = 0;
 const syncClock = () => new Date(Date.now() + syncShift);
@@ -865,6 +866,17 @@ function syncNextDay(req: IncomingMessage, res: ServerResponse) {
   syncHandle = makeSyncHandle();
   res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
   res.end(JSON.stringify({ shiftMs: syncShift }));
+}
+
+// POST /mock-sync/shift?days=N：同步服務的時間往後推 N 天，接著跑一次定時維護（E2E 測 12 個月沒有連線的空間到期刪除）.
+// 網頁那邊的時間也要一起往後撥（簽章的時間要在前後 5 分鐘內）
+async function syncShiftDays(req: IncomingMessage, res: ServerResponse) {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const days = Number(url.searchParams.get("days"));
+  if (Number.isFinite(days) && days > 0) syncShift += days * 86_400_000;
+  const result = await maintain(syncStore);
+  res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
+  res.end(JSON.stringify({ shiftMs: syncShift, ...result }));
 }
 
 function proxySync(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -943,6 +955,7 @@ function record(kind: "llm" | "weather", body: unknown) {
 
 createServer((req, res) => {
   if (req.url?.startsWith("/mock-sync/next-day") && req.method === "POST" && syncLimiter) return syncNextDay(req, res);
+  if (req.url?.startsWith("/mock-sync/shift") && req.method === "POST") return void syncShiftDays(req, res);
   if (req.url?.startsWith("/sync/")) return proxySync(req, res, req.url.slice("/sync".length));
   const send = (status: number, payload: unknown) => {
     res.writeHead(status, { "content-type": "application/json", ...CORS });

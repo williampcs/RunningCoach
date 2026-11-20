@@ -16,7 +16,8 @@ const SCHEMA = `
     network_at  INTEGER,
     progress_at INTEGER,
     rekey_by    TEXT,
-    handoff     TEXT
+    handoff     TEXT,
+    seen_on     TEXT
   );
   CREATE TABLE IF NOT EXISTS records (
     space  TEXT NOT NULL,
@@ -173,6 +174,7 @@ export class SyncStore {
       ["spaces", "progress_at", "INTEGER"],
       ["spaces", "rekey_by", "TEXT"],
       ["spaces", "handoff", "TEXT"],
+      ["spaces", "seen_on", "TEXT"],
       ["devices", "removed_by", "TEXT"],
       ["devices", "removal_statement", "TEXT"],
       ["devices", "removal_signature", "TEXT"],
@@ -187,6 +189,72 @@ export class SyncStore {
       }
     }
     await this.driver.exec("CREATE INDEX IF NOT EXISTS spaces_network ON spaces (network)");
+    // 最後連線的日期（規格 12.10「不活躍的空間到期刪除」）：這個欄加上之前就有的空間，從上線那天起算，不追溯
+    await this.driver.run("UPDATE spaces SET seen_on=? WHERE seen_on IS NULL", [this.today()]);
+  }
+
+  /** 今天的日期（UTC，YYYY-MM-DD）：最後連線只記到日 */
+  private today(): string {
+    return this.now().toISOString().slice(0, 10);
+  }
+
+  /**
+   * 這個空間今天有裝置連線（通過驗證的請求，讀或寫都算）：只記日期，不記時間與來源；
+   * 一天最多寫一次（已經是今天的不寫）
+   */
+  async touchSpace(space: string): Promise<void> {
+    const today = this.today();
+    // 這個執行個體今天已經記過的不再查（每個請求的查詢數有上限）
+    if (this.seenToday.get(space) === today) return;
+    await this.driver.run("UPDATE spaces SET seen_on=? WHERE id=? AND (seen_on IS NULL OR seen_on < ?)", [today, space, today]);
+    this.rememberSeen(space, today);
+  }
+
+  /** 這個執行個體記得哪些空間今天已經記過（只在記憶體裡，數量有上限） */
+  private readonly seenToday = new Map<string, string>();
+
+  private rememberSeen(space: string, today: string): void {
+    if (this.seenToday.size >= 10_000) this.seenToday.clear();
+    this.seenToday.set(space, today);
+  }
+
+  /** 最後一次有裝置連線的日期（YYYY-MM-DD）；沒有這個空間時 null */
+  async seenOn(space: string): Promise<string | null> {
+    const row = (await this.driver.all("SELECT seen_on FROM spaces WHERE id=?", [space]))[0];
+    return row?.seen_on === null || row?.seen_on === undefined ? null : String(row.seen_on);
+  }
+
+  /**
+   * 刪掉 olderThanMs 都沒有任何裝置連線的空間（連同紀錄、裝置、配對的模式、換金鑰之前的舊空間）.
+   * 只看最新的空間（還沒換金鑰的；換過的舊空間跟著它刪）. 有換到一半的新空間時，兩邊（舊空間與換到一半的新空間）
+   * 都超過期限才刪，一起刪：換金鑰做到一半、或已經先移除裝置而鎖住的，只要任一邊有連線就不動.
+   * 換到一半的新空間本身不在這裡單獨刪（purgeStaleRekeys 依進度清）. 回傳刪掉幾個（最新的空間的數量）
+   */
+  async expireInactiveSpaces(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(this.now().getTime() - olderThanMs).toISOString().slice(0, 10);
+    const rows = await this.driver.all(
+      "SELECT id FROM spaces WHERE seen_on IS NOT NULL AND seen_on < ?" +
+        " AND id NOT IN (SELECT space FROM moves)" +
+        // 換到一半的新空間不單獨刪
+        " AND NOT (rekey_from IS NOT NULL AND id NOT IN (SELECT moved_to FROM moves))" +
+        // 換到一半的新空間最近有連線（換金鑰的那台在複製、或用新的復原碼接手的）：舊空間也不刪
+        " AND NOT EXISTS (SELECT 1 FROM spaces p WHERE p.rekey_from = spaces.id AND p.id NOT IN (SELECT moved_to FROM moves)" +
+        " AND (p.seen_on IS NULL OR p.seen_on >= ?))",
+      [cutoff, cutoff],
+    );
+    let expired = 0;
+    for (const r of rows) {
+      const space = String(r.id);
+      // 再確認一次（並行的連線剛好在這之間進來時不刪）
+      const seen = await this.seenOn(space);
+      if (seen === null || seen >= cutoff) continue;
+      const pending = await this.driver.all("SELECT id, seen_on FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)", [space]);
+      if (pending.some((p) => p.seen_on === null || p.seen_on === undefined || String(p.seen_on) >= cutoff)) continue;
+      for (const p of pending) await this.deleteOne(String(p.id));
+      await this.deleteSpace(space);
+      expired++;
+    }
+    return expired;
   }
 
   async spaceToken(space: string): Promise<string | null> {
@@ -218,8 +286,8 @@ export class SyncStore {
   ): Promise<boolean> {
     const stamp = this.now().toISOString();
     const result = await this.driver.run(
-      "INSERT INTO spaces (id, token_hash, created_at, updated_at, rekey_from, progress_at, network, network_at)" +
-        " SELECT ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE ? END, CASE WHEN ? IS NULL THEN ? ELSE (SELECT network FROM spaces WHERE id = ?) END," +
+      "INSERT INTO spaces (id, token_hash, created_at, updated_at, seen_on, rekey_from, progress_at, network, network_at)" +
+        " SELECT ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE ? END, CASE WHEN ? IS NULL THEN ? ELSE (SELECT network FROM spaces WHERE id = ?) END," +
         " CASE WHEN ? IS NULL THEN (CASE WHEN ? IS NULL THEN NULL ELSE ? END) ELSE (SELECT network_at FROM spaces WHERE id = ?) END" +
         " WHERE (? IS NOT NULL AND NOT EXISTS (SELECT 1 FROM spaces WHERE rekey_from = ? AND id NOT IN (SELECT moved_to FROM moves)))" +
         " OR (? IS NULL AND (? OR (SELECT COUNT(*) FROM spaces WHERE id NOT IN (SELECT space FROM moves)) < ?)) ON CONFLICT(id) DO NOTHING",
@@ -228,6 +296,7 @@ export class SyncStore {
         tokenHash,
         stamp,
         stamp,
+        this.today(),
         rekeyFrom,
         rekeyFrom,
         this.now().getTime(),
@@ -245,6 +314,7 @@ export class SyncStore {
         maxSpaces ?? 0,
       ],
     );
+    if (result.changes > 0) this.rememberSeen(space, this.today());
     if (result.changes > 0 && rekeyFrom !== null && rekeyBy !== null) await this.driver.run("UPDATE spaces SET rekey_by=? WHERE id=?", [rekeyBy, space]);
     return result.changes > 0;
   }
