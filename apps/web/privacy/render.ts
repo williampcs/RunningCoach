@@ -93,7 +93,7 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
         "<li>每個請求的一次性亂數，用來擋下重送的請求，十分鐘後刪除。</li>"
       : "",
     "<!--DEVICES_NOTE-->": build.devices
-      ? "<li>移除某台裝置時，被移除的那台之後連不上同步，下次打開時會清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）；它在移除前已經下載的資料我們收不回來。</li>"
+      ? "<li>移除某台裝置時，被移除的那台之後連不上同步，下次打開時會清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台，由那台的人決定清除或匯出）；它在移除前已經下載的資料我們收不回來。</li>"
       : "",
     "<!--ONBOARDING_STORED-->": build.onboarding
       ? "<li><strong>「先看看」的範例</strong>：第一次打開時可以先用範例的資料逛一圈。範例的資料只在這個分頁的記憶體裡，不寫進上面的資料庫、不讀你存的 key、不同步、不連任何外部服務；離開（按「開始設定」或關掉分頁）就清掉。設定精靈走到哪一步記在 localStorage。</li>"
@@ -105,7 +105,7 @@ export function renderPrivacyPage(build: PrivacyBuild): string {
       ? "<li>2026-11-02：第一次打開時的設定精靈（貼上 key 時檢查能不能用，只送「ping」）與「先看看」的範例（只在記憶體裡，不存、不連外部服務）。</li>"
       : "",
     "<!--INTERVALS_LOGIN-->": build.intervalsLogin
-      ? "<li><strong>用 Intervals.icu 登入（選用）</strong>：按「用 Intervals.icu 登入」時，你在 Intervals.icu 按同意後，它給的一次性授權碼會經過我們的同步服務轉送一次，換成只能讀你自己資料的 token（要用到只有我們有的 App 密碼，所以要經過伺服器）；同步服務不保存授權碼與 token、不留紀錄。token 只存在這台裝置的瀏覽器（密碼鎖開著時加密），不會同步；之後由瀏覽器直接帶著 token 向 Intervals.icu 讀資料。權限只有讀：活動、恢復資料、運動設定。按「中斷連結」會請 Intervals.icu 取消授權並刪掉這台的 token；也可以在 Intervals.icu 的設定頁移除 Zone2Mate。</li>"
+      ? "<li><strong>用 Intervals.icu 登入（選用）</strong>：按「用 Intervals.icu 登入」時，你在 Intervals.icu 按同意後，它給的一次性授權碼會經過我們的同步服務轉送一次，換成只能讀你自己資料的 token（要用到只有我們有的 App 密碼，所以要經過伺服器）；同步服務不保存授權碼與 token、不留紀錄。token 存在這台裝置的瀏覽器（密碼鎖開著時加密）；開著多裝置同步、選了帶 key 時，會加密後帶到你的其他裝置（我們解不開）；之後由瀏覽器直接帶著 token 向 Intervals.icu 讀資料。權限只有讀：活動、恢復資料、運動設定。按「中斷連結」會請 Intervals.icu 取消授權並刪掉這台的 token；也可以在 Intervals.icu 的設定頁移除 Zone2Mate。</li>"
       : "",
     "<!--HUMAN_CHECK-->": build.humanCheck
       ? '<li>開始同步與配對新裝置時，先用 Cloudflare 的人機驗證（Turnstile）確認不是機器人：網頁會從 <code>challenges.cloudflare.com</code> 載入它的方塊，Cloudflare 依它的<a href="https://www.cloudflare.com/turnstile-privacy-policy/">Turnstile 隱私說明</a>處理連線與瀏覽器的資訊；同步服務只把驗證結果的代碼送去 Cloudflare 確認，不送你的 IP，也不留紀錄。</li>'

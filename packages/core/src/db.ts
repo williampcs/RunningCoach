@@ -46,13 +46,24 @@ import type {
  * 18：planned_sessions.self_change（選手自己改短、換成輕鬆：原本的內容、改成什麼、原因，規格 12.34 第 3 點 B）
  * 19：workouts.sync_id、updated_at（手動新增的跑步：跨裝置不變的 id 與修改時間，規格 12.36「沒有手錶也能用」）
  * 20：trial_accounts（免費試用的帳號掛進加密的同步：代理的網址、帳號、加密過的復原密鑰，規格 12.44 第 1 步）
+ * 21：synced_secrets（API key 與 Intervals.icu 的連線跟著加密的同步：名稱、加密過的內容、改的時間，規格 12.47）
  */
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 /** 同步裡的免費試用帳號（規格 12.44 第 1 步）；box 要用同步金鑰解開（device-sync/trial-account.ts） */
 export interface TrialAccountRecord {
   account: string;
   proxy_url: string;
+  box: string;
+  updated_at: string;
+}
+
+/**
+ * 同步裡的 API key 與 Intervals.icu 的連線（規格 12.47）：name 是 llm、intervals，box 要用同步金鑰解開（device-sync/synced-secret.ts）；
+ * share 是這個同步空間要不要帶 key（box 是 on／off，不是秘密）. updated_at 是那台改 key 的時間（最後改的為準）
+ */
+export interface SyncedSecretRecord {
+  name: string;
   box: string;
   updated_at: string;
 }
@@ -303,6 +314,12 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS trial_accounts (
     account     TEXT PRIMARY KEY,
     proxy_url   TEXT NOT NULL,
+    box         TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
+  -- API key 與 Intervals.icu 的連線（規格 12.47）：box 是用同步金鑰加密的內容（同步的 sk: 紀錄），只有同一組同步金鑰的裝置解得開
+  CREATE TABLE IF NOT EXISTS synced_secrets (
+    name        TEXT PRIMARY KEY,
     box         TEXT NOT NULL,
     updated_at  TEXT NOT NULL
   );
@@ -664,6 +681,27 @@ export class Db {
 
   async deleteTrialAccount(account: string): Promise<void> {
     await this.run("DELETE FROM trial_accounts WHERE account=?", [account]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // synced_secrets（API key 與 Intervals.icu 的連線跟著加密的同步，規格 12.47）
+  // ---------------------------------------------------------------------------
+
+  listSyncedSecrets(): Promise<SyncedSecretRecord[]> {
+    return this.all<SyncedSecretRecord>("SELECT name, box, updated_at FROM synced_secrets ORDER BY name");
+  }
+
+  /** updated_at 由呼叫的給（那台改 key 的時間，不是存進來的時間）：兩台都改過時以它比誰比較新 */
+  async saveSyncedSecret(record: SyncedSecretRecord): Promise<void> {
+    await this.run(
+      "INSERT INTO synced_secrets (name, box, updated_at) VALUES (?, ?, ?)" +
+        " ON CONFLICT(name) DO UPDATE SET box=excluded.box, updated_at=excluded.updated_at",
+      [record.name, record.box, record.updated_at],
+    );
+  }
+
+  async deleteSyncedSecret(name: string): Promise<void> {
+    await this.run("DELETE FROM synced_secrets WHERE name=?", [name]);
   }
 
   // ---------------------------------------------------------------------------

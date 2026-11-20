@@ -1,4 +1,7 @@
-/** 使用者設定 — 存在這個瀏覽器的 localStorage，不會上傳. */
+/**
+ * 使用者設定 — 存在這個瀏覽器的 localStorage. 設定本身不上傳；開著多裝置同步、選了「帶到其他裝置」時，
+ * API key 與 Intervals.icu 的連線另外加密後跟著同步（規格 12.47，secret-sync.ts）.
+ */
 import {
   AnthropicProvider,
   TERMS_VERSION,
@@ -17,6 +20,9 @@ import { TRIAL_MODEL } from "./trial";
 const STORAGE_KEY = () => storageKey(SCOPED_KEYS.settings);
 /** 啟用密碼鎖時，API key 等憑證以密文存在這裡，STORAGE_KEY 裡的對應欄位留空 */
 const LOCK_KEY = () => storageKey(SCOPED_KEYS.lock);
+/** API key 與 Intervals.icu 的連線在這台最後改的時間（規格 12.47）：只有時間，沒有 key */
+const STAMPS_KEY = () => storageKey(SCOPED_KEYS.secretStamps);
+const SHARE_OK_KEY = () => storageKey(SCOPED_KEYS.secretShare);
 
 /** 解鎖後的金鑰與憑證只放在記憶體；重新載入頁面就要再輸入一次密碼 */
 let lockSession: LockSession | null = null;
@@ -37,7 +43,7 @@ export interface AppSettings {
   proxy: { url: string; token: string; account?: string | null };
   /**
    * Intervals.icu：API key（Basic），或用 Intervals.icu 登入拿到的 token（Bearer，規格 12.37）與那個帳號.
-   * token 和 API key 一樣只存在這台（密碼鎖開著時加密），不同步
+   * token 和 API key 一樣存在這台（密碼鎖開著時加密）；同步開著、選了「帶到其他裝置」時另外加密後跟著同步（規格 12.47，secret-sync.ts）
    */
   intervals: { apiKey: string; athleteId: string; accessToken: string; account: { id: string | null; name: string | null } | null };
   /** 多裝置同步（規格 12.10）：服務網址與同步金鑰（base64url；空白表示沒有開啟） */
@@ -144,15 +150,158 @@ export function loadSettings(): AppSettings {
   return lockEnabled() ? withSecrets(plain, unlockedSecrets ?? NO_SECRETS) : plain;
 }
 
+// ---------------------------------------------------------------------------
+// 跟著同步的 key（規格 12.47）：哪些欄位算一樣、這台什麼時候改的
+// ---------------------------------------------------------------------------
+
+export type SecretName = "llm" | "intervals";
+export const SECRET_NAMES: SecretName[] = ["llm", "intervals"];
+
+/** AI 的 API key（自己的 key 才有；免費試用的憑證不跟同步，每台一個） */
+export interface LlmSecret {
+  provider: ProviderKind;
+  apiKey: string;
+  baseURL: string;
+  models: Record<Purpose, string>;
+}
+export type IntervalsSecret = AppSettings["intervals"];
+
+/** 這台不參與 llm 的同步：用免費試用（試用的憑證每台一個；不送這台的、也不拿別台的蓋掉） */
+export const secretSkipped = (s: AppSettings, name: SecretName) => name === "llm" && s.llmMode === "proxy";
+
+/** 這台要帶到其他裝置的內容；沒有（還沒填、清掉了）時是 null */
+export function secretOf(s: AppSettings, name: "llm"): LlmSecret | null;
+export function secretOf(s: AppSettings, name: "intervals"): IntervalsSecret | null;
+export function secretOf(s: AppSettings, name: SecretName): LlmSecret | IntervalsSecret | null;
+export function secretOf(s: AppSettings, name: SecretName): LlmSecret | IntervalsSecret | null {
+  if (name === "llm") {
+    if (s.llmMode !== "byok" || !s.apiKey.trim()) return null;
+    return { provider: s.provider, apiKey: s.apiKey, baseURL: s.baseURL, models: { ...s.models } };
+  }
+  if (!intervalsConnected(s)) return null;
+  const { apiKey, athleteId, accessToken, account } = s.intervals;
+  return { apiKey, athleteId, accessToken, account: account ? { id: account.id, name: account.name } : null };
+}
+
+/** 兩份內容一樣嗎（欄位順序不算） */
+export function sameSecret(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.keys(v as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+        )
+      : v;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/**
+ * 每一樣在這台的同步狀態（只有時間與旗標，沒有 key）：
+ * - at：這台現在這份的時間（這台改的時間，或帶進來的那份的時間，最多到帶進來時的「現在＋幾分鐘」）
+ * - seen：這台最後一次和雲端一致時，雲端那份的時間（原樣）；雲端之後換了才算「另一台改過」
+ * - edited：這台在那之後自己改過（還沒送上去）. 這台的修改不會被默默蓋掉
+ */
+export interface SecretStamp {
+  at: string;
+  seen: string | null;
+  edited: boolean;
+}
+
+export function secretStamps(): Partial<Record<SecretName, SecretStamp>> {
+  try {
+    const value = JSON.parse(localStorage.getItem(STAMPS_KEY()) ?? "{}") as Record<string, Partial<SecretStamp>>;
+    const out: Partial<Record<SecretName, SecretStamp>> = {};
+    for (const n of SECRET_NAMES) {
+      const v = value[n];
+      if (v && typeof v.at === "string") out[n] = { at: v.at, seen: typeof v.seen === "string" ? v.seen : null, edited: v.edited === true };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function setSecretStamp(name: SecretName, stamp: SecretStamp): void {
+  try {
+    localStorage.setItem(STAMPS_KEY(), JSON.stringify({ ...secretStamps(), [name]: stamp }));
+  } catch {
+    // 記不住就當成不知道什麼時候改的：兩台不同時問使用者
+  }
+}
+
+/** 這台的修改的時間：至少比這台現在這份晚（這台的修改一定比它看過的新） */
+function editStamp(old: SecretStamp | undefined, now: Date): SecretStamp {
+  const after = old ? Date.parse(old.at) + 1 : 0;
+  const at = new Date(Math.max(now.getTime(), Number.isFinite(after) ? after : 0)).toISOString();
+  return { at, seen: old?.seen ?? null, edited: true };
+}
+
+/**
+ * 存設定時：跟著同步的內容變了（填了、換了 key），記成這台的修改.
+ * 變成空的不算（App 自己清的，例如被移除、忘記密碼）：當成「沒有意見」，之後照雲端的；
+ * 使用者在畫面上清掉、而且這台同意帶 key 時，畫面另外呼叫 markUserCleared() 才會把「已清除」送出去
+ */
+function stampChanges(prev: AppSettings, next: AppSettings, now = new Date()): void {
+  const stamps = secretStamps();
+  for (const name of SECRET_NAMES) {
+    // 換成免費試用不算清掉 key
+    if (secretSkipped(next, name)) continue;
+    const value = secretOf(next, name);
+    if (sameSecret(secretOf(prev, name), value)) continue;
+    const old = stamps[name];
+    if (value === null) {
+      if (old) setSecretStamp(name, { at: old.at, seen: old.seen, edited: false });
+      continue;
+    }
+    setSecretStamp(name, editStamp(old, now));
+  }
+}
+
+/** 使用者在畫面上清掉了 key 或中斷了連結（這台同意帶 key 時才呼叫）：「已清除」算這台的修改，下次同步送出去 */
+export function markUserCleared(name: SecretName, now = new Date()): void {
+  setSecretStamp(name, editStamp(secretStamps()[name], now));
+}
+
+/** 這台同意把自己的 key 帶上去的那一次「提供分享」（sk:share 的時間）；拒絕的是 declined:時間 */
+export function shareAgreement(): string | null {
+  try {
+    return localStorage.getItem(SHARE_OK_KEY());
+  } catch {
+    return null;
+  }
+}
+
+export function setShareAgreement(value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(SHARE_OK_KEY());
+    else localStorage.setItem(SHARE_OK_KEY(), value);
+  } catch {
+    // 記不住：下次再問
+  }
+}
+
+/** 被移除、全部重置：跟著同步的 key 在這台的狀態一起清掉（之後重新加入時當成沒有意見、也重新問要不要帶） */
+export function clearSecretSyncState(): void {
+  try {
+    localStorage.removeItem(STAMPS_KEY());
+    localStorage.removeItem(SHARE_OK_KEY());
+  } catch {
+    // 清不掉：照樣不會送「已清除」（清掉的 key 不算修改）
+  }
+}
+
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (lockEnabled()) {
     if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
+    stampChanges(withSecrets(loadPlainSettings(), unlockedSecrets ?? NO_SECRETS), settings);
     const sealed = await sealSecrets(lockSession, secretsOf(settings));
     localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
     localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
     unlockedSecrets = secretsOf(settings);
     return;
   }
+  stampChanges(loadPlainSettings(), settings);
   localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
 }
 
@@ -160,6 +309,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 export function clearSettings(): void {
   localStorage.removeItem(STORAGE_KEY());
   localStorage.removeItem(LOCK_KEY());
+  clearSecretSyncState();
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +376,12 @@ export function suggestedModels(mode: AppSettings["llmMode"], provider: Provider
   return provider === "anthropic" ? { ...CLAUDE_MODELS } : { chat: "", summary: "", compress: "" };
 }
 
-export const consentKey = (s: AppSettings) => (s.llmMode === "proxy" ? "proxy" : `byok:${s.provider}`);
+/**
+ * 資料流向的同意綁在「送到誰」：自己的 key 綁供應商；其他相容服務再綁服務網址（換了網址要重新確認，
+ * 同步帶進來的設定也一樣，規格 12.47）
+ */
+export const consentKey = (s: AppSettings) =>
+  s.llmMode === "proxy" ? "proxy" : s.provider === "openai-compatible" ? `byok:openai-compatible:${s.baseURL.trim().replace(/\/+$/, "")}` : `byok:${s.provider}`;
 
 /** 已確認過這一版的使用須知（規格 12.32） */
 export const termsAccepted = (s: AppSettings) => s.terms?.version === TERMS_VERSION;

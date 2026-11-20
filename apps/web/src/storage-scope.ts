@@ -23,6 +23,10 @@ export const SCOPED_KEYS = {
   feed: "running-coach.feed.v1",
   regionHint: "running-coach.region-hint.dismissed",
   redFlag: "running-coach.red-flag-alert",
+  /** API key 與 Intervals.icu 的連線在這台最後改的時間（跟著同步時，最後改的為準，規格 12.47）；不是秘密 */
+  secretStamps: "running-coach.secret-stamps.v1",
+  /** 這台同意把自己的 key 帶上去的那一次「提供分享」（sk:share 的時間）；不是秘密 */
+  secretShare: "running-coach.secret-share.v1",
 } as const;
 
 type ScopedKey = (typeof SCOPED_KEYS)[keyof typeof SCOPED_KEYS];

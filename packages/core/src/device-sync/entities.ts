@@ -3,13 +3,14 @@
  *
  * 只同步只存在 App 裡的資料：選手資料、賽事、課表、每日自評、記住的事、傷病紀錄、對話與對話摘要、手動新增的跑步，以及跑步上的體感、
  * 教練的分析與「不是同一趟」、其他運動（騎車等）的體感. 從 Intervals.icu 來的跑步、恢復資料、其他運動由各裝置自己同步.
- * API key 與設定不在資料庫裡，不同步.
+ * 設定不在資料庫裡，不同步；API key 與 Intervals.icu 的連線在使用者選了「帶到其他裝置」時另外以 sk: 紀錄同步（下面）.
  *
  * 名稱：選手資料用欄位名、自評用日期、賽事、課表、記住的事與傷病紀錄用 sync_id（同步時補上的隨機 id）、
  * 對話與摘要用內容的雜湊（內容寫入後不再修改；對話的「已整理」與回覆可以變）、跑步上的資料用 Intervals.icu 的活動 id，
  * 手動新增的跑步用它的 sync_id（整筆一起送，體感也在裡面）. 匯入的檔案（規格 12.40）：跑步 fw:<sync_id>、其他運動 fo:<雜湊>，
  * 整筆的摘要一起送（不含每秒的資料）. 免費試用的帳號（規格 12.44 第 1 步）：ta:<帳號>，內容是代理的網址與用同步金鑰再加密一次的
- * 復原密鑰（device-sync/trial-account.ts）；舊版不認得，不套用也不刪.
+ * 復原密鑰（device-sync/trial-account.ts）；舊版不認得，不套用也不刪. API key 與 Intervals.icu 的連線（規格 12.47）：sk:llm、sk:intervals，
+ * 內容是用同步金鑰再加密一次的 key 與改的時間（device-sync/synced-secret.ts）；sk:share 是要不要帶 key；舊版一樣不認得.
  */
 import { dropCoveredFileOthers, markFileRunDuplicate } from "../activity-files/store";
 import type { SqlDriver, SqlValue } from "../types";
@@ -21,7 +22,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/.test(name) || /^sk:(llm|intervals|share)$/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -191,6 +192,10 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   // 免費試用的帳號（schema 20）
   for (const r of await sql.all("SELECT account, proxy_url, box, updated_at FROM trial_accounts")) {
     data.set(`ta:${r.account}`, { url: r.proxy_url ?? null, box: r.box ?? null, updated_at: r.updated_at ?? null });
+  }
+  // API key 與 Intervals.icu 的連線（schema 21）
+  for (const r of await sql.all("SELECT name, box, updated_at FROM synced_secrets")) {
+    data.set(`sk:${r.name}`, { box: r.box ?? null, updated_at: r.updated_at ?? null });
   }
   for (const r of await sql.all("SELECT a, b FROM workout_distinct")) {
     const [ka, kb] = [keyById.get(Number(r.a)), keyById.get(Number(r.b))];
@@ -410,6 +415,18 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
           "INSERT INTO trial_accounts (account, proxy_url, box, updated_at) VALUES (?, ?, ?, ?)" +
             " ON CONFLICT(account) DO UPDATE SET proxy_url=excluded.proxy_url, box=excluded.box, updated_at=excluded.updated_at",
           [id, data.url, data.box, typeof data.updated_at === "string" ? data.updated_at : ""],
+        );
+      }
+      return "applied";
+    case "sk":
+      // 跟著同步的 key：只認得 llm、intervals、share；其他名稱不存（isKnown 也不認得，不會當成刪除送出）
+      if (!isKnown(name)) return "applied";
+      if (!data) await sql.run("DELETE FROM synced_secrets WHERE name=?", [id]);
+      else if (typeof data.box === "string") {
+        await sql.run(
+          "INSERT INTO synced_secrets (name, box, updated_at) VALUES (?, ?, ?)" +
+            " ON CONFLICT(name) DO UPDATE SET box=excluded.box, updated_at=excluded.updated_at",
+          [id, data.box, typeof data.updated_at === "string" ? data.updated_at : ""],
         );
       }
       return "applied";

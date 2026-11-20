@@ -29,7 +29,7 @@ type State = { kind: "idle" } | { kind: "busy"; text: string } | { kind: "error"
  * 從 Intervals.icu 回來時（網址的 code 在 main.tsx 已經讀走並清掉）在這裡換 token 並存起來
  */
 export function IntervalsLogin({ from }: { from: LoginFrom }) {
-  const { settings, updateSettings, toast } = useApp();
+  const { settings, updateSettings, toast, secretSync } = useApp();
   const [state, setState] = useState<State>({ kind: "idle" });
   const available = intervalsLoginAvailable();
 
@@ -72,6 +72,8 @@ export function IntervalsLogin({ from }: { from: LoginFrom }) {
     const revoked = await disconnectIntervals(token, import.meta.env.VITE_INTERVALS_BASE_URL || INTERVALS_BASE_URL);
     try {
       await updateSettings({ ...settings, intervals: { ...settings.intervals, accessToken: "", account: null } });
+      // 同意帶 key 的話，別台的連線也跟著清（規格 12.47）
+      if (!settings.intervals.apiKey.trim()) secretSync.userCleared("intervals");
     } catch (e) {
       setState({ kind: "error", text: `刪不掉這台的登入：${errorText(e)}` });
       return;

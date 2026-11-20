@@ -3,7 +3,7 @@
  * 1. 按「用 Intervals.icu 登入」→ 帶著 client_id、回呼網址（網站的根目錄）、權限範圍與隨機的 state 到 Intervals.icu 同意.
  * 2. Intervals.icu 轉回來時網址帶 ?code=…&state=…：打開 App 時（任何外部請求之前）就從網址清掉，state 對得上才用.
  * 3. 把 code 送到我們的同步服務換成 token（要 client_secret；只轉送、不存，apps/sync/src/intervals-token.ts）.
- * 4. token 和 API key 一樣存在這台的設定（密碼鎖開著時加密），不同步；之後瀏覽器直接帶 Bearer 向 Intervals.icu 讀資料.
+ * 4. token 和 API key 一樣存在這台的設定（密碼鎖開著時加密）；選了帶 key 時加密後跟著同步（規格 12.47）；之後瀏覽器直接帶 Bearer 向 Intervals.icu 讀資料.
  * 中斷連結：呼叫 Intervals.icu 的 disconnect-app，再刪掉這台的 token；呼叫失敗也照樣刪，並請使用者到 Intervals.icu 移除.
  */
 

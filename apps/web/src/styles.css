@@ -3339,6 +3339,24 @@ button.text.import-button {
   border-top: 1px solid var(--border);
 }
 
+/* 我的鑰匙與帳號（規格 12.47）：每一列下面是「換手機」「弄丟了」兩行，對齊標題 */
+.key-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-2);
+  margin: 0;
+  padding: 0 0 var(--sp-3) calc(36px + var(--sp-3));
+  color: var(--muted);
+}
+
+.key-facts dt {
+  font-weight: 600;
+}
+
+.key-facts dd {
+  margin: 0;
+}
+
 /* 設定：第一層是清單，點進去是那一項的欄位 */
 .settings-list {
   padding: 0 var(--sp-4);

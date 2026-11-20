@@ -517,6 +517,63 @@ function ExpiryNote() {
   return <p className="small muted expiry-note">{EXPIRY_TEXT}</p>;
 }
 
+const SHARE_LABEL = "把 API key 與 Intervals.icu 的連線也帶到其他裝置";
+
+/** 帶不帶 key 的說明（ⓘ） */
+function ShareKeysInfo() {
+  return (
+    <InfoTip label="帶到其他裝置的說明">
+      <ul>
+        <li>和其他同步的資料一樣，在這台加密後才送出；同步服務只存加密後的內容，我們解不開。</li>
+        <li>保護只跟最弱的那台一樣：在開了密碼鎖的這台填的 key，到了沒開密碼鎖的裝置上是明文。每台都開密碼鎖比較安全。</li>
+        <li>一台改了 key，另一台同步後跟著換；換了 AI 服務或服務網址、或兩台都改過時，會先問你要用哪一份。資料流向每台自己確認。</li>
+        <li>取消勾選會刪掉雲端的那一份，每台留著自己現在的。所有裝置都照同一個設定。</li>
+        <li>免費試用每台各一個，不跟著帶。</li>
+      </ul>
+    </InfoTip>
+  );
+}
+
+/** 同步設定裡：這個同步空間要不要帶 key（規格 12.47） */
+function ShareKeysToggle() {
+  const { secretSync, toast } = useApp();
+  // 按下去馬上顯示新的狀態（存好之前）
+  const [changing, setChanging] = useState<boolean | null>(null);
+  if (secretSync.share === null) return null;
+  async function change(on: boolean) {
+    setChanging(on);
+    try {
+      await secretSync.setShare(on);
+      toast(on ? "API key 與 Intervals.icu 的連線會帶到其他裝置。" : "已刪掉雲端的 key，之後不再帶到其他裝置。");
+    } catch (e) {
+      toast(`沒有改成：${errorText(e)}`);
+    } finally {
+      setChanging(null);
+    }
+  }
+  const on = changing ?? secretSync.share;
+  return (
+    <>
+      <p className="row share-keys">
+        <label className="check">
+          <input type="checkbox" checked={on} disabled={changing !== null} onChange={(e) => void change(e.target.checked)} />
+          {SHARE_LABEL}
+        </label>
+        <ShareKeysInfo />
+      </p>
+      {!on && <p className="small muted share-keys-hint">沒有勾：換手機或加入新裝置時，API key 與 Intervals.icu 要在那台重新填。</p>}
+      {on && changing === null && !secretSync.shareAgreed && !secretSync.shareAsk && (
+        <p className="row share-keys-hint">
+          <span className="small muted">這台的 key 沒有帶上去（別台的照樣拿得到）。</span>
+          <button className="text" onClick={() => void secretSync.answerShare(true)}>
+            這台也帶
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
+
 /**
  * 裝置清單（規格 12.27）：每台的名稱、加入與最後同步的時間、「這台」；改名、移除、換金鑰.
  * 最後同步的時間是伺服器記的，不靠各台自己寫
@@ -624,7 +681,7 @@ function DeviceList({
           只換金鑰
         </button>
         <InfoTip label="移除與換金鑰">
-          移除某台時，那台馬上不能再同步；接著換一把新的同步金鑰與復原碼（資料多時要好幾天，每天自動接著做）：留下的裝置換好後自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台，由那台的人決定清除或匯出）。懷疑復原碼外流時按「只換金鑰」。已經被下載的資料收不回來。
+          移除某台時，那台馬上不能再同步；接著換一把新的同步金鑰與復原碼（資料多時要好幾天，每天自動接著做）：留下的裝置換好後自動換過去，不用重新配對；被移除的那台之後連不上，下次打開時清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台，由那台的人決定清除或匯出）。懷疑復原碼外流時按「只換金鑰」。已經被下載的資料收不回來。
         </InfoTip>
       </div>
     </div>
@@ -711,7 +768,7 @@ function rekeyError(e: unknown, what: string): string {
 
 /** 設定頁的多裝置同步（規格 12.10） */
 export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
-  const { settings, updateSettings, deviceSync, rekey: rekeying, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus } = useApp();
+  const { settings, updateSettings, deviceSync, rekey: rekeying, testMode, pairFromLink, clearPairFromLink, coach, devicesFocus, secretSync } = useApp();
   const [mode, setMode] = useState<
     "idle" | "verify" | "start" | "join" | "confirmAdd" | "add" | "restore" | "confirmCode" | "showCode" | "confirmRemove" | "confirmRekey" | "newCode" | "removeCode"
   >("idle");
@@ -721,6 +778,8 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
   const [code, setCode] = useState<string | null>(null);
   const [newRoot, setNewRoot] = useState<Uint8Array | null>(null);
   const [saved, setSaved] = useState(false);
+  /** 開始同步時：API key 與 Intervals.icu 的連線也帶到其他裝置（規格 12.47；先預設不勾，使用者自己選） */
+  const [shareKeys, setShareKeys] = useState(false);
   const [restoreText, setRestoreText] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error" | "warn"; text: string } | null>(null);
@@ -962,18 +1021,28 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
           我已經把復原碼存好了
         </label>
+        <p className="row share-keys">
+          <label className="check">
+            <input type="checkbox" checked={shareKeys} onChange={(e) => setShareKeys(e.target.checked)} />
+            {SHARE_LABEL}
+          </label>
+          <ShareKeysInfo />
+        </p>
         <div className="row">
           <button
             className="primary"
             disabled={!saved}
             onClick={() =>
-              void saveKey(newRoot).then(() => {
-                // 被移除的這台用自己的資料重新開始：不再顯示「已移除」
-                clearRemoved();
-                setMode("idle");
-                setNewRoot(null);
-                setMessage({ kind: "ok", text: "已開啟同步。要加入另一台時，在那台按「加入已經在同步的裝置」。" });
-              })
+              void secretSync
+                .setShare(shareKeys)
+                .then(() => saveKey(newRoot))
+                .then(() => {
+                  // 被移除的這台用自己的資料重新開始：不再顯示「已移除」
+                  clearRemoved();
+                  setMode("idle");
+                  setNewRoot(null);
+                  setMessage({ kind: "ok", text: "已開啟同步。要加入另一台時，在那台按「加入已經在同步的裝置」。" });
+                })
             }
           >
             開始同步
@@ -1060,7 +1129,8 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
           <span>在電腦、手機之間同步選手資料、賽事、課表、自評與對話。</span>
           <InfoTip label="同步哪些資料">
             <ul>
-              <li>同步選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓；API key 不同步，每台各自填。</li>
+              <li>同步選手資料、賽事、課表、每日自評、和教練的對話，以及跑步的體感與分析。跑步紀錄本身每台各自從 Intervals.icu 抓。</li>
+              <li>API key 與 Intervals.icu 的連線：開始同步時可以選要不要也帶到其他裝置，一樣加密後才送出。免費試用每台各一個，不跟著帶。</li>
               <li>
                 資料在這台加密後才送出，同步服務只存加密後的內容，看不到也解不開；解開用的金鑰只在你的裝置上。這台已有的資料會和雲端的合併。同步服務存了什麼見
                 <PrivacyLink />。
@@ -1160,7 +1230,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
         ) : mode === "confirmRemove" && target ? (
           <ConfirmIdentity
             purpose="remove"
-            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的同步金鑰與 API key（訓練資料留在那台）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來。`}
+            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來；它也已經有同步過的 API key 與 Intervals.icu 的連線：裝置弄丟或被偷時，到 AI 服務的後台撤銷、換一把新的 key，到 Intervals.icu 中斷連結或重新產生 key。`}
             onConfirmed={() => void rekey(target)}
             onCancel={() => {
               setMode("idle");
@@ -1239,6 +1309,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
                 }}
               />
             )}
+            <ShareKeysToggle />
             <div className="actions">
               <button disabled={deviceSync.busy} onClick={() => void deviceSync.run()}>
                 {deviceSync.busy ? "同步中…" : "立即同步裝置"}

@@ -635,11 +635,12 @@ export class SyncEngine {
    * 讀接手資訊（舊的同步金鑰與開始的那台事先簽好的最後一步，以新的同步金鑰加密），經由新空間讀舊空間的資料、
    * 用新的金鑰重新加密送過來（額度照開始的那台算），最後送出事先簽好的換金鑰. 額度用完時丟 SyncRekeyPausedError
    */
-  async takeover(onProgress?: (step: RekeyProgress) => void): Promise<void> {
+  /** 回傳換之前的同步金鑰（呼叫的用它解開舊的、再用新的加密的內容，例如跟著同步的 key）；不用接手時是 null */
+  async takeover(onProgress?: (step: RekeyProgress) => void): Promise<Uint8Array | null> {
     if (!this.device) throw new Error("接手換金鑰要開啟裝置清單");
     const keys = await this.keys;
     const raw = await this.fetchDevices(keys);
-    if (!raw.rekeyTarget) return;
+    if (!raw.rekeyTarget) return null;
     const { handoff } = await this.api.request<{ handoff: string | null }>("GET", `/v1/spaces/${keys.space}/handoff`, undefined, this.auth(keys));
     if (!handoff) throw new Error("找不到接手換金鑰需要的資料；請在開始換金鑰的那台接著做。");
     const info = (await open(keys, HANDOFF_ID, handoff)) as { v: number; root: string; from: string; plan: RekeyPlanBody };
@@ -681,6 +682,7 @@ export class SyncEngine {
     });
     this.rawDevices = null;
     await this.sync();
+    return fromBase64url(info.root);
   }
 
   private async loadPending(keys: SyncKeys): Promise<{ root: Uint8Array; keys: SyncKeys; stored: StoredRekey } | null> {
