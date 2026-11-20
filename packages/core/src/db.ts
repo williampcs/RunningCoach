@@ -5,6 +5,7 @@ import type { ImportRecord } from "./activity-files/convert";
 import { dropCoveredFileOthers } from "./activity-files/store";
 import { keepScore, maybeSameRun, sameRun } from "./dedupe";
 import { sportOfType } from "./sports";
+import { coverManualOthers, deleteManualActivity, listManualActivities, writeManualActivity, type ManualActivity, type ManualActivityInput } from "./manual-activities";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, parseInjurySports, parsePainScores, withScore, type Injury, type InjurySide, type InjuryStatus, type PainScore } from "./injuries";
 import type { PlannedSession, PlanStyle, SelfChange, SessionDraft, SessionStatus } from "./plan";
 import type { RaceOutcome } from "./races";
@@ -47,8 +48,10 @@ import type {
  * 19：workouts.sync_id、updated_at（手動新增的跑步：跨裝置不變的 id 與修改時間，規格 12.36「沒有手錶也能用」）
  * 20：trial_accounts（免費試用的帳號掛進加密的同步：代理的網址、帳號、加密過的復原密鑰，規格 12.44 第 1 步）
  * 21：synced_secrets（API key 與 Intervals.icu 的連線跟著加密的同步：名稱、加密過的內容、改的時間，規格 12.47）
+ * 22：沒有紀錄的課的回報（手動記的活動，規格 12.48）：workouts 與 other_activities 的 session_id（回報的是哪一堂課的 sync_id）、
+ *     completion（做到多少：done、partial、changed），other_activities.updated_at（手動記的才有）
  */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 /** 同步裡的免費試用帳號（規格 12.44 第 1 步）；box 要用同步金鑰解開（device-sync/trial-account.ts） */
 export interface TrialAccountRecord {
@@ -637,6 +640,15 @@ export class Db {
         if (!workoutCols19.has(col)) await d.exec(`ALTER TABLE workouts ADD COLUMN ${col} TEXT`);
       }
       await d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_workouts_sync_id ON workouts(sync_id)");
+      // --- Migration: 沒有紀錄的課的回報（schema 22，規格 12.48）：回報的是哪一堂課、做到多少 ---
+      const workoutCols22 = await columns("workouts");
+      for (const col of ["session_id", "completion"]) {
+        if (!workoutCols22.has(col)) await d.exec(`ALTER TABLE workouts ADD COLUMN ${col} TEXT`);
+      }
+      const otherCols22 = await columns("other_activities");
+      for (const col of ["session_id", "completion", "updated_at"]) {
+        if (!otherCols22.has(col)) await d.exec(`ALTER TABLE other_activities ADD COLUMN ${col} TEXT`);
+      }
 
       await d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -1175,7 +1187,7 @@ export class Db {
 
   async getPlannedSessions(planId: number): Promise<PlannedSession[]> {
     const rows = await this.all<SessionRow>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE plan_id=? ORDER BY position",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change, sync_id FROM planned_sessions WHERE plan_id=? ORDER BY position",
       [planId],
     );
     return rows.map(sessionOf);
@@ -1183,7 +1195,7 @@ export class Db {
 
   async getPlannedSession(id: number): Promise<PlannedSession | null> {
     const row = await this.get<SessionRow>(
-      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change FROM planned_sessions WHERE id=?",
+      "SELECT id, plan_id, date, kind, title, steps, purpose, success, fallback, status, note, sport, done_at, edited_at, self_change, sync_id FROM planned_sessions WHERE id=?",
       [id],
     );
     return row ? sessionOf(row) : null;
@@ -1713,16 +1725,24 @@ export class Db {
   async removeOtherActivitiesMissing(seenIds: string[], since: string, until: string): Promise<void> {
     const placeholders = seenIds.map(() => "?").join(", ");
     await this.run(
-      // 匯入的檔案（file:）不是 Intervals.icu 來的，不跟著它刪
-      `DELETE FROM other_activities WHERE date >= ? AND date <= ? AND intervals_id NOT LIKE 'file:%'${seenIds.length ? ` AND intervals_id NOT IN (${placeholders})` : ""}`,
+      // 匯入的檔案（file:）與手動記的（manual:）不是 Intervals.icu 來的，不跟著它刪
+      `DELETE FROM other_activities WHERE date >= ? AND date <= ? AND intervals_id NOT LIKE 'file:%' AND intervals_id NOT LIKE 'manual:%'${seenIds.length ? ` AND intervals_id NOT IN (${placeholders})` : ""}`,
       [since, until, ...seenIds],
     );
   }
 
-  /** 最近 N 天跑步以外的運動，新的在前 */
-  getOtherActivities(days: number): Promise<OtherActivity[]> {
+  /**
+   * 最近 N 天跑步以外的運動，新的在前. 手動記的（沒有紀錄的課的回報，規格 12.48）和裝置的同一天、同一種運動的一筆重疊時，
+   * 只留裝置的那筆（資料多），手動記的體感、備註、回報的課在裝置那筆沒有時帶過去（只在讀取時，不改資料；裝置的那筆不見了，手動的又會出現）
+   */
+  async getOtherActivities(days: number): Promise<OtherActivity[]> {
+    return coverManualOthers(await this.getOtherActivityRows(days));
+  }
+
+  /** 最近 N 天跑步以外的運動的原樣（含被裝置的紀錄蓋過的手動紀錄） */
+  getOtherActivityRows(days: number): Promise<OtherActivity[]> {
     return this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, o.session_id, o.completion, f.perceived_effort, f.subjective_notes, s.summary" +
         " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.date >= ? ORDER BY o.date DESC",
       [addDays(this.clock.today(), -days)],
     );
@@ -1737,11 +1757,59 @@ export class Db {
   /** 跑步以外的一筆運動（含回報的體感）；找不到時為 null */
   async getOtherActivity(intervalsId: string): Promise<OtherActivity | null> {
     const rows = await this.all<OtherActivity>(
-      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, f.perceived_effort, f.subjective_notes, s.summary" +
+      "SELECT o.intervals_id, o.date, o.type, o.duration_min, o.distance_km, o.avg_hr, o.training_load, o.raw_json, o.session_id, o.completion, f.perceived_effort, f.subjective_notes, s.summary" +
         " FROM other_activities o LEFT JOIN activity_feedback f ON f.intervals_id = o.intervals_id LEFT JOIN activity_summaries s ON s.intervals_id = o.intervals_id WHERE o.intervals_id = ?",
       [intervalsId],
     );
     return rows[0] ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 手動記的活動（沒有紀錄的課的回報，規格 12.48）
+  // ---------------------------------------------------------------------------
+
+  /** 一堂課的 sync_id；還沒有時補上（同步時才補，回報要先有才能連過去）. 找不到課是 null */
+  async sessionSyncId(sessionId: number): Promise<string | null> {
+    await this.run("UPDATE planned_sessions SET sync_id = lower(hex(randomblob(16))) WHERE id=? AND sync_id IS NULL", [sessionId]);
+    const row = await this.get<{ sync_id: string }>("SELECT sync_id FROM planned_sessions WHERE id=?", [sessionId]);
+    return row?.sync_id ?? null;
+  }
+
+  /** 手動記一筆活動（manual-activities.ts）；回傳 sync_id */
+  addManualActivity(input: ManualActivityInput): Promise<string> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const id = String((await d.all("SELECT lower(hex(randomblob(16))) AS id"))[0]!.id);
+      await writeManualActivity(d, id, input, this.stamp());
+      return id;
+    });
+  }
+
+  /** 改手動記的那一筆（跑步還是跑步、其他運動還是其他運動）；找不到時回傳 false */
+  updateManualActivity(syncId: string, input: ManualActivityInput): Promise<boolean> {
+    const d = this.driver;
+    return this.tx(async () => {
+      const found = (await listManualActivities(d, { syncId }))[0];
+      if (!found) return false;
+      const sport = found.sport === "run" || input.sport === "run" ? found.sport : input.sport;
+      await writeManualActivity(d, syncId, { ...input, sport }, this.stamp());
+      return true;
+    });
+  }
+
+  /** 刪掉手動記的那一筆；找不到時回傳 false */
+  deleteManualActivity(syncId: string): Promise<boolean> {
+    return this.tx(() => deleteManualActivity(this.driver, syncId));
+  }
+
+  /** 手動記的一筆；找不到時是 null */
+  async getManualActivity(syncId: string): Promise<ManualActivity | null> {
+    return (await this.serial(() => listManualActivities(this.driver, { syncId })))[0] ?? null;
+  }
+
+  /** 回報某一堂課（planned_sessions.sync_id）的手動紀錄，最近改的在前 */
+  getManualActivitiesForSession(session: string): Promise<ManualActivity[]> {
+    return this.serial(() => listManualActivities(this.driver, { session }));
   }
 
   /** 騎車等其他運動的體感與感受（運動回報）；兩個都是 null 時刪掉 */
@@ -1841,3 +1909,4 @@ export class Db {
     await this.run("DELETE FROM pending_subjective WHERE date < ?", [addDays(this.clock.today(), -7)]);
   }
 }
+

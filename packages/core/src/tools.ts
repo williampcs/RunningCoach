@@ -4,7 +4,9 @@ import { RECENT_WORKOUT_DAYS } from "./context";
 import { addDays, daysBetween, isoWeekLabel, localDate, localDayStartUtc, localTime, weekdayName } from "./dates";
 import { heartRateText } from "./format";
 import { describeCheckin, formatRecoveryReport, recoveryNoteFor } from "./recovery";
-import { activePlan, changeSession, editSessionFromTool, nextPlan, planNoteFor, planTextForTool, savePlanFromTool, type SessionAction } from "./planning";
+import { activePlan, changeSession, contextFor, editSessionFromTool, nextPlan, planNoteFor, planTextForTool, reportSession, savePlanFromTool, sessionReport, type SessionAction } from "./planning";
+import { isCompletion } from "./manual-activities";
+import { estimateSession } from "./plan";
 import { INJURY_SIDE_LABELS, INJURY_STATUS_LABELS, injuryLine, PAIN_WHEN_LABELS, parseInjurySports, type InjurySide, type InjuryStatus, type PainWhen } from "./injuries";
 import { computeTrainingValues, formatTrainingValues } from "./training-values";
 import { MEMORY_MAX_CHARS, type Db, type InjuryInput, type RaceUpdate } from "./db";
@@ -78,6 +80,27 @@ const ACTIVITY_FEEDBACK_TOOL: ToolDef = {
       subjective_notes: { type: "string", description: "主觀感受，例：腿很重，最後一組撐不住" },
     },
     required: ["perceived_effort"],
+  },
+};
+
+/** 回報一堂沒有紀錄的課（功能開關 report，規格 12.48） */
+const REPORT_SESSION_TOOL: ToolDef = {
+  name: "report_session",
+  description:
+    "記下選手做了課表上沒有手錶紀錄的一堂課（肌力、沒戴錶的騎車或跑步、交叉訓練）：做到多少、花了多久、體感、備註，存成一筆手動的紀錄，" +
+    "比對、紀錄頁、負荷都會算進去。選手在對話裡說某堂課做完了、做了一部分或有改，並說了感受時呼叫；同一堂再呼叫一次是改原本的回報。" +
+    "session_id 用 get_training_plan 列出的。已經有手錶紀錄的課不用這個（跑步用 save_workout、騎車等用 save_activity_feedback）。",
+  input_schema: {
+    type: "object",
+    properties: {
+      session_id: { type: "integer", description: "get_training_plan 列出的 session_id" },
+      completion: { type: "string", enum: ["done", "partial", "changed"], description: "done 完成、partial 做了一部分（例：少做一組、時間不夠）、changed 有改（例：深蹲改成徒手、換了動作）" },
+      perceived_effort: { type: "integer", description: "體感強度 1-10" },
+      duration_min: { type: "number", description: "花了幾分鐘；選手沒說時不填（用課表的時間）" },
+      distance_km: { type: "number", description: "跑步、騎車、游泳的距離（選手說了才填）" },
+      subjective_notes: { type: "string", description: "備註，例：棒式撐不到 30 秒、深蹲改成徒手" },
+    },
+    required: ["session_id", "completion", "perceived_effort"],
   },
 };
 
@@ -612,6 +635,7 @@ export function buildTools(settings: CoachSettings, options: { weather?: boolean
     },
   ];
   if (featureOn(settings, "multisport")) multisportTools(tools);
+  if (featureOn(settings, "report")) reportTools(tools);
   if (options.weather) tools.push(WEATHER_TOOL);
   // 每個工具的參數都只能是列出的那些（strict 的工具一定要；其他的一起寫，格式一致）
   for (const tool of tools) tool.input_schema.additionalProperties = false;
@@ -664,6 +688,17 @@ function multisportTools(tools: ToolDef[]): void {
   action.description = "done：選手說肌力或交叉訓練做完了（沒有手錶紀錄也算完成）；undone：取消做完了的回報";
   const update = tools.find((t) => t.name === "update_planned_session")!;
   update.description += "選手說肌力或交叉訓練做完了（手錶沒有記錄）時，用 action=done 記下。";
+}
+
+/** 回報沒有紀錄的課（功能開關 report，規格 12.48）：加上 report_session；「做完了」改用它記（可以帶時間、體感、備註） */
+function reportTools(tools: ToolDef[]): void {
+  tools.push(REPORT_SESSION_TOOL);
+  const update = tools.find((t) => t.name === "update_planned_session")!;
+  const action = (update.input_schema.properties as Schema["properties"]).action!;
+  if (action.enum?.includes("done")) {
+    action.description = "done：選手只說做完了、沒說別的時（說了體感、時間或備註時改用 report_session）；undone：取消做完了的回報（手動記的那筆一起刪）";
+    update.description = update.description.replace("選手說肌力或交叉訓練做完了（手錶沒有記錄）時，用 action=done 記下。", "選手說沒有手錶紀錄的課做完了時，用 report_session 記下做到多少與體感。");
+  }
 }
 
 /** 產生摘要用到的欄位；剛拉取的活動與已存檔的訓練都適用 */
@@ -835,6 +870,7 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
   const { db, llm, activities, settings, today, logger } = deps;
   const weather = deps.weather ?? null;
   const multisport = featureOn(settings, "multisport");
+  const report = featureOn(settings, "report");
 
   // 跑後回報流程中，暫存最近一次取回的跑步活動
   let activityCache: Activity | null = null;
@@ -1225,6 +1261,9 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
         const sport = str(input.sport) || "ride";
         const sameDay = (await db.getOtherActivities(Math.max(1, daysBetween(date, today()) + 1))).filter((a) => a.date === date);
         const found = sameDay.find((a) => sportOfType(a.type) === sport) ?? (sameDay.length === 1 ? sameDay[0] : undefined);
+        if (!found && report) {
+          return `${date} 沒有同步到${SPORT_LABELS[sport as keyof typeof SPORT_LABELS] ?? "這項運動"}的紀錄（可能沒戴錶，或手錶還沒上傳到 Intervals.icu）。是課表上的課的話，改用 report_session 記成手動的紀錄（session_id 用 get_training_plan 列出的）；之後手錶的紀錄進來會自動合併。`;
+        }
         if (!found) {
           return `${date} 沒有同步到${SPORT_LABELS[sport as keyof typeof SPORT_LABELS] ?? "這項運動"}的紀錄（可能手錶還沒上傳到 Intervals.icu）。請選手同步後再回報，或之後在「運動回報」填。`;
         }
@@ -1238,6 +1277,29 @@ export function createToolExecutor(deps: ToolExecutorDeps): ToolExecutor {
           logger.warn(`Ride summary failed for ${found.intervals_id}: ${e instanceof Error ? e.message : String(e)}`);
           return `${saved}（這次沒有產生分析）`;
         }
+      }
+
+      case "report_session": {
+        if (!report) return `未知的 tool：${name}`;
+        const id = toInt(input.session_id, "session_id");
+        const completion = str(input.completion);
+        if (!isCompletion(completion)) throw new Error("completion 只能是 done、partial、changed");
+        const effort = toInt(input.perceived_effort, "perceived_effort");
+        const session = await db.getPlannedSession(id);
+        if (!session) throw new Error(`找不到 session_id=${id} 的課`);
+        let minutes = typeof input.duration_min === "number" ? input.duration_min : Number.NaN;
+        if (!(minutes > 0)) {
+          // 選手沒說時間：用原本的回報或課表的時間
+          minutes = (await sessionReport(db, id))?.duration_min ?? Math.round(estimateSession(session, await contextFor(db, today(), today(), "fixed", { multisport })).minutes);
+        }
+        if (!(minutes > 0)) throw new Error("這堂課看不出時間，請問選手花了多久（duration_min）");
+        return reportSession(db, today(), id, {
+          completion,
+          duration_min: minutes,
+          distance_km: typeof input.distance_km === "number" && input.distance_km > 0 ? input.distance_km : null,
+          perceived_effort: effort,
+          subjective_notes: str(input.subjective_notes).trim() || null,
+        }, { multisport });
       }
 
       case "update_planned_session": {

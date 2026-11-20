@@ -184,7 +184,8 @@ async function planItems(db: Db, today: string, multisport: boolean): Promise<Fe
   for (const s of active.sessions) {
     const r = s.result;
     if (s.date === today && s.status !== "skipped" && s.kind !== "rest") {
-      if (r?.outcome === "different") {
+      // 選手自己回報「有改」的（規格 12.48）不用再問
+      if (r?.outcome === "different" && !r.manual) {
         items.push({
           id: `plan-different-${s.id}`,
           kind: "plan",
@@ -323,11 +324,13 @@ export async function buildFeed(
     for (let j = i + 1; j < recentRuns.length && asked < 2; j++) {
       const [a, b] = [recentRuns[i]!, recentRuns[j]!];
       const pair = `${Math.min(a.id, b.id)}-${Math.max(a.id, b.id)}`;
-      if (distinct.has(pair) || !maybeSameRun(a, b)) continue;
+      // 回報課時手動記的跑步（規格 12.48）常沒有距離、時間是估的：同一天另一筆不是手動記的，就問是不是同一趟
+      const reported = (x: typeof a, y: typeof a) => x.session_id != null && x.source === "manual" && y.source !== "manual" && x.date === y.date;
+      if (distinct.has(pair) || !(maybeSameRun(a, b) || reported(a, b) || reported(b, a))) continue;
       // 保留資料較完整的；一樣完整時保留先進來的
       const [keep, dup] = keepScore(b) > keepScore(a) || (keepScore(b) === keepScore(a) && b.id < a.id) ? [b, a] : [a, b];
       const day = a.date === today ? "今天" : daysBetween(a.date, today) === 1 ? "昨天" : a.date;
-      const describe = (w: typeof a) => `${km(w.distance_km ?? 0)}・${Math.round(w.duration_min ?? 0)} 分`;
+      const describe = (w: typeof a) => `${w.distance_km == null ? "手動回報" : km(w.distance_km)}・${Math.round(w.duration_min ?? 0)} 分`;
       const pairSource = dataSourceLine(dataSourcesOfRows([a, b]));
       items.push({
         ...(pairSource ? { source: pairSource } : {}),

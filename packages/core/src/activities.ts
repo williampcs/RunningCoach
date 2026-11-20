@@ -276,7 +276,7 @@ export function recordOfOther(a: OtherActivity): ActivityRecord {
     intervalsId: a.intervals_id,
     sport: sportOfType(a.type),
     type: a.type,
-    source: a.intervals_id.startsWith("fake-") ? "fake" : a.intervals_id.startsWith("file:") ? "file" : "intervals",
+    source: a.intervals_id.startsWith("fake-") ? "fake" : a.intervals_id.startsWith("file:") ? "file" : a.intervals_id.startsWith("manual:") ? "manual" : "intervals",
     date: a.date,
     duration_min: a.duration_min ?? null,
     distance_km: a.distance_km ?? null,

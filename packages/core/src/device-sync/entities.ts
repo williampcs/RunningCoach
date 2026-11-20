@@ -11,8 +11,11 @@
  * 整筆的摘要一起送（不含每秒的資料）. 免費試用的帳號（規格 12.44 第 1 步）：ta:<帳號>，內容是代理的網址與用同步金鑰再加密一次的
  * 復原密鑰（device-sync/trial-account.ts）；舊版不認得，不套用也不刪. API key 與 Intervals.icu 的連線（規格 12.47）：sk:llm、sk:intervals，
  * 內容是用同步金鑰再加密一次的 key 與改的時間（device-sync/synced-secret.ts）；sk:share 是要不要帶 key；舊版一樣不認得.
+ * 沒有紀錄的課的回報（規格 12.48）：ma:<sync_id>，手動記的一筆活動整筆（運動、日期、時間、距離、體感、備註、那堂課的 sync_id、做到多少）；
+ * 跑步存在 workouts、其他運動存在 other_activities（manual-activities.ts）. 舊版不認得，不套用也不刪；這種的其他運動體感不另外送 af:.
  */
 import { dropCoveredFileOthers, markFileRunDuplicate } from "../activity-files/store";
+import { deleteManualActivity, isCompletion, listManualActivities, writeManualActivity } from "../manual-activities";
 import type { SqlDriver, SqlValue } from "../types";
 
 export type Sql = Pick<SqlDriver, "all" | "run">;
@@ -22,7 +25,7 @@ export type EntityData = Record<string, SqlValue>;
 export const isAttached = (name: string) => /^(w|ws|wd):/.test(name);
 
 /** 這個版本認得的種類；新版本才有的種類，這台不套用、也不會當成刪除送出 */
-export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta):/.test(name) || /^sk:(llm|intervals|share)$/.test(name);
+export const isKnown = (name: string) => /^(p|r|pl|ps|ck|c|cs|m|in|w|ws|wd|af|as|mw|fw|fo|ta|ma):/.test(name) || /^sk:(llm|intervals|share)$/.test(name);
 
 /** 排序後的 JSON：同樣的內容一定得到同樣的字串 */
 export function canonical(value: unknown): string {
@@ -70,6 +73,8 @@ const MANUAL_WORKOUT_COLS = ["date", "distance_km", "duration_min", "avg_hr", "a
 const FILE_WORKOUT_COLS = ["date", "distance_km", "duration_min", "avg_hr", "max_hr", "avg_pace", "elevation_m", "calories", "raw_json", "perceived_effort", "subjective_notes", "updated_at"] as const;
 /** 匯入的檔案：騎車等其他運動（體感與分析照舊用 af:、as:） */
 const FILE_OTHER_COLS = ["date", "type", "duration_min", "distance_km", "avg_hr", "raw_json"] as const;
+/** 手動記的一筆活動（schema 22，規格 12.48）：整筆 */
+const MANUAL_ACTIVITY_SPORTS = new Set(["run", "ride", "swim", "strength", "other"]);
 
 const pick = (row: Record<string, SqlValue>, cols: readonly string[]): EntityData => Object.fromEntries(cols.map((c) => [c, row[c] ?? null]));
 
@@ -162,13 +167,15 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
 
   // 跑步上的資料
   const workoutCols = [...new Set([...MANUAL_WORKOUT_COLS, ...FILE_WORKOUT_COLS])];
-  const workouts = await sql.all(`SELECT id, intervals_id, strava_id, sync_id, source, ${workoutCols.join(", ")} FROM workouts WHERE removed_at IS NULL`);
+  const workouts = await sql.all(`SELECT id, intervals_id, strava_id, sync_id, source, session_id, ${workoutCols.join(", ")} FROM workouts WHERE removed_at IS NULL`);
   const keyById = new Map<number, string>();
   for (const w of workouts) {
     const key = workoutKey(w);
     if (!key) continue;
     keyById.set(Number(w.id), key);
     if (w.sync_id && w.source === "file") data.set(`fw:${w.sync_id}`, pick(w, FILE_WORKOUT_COLS));
+    // 回報課時記的跑步是 ma:（下面）
+    else if (w.sync_id && w.source === "manual" && w.session_id != null) continue;
     else if (w.sync_id) data.set(`mw:${w.sync_id}`, pick(w, MANUAL_WORKOUT_COLS));
     else if (w.perceived_effort !== null || w.subjective_notes !== null) data.set(`w:${key}`, { e: w.perceived_effort ?? null, n: w.subjective_notes ?? null });
   }
@@ -179,7 +186,8 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
     if (key) data.set(`ws:${key}`, { s: r.summary ?? null, at: r.created_at ?? null });
   }
   // 其他運動的體感（運動回報）：用 Intervals.icu 的活動 id；回報存在另一個表，這台還沒同步到那趟也照樣套用與送出
-  for (const r of await sql.all("SELECT intervals_id, perceived_effort, subjective_notes, updated_at FROM activity_feedback")) {
+  // 手動記的其他運動（manual:）的體感在 ma: 裡，不另外送
+  for (const r of await sql.all("SELECT intervals_id, perceived_effort, subjective_notes, updated_at FROM activity_feedback WHERE intervals_id NOT LIKE 'manual:%'")) {
     data.set(`af:${r.intervals_id}`, { e: r.perceived_effort ?? null, n: r.subjective_notes ?? null, updated_at: r.updated_at ?? null });
   }
   // 騎車等其他運動的分析（schema 16；舊版不認得，不套用也不刪）
@@ -188,6 +196,20 @@ export async function snapshot(sql: Sql): Promise<Snapshot> {
   }
   for (const r of await sql.all(`SELECT intervals_id, ${FILE_OTHER_COLS.join(", ")} FROM other_activities WHERE intervals_id LIKE 'file:%'`)) {
     data.set(`fo:${String(r.intervals_id).slice(5)}`, pick(r, FILE_OTHER_COLS));
+  }
+  // 手動記的活動（schema 22，沒有紀錄的課的回報）
+  for (const a of await listManualActivities(sql)) {
+    data.set(`ma:${a.sync_id}`, {
+      sport: a.sport,
+      date: a.date,
+      duration_min: a.duration_min,
+      distance_km: a.distance_km,
+      perceived_effort: a.perceived_effort,
+      subjective_notes: a.subjective_notes,
+      session: a.session_id,
+      completion: a.completion,
+      updated_at: a.updated_at,
+    });
   }
   // 免費試用的帳號（schema 20）
   for (const r of await sql.all("SELECT account, proxy_url, box, updated_at FROM trial_accounts")) {
@@ -406,6 +428,36 @@ export async function applyEntity(sql: Sql, name: string, data: EntityData | nul
       // 這台已經有 Intervals.icu 的同一趟：留那一筆（檔案這筆刪掉，下次同步別台也跟著刪）
       const date = String(row.date ?? "");
       await dropCoveredFileOthers(sql, [`file:${id}`], date ? { from: date, to: date } : null);
+      return "applied";
+    }
+    case "ma": {
+      if (!data) {
+        await deleteManualActivity(sql, id);
+        return "applied";
+      }
+      // 這版看不懂的內容（例如新版才有的運動）不套用，先暫存：不會被當成這台刪掉而送出刪除
+      const sport = String(data.sport ?? "");
+      const date = String(data.date ?? "");
+      const minutes = typeof data.duration_min === "number" ? data.duration_min : NaN;
+      const effort = typeof data.perceived_effort === "number" ? data.perceived_effort : NaN;
+      const session = typeof data.session === "string" && data.session ? data.session : null;
+      if (!MANUAL_ACTIVITY_SPORTS.has(sport) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !(minutes > 0) || !(effort >= 1 && effort <= 10)) return "pending";
+      if (sport === "run" && !session) return "pending";
+      await writeManualActivity(
+        sql,
+        id,
+        {
+          session_id: session,
+          sport,
+          date,
+          duration_min: minutes,
+          distance_km: typeof data.distance_km === "number" && data.distance_km > 0 ? data.distance_km : null,
+          perceived_effort: effort,
+          subjective_notes: typeof data.subjective_notes === "string" ? data.subjective_notes : null,
+          completion: isCompletion(data.completion) ? data.completion : "done",
+        },
+        typeof data.updated_at === "string" ? data.updated_at : new Date().toISOString(),
+      );
       return "applied";
     }
     case "ta":

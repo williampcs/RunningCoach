@@ -6,7 +6,24 @@ import { buildFeed, RACE_WEATHER_FEED_DAYS, type FeedItem } from "./feed";
 import { featureOn } from "./features";
 import { accumulation, rideAccumulation, rideCards, runCards, type Accumulation, type RideAccumulation, type RideCard, type RunCard } from "./history";
 import { importHistory, type ImportProgress, type ImportResult } from "./history-import";
-import { activePlan, changeSession, nextPlan, planNoteFor, selfChangeReason, selfChangeSession, type ActivePlan, type SelfChangeRequest, type SessionAction } from "./planning";
+import {
+  activePlan,
+  changeSession,
+  nextPlan,
+  planNoteFor,
+  reportSession,
+  selfChangeReason,
+  selfChangeSession,
+  sessionReport,
+  unreportedSessions,
+  unreportSession,
+  type ActivePlan,
+  type SelfChangeRequest,
+  type SessionAction,
+  type SessionReportInput,
+  type UnreportedSession,
+} from "./planning";
+import type { ManualActivity } from "./manual-activities";
 import type { SelfChange, SelfChangeReason } from "./plan";
 import { pastPlanWeeks, type PastWeek } from "./plan-history";
 import { isoWeekLabel, localDate } from "./dates";
@@ -722,6 +739,26 @@ export class Coach {
   /** 選手在計畫頁調整一堂課：移到別天、跳過、改用替代、恢復；回傳結果（含調整後的檢查） */
   changeSession(id: number, action: SessionAction, options: { date?: string | null; reason?: string } = {}): Promise<string> {
     return changeSession(this.db, this.today(), id, action, { ...options, multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 回報一堂沒有紀錄的課（規格 12.48）：做到多少、時間、體感、備註 → 手動記的一筆活動 */
+  reportSession(id: number, input: SessionReportInput): Promise<string> {
+    return reportSession(this.db, this.today(), id, input, { multisport: featureOn(this.settings, "multisport") });
+  }
+
+  /** 取消一堂課的回報 */
+  unreportSession(id: number): Promise<void> {
+    return unreportSession(this.db, id);
+  }
+
+  /** 一堂課目前的回報；沒有時是 null */
+  sessionReport(id: number): Promise<ManualActivity | null> {
+    return sessionReport(this.db, id);
+  }
+
+  /** 今天與最近幾天還沒回報、也沒有手錶紀錄的課（「回報」分頁） */
+  unreportedSessions(): Promise<UnreportedSession[]> {
+    return unreportedSessions(this.db, this.today(), { multisport: featureOn(this.settings, "multisport") });
   }
 
   /** 選手自己改短或換成輕鬆（規格 12.34 第 3 點 B） */
