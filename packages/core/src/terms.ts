@@ -7,10 +7,10 @@
  */
 
 /** 使用須知的版本：使用者確認過的版本比這個舊時，再請他確認一次 */
-export const TERMS_VERSION = 1;
+export const TERMS_VERSION = 2;
 
 /** 這一版使用須知的日期（頁面上的「最後更新」） */
-export const TERMS_UPDATED = "2026-10-28";
+export const TERMS_UPDATED = "2026-11-23";
 
 /** 精簡版：對話輸入框下方、新手引導、Discord 的說明都用這一句，後面接「使用須知」的連結 */
 export const TERMS_SHORT = "教練是 AI，建議僅供參考，不能取代醫師或專業教練；身體不適請停止訓練並就醫。";

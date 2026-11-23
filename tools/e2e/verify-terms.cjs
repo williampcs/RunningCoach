@@ -8,6 +8,8 @@
 // - 連結：新手引導、設定最下面、使用說明的開頭與「使用須知」一節
 // staging 的標示由 verify-environments.cjs 檢查。
 const E2E = require("./env.cjs");
+// 使用須知目前的版本：從核心讀，升版時不用改這支腳本
+const TERMS_VERSION = Number(/TERMS_VERSION = (\d+)/.exec(require("node:fs").readFileSync(require("node:path").join(__dirname, "../../packages/core/src/terms.ts"), "utf8"))[1]);
 const { chromium } = E2E;
 
 const TERMS = new URL("terms", E2E.URL).href;
@@ -159,7 +161,7 @@ async function shortLine(page) {
       await panel.getByRole("button", { name: "儲存設定" }).click();
       await page.getByText("設定已儲存在這個瀏覽器。").waitFor();
       const terms = await storedTerms(page);
-      check[`${tag}.storedVersionAndDate`] = terms?.version === 1 && /^\d{4}-\d{2}-\d{2}$/.test(terms?.date ?? "");
+      check[`${tag}.storedVersionAndDate`] = terms?.version === TERMS_VERSION && /^\d{4}-\d{2}-\d{2}$/.test(terms?.date ?? "");
       await E2E.go(page, "對話");
       await page.getByLabel("訊息").fill("你好");
       await page.getByLabel("訊息").press("Enter");
@@ -196,7 +198,7 @@ async function shortLine(page) {
       await gate.getByLabel("我已閱讀使用須知").check();
       await cont.click();
       check[`${tag}.gateClosed`] = await gate.waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false);
-      check[`${tag}.gateStored`] = (await storedTerms(page))?.version === 1;
+      check[`${tag}.gateStored`] = (await storedTerms(page))?.version === TERMS_VERSION;
       check[`${tag}.canChatAfterGate`] = await page.getByLabel("訊息").isVisible();
 
       step = "版本變了";
@@ -211,7 +213,7 @@ async function shortLine(page) {
       await gate.getByLabel("我已閱讀使用須知").check();
       await gate.getByRole("button", { name: "繼續" }).click();
       await gate.waitFor({ state: "detached", timeout: 5000 });
-      check[`${tag}.newVersionStored`] = (await storedTerms(page))?.version === 1;
+      check[`${tag}.newVersionStored`] = (await storedTerms(page))?.version === TERMS_VERSION;
 
       step = "連結";
       await E2E.go(page, "設定");
