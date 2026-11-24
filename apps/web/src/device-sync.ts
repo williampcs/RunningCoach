@@ -271,3 +271,14 @@ export function useDeviceSync(
     [available, engine, devicesMode, identity, api, busy, lastAt, last, error, identityError, key, gone, devices, newDevices, acknowledge, run],
   );
 }
+
+/**
+ * 換金鑰大約還要幾天：剩下的筆數除以今天搬的筆數，無條件進位、至少 1 天；今天沒有搬（估不出來）時 null
+ */
+export function rekeyDaysLeft({ done, total, today }: { done: number; total: number; today: number }): number | null {
+  if (!(today > 0)) return null;
+  return Math.max(1, Math.ceil(Math.max(0, total - done) / today));
+}
+
+/** 移除之前的確認：資料比這多時說明要好幾天才會在背景搬完 */
+export const MANY_RECORDS = 500;

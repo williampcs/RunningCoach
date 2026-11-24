@@ -623,6 +623,8 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     await expect(a.engine.rekey([], undefined, (p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).rejects.toMatchObject({ done: 100, total: 300 });
     expect(await copiedToday(from)).toBe(100);
     const pendingSpace = (await a.engine.pendingRekey())!.space;
+    // 畫面用今天複製的筆數估還要幾天
+    expect((await a.engine.pendingRekey())!.today).toBe(100);
     // 換到一半的這段時間：B 照常同步，新增 5 筆、改 1 筆（舊空間）
     for (let i = 0; i < 5; i++) await b.db.saveCheckin({ date: `2026-10-0${i + 1}`, energy: 5, soreness: 1, sleep: 5, notes: `新的 ${i}` });
     await b.db.saveCheckin({ date: "2022-01-01", energy: 1, soreness: 5, sleep: 1, notes: "改過" });
@@ -632,6 +634,8 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     await expect(a.engine.resumeRekey((p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).rejects.toMatchObject({ done: 199, total: 305 });
     expect(await copiedToday(from)).toBe(100);
     expect((await a.engine.pendingRekey())!.space).toBe(pendingSpace);
+    // 今天從 99 筆（改過的那筆要重送）送到 199 筆
+    expect((await a.engine.pendingRekey())!.today).toBe(100);
     // 第三天：送完（含換到一半時新增與改過的），換金鑰完成
     nextUtcDay();
     expect(await a.engine.resumeRekey((p) => p.step === "copy" && steps.push(`${p.done}/${p.total}`))).not.toBeNull();
@@ -1106,20 +1110,20 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
   });
 
   it("正常大小的換金鑰照樣一次完成（每天額度調小）", async () => {
-    expect(REKEY_ACTOR_SHARE).toBe(0.25);
-    // 每天 12,000 列：換金鑰的那一份 3,000 列、每台每個來源 750 列，200 筆的複製（約 620 列）一次搬得完
+    expect(REKEY_ACTOR_SHARE).toBe(0.5);
+    // 每天 12,000 列：換金鑰的那一份 3,000 列、每台每個來源 1,500 列，200 筆的複製（約 620 列）一次搬得完
     const handler = handlerWith({ dailyWrites: 12_000, rateLimits: { writes: {}, spaceWrites: 10_000 } });
     const a = await setupDevice(handler, 200);
     const before = a.state.root;
     await a.engine.rekey();
     expect(a.state.root).not.toEqual(before);
     expect(await rekeyCount()).toBeGreaterThanOrEqual(3 * 200);
-    expect(await rekeyCount()).toBeLessThanOrEqual(750);
+    expect(await rekeyCount()).toBeLessThanOrEqual(1500);
   });
 
-  it("每台裝置每天只能用掉換金鑰那一份的一小部分，接連換好幾次金鑰也一起算；別的裝置與來源照常換", async () => {
-    // 換金鑰的那一份 4,000 列，每台、每個來源 1,000 列（約 320 筆）
-    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+  it("每台裝置每天只能用掉換金鑰那一份的一半，接連換好幾次金鑰也一起算；別的裝置與來源照常換", async () => {
+    // 換金鑰的那一份 2,000 列，每台、每個來源一半 1,000 列（約 320 筆）：一天的換金鑰額度至少要兩個來源才用得完
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 2000 } });
     const ip = (value: string) => (request: Request) => {
       const headers = new Headers(request.headers);
       headers.set("cf-connecting-ip", value);
@@ -1146,8 +1150,8 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     expect(await store.movedTo(second)).not.toBeNull();
   });
 
-  it("同一個網段的好幾台一起用：每個來源每天也只能用掉一小部分", async () => {
-    const handler = handlerWith({ rateLimits: { rekeyWrites: 4000 } });
+  it("同一個網段的好幾台一起用：每個來源每天也只能用掉一部分", async () => {
+    const handler = handlerWith({ rateLimits: { rekeyWrites: 2000 } });
     const ip = (value: string) => (request: Request) => {
       const headers = new Headers(request.headers);
       headers.set("cf-connecting-ip", value);
@@ -1167,5 +1171,11 @@ describe("預設的寫入額度", () => {
   it("每個來源與每個空間的上限照整個服務的額度算", () => {
     expect(Math.floor(DEFAULT_DAILY_WRITES * SOURCE_WRITE_SHARE.narrow)).toBe(4000);
     expect(Math.floor(DEFAULT_DAILY_WRITES * SPACE_WRITE_SHARE)).toBe(4000);
+  });
+
+  it("換金鑰：整個服務的 25%（1 萬列），每台裝置與每個來源一半（5,000 列，約 1,600 筆）", () => {
+    const rekey = Math.floor(DEFAULT_DAILY_WRITES * REKEY_WRITE_SHARE);
+    expect(rekey).toBe(10_000);
+    expect(Math.floor(rekey * REKEY_ACTOR_SHARE)).toBe(5_000);
   });
 });

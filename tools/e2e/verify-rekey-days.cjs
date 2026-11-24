@@ -1,6 +1,6 @@
 // 驗證換金鑰可以跨天完成、移除馬上生效（規格 12.10「換金鑰可以跨天完成」，功能開關 devices）：
 // - A 開始同步、B 用復原碼還原；過了冷卻期 A 移除 B，而今天換金鑰的額度不夠（模擬上游 MOCK_SYNC_REKEY_WRITES=1）
-// - 移除馬上生效：A 看到「那台已經不能再同步」、B 重新整理就顯示已移除；換金鑰停下來：「今天完成 n／N 筆，明天會自動接著做」
+// - 移除馬上生效：A 看到「那台已經進不來」、B 重新整理就顯示已移除；換金鑰停下來：「今天完成 n／N 筆（，大約再 N 天），明天打開時會自動接著做」
 // - 換好之前用舊的復原碼加入新的裝置（C）不行，畫面說要用新的復原碼；A 重新整理後狀態還在
 // - 移除之前先給新的復原碼（存好才移除）；移除之後不能取消
 // - A 不見了；隔天（模擬上游推到下一個 UTC 日、額度放寬）D 用新的復原碼還原，自動接手做完、拿到資料；B 仍然是已移除
@@ -184,6 +184,13 @@ async function serve(outDir) {
     if (waitLeft > 0) await A.page.waitForTimeout(waitLeft);
     await syncNow(A);
     await rows(A).filter({ hasText: "iPhone · Safari" }).getByRole("button", { name: "移除" }).click();
+    // 確認畫面：資料多於 500 筆時說要好幾天才會在背景搬完、移除會馬上生效
+    await A.card.getByRole("button", { name: "這次同步了什麼" }).click();
+    const synced = Number(((await A.card.innerText()).match(/共同步 (\d+) 筆/) ?? [])[1] ?? NaN);
+    const manyNote = (await A.card.getByText(/資料比較多時要好幾天才會在背景搬完；移除會馬上生效/).count()) > 0;
+    console.log(`  同步的筆數：${synced}，確認畫面的說明：${manyNote ? "有" : "沒有"}`);
+    check.confirmManyNote = Number.isFinite(synced) ? manyNote === synced > 500 : !manyNote;
+    await A.page.screenshot({ path: `${E2E.OUT}/rekey-days-A-confirm-desktop-light.png` });
     await A.card.getByRole("button", { name: "移除並換金鑰" }).click();
     // 移除之前先給新的復原碼，存好才移除
     await A.card.locator(".remove-code .recovery-code").waitFor({ timeout: 20000 });
@@ -197,8 +204,12 @@ async function serve(outDir) {
     await A.card.getByLabel("我已經把新的復原碼存好了").check();
     await A.card.getByRole("button", { name: "存好了，移除" }).click();
     const status = A.card.locator(".rekey-status");
-    check.aShowsRemovedNow = await status.getByText(/已經移除「iPhone · Safari」：那台已經不能再同步。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
-    check.aShowsPaused = await status.getByText(/正在用新的金鑰重新加密資料：今天完成 \d+／\d+ 筆，明天會自動接著做。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    check.aShowsRemovedNow = await status.getByText(/已經移除「iPhone · Safari」，那台已經進不來。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    // 今天一筆都沒搬（額度 1 列）：估不出還要幾天，不顯示天數（天數的算法在 apps/web/test/rekey-days.test.ts）
+    check.aShowsPaused = await status.getByText(/剩下的資料會在背景搬完：今天完成 0／\d+ 筆，明天打開時會自動接著做。/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    check.aNoDaysWithoutEstimate = !(await status.innerText()).includes("大約再");
+    check.aShowsSyncingNote = (await status.getByText(/資料都還在，這幾天照常同步，只是換好之前不能加入新的裝置。/).count()) === 1;
+    console.log(`  A 的狀態：${(await status.innerText()).replace(/\n/g, " ／ ")}`);
     check.aListWithoutB = await waitNames(A, ["Mac · Edge"]);
     check.cannotCancelAfterRemoval = (await A.card.getByRole("button", { name: "放棄換金鑰" }).count()) === 0;
     await A.card.locator(".rekey-status").scrollIntoViewIfNeeded();
@@ -221,7 +232,7 @@ async function serve(outDir) {
     await A.page.reload();
     await A.page.locator("nav.tabbar button").first().waitFor();
     await A.tab("設定");
-    check.aPausedAfterReload = await A.card.locator(".rekey-status").getByText(/明天會自動接著做/).waitFor({ timeout: 15000 }).then(() => true, () => false);
+    check.aPausedAfterReload = await A.card.locator(".rekey-status").getByText(/明天打開時會自動接著做/).waitFor({ timeout: 15000 }).then(() => true, () => false);
     await A.page.emulateMedia({ colorScheme: "dark" });
     await A.page.screenshot({ path: `${E2E.OUT}/rekey-days-A-paused-desktop-dark.png` });
 

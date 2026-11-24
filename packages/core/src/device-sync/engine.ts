@@ -200,11 +200,29 @@ export interface PendingRekey {
   resumeAt: number;
   done: number;
   total: number;
+  /** 今天（UTC 日，和同步服務的每日額度同一個日界）複製了幾筆：畫面用它估還要幾天 */
+  today: number;
   removed: string[];
 }
 
+/** 複製的進度：day／dayStart 是今天（UTC 日）開始複製時已經完成的筆數，用來算今天複製了幾筆 */
+interface CopyProgress {
+  done: number;
+  total: number;
+  resumeAt: number;
+  day?: number;
+  dayStart?: number;
+}
+
+/** 今天複製了幾筆（不是今天的進度時 0） */
+function copiedToday(p: CopyProgress, now: number): number {
+  return p.day === Math.floor(now / DAY_MS) && p.dayStart !== undefined ? Math.max(0, p.done - p.dayStart) : 0;
+}
+
+const DAY_MS = 86_400_000;
+
 /** 存在這台的同步狀態裡（sync_meta）：新的同步金鑰只在這台 */
-interface StoredRekey extends PendingRekey {
+interface StoredRekey extends Omit<PendingRekey, "today">, CopyProgress {
   root: string;
   from: string;
   /** 開始時（使用者確認過的）裝置清單 */
@@ -589,7 +607,7 @@ export class SyncEngine {
     const pending = await this.loadPending(await this.keys);
     if (!pending) return null;
     const { space, resumeAt, done, total, removed, codeGiven } = pending.stored;
-    return { space, resumeAt, done, total, removed, codeGiven };
+    return { space, resumeAt, done, total, today: copiedToday(pending.stored, this.now().getTime()), removed, codeGiven };
   }
 
   /** 接著做換到一半的換金鑰（隔天、或關掉頁面再打開時）；沒有換到一半的時回傳 null */
@@ -619,12 +637,18 @@ export class SyncEngine {
   }
 
   /** 用新的復原碼接手換金鑰的進度（這台接手過、還沒完成時）；沒有的話 null */
-  async takeoverStatus(): Promise<{ done: number; total: number; resumeAt: number } | null> {
+  async takeoverStatus(): Promise<{ done: number; total: number; today: number; resumeAt: number } | null> {
+    const value = await this.takeoverProgress();
+    return value ? { done: value.done, total: value.total, today: copiedToday(value, this.now().getTime()), resumeAt: value.resumeAt } : null;
+  }
+
+  /** 這台接手的進度（sync_meta）；不是目前這個空間的不算 */
+  private async takeoverProgress(): Promise<(CopyProgress & { space: string }) | null> {
     const text = await this.db.syncTransaction((sql) => getMeta(sql, TAKEOVER_META));
     if (!text) return null;
     try {
-      const value = JSON.parse(text) as { space?: string; done: number; total: number; resumeAt: number };
-      return value.space === (await this.keys).space ? { done: value.done, total: value.total, resumeAt: value.resumeAt } : null;
+      const value = JSON.parse(text) as CopyProgress & { space?: string };
+      return value.space === (await this.keys).space ? (value as CopyProgress & { space: string }) : null;
     } catch {
       return null;
     }
@@ -646,7 +670,9 @@ export class SyncEngine {
     const info = (await open(keys, HANDOFF_ID, handoff)) as { v: number; root: string; from: string; plan: RekeyPlanBody };
     const oldKeys = await deriveKeys(fromBase64url(info.root));
     if (info.v !== 1 || oldKeys.space !== info.from) throw new Error("接手換金鑰的資料對不上，停止。");
-    const progress = { space: keys.space, done: 0, total: 0, resumeAt: 0 };
+    // 今天之前接手過的：沿用今天開始時的筆數（同一天接著做好幾次也算在今天）
+    const before = await this.takeoverProgress();
+    const progress: CopyProgress & { space: string } = { space: keys.space, done: 0, total: 0, resumeAt: 0, day: before?.day, dayStart: before?.dayStart };
     const save = () => this.db.syncTransaction((sql) => setMeta(sql, TAKEOVER_META, JSON.stringify(progress)));
     const via = { path: `/v1/spaces/${keys.space}/source`, auth: this.auth(keys) };
     try {
@@ -869,7 +895,7 @@ export class SyncEngine {
     keys: SyncKeys,
     remote: Map<string, { env: Envelope; seq: number }>,
     copied: Map<string, { env: Envelope; seq: number }>,
-    progress: { done: number; total: number; resumeAt: number },
+    progress: CopyProgress,
     save: () => Promise<void>,
     onProgress?: (step: RekeyProgress) => void,
   ): Promise<void> {
@@ -882,6 +908,12 @@ export class SyncEngine {
       .sort((a, b) => order(a.env.k) - order(b.env.k) || a.seq - b.seq);
     const total = remote.size;
     let done = total - todo.length;
+    // 今天第一次複製：記下開始時已經完成的筆數
+    const day = Math.floor(this.now().getTime() / DAY_MS);
+    if (progress.day !== day || progress.dayStart === undefined) {
+      progress.day = day;
+      progress.dayStart = done;
+    }
     const report = async () => {
       progress.done = done;
       progress.total = total;

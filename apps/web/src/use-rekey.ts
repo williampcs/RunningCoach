@@ -20,14 +20,14 @@ export interface RekeyState {
   progress: RekeyProgress | null;
   /** 最後一次的錯誤（今天的額度用完不算錯誤，看 pending.resumeAt） */
   error: unknown;
-  /** 這次移除的那台（移除之後馬上顯示「那台已經不能再同步」） */
+  /** 這次移除的那台（移除之後馬上顯示「那台已經進不來」） */
   removed: SyncDevice | null;
   /** 換好了：新的同步金鑰（設定頁顯示新的復原碼後清掉） */
   finished: Uint8Array | null;
   /** 換好了，新的復原碼移除時已經給過（不再顯示第二組） */
   finishedQuietly: boolean;
   /** 用新的復原碼還原、接手換金鑰的進度（這台接手時）；沒有的話 null */
-  takeover: { done: number; total: number; resumeAt: number } | null;
+  takeover: { done: number; total: number; today: number; resumeAt: number } | null;
   /** 這台接手的換金鑰完成了 */
   takeoverDone: boolean;
   /** 移除之前：建立新空間、回傳新的同步金鑰（顯示新的復原碼）；失敗時 null（看 error） */
@@ -56,7 +56,7 @@ export function useRekey(deviceSync: DeviceSyncState, trialSync: TrialSyncState,
   const [removed, setRemoved] = useState<SyncDevice | null>(null);
   const [finished, setFinished] = useState<Uint8Array | null>(null);
   const [finishedQuietly, setFinishedQuietly] = useState(false);
-  const [takeover, setTakeover] = useState<{ done: number; total: number; resumeAt: number } | null>(null);
+  const [takeover, setTakeover] = useState<{ done: number; total: number; today: number; resumeAt: number } | null>(null);
   const [takeoverDone, setTakeoverDone] = useState(false);
   const rekeyTarget = deviceSync.devices?.rekeyTarget === true;
   const [tick, setTick] = useState(0);
