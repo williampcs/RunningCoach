@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { coverManualOthers, Db, loadOf, type OtherActivity } from "../src";
+import { coverManualOthers, Db, loadOf, pastPlanWeeks, type OtherActivity } from "../src";
 import { applyEntity, isKnown, snapshot } from "../src/device-sync/entities";
 import { matchWeek } from "../src/plan-match";
 import { changeSession, planTextForTool, reportSession, unreportedSessions, unreportSession } from "../src/planning";
@@ -295,5 +295,44 @@ describe("沒有紀錄的課的回報（規格 12.48）", () => {
     const m = matchWeek(sessions as never, [], others, WEEK, TODAY, ctx);
     expect(m.results.get(1)).toMatchObject({ activityId: "manual:m1", outcome: "partial" });
     expect(m.extraOthers.map((o) => o.intervals_id)).toEqual(["i1"]);
+  });
+});
+
+describe("從「之前的週」回報（規格 12.34、12.48）", () => {
+  it("之前的週沒有手錶紀錄的課可以回報與修改；有手錶紀錄的、跳過的不行；回報後結果跟著變", async () => {
+    const { coach } = await makeCoach([], { settings: FLAGS });
+    const db = coach.db;
+    const meta = (weekStart: string) => ({ weekLabel: weekStart, weekStart, style: "fixed" as const, reason: "r", outline: null, notes: null, content: "" });
+    const draft = (date: string, kind: "strength" | "easy", title: string) => ({ date, kind, title, steps: [{ duration_min: 30 }], purpose: "", success: "", fallback: null });
+    const pastId = await db.saveStructuredPlan(meta("2026-09-28"), [
+      draft("2026-09-29", "strength", "肌力"),
+      draft("2026-09-30", "easy", "輕鬆跑"),
+      draft("2026-10-01", "strength", "跳過的肌力"),
+    ]);
+    const [strength, easy, skipped] = await db.getPlannedSessions(pastId);
+    await db.updatePlannedSession(skipped!.id, { status: "skipped" });
+    await db.saveWorkout(activity({ intervals_id: "i-past", date: "2026-09-30", distance_km: 6, duration_min: 32 }));
+    // 這週的課表（之前的週那份不再是啟用的）
+    await db.saveStructuredPlan(meta(WEEK), [draft("2026-10-06", "easy", "這週")]);
+    expect((await db.getTrainingPlan(pastId))!.is_active).toBeFalsy();
+
+    const sessions = async () => Object.fromEntries((await pastPlanWeeks(db, TODAY, { multisport: true })).weeks[0]!.sessions.map((s) => [s.title, s]));
+    let byTitle = await sessions();
+    expect(byTitle["肌力"]!.report).toEqual({ sport: "strength", minutes: 30, km: null, reported: false });
+    expect(byTitle["肌力"]!.outcome).toBe("missed");
+    expect(byTitle["輕鬆跑"]!.report).toBeNull();
+    expect(byTitle["跳過的肌力"]!.report).toBeNull();
+
+    await coach.reportSession(strength!.id, report({ completion: "partial", duration_min: 20, perceived_effort: 6, subjective_notes: "只做上半身" }));
+    byTitle = await sessions();
+    expect(byTitle["肌力"]!.report!.reported).toBe(true);
+    expect(byTitle["肌力"]!.outcome).toBe("partial");
+    expect(await coach.sessionReport(strength!.id)).toMatchObject({ duration_min: 20, completion: "partial", date: "2026-09-29" });
+    // 修改：同一筆
+    await coach.reportSession(strength!.id, report({ completion: "done", duration_min: 30, perceived_effort: 5 }));
+    expect((await sessions())["肌力"]!.outcome).toBe("achieved");
+    expect((await db.getOtherActivities(30)).filter((a) => a.intervals_id.startsWith("manual:"))).toHaveLength(1);
+    // 有手錶紀錄的照舊不能回報
+    await expect(coach.reportSession(easy!.id, report())).rejects.toThrow("手錶的紀錄");
   });
 });

@@ -223,7 +223,8 @@ describe("測試模式的假資料", () => {
     // FakeActivitySource 涵蓋 14 天前當天；去掉範圍外的那天後，筆數與手機的那份相同
     const inWindow = plain.filter((r) => r.date >= addDays(TODAY, -14));
     expect(message).toContain(`合併 ${copies.length} 筆重複的紀錄`);
-    expect(await coach.db.countWorkouts()).toBe(inWindow.length);
+    // 同步後另外補抓教練看的最近 4 週（不產生分析）：只數 14 天內的
+    expect(await coach.db.countWorkouts(14)).toBe(inWindow.length);
     expect((await coach.db.getRecentWorkouts(14)).every((w) => w.avg_hr !== null)).toBe(true);
   });
 });

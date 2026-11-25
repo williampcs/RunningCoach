@@ -418,6 +418,18 @@ async function sessionInActivePlan(db: Db, id: number): Promise<{ session: Plann
   return { session, plan: plan as TrainingPlan & { week_start: string }, style: (plan.style ?? "fixed") as PlanStyle };
 }
 
+/**
+ * 一堂課和它的課表：回報（規格 12.48）也收之前的週的課（「之前的週」的回報，規格 12.34），所以不限目前啟用的課表；
+ * 要是一堂一堂的課表（有週一）
+ */
+async function sessionInPlan(db: Db, id: number): Promise<{ session: PlannedSession; plan: TrainingPlan & { week_start: string }; style: PlanStyle }> {
+  const session = await db.getPlannedSession(id);
+  if (!session) throw new Error(`找不到 session_id=${id} 的課`);
+  const plan = await db.getTrainingPlan(session.plan_id);
+  if (!plan?.week_start) throw new Error("這堂課不在一堂一堂的課表裡");
+  return { session, plan: plan as TrainingPlan & { week_start: string }, style: (plan.style ?? "fixed") as PlanStyle };
+}
+
 /** 整週的檢查用的課：跳過的不算；改用替代的當成輕鬆跑，不算強度課 */
 function countedSessions(sessions: PlannedSession[]): SessionDraft[] {
   return sessions
@@ -721,7 +733,7 @@ export function reportSport(s: Pick<PlannedSession, "kind" | "sport">): Sport {
 
 /** 回報一堂課（新的或改原本的回報）的檢查與存檔；回傳給教練與畫面的一句話 */
 export async function reportSession(db: Db, today: string, id: number, input: SessionReportInput, options: PlanOptions = {}): Promise<string> {
-  const { session, plan, style } = await sessionInActivePlan(db, id);
+  const { session, plan, style } = await sessionInPlan(db, id);
   if (session.kind === "rest") throw new Error("休息日不用回報");
   if (session.status === "skipped") throw new Error("跳過的課，先恢復原本的課再回報");
   if (session.date && session.date > today) throw new Error("還沒到的課不能回報");

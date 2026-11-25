@@ -68,8 +68,11 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
       setOpen((current) => new Set(current).add(focus.workoutId));
       setScrollTo(`[data-workout="${focus.workoutId}"]`);
     } else {
+      // 騎車是 data-ride，肌力、游泳等其他運動是 data-other（之前只找騎車，其他運動停在頁首）
+      const id = CSS.escape(focus.activityId);
       setOpenRides((current) => new Set(current).add(focus.activityId));
-      setScrollTo(`[data-ride="${CSS.escape(focus.activityId)}"]`);
+      setOpenOthers((current) => new Set(current).add(focus.activityId));
+      setScrollTo(`[data-ride="${id}"], [data-other="${id}"]`);
     }
     onFocusUsed?.();
   }, [focus, onFocusUsed, today]);
@@ -81,7 +84,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
     if (!row) return;
     row.scrollIntoView({ block: "start", behavior: "smooth" });
     setScrollTo(null);
-  }, [scrollTo, cards, rides]);
+  }, [scrollTo, cards, rides, others]);
 
   useEffect(() => {
     let alive = true;
@@ -237,7 +240,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
         {expanded && (
           <div className="other-detail stack small">
             {a.subjective_notes ? <p>備註：{a.subjective_notes}</p> : <p className="muted">沒有備註。</p>}
-            {manual && <p className="muted">從課表回報的；要修改到課表的那堂課。</p>}
+            {manual && <p className="muted">從課表回報的；要修改到課表的那堂課（過去的週在計畫頁的「之前的週」）。</p>}
           </div>
         )}
       </li>
@@ -278,7 +281,7 @@ export function HistoryView({ focus = null, onFocusUsed }: { focus?: HistoryFocu
     // 手動記的：整筆可以改與刪（體感也在同一張表單）
     if (w.source === "manual") {
       // 從課表回報的（規格 12.48）：在那堂課改
-      if (w.session_id) return <p className="small muted">從課表回報的；要修改到課表的那堂課。</p>;
+      if (w.session_id) return <p className="small muted">從課表回報的；要修改到課表的那堂課（過去的週在計畫頁的「之前的週」）。</p>;
       if (editingManual === w.id) {
         return <ManualRunForm editing={w} onSaved={() => setEditingManual(null)} onCancel={() => setEditingManual(null)} />;
       }

@@ -4,6 +4,8 @@ import { dataSourceLine, mergeDataSources, monthDay, OUTCOME_LABELS, PAST_WEEKS_
 import { Check, ChevronRight, Circle, CircleCheck, CircleDashed, CircleDot, CircleMinus, type LucideIcon } from "lucide-react";
 
 import { useApp } from "../app-context";
+import { featureEnabled } from "../environment";
+import { SessionReportForm } from "./SessionReport";
 import { DataSource, Disclosure, Icon, ICON_CHIP, SportIcon, SPORT_NAMES, type SportKey } from "../ui";
 
 type Outcome = PastSession["outcome"];
@@ -52,10 +54,14 @@ function sportOf(s: PastSession): SportKey {
   return s.isRun ? "run" : "other";
 }
 
+/** 這台沒抓過那段時間的紀錄（規格 12.34）：不寫實際與沒做 */
+const UNCOVERED = "這台沒有這段時間的紀錄";
+
 /** 計畫與實際的總量：只有跑步的週寫距離，有其他運動時寫時間；文字課表只寫實際的 */
 function totalText(w: PastWeek): string {
   const amount = (x: { km: number; minutes: number }) => (w.unit === "km" ? `${x.km} km` : hoursText(x.minutes));
-  return w.planned ? `計畫 ${amount(w.planned)} · 實際 ${amount(w.actual)}` : `文字課表 · 實際 ${amount(w.actual)}`;
+  const actual = w.uncovered ? UNCOVERED : `實際 ${amount(w.actual)}`;
+  return w.planned ? `計畫 ${amount(w.planned)} · ${actual}` : `文字課表 · ${actual}`;
 }
 
 function Mark({ outcome }: { outcome: Outcome }) {
@@ -63,9 +69,10 @@ function Mark({ outcome }: { outcome: Outcome }) {
 }
 
 /** 一週的小圖示：螢幕閱讀器讀「做了 3、沒做 1」 */
-function Marks({ sessions }: { sessions: PastSession[] }) {
+function Marks({ sessions, uncovered }: { sessions: PastSession[]; uncovered: boolean }) {
   const counts = new Map<string, number>();
-  for (const s of sessions) counts.set(outcomeLabel(s), (counts.get(outcomeLabel(s)) ?? 0) + 1);
+  const labelOf = (s: PastSession) => (uncovered && s.outcome === "missed" ? "沒有紀錄" : outcomeLabel(s));
+  for (const s of sessions) counts.set(labelOf(s), (counts.get(labelOf(s)) ?? 0) + 1);
   const label = [...counts].map(([l, n]) => `${l} ${n}`).join("、");
   return (
     <span className="past-marks" role="img" aria-label={label || "沒有課"}>
@@ -76,15 +83,24 @@ function Marks({ sessions }: { sessions: PastSession[] }) {
   );
 }
 
-/** 點開一週：每堂課的標題、結果與實際；配到紀錄的那一堂點了到紀錄頁那一趟 */
+/**
+ * 點開一週：每堂課的標題、結果與實際；配到手錶紀錄的那一堂點了到紀錄頁那一趟.
+ * 沒有手錶紀錄的課（功能開關 report，規格 12.48）：點了在那一列下面打開回報的表單（還沒回報的回報、回報過的修改），不繞到紀錄頁
+ */
 function WeekSessions({ week }: { week: PastWeek }) {
+  // 這台沒有那段時間的紀錄：沒配到的課不寫「沒做」（可能是有做、這台沒抓到）
+  const label = (s: PastSession) => (week.uncovered && s.outcome === "missed" ? "沒有紀錄" : outcomeLabel(s));
   const { openHistory } = useApp();
+  const [reporting, setReporting] = useState<number | null>(null);
+  const reportOn = featureEnabled("report");
   return (
     <ol className="rows past-sessions">
       {week.sessions.map((s) => {
         const sport = sportOf(s);
         const when = s.date ? `${monthDay(s.date)}（${weekdayOf(s.date)}）` : "這週任一天";
-        const target = s.workoutId !== null ? { workoutId: s.workoutId } : s.activityId ? { activityId: s.activityId } : null;
+        const report = reportOn ? s.report : null;
+        const target = report ? null : s.workoutId !== null ? { workoutId: s.workoutId } : s.activityId ? { activityId: s.activityId } : null;
+        const open = report !== null && reporting === s.id;
         const body = (
           <>
             <span className="list-row-icon" title={SPORT_NAMES[sport]}>
@@ -97,20 +113,32 @@ function WeekSessions({ week }: { week: PastWeek }) {
             <span className="list-row-end">
               <span className={`badge ${s.outcome}`}>
                 {s.outcome === "achieved" && <Icon as={Check} size={ICON_CHIP} />}
-                {outcomeLabel(s)}
+                {label(s)}
               </span>
-              {target && <Icon as={ChevronRight} size={16} className="icon chev" />}
+              {report && <span className="small muted past-report-label">{report.reported ? "修改回報" : "回報"}</span>}
+              {(target || report) && <Icon as={ChevronRight} size={16} className="icon chev" />}
             </span>
           </>
         );
         return (
-          <li key={s.id} data-outcome={s.outcome}>
-            {target ? (
+          <li key={s.id} data-outcome={s.outcome} data-session={s.id}>
+            {report ? (
+              <button type="button" className="list-row past-report-row" aria-expanded={open} onClick={() => setReporting(open ? null : s.id)}>
+                {body}
+              </button>
+            ) : target ? (
               <button type="button" className="list-row" onClick={() => openHistory({ ...target, date: s.date ?? week.weekStart })}>
                 {body}
               </button>
             ) : (
               <div className="list-row">{body}</div>
+            )}
+            {open && (
+              <SessionReportForm
+                session={{ id: s.id, title: s.title, sport: report.sport, minutes: report.minutes, km: report.km }}
+                onDone={() => setReporting(null)}
+                onCancel={() => setReporting(null)}
+              />
             )}
           </li>
         );
@@ -121,18 +149,43 @@ function WeekSessions({ week }: { week: PastWeek }) {
 
 /** 計畫頁最下面「之前的週」（規格 12.34）：預設收起；只列有課表的週，最近的在上面，先 8 週 */
 export function PastWeeks() {
-  const { coach, revision } = useApp();
+  const { coach, revision, touch, activitiesReady } = useApp();
   const [limit, setLimit] = useState(PAST_WEEKS_PAGE);
   const [data, setData] = useState<{ weeks: PastWeek[]; more: boolean } | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // 「之前的週」打開了（收起時不補抓）
+  const [shown, setShown] = useState(false);
+  const [backfill, setBackfill] = useState<"idle" | "busy" | "failed">("idle");
 
   useEffect(() => {
     let alive = true;
-    void coach.pastPlanWeeks(limit).then((d) => alive && setData(d));
+    void coach.pastPlanWeeks(limit, { checkCoverage: activitiesReady }).then((d) => alive && setData(d));
     return () => {
       alive = false;
     };
-  }, [coach, revision, limit]);
+  }, [coach, revision, limit, activitiesReady]);
+
+  // 打開「之前的週」時，這台沒有紀錄的週從 Intervals.icu 補抓一次（只存紀錄、不產生分析；同一段這次打開 App 只試一次）
+  useEffect(() => {
+    if (!shown || !activitiesReady || !data?.weeks.some((w) => w.uncovered)) return;
+    let alive = true;
+    // 試過失敗的那段這次不再試（backfillPastWeeks 回 null）：失敗的說明留著
+    const keepFailed = (next: "idle" | "busy") => setBackfill((current) => (current === "failed" ? current : next));
+    keepFailed("busy");
+    coach
+      .backfillPastWeeks(data.weeks)
+      .then((result) => {
+        if (!alive) return;
+        if (result) {
+          setBackfill("idle");
+          touch();
+        } else keepFailed("idle");
+      })
+      .catch(() => alive && setBackfill("failed"));
+    return () => {
+      alive = false;
+    };
+  }, [coach, data, shown, activitiesReady, touch]);
 
   if (!data?.weeks.length) return null;
   const toggle = (weekStart: string) =>
@@ -145,9 +198,11 @@ export function PastWeeks() {
 
   return (
     <section className="card past-weeks-card">
-      <Disclosure className="past-weeks" summary="之前的週">
+      <Disclosure className="past-weeks" summary="之前的週" onToggle={(o) => o && setShown(true)}>
         {/* 每週的實際總量用到 Garmin 的資料時（KI-048） */}
         <DataSource text={dataSourceLine(mergeDataSources(data.weeks.map((w) => w.sources)))} />
+        {backfill === "busy" && <p className="small muted past-backfill">正在從 Intervals.icu 補抓這台沒有的紀錄…</p>}
+        {backfill === "failed" && <p className="small muted past-backfill">補抓不到這台沒有的紀錄，下次打開 App 再試；這段時間的課先不算沒做。</p>}
         <p className="past-legend small muted">
           {LEGEND.map(([o, label]) => (
             <span key={o}>
@@ -175,7 +230,7 @@ export function PastWeeks() {
                       <span className="list-row-sub">{totalText(w)}</span>
                     </span>
                     <span className="list-row-end">
-                      <Marks sessions={w.sessions} />
+                      <Marks sessions={w.sessions} uncovered={w.uncovered} />
                       <Icon as={ChevronRight} size={16} className="icon chev" />
                     </span>
                   </button>

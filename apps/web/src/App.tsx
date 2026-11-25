@@ -502,7 +502,11 @@ export function App() {
         day = today;
         touch();
       }
-      if (activitiesReady) void coach.refreshWellness().then((fetched) => fetched && touch());
+      if (activitiesReady) {
+        void coach.refreshWellness().then((fetched) => fetched && touch());
+        // 跑步與其他運動：這台超過 1 小時沒抓就在背景抓最近 14 天，只存紀錄、不產生分析（規格 12.34 的 A1）
+        void coach.autoSyncActivities().then((fetched) => fetched && touch());
+      }
     };
     refresh();
     document.addEventListener("visibilitychange", refresh);
