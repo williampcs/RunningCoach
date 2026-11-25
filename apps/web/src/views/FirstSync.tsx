@@ -1,3 +1,4 @@
+import { importProgressText } from "@running-coach/core";
 import { useApp } from "../app-context";
 import { featureEnabled } from "../environment";
 import type { useSync } from "../use-sync";
@@ -19,7 +20,7 @@ export function FirstSync({ sync, disabled = false }: { sync: ReturnType<typeof 
             ? "「同步最近 14 天」：最近兩週的跑步、騎車與恢復資料，每一趟跑步都有教練的分析，花一點模型的費用。"
             : "「同步最近 14 天」：最近兩週的跑步與恢復資料，每一趟都有教練的分析，花一點模型的費用。"}
         </li>
-        {canAll && <li>「匯入全部的紀錄」：再把更早的跑步全部存進來，不產生分析、不花費用，可能要一兩分鐘。</li>}
+        {canAll && <li>「匯入全部的紀錄」：再把更早的跑步與其他運動全部存進來，不產生分析、不花費用，可能要一兩分鐘。</li>}
       </ul>
       <div className="actions">
         <button className={disabled ? "" : "primary"} disabled={disabled || sync.busy} onClick={() => void sync.run()}>
@@ -35,7 +36,7 @@ export function FirstSync({ sync, disabled = false }: { sync: ReturnType<typeof 
         <div className="import-progress" role="status">
           <div className="indeterminate" />
           <span className="small">
-            正在讀 {sync.progress.oldest} – {sync.progress.newest} 的跑步…已找到 {sync.progress.found} 趟
+            {importProgressText(sync.progress)}
           </span>
         </div>
       )}

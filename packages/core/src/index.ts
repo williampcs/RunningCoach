@@ -90,7 +90,7 @@ export {
   type Track,
   type TrackStation,
 } from "./history";
-export { type ImportProgress, type ImportResult } from "./history-import";
+export { importProgressText, type ImportProgress, type ImportResult } from "./history-import";
 export { addCoverage, backfillActivities, getCoverage, getFetchStatus, isCovered, mergeRanges, recordFetch, SNAPSHOT_ACTIVITY_COVERAGE, SNAPSHOT_ACTIVITY_FETCH, type BackfillResult, type CoverageRange, type FetchStatus } from "./activity-coverage";
 export {
   DNS_REASONS,
