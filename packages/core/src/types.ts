@@ -47,9 +47,10 @@ export interface ActivitySource {
   fetchOtherActivityTypes?(days: number): Promise<string[]>;
   /**
    * 一段期間（含頭尾的日期）的跑步，匯入完整歷史用；unavailable 是來源列出、但不提供內容的活動數
-   * （Intervals.icu 不經 API 提供從 Strava 匯入的活動）。不支援的來源不實作
+   * （Intervals.icu 不經 API 提供從 Strava 匯入的活動）。others 是同一段期間跑步以外的運動（同一次請求；匯入完整歷史與「之前的週」的補抓用，
+   * 規格 12.34）；來源沒有其他運動時不帶。不支援的來源不實作
    */
-  fetchRunsBetween?(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }>;
+  fetchRunsBetween?(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number; others?: OtherActivity[] }>;
   /**
    * 最近 N 天來源列出、但不提供內容的活動（「空殼」：Strava 的，之後可能還有 Garmin 的；KI-048）.
    * 不存成紀錄、不算負荷，只用來在看板說明；不支援的來源不實作

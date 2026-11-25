@@ -10,6 +10,7 @@
  * 另外更新恢復資料（靜息心率、HRV、睡眠），以及訓練數值用的跑步設定與最佳配速曲線；
  * 沒有跑步時也更新，失敗不影響活動的同步
  */
+import { addCoverage } from "./activity-coverage";
 import { addDays } from "./dates";
 import { athleteSports } from "./sports";
 import type { Db, SaveResult } from "./db";
@@ -36,6 +37,7 @@ async function syncOtherActivities(
   activities: ActivitySource,
   logger: Logger,
   keepIds: string[] = [],
+  status: { stored: boolean } = { stored: false },
 ): Promise<{ counts: Map<string, number>; stored: boolean } | null> {
   let types: string[];
   let stored = false;
@@ -53,6 +55,7 @@ async function syncOtherActivities(
       );
       types = others.map((a) => a.type);
       stored = true;
+      status.stored = true;
     } else if (activities.fetchOtherActivityTypes) {
       types = await activities.fetchOtherActivityTypes(SYNC_DAYS);
     } else {
@@ -106,6 +109,34 @@ export async function refreshTrainingSnapshots(db: Db, activities: ActivitySourc
   }
 }
 
+/** 最近幾天（今天、昨天）沒分析的跑步要補分析 */
+const ANALYZE_RECENT_DAYS = 1;
+
+async function analyzeRecentUnanalyzed(db: Db, llm: Llm, weather: WeatherSource | null, logger: Logger, fetched: Activity[]): Promise<void> {
+  const byId = new Map(fetched.flatMap((a) => (a.intervals_id ? [[a.intervals_id, a] as const] : [])));
+  for (const w of await db.getRecentWorkouts(ANALYZE_RECENT_DAYS)) {
+    if (w.summary || w.perceived_effort != null || !w.intervals_id || w.source === "manual") continue;
+    const activity = byId.get(w.intervals_id);
+    if (!activity) continue;
+    const synced = await db.syncedSummaryFor(w.intervals_id);
+    try {
+      const summary =
+        synced ??
+        (await generateWorkoutSummary(llm, {
+          ...activity,
+          perceived_effort: null,
+          subjective_notes: null,
+          recovery: await recoveryNoteFor(db, activity.date),
+          plan: await planNoteFor(db, db.today(), w.id),
+          weather: await runWeatherNote(weather, activity),
+        }));
+      await db.saveWorkoutSummary(w.id, summary);
+    } catch (e) {
+      logger.warn(`Summary generation failed for workout_id=${w.id}: ${message(e)}`);
+    }
+  }
+}
+
 /** 執行同步，回傳結果摘要字串 */
 export async function runSync(deps: {
   db: Db;
@@ -115,7 +146,14 @@ export async function runSync(deps: {
   logger: Logger;
   /** 多運動的開關：不跑步的選手（只練騎車等）沒有跑步時不當成問題 */
   multisport?: boolean;
+  /**
+   * 產生跑後分析（預設是）. 自動抓（打開 App、回到前景，規格 12.34 的 A1）時是 false：只存紀錄、不花模型的費用；
+   * 有等著合併的跑後感受的那天先不存（留給按「同步」時合併並分析）.
+   * 是 true 時另外補最近 2 天（今天、昨天）還沒分析、也還沒回報體感的跑步（自動抓進來的）
+   */
+  analyze?: boolean;
 }): Promise<string> {
+  const analyze = deps.analyze ?? true;
   const { db, llm, activities, logger } = deps;
 
   // 恢復資料先處理：受傷休息、沒有跑步紀錄時更需要它
@@ -157,7 +195,10 @@ export async function runSync(deps: {
   );
   const removedNote = removedCount ? `移除 ${removedCount} 筆在 Intervals.icu 已刪除或不再是跑步的紀錄` : "";
   await refreshTrainingSnapshots(db, activities, logger);
-  const others = await syncOtherActivities(db, activities, logger, unavailable.keepIds);
+  const othersStatus = { stored: false };
+  const others = await syncOtherActivities(db, activities, logger, unavailable.keepIds, othersStatus);
+  // 記下這台抓過這 14 天（之前的週判斷這台有沒有那段時間的紀錄，規格 12.34）；其他運動沒抓成功時不算
+  if (othersStatus.stored || !activities.fetchOtherActivities) await addCoverage(db, addDays(today, -(SYNC_DAYS - 1)), today);
 
   if (!fetched.length && deps.multisport && others?.stored && !athleteSports(await db.getProfile()).includes("run")) {
     return `✅ Intervals.icu 同步完成：其他運動 ${countsText(others.counts)}（教練會參考）${removedNote ? `，${removedNote}` : ""}${unavailableNote ? `，${unavailableNote}` : ""}${wellnessDays ? `，更新恢復資料 ${wellnessDays} 天` : ""}${wellnessFailed ? "（恢復資料暫時無法取得）" : ""}`;
@@ -195,6 +236,8 @@ export async function runSync(deps: {
     }
 
     const pending = await db.getPendingSubjectiveByDate(activity.date);
+    // 自動抓：那天有等著合併的跑後感受時先不存，按「同步」時再合併並分析
+    if (!analyze && pending) continue;
 
     let saved: SaveResult;
     try {
@@ -218,7 +261,7 @@ export async function runSync(deps: {
     const synced = activity.intervals_id ? await db.syncedSummaryFor(activity.intervals_id) : null;
     if (synced) {
       await db.saveWorkoutSummary(saved.id, synced);
-    } else {
+    } else if (analyze) {
       try {
         const summary = await generateWorkoutSummary(llm, {
           ...activity,
@@ -243,6 +286,8 @@ export async function runSync(deps: {
   }
 
   await db.cleanupOldPendingSubjective();
+  // 按「同步」時：自動抓進來、還沒分析也還沒回報的最近 2 天的跑步補上分析（自動抓不產生分析）
+  if (analyze) await analyzeRecentUnanalyzed(db, llm, deps.weather ?? null, logger, fetched);
 
   if (newCount === 0 && !duplicateCount && !restoredCount && !removedCount) {
     const base = skippedCount > 0 ? "✅ 無新資料，所有活動已是最新狀態。" : `✅ Intervals.icu 同步完成${unavailableNote ? "。" : ""}`;

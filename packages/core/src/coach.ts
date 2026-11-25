@@ -25,8 +25,12 @@ import {
 } from "./planning";
 import type { ManualActivity } from "./manual-activities";
 import type { SelfChange, SelfChangeReason } from "./plan";
-import { pastPlanWeeks, type PastWeek } from "./plan-history";
-import { isoWeekLabel, localDate } from "./dates";
+import { ADHERENCE_WEEKS, pastPlanWeeks, type PastWeek } from "./plan-history";
+import { addDays, isoWeekLabel, localDate, weekdayIndex } from "./dates";
+import { backfillActivities, getCoverage, getFetchStatus, isCovered, recordFetch, type BackfillResult, type FetchStatus } from "./activity-coverage";
+
+/** 自動抓紀錄的間隔：這台上次抓超過 1 小時才再抓（規格 12.34 的 A1） */
+export const AUTO_SYNC_MAX_AGE_MS = 60 * 60 * 1000;
 import { Db, type ManualWorkoutInput } from "./db";
 import { stoppedReply } from "./stopped";
 import { Llm, type ChatEvent, type LlmConfig, type Purpose, type Usage } from "./llm";
@@ -396,10 +400,80 @@ export class Coach {
 
   /** 從活動來源同步最近的跑步活動，並合併主觀暫存 */
   async sync(): Promise<string> {
+    const text = await this.runSyncRecorded(true);
+    // 教練看的最近 4 週裡這台沒抓過的日期也補抓（這次打開 App 只試一次）
+    if (!text.startsWith("❌")) await this.backfillAdherenceWeeks();
+    return text;
+  }
+
+  /** 同步並記下結果（上次抓紀錄的時間、最近一次的錯誤，設定的訓練紀錄顯示） */
+  private async runSyncRecorded(analyze: boolean): Promise<string> {
     const { llm, activities, weather } = this.runtime;
-    const result = await runSync({ db: this.db, llm, activities, weather, logger: this.logger, multisport: featureOn(this.runtime.settings, "multisport") });
+    const at = this.now().toISOString();
+    let result: string;
+    try {
+      result = await runSync({ db: this.db, llm, activities, weather, logger: this.logger, multisport: featureOn(this.runtime.settings, "multisport"), analyze });
+    } catch (e) {
+      await recordFetch(this.db, at, e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+    await recordFetch(this.db, at, result.startsWith("❌") ? result.replace(/^❌\s*/, "") : null);
     this.wellnessFetchedAt = this.now().getTime();
     return result;
+  }
+
+  private autoSyncing: Promise<boolean> | null = null;
+
+  /**
+   * 自動抓紀錄（規格 12.34 的 A1）：打開 App、回到前景時呼叫；這台上次抓（成功或失敗）超過 maxAgeMs 才抓最近 14 天的跑步與其他運動.
+   * 只存紀錄、不產生分析（不花模型的費用；分析在跑後回報或按「同步」時）. 這台還沒抓過任何紀錄時不抓（第一次由選手選最近 14 天或全部）.
+   * 回傳有沒有抓（成功）；失敗只記下（設定的訓練紀錄顯示），不丟出
+   */
+  autoSyncActivities(maxAgeMs = AUTO_SYNC_MAX_AGE_MS): Promise<boolean> {
+    this.autoSyncing ??= (async () => {
+      try {
+        const status = await getFetchStatus(this.db);
+        const last = [status?.at, status?.errorAt].filter((t): t is string => !!t).sort().at(-1);
+        if (last && this.now().getTime() - Date.parse(last) < maxAgeMs) return false;
+        if (!status && !(await getCoverage(this.db)).length && (await this.db.countWorkouts()) === 0) return false;
+        const text = await this.runSyncRecorded(false);
+        if (text.startsWith("❌")) return false;
+        await this.backfillAdherenceWeeks();
+        return true;
+      } catch (e) {
+        this.logger.warn(`Auto sync failed: ${e instanceof Error ? e.message : String(e)}`);
+        return false;
+      } finally {
+        this.autoSyncing = null;
+      }
+    })();
+    return this.autoSyncing;
+  }
+
+  /**
+   * 教練看的最近 4 週（recentAdherence）裡這台沒抓過的日期：自動抓之後補抓一次（一次請求、不產生分析），
+   * 摘要才不會少算那幾週. 這次打開 App 試過同一段就不再試；失敗只記錄
+   */
+  private async backfillAdherenceWeeks(): Promise<void> {
+    if (!this.runtime.activities.fetchRunsBetween) return;
+    const today = this.today();
+    const thisMonday = addDays(today, -weekdayIndex(today));
+    const from = addDays(thisMonday, -7 * ADHERENCE_WEEKS);
+    const to = addDays(thisMonday, -1);
+    if (isCovered(await getCoverage(this.db), from, to)) return;
+    const key = `${from}~${to}`;
+    if (this.backfillTried.has(key)) return;
+    this.backfillTried.add(key);
+    try {
+      await backfillActivities(this.db, this.runtime.activities, from, to);
+    } catch (e) {
+      this.logger.warn(`Backfill failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** 上次抓紀錄的時間與最近一次的錯誤（設定的訓練紀錄） */
+  fetchStatus(): Promise<FetchStatus | null> {
+    return getFetchStatus(this.db);
   }
 
   /** 匯入完整歷史：只存紀錄，不產生 AI 分析（不花模型的費用）；可以重跑 */
@@ -686,9 +760,33 @@ export class Coach {
     return nextPlan(this.db, this.today());
   }
 
-  /** 課表頁的「之前的週」（規格 12.34）：新的在前，先列 limit 週 */
-  pastPlanWeeks(limit?: number): Promise<{ weeks: PastWeek[]; more: boolean }> {
-    return pastPlanWeeks(this.db, this.today(), { limit, multisport: featureOn(this.settings, "multisport") });
+  /**
+   * 課表頁的「之前的週」（規格 12.34）：新的在前，先列 limit 週.
+   * checkCoverage：這台連著 Intervals.icu 時，看這台抓過的範圍標出「這台沒有這段時間的紀錄」的週（PastWeek.uncovered）
+   */
+  async pastPlanWeeks(limit?: number, options: { checkCoverage?: boolean } = {}): Promise<{ weeks: PastWeek[]; more: boolean }> {
+    const coverage = options.checkCoverage ? await getCoverage(this.db) : null;
+    return pastPlanWeeks(this.db, this.today(), { limit, multisport: featureOn(this.settings, "multisport"), coverage });
+  }
+
+  /** 這次打開 App 已經補抓過（或試過）的範圍：失敗了也不一直重試（Intervals.icu 的頻率限制），下次打開再試 */
+  private backfillTried = new Set<string>();
+
+  /**
+   * 「之前的週」裡這台沒有紀錄的週（uncovered）補抓一次：一次請求抓那幾週（從最舊那週的週一到最新那週的週日，不超過今天），
+   * 只存紀錄、不產生分析. 這次打開 App 試過同一段就不再試；回傳 null 是沒有要抓的或試過了. 失敗時丟出錯誤
+   */
+  async backfillPastWeeks(weeks: PastWeek[]): Promise<BackfillResult | null> {
+    const missing = weeks.filter((w) => w.uncovered);
+    if (!missing.length || !this.runtime.activities.fetchRunsBetween) return null;
+    const today = this.today();
+    const from = missing.map((w) => w.weekStart).sort()[0]!;
+    const lastEnd = addDays(missing.map((w) => w.weekStart).sort().at(-1)!, 6);
+    const to = lastEnd < today ? lastEnd : today;
+    const key = `${from}~${to}`;
+    if (this.backfillTried.has(key)) return null;
+    this.backfillTried.add(key);
+    return backfillActivities(this.db, this.runtime.activities, from, to);
   }
 
   /** 最近 N 天的跑步卡片（紀錄頁、跑後回報的結果），新的在前 */

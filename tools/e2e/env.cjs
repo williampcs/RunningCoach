@@ -56,7 +56,8 @@ async function go(page, label) {
   const close = page.locator("#side-panel:not(.leaving) .side-panel-close");
   if (await close.isVisible()) await close.click();
   await page.locator("#side-panel").waitFor({ state: "detached" });
-  await button.click();
+  // 分頁的按鈕在分頁列裡找：課卡也有叫「回報」的按鈕（規格 12.48）
+  await page.locator("nav.tabbar").getByRole("button", { name: label, exact: true }).click();
 }
 
 /**

@@ -370,8 +370,11 @@ function noHrPlan() {
   };
 }
 
-/** weeksAgo 週以前的課表（「之前的週」與自己改課的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存 */
-function pastPlan(weeksAgo: number) {
+/**
+ * weeksAgo 週以前的課表（「之前的週」與自己改課的 E2E 用）：課都在今天以前，所以有檢查器的提醒，附上理由存.
+ * multisport：工具有交叉訓練的 sport 時（多運動的開關開著），週五加一堂肌力（從「之前的週」回報用，規格 12.48）
+ */
+function pastPlan(weeksAgo: number, multisport = false) {
   const weekday = (new Date(`${today()}T00:00:00Z`).getUTCDay() + 6) % 7;
   const day = (offset: number) => daysAgo(weekday + 7 * weeksAgo - offset);
   const easy = (date: string, title: string, minutes: number) => ({ date, kind: "easy", title, steps: [{ duration_min: minutes, target: { hr: "easy" } }], purpose: "有氧基礎", success: "心率不超過輕鬆跑上限" });
@@ -394,6 +397,7 @@ function pastPlan(weeksAgo: number) {
         fallback: "改成 40 分鐘輕鬆跑",
       },
       // 2 週前的長跑排得比假資料長（24 km 只跑了約 16 km）：「之前的週」看得到部分達成
+      ...(multisport ? [{ date: day(4), kind: "strength", title: "週五的肌力", steps: [{ duration_min: 25, note: "深蹲、臀橋、核心" }], purpose: "減少受傷", success: "動作確實" }] : []),
       { date: day(6), kind: "long", title: "長跑", steps: [{ distance_km: weeksAgo === 2 ? 24 : 16, target: { pace: "E" } }], purpose: "耐力", success: "後半段配速不掉" },
     ],
   };
@@ -611,7 +615,7 @@ function reply(body: { messages: Message[]; system?: string | Block[]; tools?: u
     return [toolUse("save_training_plan", cyclingPlan(/只騎車/.test(lastText)))];
   }
   // 之前的週（規格 12.34）：測試模式的假資料（每週 3 次：週二輕鬆、週四強度、週日長跑）對得上的過去 10 週課表，週三多一堂不會有紀錄的
-  if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i)));
+  if (/前幾週的課表/.test(lastText)) return Array.from({ length: 10 }, (_, i) => toolUse("save_training_plan", pastPlan(10 - i, hasMultisport(body.tools))));
   // 量不到心率的選手（沒有手錶，規格 12.36）：今天一堂輕鬆跑（手動記的那趟對得上），完成的標準用說話測試
   if (/排.*課表|幫我排/.test(lastText) && systemText.includes("心率：量不到")) return [toolUse("save_training_plan", noHrPlan())];
   if (/排.*課表|幫我排/.test(lastText)) return [toolUse("save_training_plan", samplePlan(lastText, hasMultisport(body.tools), systemText))];

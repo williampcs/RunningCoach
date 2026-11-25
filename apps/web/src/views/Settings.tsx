@@ -15,6 +15,7 @@ import { DeviceSyncCard } from "./DeviceSync";
 import { KeysOverview, SecretPrompts } from "./KeysOverview";
 import { MovedCard } from "./Moved";
 import { FirstSync } from "./FirstSync";
+import { FetchStatusLine } from "./FetchStatus";
 import { WeatherCard } from "./WeatherSettings";
 import { IntervalsGuide, RecordWithPicker, resetGettingStarted } from "./GettingStarted";
 import { storageProtection, type StorageProtection } from "../update-check";
@@ -572,6 +573,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
           </p>
           <PhoneGuide />
           <IntervalsLogin from="settings" />
+          {activitiesReady && !testMode.enabled && <FetchStatusLine />}
           {!loginAvailable && apiKeyField}
           <Disclosure summary="進階" className="advanced">
             {loginAvailable && (

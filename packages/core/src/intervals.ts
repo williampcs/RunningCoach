@@ -236,12 +236,14 @@ export class IntervalsClient implements ActivitySource {
   }
 
   /** 匯入完整歷史：一次抓一段期間，請求放寬逾時 */
-  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }> {
+  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number; others: OtherActivity[] }> {
     const data = await this.getJson(`/activities?oldest=${oldest}&newest=${newest}`, HISTORY_TIMEOUT_MS);
     const all = Array.isArray(data) ? (data as RawActivity[]) : [];
     const unavailable = all.filter(isUnavailable).length;
     const runs = all.filter((a) => !isUnavailable(a) && isRun(a) && a.id != null).sort(byStartDesc);
-    return { runs: runs.map((raw) => this.normalize(raw)), unavailable };
+    // 其他運動（騎車、肌力等）一起帶回：匯入完整歷史與「之前的週」的補抓不必多一次請求（規格 12.34）
+    const others = all.filter((a) => !isUnavailable(a) && !isRun(a) && a.id != null).map((raw) => this.toOther(raw));
+    return { runs: runs.map((raw) => this.normalize(raw)), unavailable, others };
   }
 
   private async getJson(path: string, timeoutMs = 15_000): Promise<unknown> {
@@ -260,21 +262,23 @@ export class IntervalsClient implements ActivitySource {
 
   /** 最近 N 天跑步以外的運動（騎車、游泳、肌力訓練等） */
   async fetchOtherActivities(days = 14): Promise<OtherActivity[]> {
-    return (await this.queryActivities(days)).filter((a) => !isUnavailable(a) && !isRun(a) && a.id != null).map((raw) => {
-      const start = typeof raw.start_date_local === "string" ? raw.start_date_local : "";
-      const seconds = num(raw.moving_time) || num(raw.elapsed_time);
-      const meters = num(raw.distance);
-      return {
-        intervals_id: String(raw.id),
-        date: start ? start.slice(0, 10) : this.options.today(),
-        type: String(raw.type ?? raw.sport_type ?? "Other"),
-        duration_min: seconds ? Math.round(seconds / 6) / 10 : null,
-        distance_km: meters ? Math.round(meters / 10) / 100 : null,
-        avg_hr: num(raw.average_heartrate),
-        training_load: num(raw.icu_training_load),
-        raw_json: JSON.stringify(raw),
-      };
-    });
+    return (await this.queryActivities(days)).filter((a) => !isUnavailable(a) && !isRun(a) && a.id != null).map((raw) => this.toOther(raw));
+  }
+
+  private toOther(raw: RawActivity): OtherActivity {
+    const start = typeof raw.start_date_local === "string" ? raw.start_date_local : "";
+    const seconds = num(raw.moving_time) || num(raw.elapsed_time);
+    const meters = num(raw.distance);
+    return {
+      intervals_id: String(raw.id),
+      date: start ? start.slice(0, 10) : this.options.today(),
+      type: String(raw.type ?? raw.sport_type ?? "Other"),
+      duration_min: seconds ? Math.round(seconds / 6) / 10 : null,
+      distance_km: meters ? Math.round(meters / 10) / 100 : null,
+      avg_hr: num(raw.average_heartrate),
+      training_load: num(raw.icu_training_load),
+      raw_json: JSON.stringify(raw),
+    };
   }
 
   /** 最近 N 天跑步以外的活動類型，例：["Walk", "Ride"] */

@@ -3,12 +3,13 @@
  * 結果和這週一樣用比對算（matchWeek），不另存；過去的週課表已停用但資料還在.
  */
 import { dataSourcesOfRows, garminOf, type DataSourceLabel } from "./activities";
+import { getCoverage, isCovered, type CoverageRange } from "./activity-coverage";
 import { addDays, daysBetween, isoWeekStart, weekdayIndex, weekdayName } from "./dates";
 import type { Db } from "./db";
 import { activeSelfChange, SELF_CHANGE_REASONS, SESSION_KINDS, sessionView, sortSessions, type SelfChange, type SelfChangeAction, type SelfChangeReason, type SessionKind } from "./plan";
 import { matchWeek, type Difficulty, type Outcome } from "./plan-match";
 import { monthDay, weekRange } from "./plan-timeline";
-import { contextFor } from "./planning";
+import { contextFor, reportSport } from "./planning";
 import type { Sport, TrainingPlan } from "./types";
 
 /** 選手在計畫頁按的調整（跳過、改用替代…）寫在課的備註；教練用工具調整的原因是別的字 */
@@ -42,6 +43,11 @@ export interface PastSession {
   selfChange: SelfChange | null;
   /** 配到的紀錄來自 Garmin 時的標示（「Garmin Forerunner 265」，KI-048）；其他是 null */
   garmin: string | null;
+  /**
+   * 沒有手錶紀錄的課的回報（規格 12.48，從「之前的週」回報，規格 12.34）：沒跳過、沒配到手錶紀錄的課才有；
+   * reported 是已經回報過（手動記的一筆或「做完了」），表單的預設是課表的時間與距離（沒有時是 null）
+   */
+  report: { sport: Sport; minutes: number | null; km: number | null; reported: boolean } | null;
 }
 
 export interface PastWeek {
@@ -59,6 +65,11 @@ export interface PastWeek {
   unit: "km" | "time";
   /** 這週實際的總量用到的資料來源（KI-048） */
   sources: DataSourceLabel[];
+  /**
+   * 這台沒有那段時間從 Intervals.icu 抓來的紀錄（這台沒抓過那幾天，activity-coverage.ts）：實際的總量與沒配到的課不可信，
+   * 畫面寫「這台沒有這段時間的紀錄」，不寫沒做. 不檢查（沒連 Intervals.icu）時是 false
+   */
+  uncovered: boolean;
 }
 
 interface Candidate {
@@ -84,7 +95,7 @@ async function candidates(db: Db, since: string, before: string, exclude: string
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
 }
 
-async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: boolean): Promise<PastWeek[]> {
+async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: boolean, coverage: CoverageRange[] | null = null): Promise<PastWeek[]> {
   if (!list.length) return [];
   const oldest = list.at(-1)!.weekStart;
   const days = daysBetween(oldest, today) + 1;
@@ -107,8 +118,9 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
       others: weekOthers.length,
     };
     const sources = dataSourcesOfRows(runs, weekOthers);
+    const uncovered = coverage !== null && !isCovered(coverage, c.weekStart, end < today ? end : today);
     if (c.text) {
-      weeks.push({ weekStart: c.weekStart, range: weekRange(c.weekStart), text: true, sessions: [], planned: null, actual, unit: weekOthers.length ? "time" : "km", sources });
+      weeks.push({ weekStart: c.weekStart, range: weekRange(c.weekStart), text: true, sessions: [], planned: null, actual, unit: weekOthers.length ? "time" : "km", sources, uncovered });
       continue;
     }
     const planned = await db.getPlannedSessions(c.plan.id);
@@ -145,6 +157,10 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
         byAthlete: s.status !== "planned" && s.note === ATHLETE_ADJUST_NOTE,
         selfChange: activeSelfChange(v),
         garmin: matched ? garminOf(matched) : null,
+        report:
+          s.status === "skipped" || ((r?.workoutId != null || !!r?.activityId) && !r?.manual)
+            ? null
+            : { sport: reportSport(s), minutes: v.minutes > 0 ? v.minutes : null, km: v.isRun && v.km > 0 ? v.km : null, reported: !!r?.manual || !!s.done_at },
       });
     }
     const onlyRuns = sessions.every((s) => s.isRun) && !weekOthers.length;
@@ -157,6 +173,7 @@ async function buildWeeks(db: Db, today: string, list: Candidate[], multisport: 
       actual,
       unit: onlyRuns ? "km" : "time",
       sources,
+      uncovered,
     });
   }
   return weeks;
@@ -176,11 +193,11 @@ async function shownWeek(db: Db): Promise<string | null> {
 export async function pastPlanWeeks(
   db: Db,
   today: string,
-  options: { limit?: number; multisport?: boolean } = {},
+  options: { limit?: number; multisport?: boolean; coverage?: CoverageRange[] | null } = {},
 ): Promise<{ weeks: PastWeek[]; more: boolean }> {
   const limit = options.limit ?? PAST_WEEKS_PAGE;
   const list = await candidates(db, "0000-01-01", mondayOf(today), await shownWeek(db));
-  const weeks = await buildWeeks(db, today, list.slice(0, limit), !!options.multisport);
+  const weeks = await buildWeeks(db, today, list.slice(0, limit), !!options.multisport, options.coverage ?? null);
   return { weeks, more: list.length > limit };
 }
 
@@ -221,6 +238,8 @@ export interface AdherenceSummary {
    */
   selfChanges: { kind: SessionKind; action: SelfChangeAction; count: number; total: number; reasons: ReasonCounts }[];
   selfChangeDays: { weekday: number; action: SelfChangeAction; count: number; reasons: ReasonCounts }[];
+  /** 這台沒有那段時間的手錶紀錄、沒算進來的週數（activity-coverage.ts，規格 12.34）；沒有時不帶 */
+  uncoveredWeeks?: number;
 }
 
 export type ReasonCounts = Partial<Record<SelfChangeReason | "none", number>>;
@@ -338,10 +357,16 @@ const actionText = (action: SelfChangeAction) => (action === "shorten" ? "改短
  */
 export function adherenceText(summary: AdherenceSummary): string {
   const { weekCount, structuredWeeks, textWeeks } = summary;
-  const coverage = structuredWeeks === weekCount ? `${weekCount} 週都有課表` : `${weekCount} 週裡 ${structuredWeeks} 週有一堂一堂的課表`;
+  // 這台沒有手錶紀錄的週不算進來：其他的週裡有幾週有課表
+  const counted = weekCount - (summary.uncoveredWeeks ?? 0);
+  const coverage =
+    structuredWeeks === counted
+      ? `${counted === weekCount ? `${weekCount} 週` : `算進來的 ${counted} 週`}都有課表`
+      : `${counted === weekCount ? `${weekCount} 週` : `算進來的 ${counted} 週`}裡 ${structuredWeeks} 週有一堂一堂的課表`;
   const lines = [
     `【最近 ${weekCount} 週照課表的情形】（${monthDay(summary.from)} – ${monthDay(summary.to)}，程式依手錶紀錄比對；${coverage}` +
-      `${textWeeks ? `、${textWeeks} 週是文字課表（沒有比對）` : ""}）`,
+      `${textWeeks ? `、${textWeeks} 週是文字課表（沒有比對）` : ""}` +
+      `${summary.uncoveredWeeks ? `、${summary.uncoveredWeeks} 週這台沒有那段時間的手錶紀錄（沒有算進來，不是沒做）` : ""}）`,
   ];
   if (!summary.kinds.length) {
     lines.push("・課表上沒有要練的課");
@@ -373,6 +398,12 @@ export async function recentAdherence(db: Db, today: string, options: { multispo
   const list = await candidates(db, from, thisMonday, null);
   if (!list.some((c) => !c.text)) return null;
   const changes = await db.getSelfChanges(from, addDays(thisMonday, -7));
-  const summary = adherenceSummary(await buildWeeks(db, today, list, !!options.multisport), from, addDays(thisMonday, -1), ADHERENCE_WEEKS, changes);
+  // 這台抓過的範圍（規格 12.34）：記過範圍時，沒抓過那段時間的週不算進來（有做的會被算成沒做）；從沒記過（沒連 Intervals.icu、或這版之前）照舊
+  const coverage = await getCoverage(db);
+  const weeks = await buildWeeks(db, today, list, !!options.multisport, coverage.length ? coverage : null);
+  const uncovered = weeks.filter((w) => w.uncovered);
+  const covered = weeks.filter((w) => !w.uncovered);
+  const summary = adherenceSummary(covered, from, addDays(thisMonday, -1), ADHERENCE_WEEKS, changes.filter((c) => !c.date || !uncovered.some((w) => c.date! >= w.weekStart && c.date! <= addDays(w.weekStart, 6))));
+  if (summary && uncovered.length) summary.uncoveredWeeks = uncovered.length;
   return summary && adherenceText(summary);
 }

@@ -291,7 +291,8 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           <p>
             <strong>匯入完成：新增 {number(result.added)} 趟</strong>
             {result.existing + result.merged > 0 && `，${number(result.existing + result.merged)} 趟原本就有`}
-            {result.earliest && `。最早的一趟是 ${result.earliest}`}。
+            {result.earliest && `。最早的一趟是 ${result.earliest}`}
+            {result.others > 0 && `。另有騎車、肌力等其他運動 ${number(result.others)} 筆`}。
           </p>
           {result.perYear.length > 0 && (
             <div className="year-chips">
