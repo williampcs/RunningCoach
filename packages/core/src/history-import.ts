@@ -20,6 +20,8 @@ export interface ImportProgress {
   newest: string;
   /** 到目前為止抓到的跑步 */
   found: number;
+  /** 到目前為止抓到的其他運動（騎車、肌力等） */
+  others?: number;
 }
 
 export interface ImportResult {
@@ -53,7 +55,7 @@ export async function importHistory(
   let found = 0;
   for (let i = 0; i < MAX_CHUNKS && empty < STOP_AFTER_EMPTY; i++) {
     const oldest = addDays(newest, -(CHUNK_DAYS - 1));
-    onProgress?.({ oldest, newest, found });
+    onProgress?.({ oldest, newest, found, others: result.others });
     const { runs, unavailable, others } = await source.fetchRunsBetween(oldest, newest);
     result.unavailable += unavailable;
     empty = runs.length || unavailable || others?.length ? 0 : empty + 1;
@@ -77,6 +79,12 @@ export async function importHistory(
     newest = addDays(oldest, -1);
   }
   result.perYear = [...years.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([year, runs]) => ({ year, runs }));
-  onProgress?.({ oldest: newest, newest, found });
+  onProgress?.({ oldest: newest, newest, found, others: result.others });
   return result;
+}
+
+/** 匯入中的說明：讀到哪一段、找到幾趟跑步與幾筆其他運動 */
+export function importProgressText(p: ImportProgress): string {
+  const others = p.others ? `、${p.others.toLocaleString("zh-TW")} 筆其他運動` : "";
+  return `正在讀 ${p.oldest} – ${p.newest} 的紀錄…已找到 ${p.found.toLocaleString("zh-TW")} 趟跑步${others}`;
 }
