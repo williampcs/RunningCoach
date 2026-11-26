@@ -33,7 +33,7 @@ import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "..
 import { checkPassword, lockEnabled } from "../settings";
 import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
 import { PrivacyLink } from "./PrivacyLink";
-import { EXPIRY_TEXT, expiredSince } from "../device-sync";
+import { EXPIRY_TEXT, expiredSince, MANY_RECORDS, rekeyDaysLeft } from "../device-sync";
 
 interface Slot {
   newPub: string;
@@ -689,7 +689,7 @@ function DeviceList({
 }
 
 /**
- * 換金鑰的狀態（規格 12.10）：剛移除的那台已經不能同步；進行中的進度；今天的額度用完時「明天會自動接著做」
+ * 換金鑰的狀態（規格 12.10）：剛移除的那台已經不能同步；進行中的進度；今天的額度用完時今天完成幾筆、大約再幾天、明天打開時自動接著做
  */
 function RekeyStatus({ onCancel }: { onCancel: () => void }) {
   const { rekey } = useApp();
@@ -706,9 +706,10 @@ function RekeyStatus({ onCancel }: { onCancel: () => void }) {
     );
   }
   if (!busy && !pending && !removed && !takeover) return null;
-  const removedText = removed ? `已經移除「${deviceName(removed)}」：那台已經不能再同步。` : pending?.removed.length ? "移除的裝置已經不能再同步。" : null;
+  const removedText = removed ? `已經移除「${deviceName(removed)}」，那台已經進不來。` : pending?.removed.length ? "已經移除，那台已經進不來。" : null;
   const counts = pending ?? takeover;
   const waiting = counts && !busy && counts.resumeAt > Date.now();
+  const days = counts ? rekeyDaysLeft(counts) : null;
   // 給了新的復原碼、還沒確認存好（還沒移除）
   const notStarted = pending && !busy && pending.codeGiven && pending.removed.length === 0;
   const locked = pending && pending.removed.length > 0;
@@ -719,7 +720,7 @@ function RekeyStatus({ onCancel }: { onCancel: () => void }) {
       {notStarted && <p>移除還沒開始：新的復原碼還沒確認存好。</p>}
       {!notStarted && waiting && (
         <p>
-          正在用新的金鑰重新加密資料：今天完成 {counts.done}／{counts.total} 筆，明天會自動接著做。
+          剩下的資料會在背景搬完：今天完成 {counts.done}／{counts.total} 筆{days ? `，大約再 ${days} 天` : ""}，明天打開時會自動接著做。
         </p>
       )}
       {!notStarted && counts && !busy && !waiting && <p>換金鑰還沒完成（已完成 {counts.done}／{counts.total} 筆）。</p>}
@@ -728,8 +729,8 @@ function RekeyStatus({ onCancel }: { onCancel: () => void }) {
         <>
           <p className="small muted">
             {locked
-              ? "資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。已經移除了裝置，這次換金鑰只能完成。"
-              : "資料都還在，其他裝置照常同步；換好之前不能加入新的裝置。"}
+              ? "資料都還在，這幾天照常同步，只是換好之前不能加入新的裝置。已經移除了裝置，這次換金鑰只能完成。"
+              : "資料都還在，這幾天照常同步，只是換好之前不能加入新的裝置。"}
           </p>
           <div className="actions">
             {!waiting && !notStarted && (
@@ -1230,7 +1231,9 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
         ) : mode === "confirmRemove" && target ? (
           <ConfirmIdentity
             purpose="remove"
-            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。它已經下載的資料收不回來；它也已經有同步過的 API key 與 Intervals.icu 的連線：裝置弄丟或被偷時，到 AI 服務的後台撤銷、換一把新的 key，到 Intervals.icu 中斷連結或重新產生 key。`}
+            risk={`移除「${deviceName(target)}」：它之後連不上同步，下次打開時清掉它的同步金鑰、API key 與 Intervals.icu 的連線（訓練資料留在那台）。同時會換一把新的同步金鑰與復原碼，舊的復原碼失效；留下的裝置自動換過去，不用重新配對。${
+              (deviceSync.last?.total ?? 0) > MANY_RECORDS ? `你有 ${deviceSync.last!.total} 筆資料：資料比較多時要好幾天才會在背景搬完；移除會馬上生效。` : ""
+            }它已經下載的資料收不回來；它也已經有同步過的 API key 與 Intervals.icu 的連線：裝置弄丟或被偷時，到 AI 服務的後台撤銷、換一把新的 key，到 Intervals.icu 中斷連結或重新產生 key。`}
             onConfirmed={() => void rekey(target)}
             onCancel={() => {
               setMode("idle");

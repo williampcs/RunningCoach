@@ -133,9 +133,10 @@ const REKEY_SLACK = { bytes: 1_000_000, records: 50 };
 export const REKEY_WRITE_SHARE = 0.25;
 /**
  * 換金鑰的那一份，每台裝置（以簽章的公開金鑰計，換金鑰之後同一台沿用，跨好幾次換金鑰一起算）、
- * 每個來源（每一層）每天最多用掉的比例：一個人不能用掉當天全部的換金鑰額度. 用完時停下來，隔天接著做
+ * 每個來源（每一層）每天最多用掉的比例：一半，一個人不能用掉當天全部的換金鑰額度（至少要兩個來源才用得完）. 用完時停下來，隔天接著做.
+ * 移除本來就馬上生效，搬得慢不影響安全，所以讓一個人一天搬得比較多（2026-11-24 從 25% 改成 50%）
  */
-export const REKEY_ACTOR_SHARE = 0.25;
+export const REKEY_ACTOR_SHARE = 0.5;
 /** 同一個舊空間每天最多複製幾筆：舊空間的筆數加上寬容（中途斷掉重試一次還夠）. 重開換金鑰不會讓複製量加倍 */
 const rekeyCopyAllowance = (records: number) => records + Math.max(REKEY_SLACK.records, Math.ceil(records * 0.25));
 const REKEY_WRITES_KEY = "sync:rekey-writes";
