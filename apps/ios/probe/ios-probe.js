@@ -66,7 +66,10 @@
       var w = await file.createWritable();
       await w.write(String(n));
       await w.close();
-      show("opfs", "第 " + n + " 次（上一次是 " + (n - 1) + "）");
+      // App 的資料庫（SQLite 的 OPFS 檔案池）在不在：只列名稱，不讀內容
+      var entries = [];
+      for await (var entry of dir.values()) entries.push(entry.kind === "directory" ? entry.name + "/" : entry.name);
+      show("opfs", { count: "第 " + n + " 次（上一次是 " + (n - 1) + "）", opfsRoot: entries.sort() });
     } catch (e) { show("opfs", "失敗 " + errText(e)); }
   };
 
@@ -105,6 +108,17 @@
     }
     show("cors", out);
   };
+
+  // #auto：模擬器用，自動跑不需要權限的幾項（不含 Apple 健康）
+  if (location.hash === "#auto") {
+    setTimeout(async function () {
+      await $("env").onclick();
+      await $("opfs").onclick();
+      await $("cors").onclick();
+      // 只有能力與連線的結果，沒有健康資料；Capacitor 會把它轉到 Xcode 的 log
+      console.log("IOS_PROBE " + JSON.stringify(results));
+    }, 300);
+  }
 
   $("copy").onclick = async function () {
     var text = "App 測試頁的結果（規格 12.49）\n" + JSON.stringify(results, null, 2);
