@@ -2,7 +2,7 @@ import { openNodeSqlite } from "@running-coach/sqlite-node";
 import { describe, expect, it } from "vitest";
 
 import { Db, IntervalsClient, type Activity, type ActivitySource } from "../src";
-import { importHistory, type ImportProgress } from "../src/history-import";
+import { importHistory, importProgressText, type ImportProgress } from "../src/history-import";
 import { activity, NOW } from "./helpers";
 
 const TODAY = "2026-10-10";
@@ -87,5 +87,12 @@ describe("匯入完整歷史", () => {
     expect(urls[0]).toContain("/activities?oldest=2024-10-11&newest=2025-10-10");
     expect(runs.map((r) => r.intervals_id)).toEqual(["i1"]);
     expect(unavailable).toBe(1);
+  });
+
+  it("匯入中的說明帶上其他運動", () => {
+    expect(importProgressText({ oldest: "2022-11-27", newest: "2023-11-26", found: 180 })).toBe("正在讀 2022-11-27 – 2023-11-26 的紀錄…已找到 180 趟跑步");
+    expect(importProgressText({ oldest: "2022-11-27", newest: "2023-11-26", found: 1200, others: 35 })).toBe(
+      "正在讀 2022-11-27 – 2023-11-26 的紀錄…已找到 1,200 趟跑步、35 筆其他運動",
+    );
   });
 });

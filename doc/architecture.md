@@ -234,7 +234,7 @@ erDiagram
 - **負荷與體能疲勞**（`load.ts`，規格 12.37）：每一趟的負荷有 Intervals.icu 算好的就用，沒有時依心率（hrSS）、配速（rTSS，只有跑步）或體感估，都是 TSS 的尺度；體能（42 天）與疲勞（7 天）是每天負荷合計的指數平均，有 Intervals.icu 的值時照舊用它的。估負荷的依據（各運動量到的最大心率與閾值心率、靜止心率、閾值配速）由 `training-values.ts` 的 `loadContextOf` 組好，放在 `TrainingValues.loadContext`，紀錄卡片與檢查器用同一份。都是算出來的，不存進資料庫。
 - `wellness`：手錶的恢復資料（靜息心率、HRV、睡眠），一天一筆。
 - `daily_checkins`：選手每天的自評（精神、痠痛、睡眠，1–5 分）。
-- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`；另有 `unavailable_activities`（最近 14 天拿不到內容的活動〔空殼〕的 id、日期與原本的來源，看板提示用，KI-048）。
+- `source_snapshots`：同步時存的 Intervals.icu 設定與最佳配速曲線，算訓練數值用：`run_settings`（跑步的閾值心率、區間）、`sport_settings`（各運動的設定：騎車的閾值心率、心率區間、FTP、功率區間等，只留閾值與區間，規格 12.24）、`pace_curve`；`activity_coverage`（這台從 Intervals.icu 抓過哪些日期的跑步與其他運動，同步、匯入完整歷史、之前的週的補抓後加上；之前的週判斷「這台沒有這段時間的紀錄」，規格 12.34）；`activity_fetch`（這台上次抓紀錄的時間與最近一次的錯誤，自動抓的間隔與設定的訓練紀錄用，規格 12.34）；`activity_fetch`（這台上次抓紀錄的時間與最近一次的錯誤，自動抓的間隔與設定的訓練紀錄用，規格 12.34）；另有 `unavailable_activities`（最近 14 天拿不到內容的活動〔空殼〕的 id、日期與原本的來源，看板提示用，KI-048）。
 
 **課表**
 - `training_plans`：一週一份。舊的文字課表只有 `content`；結構化的課表另有 `week_start`、`style`（固定或彈性）、`reason`、`outline`（之後幾週的大綱）、`notes`（檢查器的提醒與教練的理由）。`is_active` 標記還在用的。

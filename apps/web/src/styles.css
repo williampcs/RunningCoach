@@ -3800,13 +3800,24 @@ button.back-button {
   color: var(--done);
 }
 
-.past-week-row .chev {
+.past-week-row .chev,
+.past-report-row .chev {
   flex: none;
   transition: transform 0.15s;
 }
 
-.past-week-row[aria-expanded="true"] .chev {
+.past-week-row[aria-expanded="true"] .chev,
+.past-report-row[aria-expanded="true"] .chev {
   transform: rotate(90deg);
+}
+
+/* 之前的週的回報（規格 12.34、12.48）：表單在那一列下面 */
+.past-report-label {
+  white-space: nowrap;
+}
+
+.past-sessions .session-report {
+  margin: var(--sp-2) 0 var(--sp-3);
 }
 
 .past-sessions {
@@ -3816,7 +3827,8 @@ button.back-button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .past-week-row .chev {
+  .past-week-row .chev,
+  .past-report-row .chev {
     transition: none;
   }
 }

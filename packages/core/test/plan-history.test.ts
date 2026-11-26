@@ -144,6 +144,7 @@ const past = (partial: Partial<PastSession> & Pick<PastSession, "kind" | "outcom
   byAthlete: false,
   selfChange: null,
   garmin: null,
+  report: null,
   ...partial,
 });
 const week = (weekStart: string, sessions: PastSession[], text = false): PastWeek => ({
@@ -155,6 +156,7 @@ const week = (weekStart: string, sessions: PastSession[], text = false): PastWee
   actual: { km: 0, minutes: 0, runs: 0, others: 0 },
   unit: "km",
   sources: [],
+  uncovered: false,
 });
 
 describe("最近 4 週的摘要（給教練）", () => {

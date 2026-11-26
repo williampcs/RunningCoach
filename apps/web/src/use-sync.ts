@@ -56,7 +56,8 @@ export function useSync() {
         await syncDevices();
         // 最近 14 天的剛同步過，匯入時算「原本就有」；新增的就是更早的
         const unavailable = result.unavailable > 0 ? `另有 ${result.unavailable} 筆 Intervals.icu 不提供內容（例如從 Strava 匯入的），沒有匯入。` : "";
-        const all = `${text.replace(/[。.]?\s*$/, "。")}更早的紀錄：匯入 ${result.added} 趟${result.earliest ? `，最早的一趟是 ${result.earliest}` : ""}（不產生分析）。${unavailable}`;
+        const others = result.others > 0 ? `，騎車、肌力等其他運動 ${result.others} 筆` : "";
+        const all = `${text.replace(/[。.]?\s*$/, "。")}更早的紀錄：匯入 ${result.added} 趟${result.earliest ? `，最早的一趟是 ${result.earliest}` : ""}${others}（不產生分析）。${unavailable}`;
         setMessage({ kind: "ok", text: all });
         toast(all);
       } else {

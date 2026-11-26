@@ -6,7 +6,7 @@
  */
 import { addDays, daysBetween, weekdayIndex } from "./dates";
 import { EFFORT_DISTANCES } from "./intervals";
-import type { Activity, ActivitySource, BestEffort, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
+import type { Activity, ActivitySource, BestEffort, OtherActivity, PaceCurveSummary, RunSettings, WellnessDay } from "./types";
 
 export const FAKE_SCENARIOS = {
   steady: { label: "穩定訓練", description: "每週固定的次數與距離，週日長跑" },
@@ -427,8 +427,9 @@ export class FakeActivitySource implements ActivitySource {
     return this.within(days);
   }
 
-  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number }> {
-    return { runs: this.activities.filter((a) => a.date >= oldest && a.date <= newest), unavailable: 0 };
+  async fetchRunsBetween(oldest: string, newest: string): Promise<{ runs: Activity[]; unavailable: number; others: OtherActivity[] }> {
+    // 測試模式的假資料只有跑步：其他運動是空的（範圍照樣算抓過）
+    return { runs: this.activities.filter((a) => a.date >= oldest && a.date <= newest), unavailable: 0, others: [] };
   }
 
   async fetchWellness(days = 14): Promise<WellnessDay[]> {

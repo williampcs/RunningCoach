@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 
-import { addDays, dataSourceLine, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
+import { addDays, dataSourceLine, importProgressText, REGION_CHOICES, regionOf, REGIONS, shortDateLabel, type Accumulation, type ImportProgress, type ImportResult } from "@running-coach/core";
 
 import { CalendarDays, Check, Flame, MapPin, Medal, Ruler, Timer, type LucideIcon } from "lucide-react";
 
@@ -276,13 +276,13 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
         <div className="import-progress" role="status">
           <div className="indeterminate" />
           <span className="small">
-            正在讀 {progress.oldest} – {progress.newest} 的跑步…已找到 {number(progress.found)} 趟
+            {importProgressText(progress)}
           </span>
         </div>
       ) : (
         <div className="actions">
           <button onClick={() => void run()}>{result ? "再匯入一次" : "匯入完整歷史"}</button>
-          {!result && <InfoTip label="匯入完整歷史的說明">把 Intervals.icu 上更早的跑步全部存進來：只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</InfoTip>}
+          {!result && <InfoTip label="匯入完整歷史的說明">把 Intervals.icu 上更早的跑步與其他運動全部存進來：只存紀錄、不產生 AI 分析，不花模型的費用；可能要一兩分鐘。</InfoTip>}
         </div>
       )}
       {error && <div className="notice error">匯入失敗：{error}（再按一次會從頭重抓，已存的不會重複）</div>}
@@ -291,7 +291,8 @@ function ImportHistory({ onDone }: { onDone: () => void }) {
           <p>
             <strong>匯入完成：新增 {number(result.added)} 趟</strong>
             {result.existing + result.merged > 0 && `，${number(result.existing + result.merged)} 趟原本就有`}
-            {result.earliest && `。最早的一趟是 ${result.earliest}`}。
+            {result.earliest && `。最早的一趟是 ${result.earliest}`}
+            {result.others > 0 && `。另有騎車、肌力等其他運動 ${number(result.others)} 筆`}。
           </p>
           {result.perYear.length > 0 && (
             <div className="year-chips">

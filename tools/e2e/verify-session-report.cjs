@@ -4,6 +4,9 @@
 // - 回報後「回報」分頁不再列那堂；紀錄頁列出「肌力訓練」（標「手動」，點開看備註）
 // - 開始同步，另一台用復原碼還原：課卡的結果與備註、紀錄頁都看得到
 // - 取消回報後在對話說「肌力做完了，體感 5，棒式少做一組」→ 教練記下（report_session），課卡看得到
+// - 「之前的週」：沒有紀錄的肌力課點了在那一列下面打開回報的表單（不跳到紀錄頁），存了變「達成」與「修改回報」，再改成部分達成；紀錄頁那一筆指到「之前的週」
+// - 兩台的之前的週一致：A 按過同步、B 沒按過，B 打開之前的週時補抓一次（一個請求），兩台每週的總量與每堂課的結果一樣
+// - 設定的訓練紀錄顯示這台上次抓紀錄的時間（A1）
 // - 開關關著的建置（E2E_URL，4173）：課卡照舊是「做完了」、「回報」分頁沒有那一塊
 // - 設計：emoji、每張卡最多一顆實心按鈕、按鈕高度、不左右捲動；手機淺色與電腦深色的截圖（session-report-*）
 // 這個腳本自己建置一份開著 multisport、report 的（$E2E_OUT 底下），用 4188 埠開 vite preview；只需要 npm run dev:mock。
@@ -223,6 +226,113 @@ function designOf(page) {
       await after.waitFor({ timeout: 10000 });
       await expand(after);
       check.coachCard = await until(async () => (await after.innerText()).includes("備註：棒式少做一組") && (await after.locator(".badge").first().innerText()) === "部分達成");
+
+      step = "之前的週：沒有紀錄的肌力課直接回報（規格 12.34、12.48）";
+      // 過去 10 週的課表（多運動開著時每週五有一堂肌力），再排回這週的
+      await send(A.page, "排前幾週的課表");
+      await send(A.page, "幫我排這週的課表");
+      await E2E.go(A.page, "計畫");
+      const past = A.page.locator(".past-weeks-card");
+      await past.waitFor({ timeout: 10000 });
+      await past.locator("details.past-weeks > summary").click();
+      const week = past.locator(".past-week").first();
+      await week.locator(".past-week-row").click();
+      const pastStrength = week.locator(".past-sessions > li", { hasText: "週五的肌力" });
+      await pastStrength.waitFor({ timeout: 5000 });
+      const pastRow = pastStrength.locator("button.past-report-row");
+      check.pastReportable = (await pastRow.count()) === 1 && (await pastRow.innerText()).includes("回報") && (await pastRow.getAttribute("aria-expanded")) === "false";
+      // 這台連著 Intervals.icu：打開時先補抓這台沒有的週，補完是「沒做」
+      check.pastMissedBefore = await until(async () => (await pastStrength.locator(".badge").innerText()) === "沒做");
+      const tabBefore = await A.page.locator("nav.tabbar button[aria-current=true]").innerText();
+      await pastRow.click();
+      const pastForm = pastStrength.locator("form.session-report");
+      await pastForm.waitFor({ timeout: 5000 });
+      // 點了不跳到紀錄頁：表單就在那一列下面
+      check.pastStaysOnPlan = (await A.page.locator("nav.tabbar button[aria-current=true]").innerText()) === tabBefore && tabBefore.includes("計畫");
+      check.pastDefaultMinutes = (await pastForm.getByLabel("花了多久（分）").inputValue()) === "25";
+      await pastForm.getByRole("button", { name: "體感 5", exact: true }).click();
+      await pastForm.getByLabel("備註").fill("下雨在家做");
+      const pastDesign = await designOf(A.page);
+      check.pastDesign = !pastDesign.emoji && pastDesign.primaries === 0 && !pastDesign.small.length && !pastDesign.overflow;
+      if (!check.pastDesign) problems.push(`[A 之前的週設計] ${JSON.stringify(pastDesign)}`);
+      await pastStrength.screenshot({ path: `${E2E.OUT}/session-report-past-form-390-light.png` });
+      await pastForm.getByRole("button", { name: "存起來" }).click();
+      check.pastAchieved = await until(async () => (await pastStrength.locator(".badge").innerText()) === "達成");
+      check.pastEditLabel = (await pastStrength.locator(".past-report-label").innerText()) === "修改回報";
+      check.pastFormClosed = (await pastStrength.locator("form.session-report").count()) === 0;
+      check.pastActual = (await pastStrength.innerText()).includes("25 分鐘");
+      await pastStrength.locator("button.past-report-row").click();
+      const pastEdit = pastStrength.locator("form.session-report");
+      await pastEdit.waitFor({ timeout: 5000 });
+      check.pastPrefilled = (await pastEdit.getByLabel("備註").inputValue()) === "下雨在家做";
+      await pastEdit.getByRole("group", { name: "做到多少" }).getByRole("button", { name: "做了一部分" }).click();
+      await pastEdit.getByRole("button", { name: "更新回報" }).click();
+      check.pastEdited = await until(async () => (await pastStrength.locator(".badge").innerText()) === "部分達成");
+      await past.screenshot({ path: `${E2E.OUT}/session-report-past-390-light.png` });
+      // 有手錶紀錄的課（這裡沒有跑步紀錄，跑步的課沒有紀錄）也能回報；跳過的課不行（核心的測試）
+      // 紀錄頁：那一筆標手動，說明指到「之前的週」
+      await E2E.go(A.page, "紀錄");
+      const pastRecord = A.page.locator("li.other", { hasText: "肌力訓練" }).filter({ hasNotText: "今天" }).first();
+      await pastRecord.waitFor({ timeout: 10000 });
+      await pastRecord.locator("button.run-row").click();
+      check.pastHistory = (await pastRecord.innerText()).includes("備註：下雨在家做") && (await pastRecord.innerText()).includes("之前的週");
+
+      step = "兩台的之前的週一致（規格 12.34）";
+      // A 在這台按同步（Intervals.icu 最近 14 天）、打開過之前的週（補抓過），再把課表同步給 B；B 連上 Intervals.icu、只按過同步
+      await E2E.go(A.page, "回報");
+      await A.page.locator("#report-run").getByRole("button", { name: "同步" }).click();
+      await A.page.locator(".toast", { hasText: /同步完成|已是最新|新增/ }).first().waitFor({ timeout: 60000 });
+      const syncDevices = async (page) => {
+        await E2E.settings(page, "多裝置同步");
+        await syncCard(page).getByRole("button", { name: "立即同步裝置" }).click();
+        await syncCard(page).getByRole("button", { name: "立即同步裝置" }).waitFor({ timeout: 20000 });
+      };
+      await syncDevices(A.page);
+      await E2E.setupMock(B.page, { mock: E2E.MOCK, timeZone: "Asia/Taipei" });
+      await syncDevices(B.page);
+      // B 也按一次同步（只抓最近 14 天；訓練數值也是每台從 Intervals.icu 抓的，計畫的時間要用它估）：更早的週 B 沒有
+      await E2E.go(B.page, "回報");
+      await B.page.locator("#report-run").getByRole("button", { name: "同步" }).click();
+      await B.page.locator(".toast", { hasText: /同步完成|已是最新|新增/ }).first().waitFor({ timeout: 60000 });
+      const ranged = [];
+      B.page.on("request", (r) => /\/intervals\/athlete\/[^/]+\/activities\?oldest=/.test(r.url()) && ranged.push(r.url()));
+      // 每週的一列與每堂課的結果（展開全部的週）
+      const pastOf = async (page) => {
+        await E2E.go(page, "計畫");
+        const card = page.locator(".past-weeks-card");
+        await card.waitFor({ timeout: 10000 });
+        if (!(await card.locator("details.past-weeks").evaluate((d) => d.open))) await card.locator("details.past-weeks > summary").click();
+        await card.locator(".past-week").first().waitFor();
+        // 補抓完：沒有「正在補抓」，也沒有「這台沒有這段時間的紀錄」
+        const settled = await until(async () => (await card.locator(".past-backfill").count()) === 0 && !(await card.innerText()).includes("這台沒有這段時間的紀錄"), 80);
+        const closed = card.locator(".past-week-row[aria-expanded=false]");
+        for (let i = 0; i < 20 && (await closed.count()); i++) await closed.first().click();
+        const weeks = await card.locator(".past-week").evaluateAll((els) =>
+          els.map((w) => [w.querySelector(".list-row-sub")?.textContent, [...w.querySelectorAll(".past-sessions > li")].map((li) => `${li.querySelector(".list-row-title")?.textContent}|${li.querySelector(".badge")?.textContent}|${li.querySelector(".list-row-sub")?.textContent}`)]),
+        );
+        return { settled, weeks };
+      };
+      const aPast = await pastOf(A.page);
+      const bPast = await pastOf(B.page);
+      check.pastSettledA = aPast.settled;
+      check.pastSettledB = bPast.settled;
+      check.pastSameOnBoth = JSON.stringify(aPast.weeks) === JSON.stringify(bPast.weeks);
+      if (!check.pastSameOnBoth) problems.push(`[兩台] A=${JSON.stringify(aPast.weeks[0])} B=${JSON.stringify(bPast.weeks[0])}`);
+      // 有實際的紀錄（模擬的 Intervals.icu 在最近兩週有跑步與騎車）：不是兩台都空的才一樣
+      check.pastHasActual = aPast.weeks.some(([sub]) => sub && !/實際 0 分鐘/.test(sub));
+      // B 補抓一次（一段期間一次請求），不是每週一次
+      check.pastBackfillOnce = ranged.length === 1;
+      await B.page.locator(".past-weeks-card").screenshot({ path: `${E2E.OUT}/session-report-past-1280-dark.png` });
+
+      step = "設定的訓練紀錄：上次抓紀錄（規格 12.34 的 A1）";
+      await E2E.settings(B.page, "訓練紀錄");
+      const fetchLine = B.page.locator("#side-panel .fetch-status");
+      await fetchLine.waitFor({ timeout: 5000 });
+      const fetchText = await fetchLine.innerText();
+      check.fetchStatusShown = /這台上次抓紀錄：.*（(剛剛|\d+ 分鐘前)）/.test(fetchText) && fetchText.includes("自動抓最近 14 天");
+      check.fetchNoError = (await fetchLine.locator(".field-error").count()) === 0;
+      await B.page.locator("#side-panel").screenshot({ path: `${E2E.OUT}/session-report-fetch-status-1280-dark.png` });
+      await B.page.locator("#side-panel .side-panel-close").click().catch(() => {});
     } catch (e) {
       problems.push(`[${step}] ${e.message.split("\n")[0]}`);
       await A.page.screenshot({ path: `${E2E.OUT}/session-report-fail-A.png`, fullPage: true }).catch(() => {});
