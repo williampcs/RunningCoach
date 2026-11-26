@@ -1,0 +1,11 @@
+{
+  "appId": "com.zone2mate.spike",
+  "appName": "Zone2Mate",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never"
+  },
+  "server": {
+    "allowNavigation": ["staging.zone2mate.com"]
+  }
+}

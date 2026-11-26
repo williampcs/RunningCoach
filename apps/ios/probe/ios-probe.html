@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self'; connect-src 'self' https: http:; img-src 'self' data:">
+<title>App 測試頁</title>
+<link rel="stylesheet" href="ios-probe.css">
+</head>
+<body>
+<main>
+  <h1>App 測試頁（試做用）</h1>
+  <p class="hint">規格 12.49。搖一搖手機隨時回到這頁。結果只有統計，沒有你的實際數值；按「複製結果」貼給 session。</p>
+  <p><a href="/index.html">回到 App</a> · <a href="/index.html#passkey-test">App 裡的 passkey 測試</a> · <a href="https://staging.zone2mate.com/#passkey-test">在 App 裡打開 staging 的 passkey 測試</a></p>
+
+  <section>
+    <h2>1. 這個 WebView</h2>
+    <button id="env">檢查</button>
+    <pre id="env-out"></pre>
+  </section>
+
+  <section>
+    <h2>1b. 資料留得住嗎</h2>
+    <p class="hint">每按一次，在這個 App 的 OPFS 記一次（和 App 的資料庫分開的小檔案）。關掉 App（從多工畫面滑掉）再打開、放到背景再回來，次數要接著算。</p>
+    <button id="opfs">記一次</button>
+    <pre id="opfs-out"></pre>
+  </section>
+
+  <section>
+    <h2>2. Apple 健康</h2>
+    <button id="hk-ask">允許讀取</button> <button id="hk-sum">統計</button>
+    <pre id="hk-out"></pre>
+  </section>
+
+  <section>
+    <h2>4. 同步服務與試用的代理（App 的來源）</h2>
+    <button id="cors">測試</button>
+    <pre id="cors-out"></pre>
+  </section>
+
+  <p><button id="copy">複製結果</button> <span id="copied"></span></p>
+</main>
+<script src="ios-probe-config.js"></script>
+<script src="ios-probe.js"></script>
+</body>
+</html>

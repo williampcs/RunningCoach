@@ -1,0 +1,20 @@
+{
+  "name": "@running-coach/ios",
+  "version": "0.10.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/build-web.mjs && cap sync ios",
+    "setup-signing": "node scripts/setup-signing.mjs",
+    "install-device": "node scripts/install.mjs",
+    "open": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.6.3",
+    "@capacitor/ios": "8.6.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.3"
+  }
+}

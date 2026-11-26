@@ -1,0 +1,16 @@
+App/build
+App/Pods
+App/output
+App/App/public
+DerivedData
+xcuserdata
+
+# Cordova plugins for Capacitor
+capacitor-cordova-ios-plugins
+
+# Generated Config files
+App/App/capacitor.config.json
+App/App/config.xml
+
+# 每個人自己的簽章設定（Team、bundle id；規格 12.49）
+signing.local.xcconfig

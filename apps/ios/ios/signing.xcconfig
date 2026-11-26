@@ -1,0 +1,7 @@
+// App 的簽章設定（規格 12.49）。
+// 這個檔進版控，只放公開的預設值；你自己的 Team 與 bundle id 寫在同一個資料夾的 signing.local.xcconfig（不進版控），
+// 由 `npm run setup-signing -w @running-coach/ios` 產生。不要在 Xcode 的 Signing & Capabilities 分頁改 Team：那會寫進 project.pbxproj。
+PRODUCT_BUNDLE_IDENTIFIER = com.zone2mate.app
+CODE_SIGN_ENTITLEMENTS = App/App.entitlements
+CODE_SIGN_STYLE = Automatic
+#include? "signing.local.xcconfig"
