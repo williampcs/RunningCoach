@@ -890,7 +890,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：「快轉到隔天」（使用者不要）；為了測試關掉或繞過 staging 的人機驗證、加測試用的伺服器入口；對正式環境跑；改同步服務或代理的程式。需要建立同步空間、配對的流程做不到時寫下來，回報協調 session 再談。
   - 驗收：push 到 `v2`（合併 PR）後部署完自動跑、綠；PR 說明附一次故意改錯（例如期望的版號不對）時會紅的證據；整段不超過 5 分鐘；每次跑用掉的 staging 額度很少（不建立同步空間就幾乎沒有）。
   - 注意：實測的 job 不拿部署用的 secrets（`CLOUDFLARE_API_TOKEN` 等），只要網址（Variables）；workflow 不印出 secrets；`permissions` 維持最小。workflow 的改動合併前請安全 session 看一眼權限。staging 的網址等只從 Variables 讀，不寫進 repo。
-  - 狀態：待開發
+  - 狀態：開發中（開發 session「staging 部署後自動跑一輪實測」，2026-11-27）
 
 - **iOS App 的試做：先驗證再開工**（`strategy-map.md` 的「iOS App：自己和朋友用」簡報的「先驗證再開工」；2026-11-26 使用者的 Mac 裝好 Xcode、開好 Remote Control 的資料夾）
   - 對應章節：12.49（結果寫在這裡）、`strategy-map.md` 的 iOS App 簡報、12.41、12.44、12.47。
