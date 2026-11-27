@@ -29,6 +29,17 @@ for f in tools/e2e/verify-*.cjs; do echo "$f: $(node $f 2>&1 | tail -1)"; done  
 
 環境變數（都有預設值）：`E2E_URL`（preview 的網址）、`E2E_MOCK`（模擬上游）、`E2E_OUT`（截圖）。Playwright 先找專案的，找不到時用雲端開發環境預先裝好的。
 
+## 對線上的 staging 跑（`smoke-staging.cjs`）
+
+不用模擬上游：對真的 staging（Pages、同步服務、代理與 D1）跑一輪不需要模型、不需要人機驗證的檢查（規格 12.50）。`Deploy staging` 部署完會自動跑（job「Smoke test staging」）；本機也能跑，網址自己給（不寫進 repo）：
+
+```bash
+SMOKE_WEB_URL=<staging 的網址> SMOKE_SYNC_URL=<staging 同步服務的網址> SMOKE_PROXY_URL=<staging 代理的網址> \
+  SMOKE_HUMAN_CHECK=1 node tools/e2e/smoke-staging.cjs
+```
+
+`SMOKE_HUMAN_CHECK=1` 只在同步服務開著人機驗證時給（沒開時送出那個請求會真的建立一個空的同步空間）；`SMOKE_COMMIT` 給了時先等 staging 換成那個 commit；`SMOKE_VERSION` 改期望的版號。其他的變數與每一項檢查寫在檔頭。不建立同步空間、不開配對碼、不打模型。
+
 ## 腳本
 
 | 腳本 | 驗證 |
