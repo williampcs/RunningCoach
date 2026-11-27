@@ -617,7 +617,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
         throw new HttpError(409, "新的同步空間不能用", { state: "rekey_conflict" });
       }
     }
-    return applyRekey(space, caller.device, body);
+    return applyRekey(space, caller.device, body, null);
   }
 
   /**
@@ -637,14 +637,15 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
     if (body.space !== newSpace) throw new HttpError(400, "新的同步空間 id 不對");
     // 接手時一定要帶複製到的序號（不漏資料）
     if (typeof body.seq !== "number") throw new HttpError(400, "seq 格式不對");
-    return applyRekey(from, signer, body);
+    return applyRekey(from, signer, body, caller.device.id);
   }
 
   /**
    * 換金鑰的最後一步. signer：開始換金鑰、簽聲明的那台（舊空間裡登記過、過了冷卻期）. 檢查清單完整、簽過的聲明和這次的內容一致；
    * seq：新空間已經有舊空間到這個序號的資料，舊空間之後又有新的寫入時回 409 rekey_behind（用戶端補送後再試）
    */
-  async function applyRekey(space: string, signer: DeviceRow, body: Record<string, unknown>) {
+  /** completer：用新的復原碼接手、送出這一步的那台（新空間裡登記的）；開始的那台自己完成時是 null */
+  async function applyRekey(space: string, signer: DeviceRow, body: Record<string, unknown>, completer: string | null) {
     if (nowMs() < cooldownUntil(signer)) throw new HttpError(403, "這台加入還不到 24 小時", { state: "cooldown", until: cooldownUntil(signer) });
     // 剛換過金鑰的空間一分鐘內不能再換（不讓一台一直換、把服務的空間佔滿）
     const movedIn = await store.movedInAt(space);
@@ -700,6 +701,7 @@ export function createSyncHandler(deps: SyncDeps): (request: Request) => Promise
       await store.rekey(space, {
         newSpace,
         caller: signer.id,
+        completer,
         keep: keep.map((k) => ({ id: String(k.id), label: String(k.label), box: String(k.box) })),
         remove: removeNow,
         statement: String(body.statement),

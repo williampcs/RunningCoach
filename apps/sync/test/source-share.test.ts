@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine } from "@running-coach/core";
+import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, memoryRekeyKeyStore, toBase64url, type DeviceIdentity } from "@running-coach/core";
 import { hashSource, SqlRateLimiter, sourceHasher } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
@@ -235,6 +235,7 @@ describe("換金鑰的新空間：同一個舊空間只有一個換到一半的"
     const engine = new SyncEngine(db, api, state.root, () => now, {
       identity,
       label: () => ({ name: "A", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (state.root = r),
     });
     return { engine, state, identity };
@@ -439,6 +440,7 @@ describe("同一個網段建立的同步空間的總容量", () => {
     const engine = new SyncEngine(db, api, state.root, () => now, {
       identity: await newDeviceIdentity(),
       label: () => ({ name: "A", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (state.root = r),
     });
     await engine.ensureSpace();
@@ -549,15 +551,20 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     }
     const identity = await newDeviceIdentity();
     const state = { root: newRootKey() };
-    const engine = new SyncEngine(db, api, state.root, () => now, {
-      identity,
-      label: () => ({ name: "A", platform: "t" }),
-      onRootChanged: async (r) => void (state.root = r),
-    });
+    const rekeyKey = memoryRekeyKeyStore();
+    /** 重新整理頁面：同一個資料庫、同一個存放新金鑰的地方，重新建立引擎 */
+    const open = (keys = rekeyKey) =>
+      new SyncEngine(db, api, state.root, () => now, {
+        identity,
+        label: () => ({ name: "A", platform: "t" }),
+        rekeyKey: keys,
+        onRootChanged: async (r) => void (state.root = r),
+      });
+    const engine = open();
     await engine.ensureSpace();
     await engine.sync();
     advance(25 * HOUR);
-    return { engine, state, api, identity, db };
+    return { engine, state, api, identity, db, rekeyKey, open };
   }
 
   /** 同一組同步金鑰的另一台（配對加入） */
@@ -570,10 +577,11 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     const engine = new SyncEngine(db, api, state.root, () => now, {
       identity,
       label: () => ({ name: "B", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (state.root = r),
     });
     await engine.sync();
-    return { engine, state, api, identity, db };
+    return { engine, state, api, identity, db, handler };
   }
 
   const copiedToday = async (from: string) =>
@@ -1164,6 +1172,137 @@ describe("換金鑰的複製有自己的每日額度，同一個舊空間每天�
     await expect(b.engine.rekey()).rejects.toMatchObject({ total: 250 });
     expect((await b.engine.pendingRekey())!.done).toBeLessThan(250);
     expect(await rekeyCount()).toBeLessThanOrEqual(1000);
+  });
+
+  describe("換金鑰進行中的新金鑰和同步金鑰存在同一個受保護的地方（不在資料庫）", () => {
+    const metaOf = async (db: Db) => (await db.syncTransaction((sql) => sql.all("SELECT k, v FROM sync_meta"))) as { k: string; v: string }[];
+    const pendingMeta = async (db: Db) => JSON.parse((await metaOf(db)).find((r) => r.k === "rekey_pending")!.v) as Record<string, unknown>;
+
+    it("跨天的換金鑰：sync_meta 只有進度；重新整理後接著做完；換好之後刪掉", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      const from = (await deriveKeys(a.state.root)).space;
+      await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100, total: 300 });
+      const newRoot = await a.rekeyKey.load();
+      expect(newRoot).not.toBeNull();
+      expect(await pendingMeta(a.db)).not.toHaveProperty("root");
+      expect(JSON.stringify(await metaOf(a.db))).not.toContain(toBase64url(newRoot!));
+      // 重新整理（新的引擎，同一個資料庫與存放的地方）
+      nextUtcDay();
+      await expect(a.open().resumeRekey()).rejects.toMatchObject({ done: 200, total: 300 });
+      nextUtcDay();
+      expect(await a.open().resumeRekey()).toEqual(newRoot);
+      expect(a.state.root).toEqual(newRoot);
+      expect(await store.movedTo(from)).toBe((await deriveKeys(newRoot!)).space);
+      expect(await a.rekeyKey.load()).toBeNull();
+    });
+
+    it("讀不到新金鑰時（例如密碼鎖還沒解開）不接著做；讀得到之後照常", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+      expect(await a.open(memoryRekeyKeyStore()).pendingRekey()).toBeNull();
+      expect(await a.open().pendingRekey()).toMatchObject({ done: 100, total: 300 });
+    });
+
+    it("放棄時新金鑰一起刪掉", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100 });
+      await a.engine.cancelRekey();
+      expect(await a.rekeyKey.load()).toBeNull();
+      expect((await metaOf(a.db)).some((r) => r.k === "rekey_pending")).toBe(false);
+    });
+
+    it("舊的格式（新金鑰在 sync_meta）：搬到存放的地方、sync_meta 改成沒有金鑰；搬的途中失敗時不弄丟，之後照常做完", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      await expect(a.engine.rekey()).rejects.toMatchObject({ done: 100, total: 300 });
+      const newRoot = (await a.rekeyKey.load())!;
+      // 改成舊版存的樣子
+      const legacy = { ...(await pendingMeta(a.db)), root: toBase64url(newRoot) };
+      await a.db.syncTransaction((sql) => sql.run("UPDATE sync_meta SET v=? WHERE k='rekey_pending'", [JSON.stringify(legacy)]));
+      await a.rekeyKey.clear();
+      // 存不進去：丟錯，sync_meta 照舊
+      const failing = { load: async () => null, save: async () => Promise.reject(new Error("存不進去")), clear: async () => undefined };
+      await expect(a.open(failing).pendingRekey()).rejects.toThrow("存不進去");
+      expect((await pendingMeta(a.db)).root).toBe(toBase64url(newRoot));
+      // 存了但讀回來不一樣：丟錯，sync_meta 照舊
+      const lossy = { load: async () => newRootKey(), save: async () => undefined, clear: async () => undefined };
+      await expect(a.open(lossy).pendingRekey()).rejects.toThrow();
+      expect((await pendingMeta(a.db)).root).toBe(toBase64url(newRoot));
+      // 正常：搬過去
+      expect(await a.open().pendingRekey()).toMatchObject({ done: 100, total: 300 });
+      expect(await pendingMeta(a.db)).not.toHaveProperty("root");
+      expect(await a.rekeyKey.load()).toEqual(newRoot);
+      nextUtcDay();
+      await expect(a.open().resumeRekey()).rejects.toMatchObject({ done: 200 });
+      nextUtcDay();
+      expect(await a.open().resumeRekey()).toEqual(newRoot);
+      expect(a.state.root).toEqual(newRoot);
+      expect(await a.rekeyKey.load()).toBeNull();
+    });
+  });
+
+  describe("換金鑰完成時，新空間只留確認過的裝置", () => {
+    /** 只用這台的簽章（不帶憑證）：沒有登記的被拒 */
+    const signedOnly = (d: { api: SyncApi; identity: DeviceIdentity }, method: string, path: string, body?: unknown) =>
+      d.api.request(method, path, body, { device: d.identity });
+
+    it("換到一半時用新空間的憑證登記、不在留下的清單裡的：換好之後不在清單裡，送出、取回都被拒", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      const b = await joinDevice(handler, a.state.root);
+      const from = (await deriveKeys(a.state.root)).space;
+      await expect(a.engine.rekey([], [a.identity.id, b.identity.id])).rejects.toMatchObject({ done: 100 });
+      const newRoot = (await a.rekeyKey.load())!;
+      const to = (await deriveKeys(newRoot)).space;
+      // 拿到新空間憑證的一台登記進去
+      const x = await joinDevice(handler, newRoot);
+      expect((await store.devices(to)).map((d) => d.id)).toContain(x.identity.id);
+      nextUtcDay();
+      await expect(a.engine.resumeRekey()).rejects.toMatchObject({ done: 200 });
+      nextUtcDay();
+      await a.engine.resumeRekey();
+      expect(await store.movedTo(from)).toBe(to);
+      const ids = (await store.devices(to)).map((d) => d.id).sort();
+      expect(ids).toEqual([a.identity.id, b.identity.id].sort());
+      await expect(signedOnly(x, "GET", `/v1/spaces/${to}/changes?since=0`)).rejects.toMatchObject({ status: 403, state: "unknown_device" });
+      await expect(signedOnly(x, "POST", `/v1/spaces/${to}/changes`, { items: [] })).rejects.toMatchObject({ status: 403, state: "unknown_device" });
+      await expect(signedOnly(x, "GET", `/v1/spaces/${to}/devices`)).rejects.toMatchObject({ status: 403, state: "unknown_device" });
+      // 開始的那台與留下的那台照常同步
+      expect((await a.engine.sync()).devices!.devices.map((d) => d.id).sort()).toEqual(ids);
+      await b.engine.sync();
+      expect(b.state.root).toEqual(newRoot);
+      expect((await b.engine.sync()).devices!.devices.map((d) => d.id).sort()).toEqual(ids);
+    });
+
+    it("用新的復原碼接手完成：接手的那台留下（不在留下的清單裡也是），開始的那台跟著換過去；中途登記的另一台不留", async () => {
+      const handler = handlerWith({ rateLimits: { rekeyWrites: 500 } });
+      const a = await setupDevice(handler, 300);
+      const b = await joinDevice(handler, a.state.root);
+      const from = (await deriveKeys(a.state.root)).space;
+      const newRoot = await a.engine.prepareRekey([b.identity.id]);
+      const to = (await deriveKeys(newRoot)).space;
+      await expect(a.engine.rekey([b.identity.id])).rejects.toMatchObject({ done: 100 });
+      const c = await joinDevice(handler, newRoot);
+      const x = await joinDevice(handler, newRoot);
+      await expect(c.engine.takeover()).rejects.toMatchObject({ done: 100 });
+      nextUtcDay();
+      await expect(c.engine.takeover()).rejects.toMatchObject({ done: 200 });
+      nextUtcDay();
+      await c.engine.takeover();
+      expect(await store.movedTo(from)).toBe(to);
+      const ids = (await store.devices(to)).map((d) => d.id).sort();
+      expect(ids).toEqual([a.identity.id, c.identity.id].sort());
+      await expect(signedOnly(x, "GET", `/v1/spaces/${to}/changes?since=0`)).rejects.toMatchObject({ status: 403, state: "unknown_device" });
+      await expect(signedOnly(x, "POST", `/v1/spaces/${to}/changes`, { items: [] })).rejects.toMatchObject({ status: 403, state: "unknown_device" });
+      expect((await c.engine.sync()).devices!.devices.map((d) => d.id).sort()).toEqual(ids);
+      await a.engine.sync();
+      expect(a.state.root).toEqual(newRoot);
+      expect((await a.engine.sync()).devices!.devices.map((d) => d.id).sort()).toEqual(ids);
+      await expect(b.engine.sync()).rejects.toMatchObject({ message: "這台已從同步移除" });
+    });
   });
 });
 

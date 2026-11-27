@@ -17,6 +17,7 @@ import {
   toBase64url,
   type Coach,
   type DeviceIdentity,
+  type RekeyKeyStore,
   type SyncDevice,
   type SyncDevices,
   type SyncResult,
@@ -24,7 +25,22 @@ import {
 
 import { defaultDeviceLabel, loadDeviceIdentity } from "./device-identity";
 import { featureEnabled } from "./environment";
-import type { AppSettings } from "./settings";
+import { loadRekeyKey, saveRekeyKey, type AppSettings } from "./settings";
+
+/**
+ * 換金鑰進行中的新同步金鑰（規格 12.10）：存在設定的 secrets（和同步金鑰同一個地方，密碼鎖開著時加密），不放在資料庫.
+ * 密碼鎖鎖著時引擎不會建立（同步金鑰也讀不到），解鎖後才接著換
+ */
+export const rekeyKeyStore: RekeyKeyStore = {
+  load: async () => {
+    const key = loadRekeyKey();
+    return key ? fromBase64url(key) : null;
+  },
+  save: (root) => saveRekeyKey(toBase64url(root)),
+  clear: async () => {
+    if (loadRekeyKey()) await saveRekeyKey("");
+  },
+};
 
 /** 資料變動後等多久才同步：連續操作時合併成一次 */
 const DEBOUNCE_MS = 4_000;
@@ -141,6 +157,7 @@ export function useDeviceSync(
           ? {
               identity,
               label: () => defaultDeviceLabel(),
+              rekeyKey: rekeyKeyStore,
               onRootChanged: async (root) => {
                 const next = toBase64url(root);
                 followed.current = { engine: created, key: next };

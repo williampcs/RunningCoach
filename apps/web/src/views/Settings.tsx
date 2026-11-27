@@ -644,7 +644,7 @@ export function SettingsView({ section }: { section: { id: SettingsSection | nul
           <p className="row">
             <span>資料都存在這個瀏覽器{db.persistent ? "" : "分頁的記憶體（未持久化）"}，不會自動備份。換裝置前先匯出。</span>
             <InfoTip label="匯出的檔案">
-              匯出的檔案是標準的 SQLite 資料庫，含對話、訓練紀錄、賽事與選手資料，不含 API key；也可以匯入 v1（Discord 版）的 coach.db。
+              匯出的檔案是標準的 SQLite 資料庫，含對話、訓練紀錄、賽事與選手資料，不含 API key 與同步的金鑰；也可以匯入 v1（Discord 版）的 coach.db。
             </InfoTip>
           </p>
           {db.persistent && <StorageProtectionNote state={protection} />}

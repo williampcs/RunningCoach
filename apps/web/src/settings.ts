@@ -99,11 +99,34 @@ export function defaultSettings(): AppSettings {
   };
 }
 
+/**
+ * 換金鑰進行中的新同步金鑰（規格 12.10）：和同步金鑰存在同一個地方——沒有密碼鎖時在設定裡（REKEY_FIELD），
+ * 密碼鎖開著時和其他憑證一起加密. 不放進 AppSettings（畫面的草稿存回去時不會蓋掉它），存設定時照樣保留
+ */
+const REKEY_FIELD = "rekeyKey";
+
+function readPlain(): Record<string, unknown> | null {
+  const stored = JSON.parse(localStorage.getItem(STORAGE_KEY()) ?? "null") as unknown;
+  return stored && typeof stored === "object" ? (stored as Record<string, unknown>) : null;
+}
+
+/** 沒有密碼鎖時存在設定裡的那把 */
+function plainRekeyKey(): string {
+  try {
+    const value = readPlain()?.[REKEY_FIELD];
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
 function loadPlainSettings(): AppSettings {
   const defaults = defaultSettings();
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY()) ?? "null") as Partial<AppSettings> | null;
-    if (!stored) return defaults;
+    const raw = readPlain();
+    if (!raw) return defaults;
+    const { [REKEY_FIELD]: _rekey, ...rest } = raw;
+    const stored = rest as Partial<AppSettings>;
     return {
       ...defaults,
       ...stored,
@@ -291,18 +314,54 @@ export function clearSecretSyncState(): void {
   }
 }
 
+/** 明文的設定（沒有密碼鎖時）；rekeyKey 是換金鑰進行中的新金鑰，沒有時不寫 */
+function plainJson(settings: AppSettings, rekeyKey: string): string {
+  return JSON.stringify(rekeyKey ? { ...settings, [REKEY_FIELD]: rekeyKey } : settings);
+}
+
 export async function saveSettings(settings: AppSettings): Promise<void> {
   if (lockEnabled()) {
     if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存設定");
     stampChanges(withSecrets(loadPlainSettings(), unlockedSecrets ?? NO_SECRETS), settings);
-    const sealed = await sealSecrets(lockSession, secretsOf(settings));
+    const secrets = withRekeyKey(secretsOf(settings), unlockedSecrets?.rekeyKey ?? "");
+    const sealed = await sealSecrets(lockSession, secrets);
     localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
     localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
-    unlockedSecrets = secretsOf(settings);
+    unlockedSecrets = secrets;
     return;
   }
   stampChanges(loadPlainSettings(), settings);
-  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
+  localStorage.setItem(STORAGE_KEY(), plainJson(settings, plainRekeyKey()));
+}
+
+function withRekeyKey(secrets: Secrets, rekeyKey: string): Secrets {
+  const { rekeyKey: _old, ...rest } = secrets;
+  return rekeyKey ? { ...rest, rekeyKey } : rest;
+}
+
+// ---------------------------------------------------------------------------
+// 換金鑰進行中的新同步金鑰（規格 12.10）：和同步金鑰同一個受保護的地方
+// ---------------------------------------------------------------------------
+
+/** 讀：沒有、或密碼鎖還沒解開時是空字串 */
+export function loadRekeyKey(): string {
+  if (lockEnabled()) return lockSession ? (unlockedSecrets?.rekeyKey ?? "") : "";
+  return plainRekeyKey();
+}
+
+/** 存（空字串是刪掉）. 密碼鎖開著時加密，還沒解開時丟錯 */
+export async function saveRekeyKey(key: string): Promise<void> {
+  if (lockEnabled()) {
+    if (!lockSession) throw new Error("密碼鎖尚未解鎖，無法儲存");
+    const secrets = withRekeyKey(unlockedSecrets ?? NO_SECRETS, key);
+    const sealed = await sealSecrets(lockSession, secrets);
+    localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
+    unlockedSecrets = secrets;
+    // 舊的明文（啟用密碼鎖之前留下的）不留
+    if (plainRekeyKey()) localStorage.setItem(STORAGE_KEY(), JSON.stringify(loadPlainSettings()));
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY(), plainJson(loadPlainSettings(), key));
 }
 
 /** 刪除儲存的設定（含 API key 與密碼鎖），下次載入時回到預設值 */
@@ -347,16 +406,18 @@ export async function checkPassword(password: string): Promise<boolean> {
 
 /** 以密碼加密目前的憑證，明文設定裡的憑證改為空白 */
 export async function enableLock(password: string, settings: AppSettings): Promise<void> {
-  const { sealed, session } = await createLock(password, secretsOf(settings));
+  // 換金鑰進行中的新金鑰也一起加密
+  const secrets = withRekeyKey(secretsOf(settings), plainRekeyKey());
+  const { sealed, session } = await createLock(password, secrets);
   localStorage.setItem(LOCK_KEY(), JSON.stringify(sealed));
   localStorage.setItem(STORAGE_KEY(), JSON.stringify(withSecrets(settings, NO_SECRETS)));
   lockSession = session;
-  unlockedSecrets = secretsOf(settings);
+  unlockedSecrets = secrets;
 }
 
 /** 停用密碼鎖：憑證改回以明文保存 */
 export function disableLock(settings: AppSettings): void {
-  localStorage.setItem(STORAGE_KEY(), JSON.stringify(settings));
+  localStorage.setItem(STORAGE_KEY(), plainJson(settings, unlockedSecrets?.rekeyKey ?? ""));
   localStorage.removeItem(LOCK_KEY());
   lockSession = null;
   unlockedSecrets = null;

@@ -249,7 +249,7 @@ erDiagram
 - `sync_pending`：別台傳來、但這台還沒有對應紀錄的（例如那趟跑步還沒從 Intervals.icu 抓到）。
 - `trial_accounts`（schema 20，規格 12.44 第 1 步）：同步的 `ta:` 紀錄在這台的樣子：帳號、代理的網址、加密過的復原密鑰（`box`，要有同步金鑰才解得開）、修改時間。
 - `synced_secrets`（schema 21，規格 12.47）：同步的 `sk:` 紀錄在這台的樣子：名稱、加密過的內容（`box`，要有同步金鑰才解得開；`share` 這一筆是 on／off）、那台改的時間。
-- `sync_meta`：同步空間的 id 等設定；換到一半的換金鑰（`rekey_pending`：新的同步金鑰、新空間、複製到哪裡、幾點之後接著做，規格 12.10）。換金鑰（規格 12.27）完成時清掉 `sync_state` 與 `sync_meta`、留著 `sync_pending`，在新的空間重新開始。
+- `sync_meta`：同步空間的 id 等設定；換到一半的換金鑰的進度（`rekey_pending`：新空間、複製到哪裡、幾點之後接著做，規格 12.10）。新的同步金鑰不在資料庫：網頁版和同步金鑰一起存在設定的 secrets（密碼鎖開著時加密）。「匯出資料庫」匯出的是複製的一份，`sync_meta` 只留不含金鑰的鍵（`apps/web/src/db/export-copy.ts`）。換金鑰（規格 12.27）完成時清掉 `sync_state` 與 `sync_meta`、留著 `sync_pending`，在新的空間重新開始。
 
 ## 多裝置同步的資料
 

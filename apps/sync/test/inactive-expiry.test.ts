@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { Db, newDeviceIdentity, newRootKey, SyncApi, SyncEngine } from "@running-coach/core";
+import { Db, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, memoryRekeyKeyStore } from "@running-coach/core";
 import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
@@ -110,6 +110,7 @@ describe("12 個月沒有連線的空間", () => {
     const engine = new SyncEngine(db, api, newRootKey(), () => now, {
       identity: await newDeviceIdentity(),
       label: () => ({ name: "A", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async () => undefined,
     });
     await engine.ensureSpace();

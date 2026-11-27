@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { Db, isKnownSyncName, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, type DeviceIdentity } from "@running-coach/core";
+import { Db, isKnownSyncName, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, type DeviceIdentity, memoryRekeyKeyStore } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
 import { createProxy } from "../../proxy/src/handler";
@@ -97,6 +97,7 @@ async function device(root: Uint8Array, settings: AppSettings = defaultSettings(
   d.engine = new SyncEngine(db, api, d.root, () => now, {
     identity: d.identity,
     label: () => ({ name: "test", platform: "test" }),
+    rekeyKey: memoryRekeyKeyStore(),
     onRootChanged: async (next) => {
       d.root = next;
     },
