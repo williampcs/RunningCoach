@@ -19,6 +19,7 @@
 # 沒設定的部分跳過、不失敗：沒有 STAGING_PAGES_PROJECT 不部署網頁版；沒有 D1 的 id 或 STAGING_WEB_URL 不部署同步服務；
 # 沒有 STAGING_PROXY_D1_DATABASE_ID 或 STAGING_WEB_URL 不部署代理。
 # 設定步驟見規格 12.19。改了 Variables 之後手動執行一次。
+# 部署完由 job「Smoke test staging」對線上的 staging 跑一輪實測（規格 12.50，tools/e2e/smoke-staging.cjs），不拿 secrets、只讀上面的網址。
 name: Deploy staging
 
 on:
@@ -35,6 +36,8 @@ on:
       - tools/sync-config.ts
       - tools/proxy-config.ts
       - .github/workflows/staging.yml
+      - tools/e2e/smoke-staging.cjs
+      - tools/e2e/env.cjs
   workflow_dispatch:
 
 permissions:
@@ -69,6 +72,9 @@ jobs:
     if: ${{ vars.STAGING_SYNC_D1_DATABASE_ID != '' && vars.STAGING_WEB_URL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      # 部署後的實測用：這次部署的同步服務有沒有開人機驗證（1／0，不含任何金鑰）
+      human_check: ${{ steps.config.outputs.human_check }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -79,6 +85,7 @@ jobs:
         # 偶爾卡住不動（9.4「部署偶爾卡在 npm ci」）：5 分鐘沒完成就失敗，重跑即可
         timeout-minutes: 5
       - name: Fill in account values
+        id: config
         env:
           WORKER_NAME: running-coach-sync-staging
           DATABASE_NAME: running-coach-sync-staging
@@ -89,7 +96,9 @@ jobs:
           DAILY_WRITE_BUDGET: ${{ vars.STAGING_SYNC_DAILY_WRITE_BUDGET || '10000' }}
           # site key 是公開的；有 site key 與 secret key 時 Worker 才驗證（secret 不經過這一步）
           TURNSTILE_SITE_KEY: ${{ (secrets.STAGING_TURNSTILE_SECRET_KEY != '' || secrets.TURNSTILE_SECRET_KEY != '') && (vars.STAGING_TURNSTILE_SITE_KEY || vars.TURNSTILE_SITE_KEY) || '' }}
-        run: npx tsx tools/sync-config.ts
+        run: |
+          npx tsx tools/sync-config.ts
+          if [ -n "$TURNSTILE_SITE_KEY" ]; then echo "human_check=1" >> "$GITHUB_OUTPUT"; else echo "human_check=0" >> "$GITHUB_OUTPUT"; fi
       - name: Rate limit hash key
         # 來源 IP 與網段的代碼用的金鑰（規格 12.10）：寫成 Worker 的 secret RATE_LIMIT_HASH_KEY（HMAC，沒有金鑰算不出、也反推不回 IP）。
         # 在部署之前寫；沒有設定時部署失敗（不退回沒有金鑰的做法）。從 stdin 給，不印出
@@ -265,3 +274,38 @@ jobs:
         run: |
           npx --yes wrangler@4.148.0 pages project create "$PROJECT" --production-branch v2 || echo "專案已經存在，直接部署"
           npx --yes wrangler@4.148.0 pages deploy apps/web/dist --project-name "$PROJECT" --branch v2 --commit-dirty=true
+
+  smoke:
+    name: Smoke test staging
+    # 部署完對線上的 staging 跑一輪實測（規格 12.50，tools/e2e/smoke-staging.cjs）：不需要模型與人機驗證的檢查，失敗時這個 workflow 是紅的。
+    # 不拿任何 secrets，只讀 Variables 的網址；不建立同步空間、不開配對碼、不打模型
+    needs: [sync, proxy, web]
+    if: ${{ !cancelled() && needs.web.result == 'success' && vars.STAGING_WEB_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Playwright
+        # 只裝 Playwright 與 Chromium（不用 npm ci），裝在 runner 的暫存目錄；釘住確切版本
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-audit --no-fund playwright@1.63.0 > /dev/null
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium > /dev/null
+      - name: Smoke test
+        env:
+          NODE_PATH: ${{ runner.temp }}/pw/node_modules
+          E2E_OUT: ${{ runner.temp }}/smoke
+          SMOKE_WEB_URL: ${{ vars.STAGING_WEB_URL }}
+          # 這次有部署的服務才測
+          SMOKE_SYNC_URL: ${{ needs.sync.result == 'success' && vars.STAGING_SYNC_URL || '' }}
+          SMOKE_PROXY_URL: ${{ needs.proxy.result == 'success' && vars.STAGING_PROXY_URL || '' }}
+          # 等 staging 換成這次的 commit 才開始
+          SMOKE_COMMIT: ${{ github.sha }}
+          SMOKE_HUMAN_CHECK: ${{ needs.sync.outputs.human_check }}
+        run: node tools/e2e/smoke-staging.cjs

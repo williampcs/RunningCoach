@@ -354,6 +354,7 @@
 | 2.0-draft | 2026-11-25 | 合併 PR #61（之前的週的修正）進 v2，staging 待試；工作單狀態更新（9.4） |
 | 2.0-draft | 2026-11-24 | 之前的週的修正（工作單「staging 試用回報的兩個錯」，分支 `dev/past-weeks-fixes`）：沒有手錶紀錄的課在之前的週直接回報、修改回報（不繞到紀錄頁）；紀錄頁從之前的週打開肌力、游泳等時捲到那一列；兩台不一致的原因是網頁版只有按「同步」時才抓 Intervals.icu 的紀錄（每台各自抓）：記下這台抓過的日期，打開之前的週時補抓這台沒有的週（一次請求、不產生分析），抓不到時寫「這台沒有這段時間的紀錄」，不寫沒做；匯入完整歷史也帶進騎車等其他運動；打開 App 時這台超過 1 小時沒抓就自動抓最近 14 天（只存紀錄、不產生分析，按「同步」時補最近 2 天的分析），設定的訓練紀錄顯示上次抓紀錄的時間與錯誤；教練的最近 4 週摘要不把這台沒抓過的週算成沒做（12.34、12.48） |
 | 2.0-draft | 2026-11-26 | 換金鑰進行中的新同步金鑰和同步金鑰存在同一個受保護的地方（網頁版的設定 secrets，密碼鎖開著時加密），`sync_meta` 的 `rekey_pending` 只留進度；舊格式讀到時先搬過去再改寫；換好、放棄、取代時刪掉；密碼鎖鎖著時不接著換，解鎖後接著做。匯出的資料庫不含同步的金鑰（匯出前複製一份，`sync_meta` 只留不含金鑰的鍵）。換金鑰完成時新空間只留確認過的裝置（留下的清單，加上用新的復原碼接手完成的那台）（12.10） |
+| 2.0-draft | 2026-11-27 | staging 部署後的實測（12.50，分支 `dev/staging-smoke`）：`Deploy staging` 多一個 job「Smoke test staging」，網頁版部署完用 Playwright 對線上的 staging 跑 `tools/e2e/smoke-staging.cjs`（網頁版、版號、Staging 標示、功能開關、使用須知與隱私說明、先看看；同步服務與代理的 CORS、沒有憑證被拒、沒有人機驗證建立空間是 403），失敗時 workflow 是紅的；不拿 secrets，網址只讀 Variables（9.4） |
 
 ---
 
@@ -890,7 +891,7 @@ Discord 沒有表單，所有讀寫都得經過工具呼叫。網頁版有介面
   - 不做：「快轉到隔天」（使用者不要）；為了測試關掉或繞過 staging 的人機驗證、加測試用的伺服器入口；對正式環境跑；改同步服務或代理的程式。需要建立同步空間、配對的流程做不到時寫下來，回報協調 session 再談。
   - 驗收：push 到 `v2`（合併 PR）後部署完自動跑、綠；PR 說明附一次故意改錯（例如期望的版號不對）時會紅的證據；整段不超過 5 分鐘；每次跑用掉的 staging 額度很少（不建立同步空間就幾乎沒有）。
   - 注意：實測的 job 不拿部署用的 secrets（`CLOUDFLARE_API_TOKEN` 等），只要網址（Variables）；workflow 不印出 secrets；`permissions` 維持最小。workflow 的改動合併前請安全 session 看一眼權限。staging 的網址等只從 Variables 讀，不寫進 repo。
-  - 狀態：開發中（開發 session「staging 部署後自動跑一輪實測」，2026-11-27）
+  - 狀態：PR 待合併（開發 session「staging 部署後自動跑一輪實測」，分支 `dev/staging-smoke`，2026-11-27）；做法與沒做到的見 12.50「實作」。
 
 - **iOS App 的試做：先驗證再開工**（`strategy-map.md` 的「iOS App：自己和朋友用」簡報的「先驗證再開工」；2026-11-26 使用者的 Mac 裝好 Xcode、開好 Remote Control 的資料夾）
   - 對應章節：12.49（結果寫在這裡）、`strategy-map.md` 的 iOS App 簡報、12.41、12.44、12.47。
@@ -6155,3 +6156,14 @@ Intervals.icu 登入（第二次推；設計先給協調 session 看過，2026-1
 1. 請使用者在 staging 試之前，協調 session 先分清楚哪些已經自動驗證過，只請使用者試自動化做不到的（實機與 Safari／iPhone、真實的資料、使用的感受、線上服務才有的部分）。**採用**，寫進 `CLAUDE.md` 的協調 session。
 2. staging 部署後自動對 staging 跑一輪實測（真的 Cloudflare 與 D1）。**採用**，工作單見 9.4「staging 部署後自動跑一輪實測」。
 3. staging 的同步服務加「快轉到隔天」的管理入口。**不做**，使用者：「為了單一一個功能搞這個感覺很白痴」。跨天的流程照舊由 E2E 的模擬時鐘驗證。
+
+**實作：staging 部署後的實測**（2026-11-27，開發 session「staging 部署後自動跑一輪實測」，分支 `dev/staging-smoke`）
+
+- `.github/workflows/staging.yml` 多一個 job「Smoke test staging」：網頁版部署成功後執行（同步服務、代理這次有部署的才測）。只裝 Playwright 與 Chromium（釘 1.63.0，不用 `npm ci`），`permissions: contents: read`，不拿任何 secrets；網址只從 Variables（`STAGING_WEB_URL`、`STAGING_SYNC_URL`、`STAGING_PROXY_URL`）讀。同步服務有沒有開人機驗證，由部署同步服務的那一步輸出 `human_check`（1／0，不含金鑰）告訴它。
+- 腳本 `tools/e2e/smoke-staging.cjs`（本機也能跑，用法在檔頭與 `tools/e2e/README.md`）：先等 `version.json` 換成這次的 commit（最多 3 分鐘），再檢查：
+  - 網頁版：首頁打得開；`_headers` 的安全標頭與 noindex、`version.json` 不快取；標題列是 Staging、上方的 Staging 提醒、版號與 `package.json` 一致（含 commit）；設定頁最下面的完整版號、功能開關全開；使用須知與隱私說明的靜態頁有 Staging 標示，隱私說明寫的是 staging 的同步服務；新的使用者看到設定精靈，「先看看」走完對話、計畫、紀錄、選手，而且沒有任何外部請求。
+  - 同步服務：staging 的來源通過 CORS、別的來源拿不到 CORS 標頭；沒有憑證讀同步空間是 401；開著人機驗證時，沒有人機驗證的 token 建立空間是 403（`human_check`）。被這個 runner 的網段的次數限制擋下（429）時當作沒建立、印警告。
+  - 代理：`/healthz` 回 ok、CORS 同上、沒有帳號查用量是 401。
+- 用掉的 staging 額度：不建立同步空間、不開配對碼、不打模型；每次只有建立空間被拒的那一次會在次數限制的表多一筆（這個來源每小時建立空間的次數加 1）。
+- 驗證：雲端容器的網路政策不允許連 staging（代理回 403），所以沒有對線上的 staging 跑過；改在本機用 staging 的建置（`VITE_STAGING=1`、人機驗證的 site key）加上模擬 Pages `_headers` 的靜態伺服器、同步服務與代理的 Node 版跑過：全部通過（約 3 秒），同步服務的資料庫沒有任何空間、紀錄與配對碼。故意改錯會紅：期望的版號改成 9.9.9（`versionInTitle`、`settingsVersion` 失敗）；同步服務允許所有來源、沒開人機驗證（`syncCorsOtherBlocked`、`syncCreateNeedsHuman` 失敗，回 200 `created: true`）。線上第一次跑在 PR 合併、staging 部署之後。
+- 沒做（要再談的）：建立同步空間、配對、試用的邀請碼這些流程要通過人機驗證或用掉邀請碼，照工作單不繞過，沒有實測；要模型的（對話、跑後分析）也沒有。
