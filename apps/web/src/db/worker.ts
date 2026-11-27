@@ -2,6 +2,8 @@
 /** SQLite（WASM）執行緒 — 資料庫存在瀏覽器的 OPFS，不離開使用者的裝置. */
 import sqlite3InitModule, { type Database, type SAHPoolUtil, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 
+import { exportCopy } from "./export-copy";
+
 /** 正式資料是 /coach.db；測試模式用另一個檔案，兩者互不影響 */
 let dbFile = "/coach.db";
 
@@ -68,7 +70,8 @@ async function handle(request: DbRequest): Promise<unknown> {
     case "all":
       return db.exec({ sql: request.sql, bind: request.params, rowMode: "object", returnValue: "resultRows" });
     case "export":
-      return sqlite3.capi.sqlite3_js_db_export(db);
+      // 匯出的檔案不含同步的金鑰（export-copy.ts）
+      return exportCopy(sqlite3, db);
     case "import": {
       if (!pool) throw new Error("目前使用的是暫時性的記憶體資料庫，無法匯入");
       db.close();

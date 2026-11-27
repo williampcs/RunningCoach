@@ -113,6 +113,8 @@ export interface RekeyPlan {
   copiedSeq?: number | null;
   /** 換金鑰的那台：它已經先建立新的空間、登記自己、把資料送過去 */
   caller: string;
+  /** 用新的復原碼接手、送出最後一步的那台（在新空間登記的）；不在 keep 裡也留在新空間. 開始的那台自己完成時是 null */
+  completer?: string | null;
   keep: { id: string; label: string; box: string }[];
   remove: { id: string; proof: string | null }[];
   /** 換金鑰的那台簽的聲明（舊空間、新空間、留下與移除的裝置、每份新金鑰的雜湊），收到的裝置用來確認 */
@@ -666,11 +668,13 @@ export class SyncStore {
 
   /**
    * 換金鑰（一個交易）. 新的空間由換金鑰的那台先建立、登記自己、把重新加密的資料送過去；這裡才把
-   * 留下的裝置搬過去（加入時間不變；換金鑰的那台在新空間的那一列換成舊空間的）、給留下的每台存一份加密的新同步金鑰、
+   * 留下的裝置搬過去（加入時間不變；換金鑰的那台在新空間的那一列換成舊空間的；新空間裡其他登記的只留接手完成的那台）、給留下的每台存一份加密的新同步金鑰、
    * 標記移除的、刪掉舊空間的紀錄. 舊空間只留裝置與「搬到哪裡」. 舊空間已經搬過時整個失敗
    */
   async rekey(space: string, plan: RekeyPlan): Promise<void> {
     const now = this.now().getTime();
+    const completer = plan.completer ?? null;
+    const preserved = completer !== null && !plan.keep.some((k) => k.id === completer) ? completer : null;
     const stamp = this.now().toISOString();
     await this.batch([
       // 新的空間不在了（例如同一個舊空間又開了新的換金鑰）時 moved_to 是 NULL，整個交易失敗、舊空間不動
@@ -681,8 +685,9 @@ export class SyncStore {
           " AND (? IS NULL OR (SELECT COALESCE(MAX(seq), 0) FROM records WHERE space=?) <= ?)), ?, ?, ?, ?)",
         params: [space, plan.newSpace, plan.copiedSeq ?? null, space, plan.copiedSeq ?? null, now, plan.caller, plan.statement, plan.signature],
       },
-      // 新空間裡已經登記的：留下的那幾台換成舊空間的那一列（加入時間不變）；用新的復原碼接手的那台照舊留著
-      { sql: "DELETE FROM devices WHERE space=? AND id IN (SELECT value FROM json_each(?))", params: [plan.newSpace, JSON.stringify(plan.keep.map((k) => k.id))] },
+      // 新空間只留確認過的裝置：先清掉新空間裡登記的全部（留下的那幾台下面換成舊空間的那一列，加入時間不變），
+      // 只有用新的復原碼接手、送出這一步的那台（不在留下的清單裡時）照舊留著
+      { sql: "DELETE FROM devices WHERE space=? AND id IS NOT ?", params: [plan.newSpace, preserved] },
       ...plan.keep.flatMap((k) => [
         {
           sql:

@@ -221,9 +221,8 @@ function copiedToday(p: CopyProgress, now: number): number {
 
 const DAY_MS = 86_400_000;
 
-/** 存在這台的同步狀態裡（sync_meta）：新的同步金鑰只在這台 */
+/** 存在這台的同步狀態裡（sync_meta）：只有進度. 新的同步金鑰另外存在 RekeyKeyStore（只在這台） */
 interface StoredRekey extends Omit<PendingRekey, "today">, CopyProgress {
-  root: string;
   from: string;
   /** 開始時（使用者確認過的）裝置清單 */
   expected?: string[];
@@ -286,11 +285,36 @@ interface RawDevices {
   rekeyTarget?: boolean;
 }
 
-/** 裝置模式（功能開關 devices）：這台自己的金鑰、第一次登記的名稱、同步金鑰換了時存起來 */
+/**
+ * 換金鑰進行中的新同步金鑰存在哪裡（規格 12.10）：和同步金鑰同一個受保護的地方（網頁版是設定的 secrets，密碼鎖開著時加密），
+ * 不放在資料庫. 資料庫的 sync_meta 只記進度. load 沒有時回傳 null
+ */
+export interface RekeyKeyStore {
+  load(): Promise<Uint8Array | null>;
+  save(root: Uint8Array): Promise<void>;
+  clear(): Promise<void>;
+}
+
+/** 只在記憶體的（測試、沒有持久儲存的用法）；關掉就消失，換到一半的換金鑰之後接不下去 */
+export function memoryRekeyKeyStore(): RekeyKeyStore {
+  let value: Uint8Array | null = null;
+  return {
+    load: async () => (value ? Uint8Array.from(value) : null),
+    save: async (root) => {
+      value = Uint8Array.from(root);
+    },
+    clear: async () => {
+      value = null;
+    },
+  };
+}
+
+/** 裝置模式（功能開關 devices）：這台自己的金鑰、第一次登記的名稱、同步金鑰換了時存起來、換金鑰進行中的新金鑰存在哪裡 */
 export interface SyncDeviceOptions {
   identity: DeviceIdentity;
   label: () => DeviceLabel;
   onRootChanged: (root: Uint8Array) => Promise<void>;
+  rekeyKey: RekeyKeyStore;
 }
 
 export interface SyncResult {
@@ -546,8 +570,10 @@ export class SyncEngine {
       pending = {
         root,
         keys: newKeys,
-        stored: { root: toBase64url(root), space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [], expected: ids },
+        stored: { space: newKeys.space, from: keys.space, resumeAt: 0, done: 0, total: 0, removed: [], expected: ids },
       };
+      // 先存新的金鑰、再記進度：記了進度就一定讀得到金鑰
+      await this.device.rekeyKey.save(root);
       await this.savePending(pending.stored);
       await this.registerInNew(keys, pending.keys, raw);
       await this.publishHandoff(keys, pending, raw, remove);
@@ -711,14 +737,33 @@ export class SyncEngine {
     return fromBase64url(info.root);
   }
 
+  /**
+   * 換到一半的（這台開始的）：進度在 sync_meta，新的金鑰在 RekeyKeyStore.
+   * 舊的格式（新的金鑰也在 sync_meta）先搬：存進 RekeyKeyStore、讀回來確認一樣，才把 sync_meta 改寫成沒有金鑰的；
+   * 搬的途中失敗時 sync_meta 保持原樣，下次再搬
+   */
   private async loadPending(keys: SyncKeys): Promise<{ root: Uint8Array; keys: SyncKeys; stored: StoredRekey } | null> {
+    if (!this.device) return null;
+    const store = this.device.rekeyKey;
     const text = await this.db.syncTransaction((sql) => getMeta(sql, REKEY_META));
     if (!text) return null;
+    let stored: StoredRekey & { root?: unknown };
     try {
-      const stored = JSON.parse(text) as StoredRekey;
-      // 從別的空間開始的（之後換過金鑰、或重新開始同步）：不適用
-      if (stored.from !== keys.space || typeof stored.root !== "string") return null;
-      const root = fromBase64url(stored.root);
+      stored = JSON.parse(text) as StoredRekey & { root?: unknown };
+    } catch {
+      return null;
+    }
+    if (!stored || typeof stored !== "object") return null;
+    if (typeof stored.root === "string") {
+      if (!(await this.migratePending(text, stored.root, stored))) return null;
+      const { root: _moved, ...rest } = stored;
+      stored = rest;
+    }
+    // 從別的空間開始的（之後換過金鑰、或重新開始同步）：不適用
+    if (stored.from !== keys.space) return null;
+    try {
+      const root = await store.load();
+      if (!root) return null;
       const newKeys = await deriveKeys(root);
       if (newKeys.space !== stored.space) return null;
       return { root, keys: newKeys, stored: { ...stored, removed: Array.isArray(stored.removed) ? stored.removed : [] } };
@@ -727,14 +772,37 @@ export class SyncEngine {
     }
   }
 
+  /** 舊格式的搬移：金鑰對得上新空間才搬；成功（sync_meta 已經沒有金鑰）時 true */
+  private async migratePending(text: string, encoded: string, stored: StoredRekey): Promise<boolean> {
+    const store = this.device!.rekeyKey;
+    let root: Uint8Array;
+    try {
+      root = fromBase64url(encoded);
+      if ((await deriveKeys(root)).space !== stored.space) return false;
+    } catch {
+      return false;
+    }
+    await store.save(root);
+    const back = await store.load();
+    if (!back || toBase64url(back) !== encoded) throw new Error("換金鑰的新金鑰沒有存好，請再試一次");
+    const { root: _moved, ...rest } = stored as StoredRekey & { root?: unknown };
+    await this.db.syncTransaction(async (sql) => {
+      // 這段時間沒有被改過才改寫（同一份舊格式）
+      if ((await getMeta(sql, REKEY_META)) === text) await setMeta(sql, REKEY_META, JSON.stringify(rest));
+    });
+    return true;
+  }
+
   private savePending(stored: StoredRekey): Promise<void> {
     return this.db.syncTransaction((sql) => setMeta(sql, REKEY_META, JSON.stringify(stored)));
   }
 
-  private clearPending(): Promise<void> {
-    return this.db.syncTransaction(async (sql) => {
+  /** 放棄、被取代、新空間不在了：進度與新的金鑰都刪掉 */
+  private async clearPending(): Promise<void> {
+    await this.db.syncTransaction(async (sql) => {
       await sql.run("DELETE FROM sync_meta WHERE k=?", [REKEY_META]);
     });
+    await this.device?.rekeyKey.clear();
   }
 
   /**
@@ -856,6 +924,8 @@ export class SyncEngine {
       await sql.run("DELETE FROM sync_meta WHERE k NOT IN ('last_sync', 'known_devices')");
       await setMeta(sql, "space", keys.space);
     });
+    // 換好了（這台換的、或跟著別台換過去）：換金鑰進行中的新金鑰已經是同步金鑰，或已經用不到
+    await this.device!.rekeyKey.clear();
   }
 
   /** 把舊空間的紀錄用新的金鑰重新加密送到新的空間（版本號不變）；回傳每一筆在新空間的狀態，換過去之後才記 */
@@ -991,8 +1061,9 @@ export class SyncEngine {
 
 
   /** 清掉這台的同步狀態（停止同步時）；下次加入時會和雲端的資料合併 */
-  forget(): Promise<void> {
-    return this.db.syncTransaction(clearState);
+  async forget(): Promise<void> {
+    await this.db.syncTransaction(clearState);
+    await this.device?.rekeyKey.clear();
   }
 
   /** 同一時間只跑一次；重疊的呼叫拿到同一個結果 */
@@ -1023,14 +1094,17 @@ export class SyncEngine {
 
   private async runOnce(): Promise<SyncResult> {
     const keys = await this.keys;
-    await this.db.syncTransaction(async (sql) => {
+    const otherSpace = await this.db.syncTransaction(async (sql) => {
       // 這台記得雲端已經刪除：不再連線（即使有人用同一把金鑰把空間建回來，也不會把資料送過去）
       if ((await getMeta(sql, "gone")) === keys.space) throw new SyncApiError(404, "雲端的同步資料已經刪除");
       // 上次同步的是另一組金鑰（例如清除設定後重新開始）：舊的同步狀態不適用
       const space = await getMeta(sql, "space");
       if (space !== null && space !== keys.space) await clearState(sql);
       await setMeta(sql, "space", keys.space);
+      return space !== null && space !== keys.space;
     });
+    // 舊的那組開始的換金鑰也不適用了
+    if (otherSpace) await this.device?.rekeyKey.clear();
     const result: SyncResult = { received: 0, sent: 0, pending: 0, total: 0, at: nowIso(this.now()), devices: null };
     try {
       // 裝置模式：每次先取裝置清單（也確認這台還在、記下最後同步的時間）；還沒登記就登記

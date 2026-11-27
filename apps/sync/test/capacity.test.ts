@@ -1,7 +1,7 @@
 /** 同步服務的頻率限制與容量（規格 12.10）：依來源的限制跨請求有效、空的空間自動清掉、換金鑰不受空間數擋、並行時不越過總量. */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, type DeviceIdentity } from "@running-coach/core";
+import { Db, deriveKeys, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, type DeviceIdentity, memoryRekeyKeyStore } from "@running-coach/core";
 import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
@@ -169,6 +169,7 @@ describe("換金鑰不受整個服務的空間數擋（一換一）", () => {
     d.engine = new SyncEngine(db, api, d.root, () => now, {
       identity: d.identity,
       label: () => ({ name, platform: "test" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (next) => {
         d.root = next;
       },
@@ -300,7 +301,7 @@ describe("每個請求的 D1 查詢次數固定（Workers 每次呼叫有查詢�
     }
     const identity = await newDeviceIdentity();
     let root = newRootKey();
-    const engine = new SyncEngine(db, api, root, () => now, { identity, label: () => ({ name: "A", platform: "t" }), onRootChanged: async (r) => void (root = r) });
+    const engine = new SyncEngine(db, api, root, () => now, { identity, label: () => ({ name: "A", platform: "t" }), rekeyKey: memoryRekeyKeyStore(), onRootChanged: async (r) => void (root = r) });
     await engine.ensureSpace();
     await engine.sync();
     advance(25 * HOUR);
@@ -333,6 +334,7 @@ describe("換金鑰中途失敗", () => {
     const engine = new SyncEngine(db, api, root, () => now, {
       identity: await newDeviceIdentity(),
       label: () => ({ name: "A", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (root = r),
     });
     await engine.ensureSpace();
@@ -381,6 +383,7 @@ describe("換金鑰的結果不明、被頻率限制、並行", () => {
     const engine = new SyncEngine(db, api, state.root, () => now, {
       identity,
       label: () => ({ name: "A", platform: "t" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (state.root = r),
     });
     await engine.ensureSpace();

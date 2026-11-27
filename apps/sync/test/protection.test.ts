@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { Db, newDeviceIdentity, newRootKey, SyncApi, SyncEngine } from "@running-coach/core";
+import { Db, newDeviceIdentity, newRootKey, SyncApi, SyncEngine, memoryRekeyKeyStore } from "@running-coach/core";
 import { SqlRateLimiter } from "@running-coach/core/rate-limit";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
@@ -176,6 +176,7 @@ describe("人機驗證（Turnstile）", () => {
     const engine = new SyncEngine(db, api, root, () => now, {
       identity: await newDeviceIdentity(),
       label: () => ({ name: "A", platform: "test" }),
+      rekeyKey: memoryRekeyKeyStore(),
       onRootChanged: async (r) => void (root = r),
     });
     await expect(engine.ensureSpace()).rejects.toMatchObject({ status: 403, message: "人機驗證沒有通過或已經過期，請再試一次" });

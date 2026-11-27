@@ -13,6 +13,8 @@ export interface Secrets {
   syncKey?: string;
   /** 用 Intervals.icu 登入拿到的 token（規格 12.37）；之前建立的密碼鎖沒有這一項 */
   intervalsToken?: string;
+  /** 換金鑰進行中的新同步金鑰（規格 12.10）；沒有在換金鑰時沒有這一項 */
+  rekeyKey?: string;
 }
 
 /** 存進 localStorage 的密文 */

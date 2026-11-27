@@ -11,6 +11,8 @@ import {
   SyncEngine,
   SyncRemovedError,
   type DeviceIdentity,
+  memoryRekeyKeyStore,
+  type RekeyKeyStore,
 } from "@running-coach/core";
 import { openNodeSqlite, type NodeSqliteDriver } from "@running-coach/sqlite-node";
 
@@ -53,15 +55,17 @@ interface Device {
   identity: DeviceIdentity;
   root: Uint8Array;
   engine: SyncEngine;
+  rekeyKey: RekeyKeyStore;
 }
 
 async function device(name: string, root: Uint8Array, identity?: DeviceIdentity): Promise<Device> {
   const db = new Db(openNodeSqlite(":memory:"), { now: () => serverNow, today: () => serverNow.toISOString().slice(0, 10) });
   await db.init();
-  const d = { name, db, identity: identity ?? (await newDeviceIdentity()), root: Uint8Array.from(root) } as Device;
+  const d = { name, db, identity: identity ?? (await newDeviceIdentity()), root: Uint8Array.from(root), rekeyKey: memoryRekeyKeyStore() } as Device;
   d.engine = new SyncEngine(db, api, d.root, () => serverNow, {
     identity: d.identity,
     label: () => ({ name, platform: "test" }),
+    rekeyKey: d.rekeyKey,
     onRootChanged: async (next) => {
       d.root = next;
     },
@@ -447,6 +451,7 @@ describe("伺服器不受信任", () => {
     const broken = new SyncEngine(a.db, flaky, Uint8Array.from(root), () => serverNow, {
       identity: a.identity,
       label: () => ({ name: "A", platform: "test" }),
+      rekeyKey: a.rekeyKey,
       onRootChanged: async () => {
         throw new Error("不應該換");
       },

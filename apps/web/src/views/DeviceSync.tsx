@@ -33,7 +33,7 @@ import { defaultDeviceLabel, deleteDeviceIdentity, loadDeviceIdentity } from "..
 import { checkPassword, lockEnabled } from "../settings";
 import { clearRemoved, deviceName, deviceTime, removedHere } from "./DeviceAlerts";
 import { PrivacyLink } from "./PrivacyLink";
-import { EXPIRY_TEXT, expiredSince, MANY_RECORDS, rekeyDaysLeft } from "../device-sync";
+import { EXPIRY_TEXT, expiredSince, MANY_RECORDS, rekeyDaysLeft, rekeyKeyStore } from "../device-sync";
 
 interface Slot {
   newPub: string;
@@ -836,7 +836,7 @@ export function DeviceSyncCard({ onLock }: { onLock: () => void }) {
       const root = newRootKey();
       // 裝置模式：新的空間一開始就只接受登記過的裝置，並登記這台
       const device = deviceSync.devicesMode
-        ? { identity: await loadDeviceIdentity(), label: () => defaultDeviceLabel(), onRootChanged: async () => undefined }
+        ? { identity: await loadDeviceIdentity(), label: () => defaultDeviceLabel(), onRootChanged: async () => undefined, rekeyKey: rekeyKeyStore }
         : null;
       await new SyncEngine(coach.db, deviceSync.api!, root, undefined, device).ensureSpace(humanToken);
       setNewRoot(root);

@@ -1,6 +1,7 @@
 export { deriveKeys, fromBase64url, newRootKey, parseRecoveryCode, recoveryCode, toBase64url, type SyncKeys } from "./crypto";
 export {
   lastSyncAt,
+  memoryRekeyKeyStore,
   SyncApi,
   SyncApiError,
   SyncCooldownError,
@@ -9,6 +10,7 @@ export {
   SyncRekeyUnknownError,
   SyncRemovedError,
   type PendingRekey,
+  type RekeyKeyStore,
   type RekeyProgress,
   type SyncAuth,
   type SyncDevice,
